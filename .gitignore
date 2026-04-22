@@ -1,0 +1,110 @@
+# =========================
+# Secrets & environment
+# =========================
+.env
+.env.local
+.env.*.local
+*.env.local
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+backend/.venv/
+backend/.pytest_cache/
+
+# =========================
+# Node / Frontend
+# =========================
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.turbo/
+frontend/.next/
+frontend/legacy-next/.next/
+frontend/legacy-next/node_modules/
+frontend/legacy-next/dist/
+desktop/node_modules/
+desktop/dist/
+desktop/.cache/
+*.tsbuildinfo
+
+# =========================
+# Tauri / Rust
+# =========================
+desktop/src-tauri/target/
+target/
+
+# =========================
+# Test artifacts
+# =========================
+test-results/
+playwright-report/
+coverage/
+**/test-results/
+
+# =========================
+# Runtime / process artifacts
+# =========================
+.run/
+*.log
+*.pid
+
+# =========================
+# Data / GDPR-sensitive (DO NOT COMMIT)
+# =========================
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/*.bak
+data/*.backup
+data/backups/
+data/documents/
+data/uploads/
+data/offsite-mirror/
+data/restore-drill/
+!data/.gitkeep
+
+# =========================
+# Customer reference material (private business data)
+# =========================
+referans/
+
+# =========================
+# Tools / vendored binaries
+# =========================
+tools/rclone/rclone
+tools/**/*.exe
+tools/**/node_modules/
+
+# =========================
+# IDE / editors
+# =========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini

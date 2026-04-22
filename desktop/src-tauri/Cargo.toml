@@ -1,0 +1,19 @@
+[package]
+name = "seroguld_crm_desktop"
+version = "0.2.0"
+description = "Sero Guld CRM desktop shell"
+authors = ["Sero Guld"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+base64 = "0.22"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2.8.2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

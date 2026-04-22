@@ -1,0 +1,10 @@
+[Unit]
+Description=Sero Guld GDPR runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ROOT_DIR}}
+Environment=PYTHONUNBUFFERED=1
+ExecStart={{PYTHON_BIN}} {{ROOT_DIR}}/scripts/gdpr-runner.py scan-and-run --env-file {{ROOT_DIR}}/.env

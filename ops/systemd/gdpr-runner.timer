@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Sero Guld GDPR runner on a user timer
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+Unit=gdpr-runner.service
+
+[Install]
+WantedBy=timers.target

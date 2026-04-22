@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+from fastapi import HTTPException, status
+from sqlalchemy import Integer, cast, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.pos_document import PosDocument
+from app.models.product import Product
+from app.models.reference_sequence import ReferenceSequence
+
+PRODUCT_NUMBER_SEQUENCE_KEY = "product_number"
+REFERENCE_NUMBER_SEQUENCE_KEY = "reference_number"
+AFREGNINGS_NUMBER_SEQUENCE_KEY = "afregnings_number"
+INVOICE_NUMBER_SEQUENCE_KEY = "invoice_number"
+
+LEGACY_REFERENCE_SEQUENCE_KEYS = ("product_reference",)
+
+
+def _parse_numeric(value: str | None) -> int | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw or not raw.isdigit():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+async def _get_or_seed_sequence(
+    session: AsyncSession,
+    *,
+    key: str,
+    seed_value: int,
+    legacy_keys: tuple[str, ...] = (),
+) -> ReferenceSequence:
+    current = await session.get(ReferenceSequence, key)
+    if current is not None:
+        return current
+
+    for legacy_key in legacy_keys:
+        legacy = await session.get(ReferenceSequence, legacy_key)
+        if legacy is not None:
+            migrated = ReferenceSequence(key=key, next_value=int(legacy.next_value))
+            session.add(migrated)
+            await session.flush()
+            return migrated
+
+    seeded = ReferenceSequence(key=key, next_value=int(seed_value))
+    session.add(seeded)
+    await session.flush()
+    return seeded
+
+
+async def infer_product_number_seed(session: AsyncSession) -> int:
+    max_number = await session.scalar(select(func.max(cast(Product.product_number, Integer))))
+    return int(max_number or 0) + 1
+
+
+async def infer_reference_number_seed(session: AsyncSession, *, start: int, window: int) -> int:
+    lower = max(0, int(start))
+    upper = lower + max(100, int(window))
+    max_seen = lower - 1
+
+    refs = (
+        await session.scalars(
+            select(Product.reference_number).where(Product.reference_number.is_not(None))
+        )
+    ).all()
+    for ref in refs:
+        parsed = _parse_numeric(ref)
+        if parsed is None:
+            continue
+        if lower <= parsed <= upper and parsed > max_seen:
+            max_seen = parsed
+    return max_seen + 1
+
+
+async def infer_invoice_number_seed(session: AsyncSession) -> int:
+    max_sequence = await session.scalar(select(func.max(PosDocument.sequence_no)))
+    return int(max_sequence or 0) + 1
+
+
+async def preview_reference_number(session: AsyncSession, *, start: int, window: int) -> str:
+    seed = await infer_reference_number_seed(session, start=start, window=window)
+    seq = await _get_or_seed_sequence(
+        session,
+        key=REFERENCE_NUMBER_SEQUENCE_KEY,
+        seed_value=seed,
+        legacy_keys=LEGACY_REFERENCE_SEQUENCE_KEYS,
+    )
+    return str(int(seq.next_value))
+
+
+async def consume_reference_number(session: AsyncSession, *, start: int, window: int) -> str:
+    seed = await infer_reference_number_seed(session, start=start, window=window)
+    seq = await _get_or_seed_sequence(
+        session,
+        key=REFERENCE_NUMBER_SEQUENCE_KEY,
+        seed_value=seed,
+        legacy_keys=LEGACY_REFERENCE_SEQUENCE_KEYS,
+    )
+    next_value = int(seq.next_value)
+    if len(str(next_value)) > 10:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Referans no limiti asildi. Lutfen manuel referans girin.",
+        )
+    seq.next_value = next_value + 1
+    await session.flush()
+    return str(next_value)
+
+
+async def consume_product_number(session: AsyncSession) -> str:
+    seed = await infer_product_number_seed(session)
+    seq = await _get_or_seed_sequence(session, key=PRODUCT_NUMBER_SEQUENCE_KEY, seed_value=seed)
+    next_value = int(seq.next_value)
+    if next_value > 9999:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Urun numarasi limiti doldu (9999)")
+    seq.next_value = next_value + 1
+    await session.flush()
+    return f"{next_value:04d}"
+
+
+async def preview_product_number(session: AsyncSession) -> str:
+    seed = await infer_product_number_seed(session)
+    seq = await _get_or_seed_sequence(session, key=PRODUCT_NUMBER_SEQUENCE_KEY, seed_value=seed)
+    return f"{int(seq.next_value):04d}"
+
+
+async def preview_afregnings_number(session: AsyncSession, *, start: int, window: int) -> str:
+    # AFG draft numbering should follow the clerk-facing list sequence (1000 + next document sequence),
+    # not the legacy reference-number seed window.
+    _ = (start, window)
+    next_sequence = await infer_invoice_number_seed(session)
+    return str(1000 + int(next_sequence))
+
+
+async def preview_invoice_number(session: AsyncSession) -> str:
+    seed = await infer_invoice_number_seed(session)
+    seq = await _get_or_seed_sequence(session, key=INVOICE_NUMBER_SEQUENCE_KEY, seed_value=seed)
+    return str(int(seq.next_value))

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SERO GULD CRM",
+  "version": "0.2.0",
+  "identifier": "dk.seroguld.crm",
+  "build": {
+    "devUrl": "http://127.0.0.1:3300",
+    "frontendDist": "../../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SERO GULD CRM",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1180,
+        "minHeight": 760
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' asset: data: blob: filesystem: http://127.0.0.1:* http://localhost:* tauri: https://tauri.localhost; connect-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* tauri: https://tauri.localhost wss://tauri.localhost; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; media-src 'self' data: blob: http://127.0.0.1:* http://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:*;",
+      "devCsp": "default-src 'self' asset: data: blob: filesystem: http://127.0.0.1:* http://localhost:* tauri: https://tauri.localhost; connect-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* tauri: https://tauri.localhost wss://tauri.localhost; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline' http://127.0.0.1:* http://localhost:*; font-src 'self' data: http://127.0.0.1:* http://localhost:*; script-src 'self' 'unsafe-eval' http://127.0.0.1:* http://localhost:*; media-src 'self' data: blob: http://127.0.0.1:* http://localhost:*; frame-src 'self' http://127.0.0.1:* http://localhost:*;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "nsis",
+    "icon": []
+  }
+}

@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+from decimal import Decimal
+
+from fastapi import HTTPException, status
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.enums import PosSessionStatusEnum, PosTradeSideEnum
+from app.models.pos_session import PosSession
+from app.models.pos_session_line import PosSessionLine
+from app.schemas.pos import PosWorkspaceFinalizeRequest, PosWorkspaceFinalizeResponse
+
+
+def _core():
+    from app.services import pos_service as core
+
+    return core
+
+
+async def finalize_purchase_workspace(
+    session: AsyncSession,
+    *,
+    pos_session: PosSession,
+    payload: PosWorkspaceFinalizeRequest,
+) -> PosWorkspaceFinalizeResponse:
+    core = _core()
+    if pos_session.status != PosSessionStatusEnum.DRAFT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace finalize edilebilir")
+
+    trade_side = core._resolved_trade_side(pos_session)
+    if trade_side != PosTradeSideEnum.BUY_FROM_CUSTOMER:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Workspace finalize sadece alış akışı içindir")
+    if pos_session.customer_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Finalize etmeden önce müşteri seçin")
+
+    pos_lines = (
+        await session.scalars(
+            select(PosSessionLine)
+            .where(PosSessionLine.pos_session_id == pos_session.id)
+            .order_by(PosSessionLine.line_no.asc())
+        )
+    ).all()
+    if not pos_lines:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Finalize için en az bir satır gerekli")
+
+    await core._sync_buy_session_summary_from_lines(session, pos_session=pos_session)
+    target_total = core.quantize_2(
+        sum((core.to_decimal(line.line_offer_dkk or Decimal("0")) for line in pos_lines), Decimal("0.00"))
+    )
+    if target_total <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Toplam teklif tutarı geçersiz")
+
+    workspace_note = core._parse_workspace_note_payload(pos_session.notes)
+    if payload.bank_info is not None:
+        workspace_note["bank_info"] = {
+            "reg_number": payload.bank_info.reg_number or "",
+            "account_number": payload.bank_info.account_number or "",
+        }
+    if payload.payment_method is not None:
+        workspace_note["payment_method"] = payload.payment_method if payload.payment_method in {"bank", "cash"} else "bank"
+    bank_info = workspace_note.get("bank_info", {})
+    payment_method = str(workspace_note.get("payment_method") or "bank").strip().lower()
+    payment_method = payment_method if payment_method in {"bank", "cash"} else "bank"
+    note_parts: list[str] = []
+    if payload.notes and payload.notes.strip():
+        note_parts.append(payload.notes.strip())
+    note_parts.append("Betaling: Kontant" if payment_method == "cash" else "Betaling: Bankoverførsel")
+    if payment_method == "bank" and (bank_info.get("reg_number") or bank_info.get("account_number")):
+        reg = str(bank_info.get("reg_number") or "").strip() or "-"
+        account = str(bank_info.get("account_number") or "").strip() or "-"
+        note_parts.append(f"Overførsel: {reg} / {account}")
+    finalized_notes = "\n".join(note_parts) or None
+    workspace_note["freeform_note"] = payload.notes.strip() if payload.notes and payload.notes.strip() else None
+    structured_notes = core._serialize_workspace_note_payload(workspace_note)
+    edit_source_session_id, edit_source_sequence_no = core._workspace_edit_source(pos_session.notes)
+
+    first_line = pos_lines[0]
+    pos_session.product_type = first_line.product_type
+    pos_session.metal_type = first_line.metal_type
+    pos_session.weight_grams = core.quantize_2(core.to_decimal(first_line.weight_grams))
+    pos_session.purity_karat = first_line.purity_karat
+    pos_session.purity_percentage = core.quantize_2(core.to_decimal(first_line.purity_percentage))
+    pos_session.final_offer_dkk = target_total
+    pos_session.status = PosSessionStatusEnum.CONFIRMED
+    pos_session.confirmed_at = core.utc_now()
+    pos_session.notes = structured_notes
+
+    if edit_source_session_id and edit_source_sequence_no:
+        source_session = await core.get_pos_session_or_404(session, edit_source_session_id)
+        source_document = await session.scalar(
+            select(core.PosDocument).where(
+                core.PosDocument.sequence_no == edit_source_sequence_no,
+                core.PosDocument.pos_session_id == source_session.id,
+            )
+        )
+        if source_document is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kaynak belge bulunamadı")
+
+        source_transaction = await session.scalar(
+            select(core.Transaction).where(core.Transaction.pos_session_id == source_session.id)
+        )
+        customer = pos_session.customer
+        if customer is None and pos_session.customer_id is not None:
+            customer = await session.get(core.User, pos_session.customer_id)
+
+        await core._replace_purchase_workspace_lines(
+            session,
+            target_session_id=source_session.id,
+            source_lines=pos_lines,
+        )
+        source_session.customer_id = pos_session.customer_id
+        source_session.product_type = first_line.product_type
+        source_session.metal_type = first_line.metal_type
+        source_session.weight_grams = core.quantize_2(core.to_decimal(first_line.weight_grams))
+        source_session.purity_karat = first_line.purity_karat
+        source_session.purity_percentage = core.quantize_2(core.to_decimal(first_line.purity_percentage))
+        source_session.final_offer_dkk = target_total
+        source_session.notes = structured_notes
+        source_session.status = PosSessionStatusEnum.CONFIRMED
+
+        source_document.gross_amount_dkk = target_total
+        source_document.net_amount_dkk = target_total
+        source_document.vat_rate_percent = Decimal("0.00")
+        source_document.vat_amount_dkk = Decimal("0.00")
+        source_document.customer_name = customer.name if customer is not None else None
+        source_document.customer_phone = customer.phone if customer is not None else None
+        source_document.customer_email = customer.email if customer is not None else None
+        source_document.customer_address = core.decrypt_field(customer.address_encrypted) if customer is not None else None
+        source_document.notes = structured_notes
+
+        if source_transaction is None:
+            source_transaction, _ = await core._ensure_pos_transaction(
+                session,
+                pos_session=source_session,
+                product=None,
+                pos_document=source_document,
+                trade_side=trade_side,
+                amount_dkk=target_total,
+                notes=finalized_notes,
+            )
+        else:
+            source_transaction.status = "confirmed"
+            source_transaction.customer_id = source_session.customer_id
+            source_transaction.gross_amount_dkk = target_total
+            source_transaction.net_amount_dkk = target_total
+            source_transaction.vat_rate_percent = Decimal("0.00")
+            source_transaction.vat_amount_dkk = Decimal("0.00")
+            source_transaction.notes = finalized_notes
+            source_transaction.pos_document_sequence_no = source_document.sequence_no
+            await core._replace_purchase_transaction_lines(
+                session,
+                transaction=source_transaction,
+                source_lines=pos_lines,
+            )
+
+        source_display_lines = [core._to_display_line_out(line) for line in pos_lines]
+        source_session.visible_snapshot = jsonable_encoder(
+            core._to_display_out(
+                source_session,
+                lines=source_display_lines,
+                document_kind="afregningsbilag",
+                document_number=core._format_document_number(source_document),
+            )
+        )
+
+        pos_session.status = PosSessionStatusEnum.CANCELLED
+        pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
+
+        await session.commit()
+        await session.refresh(source_session)
+        await session.refresh(source_document)
+        await session.refresh(source_transaction)
+        await session.refresh(pos_session)
+
+        core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
+        await core._emit_session_state(source_session)
+        await core._emit_session_state(pos_session)
+        return PosWorkspaceFinalizeResponse(
+            session=core._to_clerk_out(source_session),
+            document_sequence_no=source_document.sequence_no,
+            document_number=core._format_document_number(source_document),
+            transaction_id=source_transaction.id,
+            line_count=len(pos_lines),
+        )
+
+    pos_document, _ = await core._ensure_pos_document(
+        session,
+        pos_session=pos_session,
+        customer=pos_session.customer,
+        trade_side=trade_side,
+        amount_dkk=target_total,
+        notes=structured_notes,
+    )
+    transaction, _ = await core._ensure_pos_transaction(
+        session,
+        pos_session=pos_session,
+        product=None,
+        pos_document=pos_document,
+        trade_side=trade_side,
+        amount_dkk=target_total,
+        notes=finalized_notes,
+    )
+
+    lines = [core._to_display_line_out(line) for line in pos_lines]
+    pos_session.visible_snapshot = jsonable_encoder(
+        core._to_display_out(
+            pos_session,
+            lines=lines,
+            document_kind="afregningsbilag",
+            document_number=core._format_document_number(pos_document),
+        )
+    )
+
+    await session.commit()
+    await session.refresh(pos_session)
+    await session.refresh(pos_document)
+    await session.refresh(transaction)
+
+    core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
+    await core._emit_session_state(pos_session)
+    return PosWorkspaceFinalizeResponse(
+        session=core._to_clerk_out(pos_session),
+        document_sequence_no=pos_document.sequence_no,
+        document_number=core._format_document_number(pos_document),
+        transaction_id=transaction.id,
+        line_count=len(pos_lines),
+    )

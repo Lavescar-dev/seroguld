@@ -1,0 +1,94 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend-frontend-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Backend setup
+        run: bash scripts/setup-dev.sh --backend-only
+
+      - name: Frontend setup
+        run: bash scripts/setup-dev.sh --frontend-only
+
+      - name: Backend pytest
+        run: bash scripts/test.sh --backend-only
+
+      - name: Frontend typecheck
+        run: bash scripts/test.sh --frontend-only
+
+      - name: Frontend truth guard
+        run: bash scripts/check-frontend-truth.sh
+
+      - name: Frontend build
+        run: bash scripts/frontend-build.sh
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Frontend smoke
+        run: bash scripts/frontend-smoke.sh
+
+  desktop-shell-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install desktop deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            webkit2gtk-driver \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Backend setup
+        run: bash scripts/setup-dev.sh --backend-only
+
+      - name: Frontend setup
+        run: bash scripts/setup-dev.sh --frontend-only
+
+      - name: Desktop setup
+        run: |
+          cd desktop
+          npm ci
+
+      - name: Desktop smoke doctor
+        run: bash scripts/desktop-smoke-doctor.sh
+
+      - name: Desktop shell smoke
+        run: xvfb-run -a bash scripts/desktop-smoke.sh

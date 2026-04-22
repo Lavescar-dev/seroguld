@@ -1,0 +1,29 @@
+export interface ApiConfig {
+  openai_api_key: string;
+  openai_model: string;
+  openai_max_tokens: string;
+  opmc_api_url: string;
+  opmc_api_key: string;
+  opmc_webhook_secret: string;
+  woo_store_url: string;
+  woo_consumer_key: string;
+  woo_consumer_secret: string;
+  woo_webhook_secret: string;
+  wp_site_url: string;
+  wp_username: string;
+  wp_app_password: string;
+  uniconta_api_url: string;
+  uniconta_username: string;
+  uniconta_password: string;
+  uniconta_company_id: string;
+  uniconta_api_key: string;
+  market_gold: string;
+  market_silver: string;
+  market_platin: string;
+  market_palladyum: string;
+  firma_adi: string;
+  firma_cvr: string;
+  firma_telefon: string;
+  firma_email: string;
+  firma_adres: string;
+}

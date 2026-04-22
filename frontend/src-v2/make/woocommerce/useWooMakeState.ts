@@ -1,0 +1,728 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+
+import { apiRequest } from '@/lib/api';
+import type {
+  DesktopBootstrap,
+  InventoryGridRow,
+  ProductHistoryEntry,
+  ProductOut,
+  ProductPublishResponse,
+  WooRawResponse,
+  WooSyncLogEntry,
+  WooWorkspace,
+} from '@/types';
+
+export type Metal = 'Altın' | 'Gümüş' | 'Platin' | 'Palladyum';
+export type UrunTip = 'Bar' | 'Mønt' | 'Smykke' | 'Medalje' | 'Granül';
+export type WooYayinDurum = 'Yayında' | 'Taslak' | 'Yayınlanmadı';
+export type WooFilter = 'all' | 'published' | 'draft' | 'unpublished';
+export type MainKat = 'kulce' | 'sikke' | 'taki' | 'gumus' | 'platin_pd';
+export type SilverSub = 'smykker' | 'barrer' | 'monter';
+export type PlatinumSub = 'platin' | 'palladyum';
+
+export interface SeoData {
+  title: string;
+  slug: string;
+  kisaAciklama: string;
+  meta: string;
+  uzunAciklama: string;
+}
+
+export interface DraftPhoto {
+  id: string;
+  name: string;
+  url: string;
+  file: File;
+  birincil: boolean;
+}
+
+export interface StokItem {
+  id: string;
+  stokNo?: string;
+  mainKat: MainKat;
+  gumusAlt?: SilverSub;
+  platinAlt?: PlatinumSub;
+  lagerDato: string;
+  urun: string;
+  saflik: number;
+  birimGram: number;
+  adet: number;
+  alisFiyati: number;
+  shopFiyati?: number;
+  shopDurumu?: 'hazir' | 'mangler_foto' | 'listelendi';
+  uretici?: string;
+  notlar?: string;
+}
+
+export interface WooListItem {
+  id: string;
+  urunNo: string;
+  durum: string;
+  tip: UrunTip;
+  metal: Metal;
+  agirlik: number;
+  ayar: number;
+  alimFiyati: number;
+  safMetal: number;
+  satici: string;
+  gdprKilitli: boolean;
+  satisHasJiyati: number;
+  wooYayin: WooYayinDurum;
+  wooId?: number | null;
+  depoStokId?: string;
+  stokNo?: string;
+  productTypeRaw: string;
+  metalTypeRaw: string;
+  shopDurumuRaw?: string | null;
+  urun: string;
+  fotoCount: number;
+  hasPhoto: boolean;
+  aiHazir: boolean;
+  aiOnaylandi: boolean;
+}
+
+export interface NewWooProductDraft {
+  kaynak: 'depo' | 'manuel' | null;
+  secilenStokId: string | null;
+  urunAdi: string;
+  metal: Metal;
+  tip: UrunTip;
+  agirlik: string;
+  ayar: string;
+  alimFiyati: string;
+  satisHasJiyati: string;
+  satici: string;
+  uretici: string;
+  gdprKilitli: boolean;
+  stokNo: string;
+  adet: string;
+  aiAciklama: string;
+  aiOnaylandi: boolean;
+  seo: SeoData;
+  fotograflar: DraftPhoto[];
+  wooYayin: WooYayinDurum;
+  notlar: string;
+}
+
+export interface WooMakeState {
+  search: string;
+  setSearch: (value: string) => void;
+  filter: WooFilter;
+  setFilter: (value: WooFilter) => void;
+  urunler: WooListItem[];
+  secilenId: string | null;
+  setSecilenId: (value: string | null) => void;
+  secilen: WooListItem | null;
+  detail: ProductOut | null;
+  history: ProductHistoryEntry[];
+  syncLog: WooSyncLogEntry[];
+  rawData: WooRawResponse | null;
+  rawOpen: boolean;
+  setRawOpen: (value: boolean | ((current: boolean) => boolean)) => void;
+  publishPrice: string;
+  setPublishPrice: (value: string) => void;
+  aiDraft: string;
+  setAiDraft: (value: string) => void;
+  stokList: StokItem[];
+  bootstrap: DesktopBootstrap | undefined;
+  loadingWorkspace: boolean;
+  loadingDetail: boolean;
+  isGeneratingAi: boolean;
+  isSavingAi: boolean;
+  isApprovingReview: boolean;
+  isPublishing: boolean;
+  isUnpublishing: boolean;
+  isSyncing: boolean;
+  isUploadingPhotos: boolean;
+  isDeletingPhoto: boolean;
+  isCreatingProduct: boolean;
+  generateAi: () => void;
+  saveAi: (approved: boolean) => void;
+  approveManualReview: () => void;
+  publish: () => void;
+  unpublish: () => void;
+  syncSale: () => void;
+  uploadPhotos: (files: File[]) => void;
+  deletePhoto: (photoId: string) => void;
+  createProductFromDraft: (draft: NewWooProductDraft) => Promise<ProductOut | null>;
+}
+
+export function emptySeoData(): SeoData {
+  return {
+    title: '',
+    slug: '',
+    kisaAciklama: '',
+    meta: '',
+    uzunAciklama: '',
+  };
+}
+
+export function defaultNewWooProductDraft(): NewWooProductDraft {
+  return {
+    kaynak: null,
+    secilenStokId: null,
+    urunAdi: '',
+    metal: 'Altın',
+    tip: 'Bar',
+    agirlik: '',
+    ayar: '999',
+    alimFiyati: '',
+    satisHasJiyati: '',
+    satici: '',
+    uretici: '',
+    gdprKilitli: false,
+    stokNo: '',
+    adet: '1',
+    aiAciklama: '',
+    aiOnaylandi: false,
+    seo: emptySeoData(),
+    fotograflar: [],
+    wooYayin: 'Taslak',
+    notlar: '',
+  };
+}
+
+function numeric(value: string | number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parsePurityToRatio(row: InventoryGridRow) {
+  if (row.purity_percentage) {
+    const percentage = numeric(row.purity_percentage);
+    if (percentage > 0) return percentage / 100;
+  }
+  const match = row.saflik_label.match(/(\d+(?:[.,]\d+)?)/);
+  if (!match) return 0.999;
+  const amount = Number(match[1].replace(',', '.'));
+  if (!Number.isFinite(amount)) return 0.999;
+  if (amount > 100) return amount / 1000;
+  return amount / 100;
+}
+
+function parseAyar(row: InventoryGridRow) {
+  if (row.purity_percentage) {
+    const percentage = numeric(row.purity_percentage);
+    if (percentage > 0) return Math.round(percentage * 10);
+  }
+  const label = row.saflik_label.toLowerCase();
+  if (label.includes('24k')) return 999;
+  if (label.includes('22k')) return 916;
+  if (label.includes('21k')) return 875;
+  if (label.includes('18k')) return 750;
+  if (label.includes('14k')) return 585;
+  if (label.includes('8k')) return 333;
+  const match = row.saflik_label.match(/(\d{3,4})/);
+  if (match) return Number(match[1].slice(0, 3));
+  return 999;
+}
+
+function mapMetal(row: InventoryGridRow): Metal {
+  if (row.main_category === 'gumus' || row.metal_type === 'silver') return 'Gümüş';
+  if (row.metal_type === 'platinum') return 'Platin';
+  if (row.metal_type === 'palladium') return 'Palladyum';
+  return 'Altın';
+}
+
+function mapTip(row: InventoryGridRow): UrunTip {
+  if (row.main_category === 'kulce' || row.subcategory === 'barrer' || row.product_type === 'bar') return 'Bar';
+  if (row.main_category === 'sikke' || row.subcategory === 'monter') return 'Mønt';
+  return 'Smykke';
+}
+
+function mapWooYayin(row: InventoryGridRow): WooYayinDurum {
+  if (row.shop_sync_status === 'listelendi') return 'Yayında';
+  if (row.shop_sync_status === 'hazir') return 'Taslak';
+  return 'Yayınlanmadı';
+}
+
+function mapDurum(row: InventoryGridRow): string {
+  if (row.status === 'for_sale') return 'Satışta';
+  if (row.status === 'draft') return 'Taslak';
+  if (row.status === 'sold') return 'Satıldı';
+  if (row.status === 'hidden') return 'Yayından Kaldırıldı';
+  return row.status;
+}
+
+function rowToStokItem(row: InventoryGridRow): StokItem {
+  return {
+    id: row.id,
+    stokNo: row.reference_number || row.product_number,
+    mainKat: row.main_category as MainKat,
+    gumusAlt: row.main_category === 'gumus' ? ((row.subcategory || 'smykker') as SilverSub) : undefined,
+    platinAlt: row.main_category === 'platin_pd' ? ((row.subcategory || 'platin') as PlatinumSub) : undefined,
+    lagerDato: row.lager_dato.slice(0, 10),
+    urun: row.urun,
+    saflik: parsePurityToRatio(row),
+    birimGram: numeric(row.birim_gram),
+    adet: row.adet || 1,
+    alisFiyati: numeric(row.alis_fiyati_dkk),
+    shopFiyati: row.shop_fiyati_dkk ? numeric(row.shop_fiyati_dkk) : undefined,
+    shopDurumu: (row.shop_sync_status as StokItem['shopDurumu']) || undefined,
+    uretici: row.producer || undefined,
+    notlar: row.notes || undefined,
+  };
+}
+
+function rowToWooListItem(row: InventoryGridRow): WooListItem {
+  return {
+    id: row.id,
+    urunNo: row.product_number,
+    durum: mapDurum(row),
+    tip: mapTip(row),
+    metal: mapMetal(row),
+    agirlik: numeric(row.toplam_gram || row.birim_gram),
+    ayar: parseAyar(row),
+    alimFiyati: numeric(row.alis_fiyati_dkk),
+    safMetal: numeric(row.has_metal_grams),
+    satici: '',
+    gdprKilitli: row.is_gdpr_locked,
+    satisHasJiyati: numeric(row.shop_fiyati_dkk || row.alis_fiyati_dkk),
+    wooYayin: mapWooYayin(row),
+    wooId: null,
+    depoStokId: row.id,
+    stokNo: row.reference_number || row.product_number,
+    productTypeRaw: row.product_type,
+    metalTypeRaw: row.metal_type,
+    shopDurumuRaw: row.shop_sync_status,
+    urun: row.urun,
+    fotoCount: Number(row.photo_count || 0),
+    hasPhoto: Boolean(row.primary_photo || row.photo_count),
+    aiHazir: Boolean(row.has_ai_description),
+    aiOnaylandi: Boolean(row.ai_description_approved),
+  };
+}
+
+function prefillFromStock(base: NewWooProductDraft, stock: StokItem): NewWooProductDraft {
+  const metal: Metal =
+    stock.mainKat === 'gumus' ? 'Gümüş' : stock.mainKat === 'platin_pd' ? (stock.platinAlt === 'palladyum' ? 'Palladyum' : 'Platin') : 'Altın';
+  const tip: UrunTip =
+    stock.mainKat === 'kulce' || stock.gumusAlt === 'barrer'
+      ? 'Bar'
+      : stock.mainKat === 'sikke' || stock.gumusAlt === 'monter'
+        ? 'Mønt'
+        : 'Smykke';
+  return {
+    ...base,
+    kaynak: 'depo',
+    secilenStokId: stock.id,
+    urunAdi: stock.urun,
+    metal,
+    tip,
+    agirlik: String(stock.birimGram || ''),
+    ayar: String(Math.round(stock.saflik * 1000) || 999),
+    alimFiyati: String(stock.alisFiyati || ''),
+    satisHasJiyati: stock.shopFiyati != null ? String(stock.shopFiyati) : String(stock.alisFiyati || ''),
+    uretici: stock.uretici || '',
+    stokNo: stock.stokNo || '',
+    adet: String(stock.adet || 1),
+    notlar: stock.notlar || '',
+  };
+}
+
+function categorySpec(draft: NewWooProductDraft) {
+  if (draft.metal === 'Gümüş') {
+    return {
+      inventory_category: 'gumus',
+      inventory_subcategory: draft.tip === 'Bar' ? 'barrer' : draft.tip === 'Mønt' ? 'monter' : 'smykker',
+      product_type: draft.tip === 'Bar' ? 'bar' : 'jewelry',
+      metal_type: 'silver',
+    };
+  }
+
+  if (draft.metal === 'Platin' || draft.metal === 'Palladyum') {
+    return {
+      inventory_category: 'platin_pd',
+      inventory_subcategory: draft.metal === 'Palladyum' ? 'palladyum' : 'platin',
+      product_type: 'bar',
+      metal_type: draft.metal === 'Palladyum' ? 'palladium' : 'platinum',
+    };
+  }
+
+  if (draft.tip === 'Bar') {
+    return {
+      inventory_category: 'kulce',
+      inventory_subcategory: null,
+      product_type: 'bar',
+      metal_type: 'yellow_gold',
+    };
+  }
+
+  if (draft.tip === 'Mønt') {
+    return {
+      inventory_category: 'sikke',
+      inventory_subcategory: null,
+      product_type: 'jewelry',
+      metal_type: 'yellow_gold',
+    };
+  }
+
+  return {
+    inventory_category: 'taki',
+    inventory_subcategory: null,
+    product_type: 'jewelry',
+    metal_type: 'yellow_gold',
+  };
+}
+
+function toCreatePayload(draft: NewWooProductDraft) {
+  const spec = categorySpec(draft);
+  const ayar = numeric(draft.ayar);
+  const agirlik = numeric(draft.agirlik);
+  const adet = Math.max(1, Math.round(numeric(draft.adet) || 1));
+  const notes = [draft.notlar.trim(), draft.seo.meta.trim() ? `SEO: ${draft.seo.meta.trim()}` : '']
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    reference_number: draft.stokNo.trim() || null,
+    display_name: draft.urunAdi.trim() || null,
+    product_type: spec.product_type,
+    metal_type: spec.metal_type,
+    weight_grams: agirlik,
+    purity_karat: spec.metal_type === 'yellow_gold' && ayar ? `${Math.round((ayar / 1000) * 24)}K` : null,
+    purity_percentage: ayar ? ayar / 10 : null,
+    unit_count: adet,
+    purchase_date: new Date().toISOString(),
+    purchase_price_dkk: numeric(draft.alimFiyati),
+    seller_new: draft.satici.trim() ? { name: draft.satici.trim() } : null,
+    notes: notes || null,
+    shop_price_dkk: numeric(draft.satisHasJiyati) || null,
+    producer: draft.uretici.trim() || null,
+    inventory_category: spec.inventory_category,
+    inventory_subcategory: spec.inventory_subcategory,
+    photos: [],
+  };
+}
+
+export function useWooMakeState(): WooMakeState {
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<WooFilter>('all');
+  const [secilenId, setSecilenId] = useState<string | null>(null);
+  const [publishPrice, setPublishPrice] = useState('');
+  const [aiDraft, setAiDraft] = useState('');
+  const [rawOpen, setRawOpen] = useState(false);
+
+  const bootstrapQuery = useQuery({
+    queryKey: ['bootstrap'],
+    queryFn: () => apiRequest<DesktopBootstrap>('/api/v2/bootstrap'),
+  });
+
+  const workspaceQuery = useQuery({
+    queryKey: ['woocommerce', 'workspace', search],
+    queryFn: () =>
+      apiRequest<WooWorkspace>(`/api/v2/woocommerce/workspace${search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ''}`),
+  });
+
+  const allRows = workspaceQuery.data?.rows || [];
+  const requestedProductId = searchParams.get('product');
+  const urunler = useMemo(() => {
+    const mapped = allRows.map(rowToWooListItem);
+    return mapped.filter((item) => {
+      if (filter === 'published') return item.wooYayin === 'Yayında';
+      if (filter === 'draft') return item.wooYayin === 'Taslak';
+      if (filter === 'unpublished') return item.wooYayin === 'Yayınlanmadı';
+      return true;
+    });
+  }, [allRows, filter]);
+
+  const stokList = useMemo(() => allRows.map(rowToStokItem), [allRows]);
+
+  useEffect(() => {
+    if (urunler.length === 0) {
+      setSecilenId(null);
+      return;
+    }
+    if (requestedProductId && urunler.some((item) => item.id === requestedProductId)) {
+      if (secilenId !== requestedProductId) {
+        setSecilenId(requestedProductId);
+      }
+      return;
+    }
+    if (!secilenId || !urunler.some((item) => item.id === secilenId)) {
+      setSecilenId(urunler[0].id);
+    }
+  }, [urunler, requestedProductId, secilenId]);
+
+  useEffect(() => {
+    const currentProductId = searchParams.get('product');
+    if (!secilenId) {
+      if (!currentProductId) return;
+      const next = new URLSearchParams(searchParams);
+      next.delete('product');
+      setSearchParams(next, { replace: true });
+      return;
+    }
+    if (currentProductId === secilenId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('product', secilenId);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, secilenId, setSearchParams]);
+
+  const secilen = useMemo(() => urunler.find((item) => item.id === secilenId) ?? null, [urunler, secilenId]);
+
+  const detailQuery = useQuery({
+    queryKey: ['woocommerce', 'product', secilenId],
+    enabled: Boolean(secilenId),
+    queryFn: () => apiRequest<ProductOut>(`/api/v2/woocommerce/products/${secilenId}`),
+  });
+
+  const historyQuery = useQuery({
+    queryKey: ['woocommerce', 'history', secilenId],
+    enabled: Boolean(secilenId),
+    queryFn: () => apiRequest<ProductHistoryEntry[]>(`/api/v2/woocommerce/products/${secilenId}/history?limit=20`),
+  });
+
+  const syncLogQuery = useQuery({
+    queryKey: ['woocommerce', 'sync-log', secilenId],
+    enabled: Boolean(secilenId),
+    queryFn: () => apiRequest<WooSyncLogEntry[]>(`/api/v2/woocommerce/products/${secilenId}/sync-log?limit=20`),
+  });
+
+  const rawQuery = useQuery({
+    queryKey: ['woocommerce', 'woo-raw', secilenId],
+    enabled: rawOpen && Boolean(detailQuery.data?.woocommerce_product_id) && Boolean(secilenId),
+    queryFn: () => apiRequest<WooRawResponse>(`/api/v2/woocommerce/products/${secilenId}/raw`),
+  });
+
+  useEffect(() => {
+    const product = detailQuery.data;
+    if (!product) return;
+    setPublishPrice(String(product.shop_price_dkk || product.sale_price_dkk || product.purchase_price_dkk || ''));
+    setAiDraft(product.ai_description || '');
+  }, [detailQuery.data]);
+
+  async function invalidateProduct(productId?: string | null) {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
+      queryClient.invalidateQueries({ queryKey: ['woocommerce'] }),
+      queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+      queryClient.invalidateQueries({ queryKey: ['depolama'] }),
+      productId ? queryClient.invalidateQueries({ queryKey: ['woocommerce', 'product', productId] }) : Promise.resolve(),
+      productId ? queryClient.invalidateQueries({ queryKey: ['woocommerce', 'history', productId] }) : Promise.resolve(),
+      productId ? queryClient.invalidateQueries({ queryKey: ['woocommerce', 'sync-log', productId] }) : Promise.resolve(),
+      productId ? queryClient.invalidateQueries({ queryKey: ['woocommerce', 'woo-raw', productId] }) : Promise.resolve(),
+    ]);
+  }
+
+  const generateAiMutation = useMutation({
+    mutationFn: (productId: string) => apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/ai`, { method: 'POST' }),
+    onSuccess: async (product) => {
+      setAiDraft(product.ai_description || '');
+      await invalidateProduct(product.id);
+    },
+  });
+
+  const saveAiMutation = useMutation({
+    mutationFn: ({ productId, approved, description }: { productId: string; approved: boolean; description: string }) =>
+      apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/ai`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ai_description: description.trim(),
+          ai_description_approved: approved,
+        }),
+      }),
+    onSuccess: async (product) => {
+      setAiDraft(product.ai_description || '');
+      await invalidateProduct(product.id);
+    },
+  });
+
+  const manualReviewMutation = useMutation({
+    mutationFn: (productId: string) =>
+      apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/manual-review/approve`, { method: 'POST' }),
+    onSuccess: async (product) => {
+      await invalidateProduct(product.id);
+    },
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: ({ productId, name }: { productId: string; name?: string | null }) =>
+      apiRequest<ProductPublishResponse>(`/api/v2/woocommerce/products/${productId}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({
+          regular_price_dkk: Number(publishPrice || '0'),
+          name: name || undefined,
+        }),
+      }),
+    onSuccess: async (payload) => {
+      setPublishPrice(String(payload.product.shop_price_dkk || payload.product.sale_price_dkk || payload.product.purchase_price_dkk || ''));
+      await invalidateProduct(payload.product.id);
+      setRawOpen(true);
+    },
+  });
+
+  const unpublishMutation = useMutation({
+    mutationFn: (productId: string) => apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/unpublish`, { method: 'POST' }),
+    onSuccess: async (product) => {
+      await invalidateProduct(product.id);
+    },
+  });
+
+  const syncSaleMutation = useMutation({
+    mutationFn: (productId: string) =>
+      apiRequest<{ message?: string; product?: ProductOut }>(`/api/v2/woocommerce/products/${productId}/sync`, { method: 'POST' }),
+    onSuccess: async (payload) => {
+      await invalidateProduct(payload.product?.id || secilenId);
+    },
+  });
+
+  const uploadPhotosMutation = useMutation({
+    mutationFn: async ({ productId, files }: { productId: string; files: File[] }) => {
+      const formData = new FormData();
+      for (const file of files) formData.append('files', file);
+      return apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/photos`, {
+        method: 'POST',
+        body: formData,
+      });
+    },
+    onSuccess: async (product) => {
+      await invalidateProduct(product.id);
+    },
+  });
+
+  const deletePhotoMutation = useMutation({
+    mutationFn: ({ productId, photoId }: { productId: string; photoId: string }) =>
+      apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/photos/${photoId}`, { method: 'DELETE' }),
+    onSuccess: async (product) => {
+      await invalidateProduct(product.id);
+    },
+  });
+
+  const createProductMutation = useMutation({
+    mutationFn: async (draft: NewWooProductDraft) => {
+      const created = await apiRequest<ProductOut>('/api/v2/depolama/products', {
+        method: 'POST',
+        body: JSON.stringify(toCreatePayload(draft)),
+      });
+
+      let current = created;
+
+      if (draft.fotograflar.length > 0) {
+        const formData = new FormData();
+        for (const photo of draft.fotograflar) {
+          formData.append('files', photo.file);
+        }
+        current = await apiRequest<ProductOut>(`/api/v2/woocommerce/products/${created.id}/photos`, {
+          method: 'POST',
+          body: formData,
+        });
+      }
+
+      const wantsApprovedAi = draft.aiOnaylandi || draft.wooYayin === 'Yayında';
+      const hasDraftAi = draft.aiAciklama.trim().length >= 10;
+      if (hasDraftAi) {
+        current = await apiRequest<ProductOut>(`/api/v2/woocommerce/products/${created.id}/ai`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            ai_description: draft.aiAciklama.trim(),
+            ai_description_approved: wantsApprovedAi,
+          }),
+        });
+      }
+
+      if (draft.wooYayin === 'Yayında') {
+        const payload = await apiRequest<ProductPublishResponse>(`/api/v2/woocommerce/products/${created.id}/publish`, {
+          method: 'POST',
+          body: JSON.stringify({
+            regular_price_dkk: Number(draft.satisHasJiyati || draft.alimFiyati || '0'),
+            name: draft.urunAdi.trim() || undefined,
+          }),
+        });
+        current = payload.product;
+      }
+
+      return current;
+    },
+    onSuccess: async (product) => {
+      setSecilenId(product.id);
+      await invalidateProduct(product.id);
+    },
+  });
+
+  return {
+    search,
+    setSearch,
+    filter,
+    setFilter,
+    urunler,
+    secilenId,
+    setSecilenId,
+    secilen,
+    detail: detailQuery.data ?? null,
+    history: historyQuery.data || [],
+    syncLog: syncLogQuery.data || [],
+    rawData: rawQuery.data ?? null,
+    rawOpen,
+    setRawOpen,
+    publishPrice,
+    setPublishPrice,
+    aiDraft,
+    setAiDraft,
+    stokList,
+    bootstrap: bootstrapQuery.data,
+    loadingWorkspace: workspaceQuery.isLoading,
+    loadingDetail: detailQuery.isLoading,
+    isGeneratingAi: generateAiMutation.isPending,
+    isSavingAi: saveAiMutation.isPending,
+    isApprovingReview: manualReviewMutation.isPending,
+    isPublishing: publishMutation.isPending,
+    isUnpublishing: unpublishMutation.isPending,
+    isSyncing: syncSaleMutation.isPending,
+    isUploadingPhotos: uploadPhotosMutation.isPending,
+    isDeletingPhoto: deletePhotoMutation.isPending,
+    isCreatingProduct: createProductMutation.isPending,
+    generateAi: () => {
+      if (detailQuery.data) {
+        generateAiMutation.mutate(detailQuery.data.id);
+      }
+    },
+    saveAi: (approved) => {
+      if (detailQuery.data && aiDraft.trim().length >= 10) {
+        saveAiMutation.mutate({ productId: detailQuery.data.id, approved, description: aiDraft });
+      }
+    },
+    approveManualReview: () => {
+      if (detailQuery.data) {
+        manualReviewMutation.mutate(detailQuery.data.id);
+      }
+    },
+    publish: () => {
+      if (detailQuery.data) {
+        publishMutation.mutate({
+          productId: detailQuery.data.id,
+          name: detailQuery.data.display_name || secilen?.urun || undefined,
+        });
+      }
+    },
+    unpublish: () => {
+      if (detailQuery.data) {
+        unpublishMutation.mutate(detailQuery.data.id);
+      }
+    },
+    syncSale: () => {
+      if (detailQuery.data) {
+        syncSaleMutation.mutate(detailQuery.data.id);
+      }
+    },
+    uploadPhotos: (files) => {
+      if (detailQuery.data && files.length > 0) {
+        uploadPhotosMutation.mutate({ productId: detailQuery.data.id, files });
+      }
+    },
+    deletePhoto: (photoId) => {
+      if (detailQuery.data && photoId) {
+        deletePhotoMutation.mutate({ productId: detailQuery.data.id, photoId });
+      }
+    },
+    createProductFromDraft: async (draft) => createProductMutation.mutateAsync(draft),
+  };
+}
+
+export function buildDraftFromStock(stock: StokItem) {
+  return prefillFromStock(defaultNewWooProductDraft(), stock);
+}

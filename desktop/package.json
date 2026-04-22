@@ -1,0 +1,15 @@
+{
+  "name": "seroguld-crm-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Sero Guld CRM desktop shell (Tauri)",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "tauri": "tauri",
+    "desktop-smoke": "node tests/desktop-smoke.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0",
+    "selenium-webdriver": "^4.35.0"
+  }
+}
