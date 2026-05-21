@@ -168,3 +168,9 @@ export async function downloadAuthedDocument(path: string, filename: string): Pr
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+export async function fetchAuthedPdfBlob(path: string): Promise<{ blob: Blob; url: string }> {
+  const blob = await apiRequest<Blob>(path);
+  const url = URL.createObjectURL(blob);
+  return { blob, url };
+}

@@ -514,8 +514,44 @@ export interface LogMeltLot {
   net_after_costs_dkk?: string | null;
   bridge_difference_dkk?: string | null;
   advance_per_gram_dkk?: string | null;
+  status?: string;
+  finalized_at?: string | null;
+  finalized_by_user_id?: string | null;
+  line_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface LogMeltLotHistory {
+  id: string;
+  lot_id: string;
+  action: string;
+  old_value?: Record<string, unknown> | null;
+  new_value?: Record<string, unknown> | null;
+  performed_by?: string | null;
+  performed_by_email?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface LogMeltLotLine {
+  line_id: string;
+  document_sequence_no: number;
+  document_number: string;
+  line_no: number;
+  weight_grams?: string | null;
+  pure_gold_grams?: string | null;
+  line_total_dkk?: string | null;
+  customer_name?: string | null;
+  product_number?: string | null;
+  reference_number?: string | null;
+}
+
+export interface LogRouteBatchApplyResponse {
+  workspace: LogWorkspace;
+  succeeded: number;
+  failed: number;
+  failures: Array<{ line_id: string; error: string }>;
 }
 
 export interface LogBucketWorkspace {
@@ -590,6 +626,33 @@ export interface InventoryWorkspace {
   market_prices: InventoryMarketPrices;
   summary: InventoryWorkspaceSummary;
   rows: InventoryGridRow[];
+}
+
+export interface ProductHistoryEntry {
+  id: string;
+  product_id: string;
+  action: string;
+  old_value?: Record<string, unknown> | null;
+  new_value?: Record<string, unknown> | null;
+  performed_by?: string | null;
+  performed_by_email?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface ProductSourceAfg {
+  pos_session_id: string;
+  sequence_no?: number | null;
+  document_number?: string | null;
+  issued_at?: string | null;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  line_no?: number | null;
+  line_weight_grams?: string | null;
+  line_pure_gold_grams?: string | null;
+  line_total_dkk?: string | null;
+  rate_dkk?: string | null;
+  transaction_id?: string | null;
 }
 
 export interface DocumentArtifactRecord {
@@ -987,6 +1050,9 @@ export interface PosSavedPurchaseListItem {
   silver_preview_items: PosSavedPurchasePreviewRow[];
   can_edit: boolean;
   can_delete: boolean;
+  uniconta_sync_status?: string | null;
+  uniconta_invoice_number?: string | null;
+  uniconta_sync_error?: string | null;
 }
 
 export interface ReportSummary {
@@ -1041,6 +1107,28 @@ export interface AntiFraudOrdersResponse {
   items: AntiFraudOrder[];
 }
 
+export interface AntiFraudCustomerHistory {
+  customer_id?: number | null;
+  total_orders: number;
+  successful_orders: number;
+  cancelled_orders: number;
+  failed_orders: number;
+  first_order_at?: string | null;
+  last_order_at?: string | null;
+  known_safe: boolean;
+  matched_by?: string | null;
+}
+
+export type RiskScoreSource =
+  | 'opmc'
+  | 'ai'
+  | 'manual_override'
+  | 'whitelist'
+  | 'blacklist'
+  | 'known_customer'
+  | 'other'
+  | 'unknown';
+
 export interface AntiFraudOrder {
   order_id: number;
   order_number?: string | null;
@@ -1051,6 +1139,7 @@ export interface AntiFraudOrder {
   payment_method?: string | null;
   customer_name?: string | null;
   customer_email?: string | null;
+  customer_id?: number | null;
   ip_address?: string | null;
   billing_country?: string | null;
   billing_city?: string | null;
@@ -1060,6 +1149,8 @@ export interface AntiFraudOrder {
   risk_score?: number | null;
   ai_risk_score?: number | null;
   opmc_risk_score?: number | null;
+  risk_score_source?: RiskScoreSource | null;
+  raw_risk_score?: number | null;
   requires_manual_review: boolean;
   risk_meta: AntiFraudRiskMeta[];
   risk_reasons: AntiFraudRiskReason[];
@@ -1068,4 +1159,9 @@ export interface AntiFraudOrder {
   ai_explanations_human: string[];
   risk_meta_human: AntiFraudHumanField[];
   whitelist_action_human?: string | null;
+  override_reasons?: string[];
+  is_whitelisted?: boolean;
+  is_blacklisted?: boolean;
+  has_manual_override?: boolean;
+  customer_history?: AntiFraudCustomerHistory | null;
 }

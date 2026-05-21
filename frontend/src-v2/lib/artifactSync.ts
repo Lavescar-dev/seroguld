@@ -1,10 +1,43 @@
+/** Modüller arası senkronizasyon için tanımlı kanal isimleri.
+ *  - `alis`            : alış sayfasının query'leri (saved purchases vs.)
+ *  - `alis-workspace`  : alış office workbook
+ *  - `log`             : log sayfası workspace + melt lots
+ *  - `depolama`        : depolama sayfası inventory grid
+ *  - `uniconta`        : uniconta sync ve faturalar
+ *  - `inventory`       : eski legacy key, depolama ile birlikte invalidate edilir
+ */
+export type ArtifactSyncKind =
+  | 'alis'
+  | 'alis-workspace'
+  | 'log'
+  | 'depolama'
+  | 'uniconta'
+  | 'inventory'
+  | (string & {});
+
 export interface ArtifactSyncSignal {
-  kind: string;
+  kind: ArtifactSyncKind;
   key: string;
   source: string;
+  /** Cross-module trigger zinciri: bu sinyalin invalidate etmesi gereken ek kind'lar.
+   *  Örnek: Log batch-apply emit eder → kind='log', triggers=['depolama','alis'] */
+  triggers?: ArtifactSyncKind[];
   artifact_updated_at?: string | null;
   emitted_at: string;
 }
+
+/** Modüller arası standart trigger zinciri. emit ederken otomatik enjekte edilir. */
+const DEFAULT_CROSS_TRIGGERS: Record<string, ArtifactSyncKind[]> = {
+  // Alış finalize → log ve depolama'da yeni AFG belge satırları belirir
+  alis: ['log', 'depolama'],
+  // Log route → depolama'da yeni stoklar belirir, alış listesindeki
+  // uniconta_sync_status da değişebilir
+  log: ['depolama', 'alis'],
+  // Depolama'da Product silme/melted geçişi → log eritme havuzu güncellenir
+  depolama: ['log'],
+  // Uniconta retry → alış listesi sync_status'u günceller
+  uniconta: ['alis'],
+};
 
 const STORAGE_KEY = 'sero_artifact_sync_event';
 const CUSTOM_EVENT = 'sero:artifact-sync';
@@ -28,11 +61,28 @@ function getBroadcastChannel() {
 }
 
 function normalizeSignal(signal: Omit<ArtifactSyncSignal, 'emitted_at'> & { emitted_at?: string }): ArtifactSyncSignal {
+  const triggers =
+    signal.triggers && signal.triggers.length > 0
+      ? signal.triggers
+      : DEFAULT_CROSS_TRIGGERS[signal.kind as string] || undefined;
   return {
     ...signal,
+    triggers,
     artifact_updated_at: signal.artifact_updated_at ?? null,
     emitted_at: signal.emitted_at || new Date().toISOString(),
   };
+}
+
+/** Sinyalin bu dinleyici için relevant olup olmadığını döner.
+ *  Hem `kind === watch` hem `triggers.includes(watch)` durumlarını yakalar. */
+export function signalMatches(
+  signal: ArtifactSyncSignal,
+  watch: ArtifactSyncKind | ArtifactSyncKind[],
+): boolean {
+  const watches = Array.isArray(watch) ? watch : [watch];
+  if (watches.includes(signal.kind as ArtifactSyncKind)) return true;
+  if (signal.triggers && signal.triggers.some((t) => watches.includes(t))) return true;
+  return false;
 }
 
 function parseSignal(raw: string | null): ArtifactSyncSignal | null {

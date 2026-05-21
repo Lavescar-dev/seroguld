@@ -38,6 +38,29 @@ export function formatDate(value?: string | null): string {
   return shortDate.format(date);
 }
 
+export function formatRelativeTime(value?: string | null, now: Date = new Date()): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  const diffMs = now.getTime() - date.getTime();
+  const future = diffMs < 0;
+  const absSec = Math.abs(Math.floor(diffMs / 1000));
+  const formatPart = (n: number, unit: string) =>
+    future ? `${n} ${unit} sonra` : `${n} ${unit} önce`;
+  if (absSec < 30) return future ? 'biraz sonra' : 'şimdi';
+  if (absSec < 60) return formatPart(absSec, 'saniye');
+  const min = Math.floor(absSec / 60);
+  if (min < 60) return formatPart(min, 'dakika');
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return formatPart(hr, 'saat');
+  const day = Math.floor(hr / 24);
+  if (day < 30) return formatPart(day, 'gün');
+  const month = Math.floor(day / 30);
+  if (month < 12) return formatPart(month, 'ay');
+  const year = Math.floor(day / 365);
+  return formatPart(year, 'yıl');
+}
+
 export function labelTradeSide(value?: string | null): string {
   return value === 'sell_to_customer' ? 'Müşteriye Satış' : 'Müşteriden Alış';
 }
