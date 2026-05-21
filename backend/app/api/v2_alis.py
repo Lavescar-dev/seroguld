@@ -1,11 +1,51 @@
 from __future__ import annotations
 
+import json
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
+from app.models.pos_document_audit import PosDocumentAudit
+
+
+_AUDIT_LOGGER = logging.getLogger("seroguld.audit.pos")
+
+
+async def _log_pos_audit(
+    db: AsyncSession,
+    *,
+    action: str,
+    actor: User,
+    sequence_no: int | None = None,
+    pos_session_id: UUID | None = None,
+    payload: dict | None = None,
+    note: str | None = None,
+    request: Request | None = None,
+) -> None:
+    entry = PosDocumentAudit(
+        sequence_no=sequence_no,
+        pos_session_id=pos_session_id,
+        action=action,
+        actor_user_id=getattr(actor, "id", None),
+        actor_email=getattr(actor, "email", None),
+        payload_json=json.dumps(payload, default=str, ensure_ascii=False) if payload else None,
+        note=note,
+        request_ip=(request.client.host if request and request.client else None),
+    )
+    db.add(entry)
+    try:
+        _AUDIT_LOGGER.info(
+            "pos.audit action=%s seq=%s actor=%s ip=%s",
+            action,
+            sequence_no,
+            getattr(actor, "email", None),
+            entry.request_ip,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 from app.api.pos import get_pos_document_detail as get_legacy_pos_document_detail
 from app.api.pos import get_pos_receipt as get_legacy_pos_receipt
 from app.api.v2 import (
@@ -246,6 +286,7 @@ async def put_alis_workspace_rows_v2(
 async def post_alis_workspace_finalize_v2(
     session_id: UUID,
     payload: PosWorkspaceFinalizeRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> PosWorkspaceFinalizeResponse:
@@ -253,6 +294,18 @@ async def post_alis_workspace_finalize_v2(
     response = await finalize_purchase_workspace(db, pos_session=pos_session, payload=payload)
     detail = await get_legacy_pos_document_detail(sequence_no=response.document_sequence_no, db=db, _=admin)
     await sync_afg_document_artifact(db, detail)
+    await _log_pos_audit(
+        db,
+        action="finalize",
+        actor=admin,
+        sequence_no=response.document_sequence_no,
+        pos_session_id=session_id,
+        payload={
+            "document_number": response.document_number,
+            "uniconta_sync_status": getattr(response, "uniconta_sync_status", None),
+        },
+        request=request,
+    )
     await db.commit()
     return response
 
@@ -402,38 +455,94 @@ async def get_alis_document_print_v2(
     )
 
 
+@router.get("/alis/documents/{sequence_no}/receipt-thermal")
+async def get_alis_document_receipt_thermal_v2(
+    sequence_no: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> Response:
+    """ESC/POS 80mm thermal printer için raw bytes.
+
+    Frontend bunu blob olarak indirir; Tauri host tarafı veya operatörün
+    PC'sindeki yazıcı yazılımı (Star/Epson driver) raw bytes'ı /dev/usb/lp0
+    veya COM porta gönderir.
+    """
+    from app.services.thermal_receipt import build_thermal_receipt_from_detail
+
+    detail = await get_legacy_pos_document_detail(sequence_no=sequence_no, db=db, _=admin)
+    payload = build_thermal_receipt_from_detail(detail)
+    return Response(
+        content=payload,
+        media_type="application/vnd.escpos+raw",
+        headers={
+            "Content-Disposition": f'attachment; filename="afg-{sequence_no}-thermal.escpos"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.post("/alis/documents/{sequence_no}/edit", response_model=PosWorkspaceOut)
 async def post_alis_document_edit_v2(
     sequence_no: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     clerk_user: User = Depends(require_admin),
 ) -> PosWorkspaceOut:
-    return await open_purchase_document_for_edit(
+    workspace = await open_purchase_document_for_edit(
         db,
         sequence_no=sequence_no,
         clerk_user=clerk_user,
     )
+    await _log_pos_audit(
+        db,
+        action="edit",
+        actor=clerk_user,
+        sequence_no=sequence_no,
+        pos_session_id=workspace.session.id if workspace and workspace.session else None,
+        request=request,
+    )
+    await db.commit()
+    return workspace
 
 
 @router.delete("/alis/documents/{sequence_no}", response_class=Response, status_code=204)
 async def delete_alis_document_v2(
     sequence_no: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> Response:
     await delete_purchase_document(
         db,
         sequence_no=sequence_no,
     )
+    await _log_pos_audit(
+        db,
+        action="delete",
+        actor=admin,
+        sequence_no=sequence_no,
+        request=request,
+    )
+    await db.commit()
     return Response(status_code=204)
 
 
 @router.post("/alis/workspace/{session_id}/cancel", response_model=PosSessionOutClerk)
 async def post_alis_workspace_cancel_v2(
     session_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> PosSessionOutClerk:
     pos_session = await get_pos_session_or_404(db, session_id)
-    return await cancel_session(db, pos_session=pos_session)
+    result = await cancel_session(db, pos_session=pos_session)
+    await _log_pos_audit(
+        db,
+        action="cancel",
+        actor=admin,
+        pos_session_id=session_id,
+        request=request,
+    )
+    await db.commit()
+    return result
 

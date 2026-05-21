@@ -33,6 +33,11 @@ class TransactionLine(Base):
     margin_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"), server_default="0")
     line_total_dkk: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
+    # Bu satır hangi AfgMeltLot içinde eritildi (link sadece destination=melt için)
+    melt_lot_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("afg_melt_lots.id"), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     transaction = relationship("Transaction", back_populates="lines")

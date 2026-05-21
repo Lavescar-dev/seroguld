@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -7,10 +8,14 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.enums import PosSessionStatusEnum, PosTradeSideEnum
 from app.models.pos_session import PosSession
 from app.models.pos_session_line import PosSessionLine
 from app.schemas.pos import PosWorkspaceFinalizeRequest, PosWorkspaceFinalizeResponse
+from app.services.uniconta_service import sync_pos_document_to_uniconta
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _core():
@@ -26,6 +31,24 @@ async def finalize_purchase_workspace(
     payload: PosWorkspaceFinalizeRequest,
 ) -> PosWorkspaceFinalizeResponse:
     core = _core()
+    # Concurrent finalize prevention: row lock al + DRAFT durumunu atomic kontrol et.
+    # SQLite SERIALIZABLE varsayılan; PostgreSQL'de SELECT ... FOR UPDATE atomic lock.
+    try:
+        locked = (
+            await session.execute(
+                select(PosSession).where(PosSession.id == pos_session.id).with_for_update()
+            )
+        ).scalar_one_or_none()
+    except Exception:
+        # SQLite with_for_update yok sayar — kabul edilir (single connection).
+        locked = pos_session
+    if locked is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace bulunamadi")
+    if locked.status != PosSessionStatusEnum.DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Workspace zaten finalize edilmiş veya iptal edilmiş.",
+        )
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace finalize edilebilir")
 
@@ -174,6 +197,8 @@ async def finalize_purchase_workspace(
         await session.refresh(source_transaction)
         await session.refresh(pos_session)
 
+        await _sync_uniconta(session, source_document, source_session, pos_lines)
+
         core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
         await core._emit_session_state(source_session)
         await core._emit_session_state(pos_session)
@@ -183,6 +208,9 @@ async def finalize_purchase_workspace(
             document_number=core._format_document_number(source_document),
             transaction_id=source_transaction.id,
             line_count=len(pos_lines),
+            uniconta_sync_status=source_document.uniconta_sync_status,
+            uniconta_invoice_number=source_document.uniconta_invoice_number,
+            uniconta_sync_error=source_document.uniconta_sync_error,
         )
 
     pos_document, _ = await core._ensure_pos_document(
@@ -218,6 +246,8 @@ async def finalize_purchase_workspace(
     await session.refresh(pos_document)
     await session.refresh(transaction)
 
+    await _sync_uniconta(session, pos_document, pos_session, pos_lines)
+
     core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
     await core._emit_session_state(pos_session)
     return PosWorkspaceFinalizeResponse(
@@ -226,4 +256,92 @@ async def finalize_purchase_workspace(
         document_number=core._format_document_number(pos_document),
         transaction_id=transaction.id,
         line_count=len(pos_lines),
+        uniconta_sync_status=pos_document.uniconta_sync_status,
+        uniconta_invoice_number=pos_document.uniconta_invoice_number,
+        uniconta_sync_error=pos_document.uniconta_sync_error,
     )
+
+
+async def _sync_uniconta(
+    session: AsyncSession,
+    pos_document,
+    pos_session: PosSession,
+    pos_lines: list[PosSessionLine],
+) -> None:
+    """Hybrid mode Uniconta sync — hata yutar, durum PosDocument'a yazılır.
+
+    U15: Audit log entry — auto sync sonucunu (success/failed/skipped) `uniconta_auto_sync`
+    action ile PosDocumentAudit'e yazıyor.
+    """
+    import json as _json
+    from app.models.pos_document_audit import PosDocumentAudit
+
+    def _audit(action: str, payload: dict, note: str | None = None) -> None:
+        session.add(
+            PosDocumentAudit(
+                sequence_no=pos_document.sequence_no,
+                pos_session_id=pos_session.id,
+                action=action,
+                actor_user_id=None,  # otomatik sistem aksiyonu
+                actor_email="system:uniconta_finalize",
+                payload_json=_json.dumps(payload, default=str, ensure_ascii=False),
+                note=note,
+            )
+        )
+
+    settings = get_settings()
+    if not settings.uniconta_username or not settings.uniconta_password:
+        LOGGER.info(
+            "Uniconta sync skipped (credentials missing) for PosDocument seq=%s",
+            pos_document.sequence_no,
+        )
+        pos_document.uniconta_sync_status = "skipped"
+        pos_document.uniconta_sync_error = "Credential eksik (.env)"
+        _audit("uniconta_auto_skipped", {"reason": "credentials missing"})
+        await session.commit()
+        return
+    cache_dir = str(settings.document_root_path() / "uniconta")
+    try:
+        result = await sync_pos_document_to_uniconta(
+            session,
+            pos_document,
+            pos_session=pos_session,
+            pos_lines=pos_lines,
+            pdf_cache_dir=cache_dir,
+        )
+        if result.get("ok"):
+            LOGGER.info(
+                "Uniconta sync OK: PosDocument seq=%s -> invoice=%s (idempotent=%s)",
+                pos_document.sequence_no,
+                result.get("invoice_number"),
+                result.get("idempotent"),
+            )
+            _audit(
+                "uniconta_auto_sync" if not result.get("idempotent") else "uniconta_auto_sync_idempotent",
+                {
+                    "ok": True,
+                    "invoice_number": result.get("invoice_number"),
+                    "pdf_path": result.get("pdf_path"),
+                    "idempotent": bool(result.get("idempotent")),
+                },
+            )
+        else:
+            LOGGER.warning(
+                "Uniconta sync failed (handled): PosDocument seq=%s reason=%s",
+                pos_document.sequence_no,
+                result.get("message"),
+            )
+            _audit(
+                "uniconta_auto_failed",
+                {"ok": False, "message": result.get("message")},
+                note=str(result.get("message") or "")[:500] or None,
+            )
+        await session.commit()
+        await session.refresh(pos_document)
+    except Exception as exc:  # pragma: no cover — defansif (commit/refresh errors)
+        LOGGER.exception(
+            "Uniconta sync unexpected exception (rollback): PosDocument seq=%s",
+            pos_document.sequence_no,
+        )
+        await session.rollback()
+        _ = exc

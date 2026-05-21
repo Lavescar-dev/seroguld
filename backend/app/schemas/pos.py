@@ -523,6 +523,9 @@ class PosWorkspaceFinalizeResponse(AppBaseModel):
     document_number: str
     transaction_id: UUID
     line_count: int
+    uniconta_sync_status: str | None = None  # 'synced' | 'failed' | 'skipped' | None
+    uniconta_invoice_number: str | None = None
+    uniconta_sync_error: str | None = None
 
 
 class PosWorkspaceOut(AppBaseModel):
@@ -576,6 +579,9 @@ class PosSavedPurchaseListItemOut(AppBaseModel):
     silver_preview_items: list[PosSavedPurchasePreviewRowOut] = Field(default_factory=list)
     can_edit: bool = False
     can_delete: bool = False
+    uniconta_sync_status: str | None = None  # 'synced' | 'failed' | 'skipped' | None
+    uniconta_invoice_number: str | None = None
+    uniconta_sync_error: str | None = None
 
 
 class PosDocumentListItemOut(AppBaseModel):

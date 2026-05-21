@@ -1,4 +1,5 @@
 from app.models.afg_melt_lot import AfgMeltLot
+from app.models.afg_melt_lot_history import AfgMeltLotHistory
 from app.models.ai_usage_log import AIUsageLog
 from app.models.customer_activity import CustomerActivityEvent
 from app.models.customer_identity import CustomerIdentityDocument
@@ -9,6 +10,7 @@ from app.models.gdpr_request import GdprRequest
 from app.models.gdpr_request_event import GdprRequestEvent
 from app.models.gdpr_retention_policy import GdprRetentionPolicy
 from app.models.pos_document import PosDocument
+from app.models.pos_document_audit import PosDocumentAudit
 from app.models.pos_session import PosSession
 from app.models.pos_session_line import PosSessionLine
 from app.models.pos_session_product_link import PosSessionProductLink
@@ -22,6 +24,7 @@ from app.models.woocommerce_log import WooCommerceSyncLog
 
 __all__ = [
     "AfgMeltLot",
+    "AfgMeltLotHistory",
     "User",
     "Product",
     "ProductHistory",
@@ -36,6 +39,7 @@ __all__ = [
     "GdprRequestEvent",
     "GdprRetentionPolicy",
     "PosDocument",
+    "PosDocumentAudit",
     "PosSession",
     "PosSessionLine",
     "PosSessionProductLink",

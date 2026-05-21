@@ -50,4 +50,13 @@ class PosDocument(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+    # Uniconta sync — finalize sonrası DebtorInvoice oluşturma akışı
+    uniconta_sync_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    uniconta_invoice_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    uniconta_account: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    uniconta_invoice_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    uniconta_pdf_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uniconta_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    uniconta_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     pos_session: Mapped["PosSession"] = relationship("PosSession", lazy="joined")

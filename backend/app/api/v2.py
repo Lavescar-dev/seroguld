@@ -84,6 +84,7 @@ from app.schemas.afg import (
     AfgRouteResponse,
 )
 from app.schemas.customer import (
+    CustomerAlisSummaryOut,
     CustomerCreate,
     CustomerDetailOut,
     CustomerListResponse,
@@ -98,13 +99,17 @@ from app.schemas.desktop_views import (
     DashboardScreenOut,
     SettingsScreenOut,
     SettingsScreenUpdateIn,
+    UnicontaBulkRetryOut,
     UnicontaConfigOut,
     UnicontaConnectIn,
     UnicontaConnectOut,
+    UnicontaFailedSyncRowOut,
+    UnicontaHealthOut,
     UnicontaInvoiceCustomerOut,
     UnicontaInvoiceLineOut,
     UnicontaInvoiceOut,
     UnicontaInvoicesOut,
+    UnicontaSyncSummaryOut,
 )
 from app.schemas.document_artifact import (
     DocumentArtifactCellEditsIn,
@@ -188,6 +193,12 @@ from app.services.document_artifact_service import (
 from app.services.office_host_service import office_host_service
 from app.services.runtime_readiness import collect_runtime_readiness
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
+from app.services.uniconta_service import (
+    UnicontaError,
+    get_uniconta_client,
+    map_uniconta_invoice_to_dto,
+    reset_uniconta_client,
+)
 from app.services.pos_document_service import format_document_number
 from app.services.product_service import get_product_or_404, to_product_out, update_product, update_status
 from app.services.pos_service import create_pos_session
@@ -744,6 +755,9 @@ async def _build_alis_saved_purchase_items(
                 User.postal_code,
                 User.cpr_number_encrypted,
                 CustomerIdentityDocument.identity_doc_number_encrypted,
+                PosDocument.uniconta_sync_status,
+                PosDocument.uniconta_invoice_number,
+                PosDocument.uniconta_sync_error,
             )
             .join(PosSession, PosSession.id == PosDocument.pos_session_id)
             .outerjoin(User, User.id == PosSession.customer_id)
@@ -752,7 +766,18 @@ async def _build_alis_saved_purchase_items(
         )
     ).all()
     extra_map: dict[int, dict[str, str | None]] = {}
-    for sequence_no, notes, customer_id, address_encrypted, postal_code, cpr_encrypted, identity_encrypted in extra_rows:
+    for (
+        sequence_no,
+        notes,
+        customer_id,
+        address_encrypted,
+        postal_code,
+        cpr_encrypted,
+        identity_encrypted,
+        uc_status,
+        uc_invoice_no,
+        uc_error,
+    ) in extra_rows:
         cpr_masked = None
         cpr_plain = None
         identity_plain = None
@@ -784,6 +809,9 @@ async def _build_alis_saved_purchase_items(
             "cpr_masked": cpr_masked,
             "cpr": cpr_plain,
             "identity_doc_number": identity_plain,
+            "uniconta_sync_status": uc_status,
+            "uniconta_invoice_number": uc_invoice_no,
+            "uniconta_sync_error": uc_error,
         }
 
     preview_rows = (
@@ -845,6 +873,9 @@ async def _build_alis_saved_purchase_items(
             silver_preview_items=preview_map.get(item.sequence_no, {}).get("silver", []),
             can_edit=True,
             can_delete=True,
+            uniconta_sync_status=extra_map.get(item.sequence_no, {}).get("uniconta_sync_status"),
+            uniconta_invoice_number=extra_map.get(item.sequence_no, {}).get("uniconta_invoice_number"),
+            uniconta_sync_error=extra_map.get(item.sequence_no, {}).get("uniconta_sync_error"),
         )
         for item in items
     ]
@@ -994,7 +1025,12 @@ def _build_settings_screen_out() -> SettingsScreenOut:
     )
 
 
-def _build_uniconta_config_out(message: str | None = None) -> UnicontaConfigOut:
+def _build_uniconta_config_out(
+    message: str | None = None,
+    *,
+    connection_status: str | None = None,
+    last_refreshed_at: str | None = None,
+) -> UnicontaConfigOut:
     settings = get_settings()
     configured = bool(
         settings.uniconta_api_url.strip()
@@ -1009,9 +1045,12 @@ def _build_uniconta_config_out(message: str | None = None) -> UnicontaConfigOut:
         env="sandbox" if "sandbox" in settings.uniconta_api_url.lower() else "production",
         apiUrl=settings.uniconta_api_url,
         apiKey=settings.uniconta_api_key,
-        connectionStatus="bagli" if configured else "bagli_degil",
+        connectionStatus=connection_status or ("bagli" if configured else "bagli_degil"),
         configured=configured,
+        lastRefreshedAt=last_refreshed_at,
         message=message or ("Uniconta proxy hazir." if configured else "Uniconta baglantisi henuz yapilandirilmadi."),
+        sendEmailOnFinalize=bool(getattr(settings, "uniconta_send_email_on_finalize", False)),
+        sendXmlOnFinalize=bool(getattr(settings, "uniconta_send_xml_on_finalize", False)),
     )
 
 
@@ -1359,15 +1398,50 @@ async def post_uniconta_connect_v2(
             "UNICONTA_PASSWORD": payload.password.strip(),
             "UNICONTA_COMPANY_ID": payload.companyId.strip(),
             "UNICONTA_API_KEY": payload.apiKey.strip(),
+            "UNICONTA_SEND_EMAIL_ON_FINALIZE": "true" if payload.sendEmailOnFinalize else "false",
+            "UNICONTA_SEND_XML_ON_FINALIZE": "true" if payload.sendXmlOnFinalize else "false",
         },
     )
     get_settings.cache_clear()
-    configured = bool(payload.apiUrl.strip() and payload.companyId.strip() and payload.username.strip() and (payload.password.strip() or payload.apiKey.strip()))
-    message = "Uniconta baglantisi hazir." if configured else "Uniconta baglanti bilgileri eksik."
-    config = _build_uniconta_config_out(message=message)
+    reset_uniconta_client()
+    configured = bool(
+        payload.apiUrl.strip()
+        and payload.companyId.strip()
+        and payload.username.strip()
+        and (payload.password.strip() or payload.apiKey.strip())
+    )
+    if not configured:
+        message = "Uniconta baglanti bilgileri eksik."
+        config = _build_uniconta_config_out(message=message, connection_status="bagli_degil")
+        return UnicontaConnectOut(
+            connectionStatus="bagli_degil",
+            configured=False,
+            message=message,
+            config=config,
+        )
+    # Canlı bağlantı testi — Uniconta Web API'sine gerçek login
+    client = get_uniconta_client()
+    result = await client.test_connection()
+    last_refreshed_at = utc_now().isoformat() if result.get("ok") else None
+    if result.get("ok"):
+        company_name = (result.get("company") or {}).get("CompanyName")
+        message = f"Uniconta'ya baglandi: {company_name}" if company_name else result.get("message", "Uniconta baglantisi basarili.")
+        config = _build_uniconta_config_out(
+            message=message,
+            connection_status="bagli",
+            last_refreshed_at=last_refreshed_at,
+        )
+        return UnicontaConnectOut(
+            connectionStatus="bagli",
+            configured=True,
+            message=message,
+            config=config,
+        )
+    message = result.get("message", "Uniconta baglantisi basarisiz.")
+    config = _build_uniconta_config_out(message=message, connection_status="hata")
     return UnicontaConnectOut(
-        connectionStatus="bagli" if configured else "hata",
-        configured=configured,
+        connectionStatus="hata",
+        configured=True,
         message=message,
         config=config,
     )
@@ -1376,9 +1450,22 @@ async def post_uniconta_connect_v2(
 @router.get("/uniconta/invoices", response_model=UnicontaInvoicesOut)
 async def get_uniconta_invoices_v2(
     limit: int = Query(default=200, ge=1, le=500),
+    source: str = Query(default="local", pattern="^(local|remote)$"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> UnicontaInvoicesOut:
+    if source == "remote":
+        client = get_uniconta_client()
+        try:
+            rows = await client.get_sale_invoices(top=limit)
+        except UnicontaError as exc:
+            raise HTTPException(status_code=502, detail=f"Uniconta remote: {exc}") from exc
+        invoices_remote = [UnicontaInvoiceOut(**map_uniconta_invoice_to_dto(r)) for r in rows]
+        return UnicontaInvoicesOut(
+            source="uniconta_remote",
+            generatedAt=datetime.utcnow().isoformat(),
+            invoices=invoices_remote,
+        )
     invoices = await _load_uniconta_invoices(db, limit=limit)
     return UnicontaInvoicesOut(
         source="crm_sale_invoices",
@@ -1397,6 +1484,381 @@ async def get_uniconta_invoice_v2(
     if not invoices:
         raise HTTPException(status_code=404, detail="Fatura bulunamadi.")
     return invoices[0]
+
+
+@router.get("/uniconta/invoice-pdf")
+async def get_uniconta_invoice_pdf_v2(
+    invoiceNumber: int = Query(..., description="Uniconta InvoiceNumber"),
+    account: str = Query(..., description="DebtorClient Account kodu"),
+    date: str = Query(..., description="Fatura tarihi (YYYY-MM-DD)"),
+    _: User = Depends(require_admin),
+) -> Response:
+    """Var olan bir Uniconta DebtorInvoice'ın PDF'ini stream eder."""
+    client = get_uniconta_client()
+    try:
+        pdf_bytes = await client.get_invoice_pdf(
+            invoice_number=invoiceNumber,
+            account=account,
+            date=date,
+        )
+    except UnicontaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="uniconta-{invoiceNumber}.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/uniconta/invoice-pdf/from-pos/{sequence_no}")
+async def get_uniconta_invoice_pdf_from_pos_v2(
+    sequence_no: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> Response:
+    """PosDocument referansından Uniconta DebtorInvoice PDF'i serve et.
+
+    Önce data/documents/uniconta/{seq}.pdf cache'ine bak; yoksa Uniconta'dan
+    canlı çek (PosDocument.uniconta_invoice_number + account + date varsa).
+    """
+    from pathlib import Path as _Path
+
+    from app.models.pos_document import PosDocument
+
+    stmt = select(PosDocument).where(PosDocument.sequence_no == sequence_no)
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="PosDocument bulunamadi.")
+
+    if row.uniconta_pdf_path:
+        cached = _Path(row.uniconta_pdf_path)
+        if cached.exists():
+            return Response(
+                content=cached.read_bytes(),
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'inline; filename="uniconta-{sequence_no}.pdf"',
+                    "Cache-Control": "no-store",
+                },
+            )
+
+    if not (row.uniconta_invoice_number and row.uniconta_account and row.uniconta_invoice_date):
+        raise HTTPException(
+            status_code=409,
+            detail="Bu belge için henüz Uniconta sync tamamlanmadı veya başarısız.",
+        )
+
+    client = get_uniconta_client()
+    try:
+        pdf_bytes = await client.get_invoice_pdf(
+            invoice_number=int(row.uniconta_invoice_number),
+            account=row.uniconta_account,
+            date=row.uniconta_invoice_date,
+        )
+    except UnicontaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="uniconta-{sequence_no}.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _categorize_sync_error(msg: str | None) -> str:
+    """Hatayı kabaca kategorize et — Sync summary'de gruplandırma için."""
+    if not msg:
+        return "unknown"
+    lower = msg.lower()
+    if "timeout" in lower or "network" in lower or "connect" in lower:
+        return "network"
+    if "401" in lower or "auth" in lower or "credential" in lower:
+        return "auth"
+    if "400" in lower or "validation" in lower or "invalid" in lower:
+        return "validation"
+    if "5" in lower[:4]:
+        return "server"
+    if "skipped" in lower or "credentials missing" in lower:
+        return "skipped"
+    return "other"
+
+
+@router.get("/uniconta/sync-summary", response_model=UnicontaSyncSummaryOut)
+async def get_uniconta_sync_summary_v2(
+    hours: int = Query(default=24, ge=1, le=720),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> UnicontaSyncSummaryOut:
+    """Son N saatte (default 24) PosDocument sync istatistikleri."""
+    from datetime import timedelta, timezone as _tz
+
+    cutoff = datetime.now(_tz.utc) - timedelta(hours=hours)
+    stmt = (
+        select(PosDocument)
+        .where(PosDocument.created_at >= cutoff)
+        .order_by(PosDocument.created_at.desc())
+    )
+    docs = list((await db.execute(stmt)).scalars().all())
+
+    synced = failed = skipped = pending = 0
+    by_cat: dict[str, int] = {}
+    last_synced: datetime | None = None
+    last_failure: datetime | None = None
+    for doc in docs:
+        s = doc.uniconta_sync_status or "pending"
+        if s == "synced":
+            synced += 1
+            if doc.uniconta_synced_at and (last_synced is None or doc.uniconta_synced_at > last_synced):
+                last_synced = doc.uniconta_synced_at
+        elif s == "failed":
+            failed += 1
+            cat = _categorize_sync_error(doc.uniconta_sync_error)
+            by_cat[cat] = by_cat.get(cat, 0) + 1
+            if doc.created_at and (last_failure is None or doc.created_at > last_failure):
+                last_failure = doc.created_at
+        elif s == "skipped":
+            skipped += 1
+            by_cat["skipped"] = by_cat.get("skipped", 0) + 1
+        else:
+            pending += 1
+
+    return UnicontaSyncSummaryOut(
+        period_hours=hours,
+        total=len(docs),
+        synced=synced,
+        failed=failed,
+        skipped=skipped,
+        pending=pending,
+        by_error_category=by_cat,
+        last_synced_at=last_synced.isoformat() if last_synced else None,
+        last_failure_at=last_failure.isoformat() if last_failure else None,
+    )
+
+
+@router.get("/uniconta/failed-syncs", response_model=list[UnicontaFailedSyncRowOut])
+async def get_uniconta_failed_syncs_v2(
+    status_filter: str = Query(default="failed", pattern="^(failed|skipped|all)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[UnicontaFailedSyncRowOut]:
+    """Sync edilmemiş AFG'leri döner — UI'da accordion + bulk retry için."""
+    stmt = select(PosDocument).order_by(PosDocument.sequence_no.desc()).limit(limit)
+    if status_filter == "failed":
+        stmt = stmt.where(PosDocument.uniconta_sync_status == "failed")
+    elif status_filter == "skipped":
+        stmt = stmt.where(PosDocument.uniconta_sync_status == "skipped")
+    else:
+        stmt = stmt.where(PosDocument.uniconta_sync_status.in_(("failed", "skipped")))
+    docs = list((await db.execute(stmt)).scalars().all())
+    out: list[UnicontaFailedSyncRowOut] = []
+    for doc in docs:
+        out.append(
+            UnicontaFailedSyncRowOut(
+                sequence_no=doc.sequence_no,
+                document_number=format_document_number(doc) if hasattr(doc, "sequence_no") else None,
+                issued_at=doc.issued_at.isoformat() if doc.issued_at else None,
+                customer_name=doc.customer_name,
+                gross_amount_dkk=str(doc.gross_amount_dkk) if doc.gross_amount_dkk is not None else None,
+                uniconta_sync_status=doc.uniconta_sync_status,
+                uniconta_sync_error=doc.uniconta_sync_error,
+                uniconta_synced_at=doc.uniconta_synced_at.isoformat() if doc.uniconta_synced_at else None,
+            )
+        )
+    return out
+
+
+@router.post("/uniconta/sync-retry-all", response_model=UnicontaBulkRetryOut)
+async def post_uniconta_sync_retry_all_v2(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> UnicontaBulkRetryOut:
+    """Failed/skipped PosDocument'lar için toplu Uniconta sync retry.
+
+    Max `limit` adet PosDocument'ı sırayla retry eder; her birinin sonucu
+    `results` listesinde dönderir.
+    """
+    from pathlib import Path as _Path
+    from app.models.pos_document_audit import PosDocumentAudit
+    from app.models.pos_session import PosSession
+    from app.models.pos_session_line import PosSessionLine
+    from app.services.uniconta_service import sync_pos_document_to_uniconta
+
+    stmt = (
+        select(PosDocument)
+        .where(PosDocument.uniconta_sync_status.in_(("failed", "skipped")))
+        .order_by(PosDocument.sequence_no.desc())
+        .limit(limit)
+    )
+    docs = list((await db.execute(stmt)).scalars().all())
+    settings = get_settings()
+    cache_dir = str(_Path(settings.document_root_path()) / "uniconta")
+
+    attempted = 0
+    succeeded = 0
+    failed = 0
+    results: list[dict] = []
+    for doc in docs:
+        attempted += 1
+        sess = (
+            await db.execute(select(PosSession).where(PosSession.id == doc.pos_session_id))
+        ).scalar_one_or_none()
+        if sess is None:
+            failed += 1
+            results.append({"sequence_no": doc.sequence_no, "ok": False, "message": "PosSession bulunamadı"})
+            continue
+        lines = list(
+            (
+                await db.execute(
+                    select(PosSessionLine)
+                    .where(PosSessionLine.pos_session_id == sess.id)
+                    .order_by(PosSessionLine.line_no.asc())
+                )
+            ).scalars().all()
+        )
+        result = await sync_pos_document_to_uniconta(
+            db, doc, pos_session=sess, pos_lines=lines, pdf_cache_dir=cache_dir
+        )
+        if result.get("ok"):
+            succeeded += 1
+        else:
+            failed += 1
+        # Audit
+        db.add(
+            PosDocumentAudit(
+                sequence_no=doc.sequence_no,
+                pos_session_id=sess.id,
+                action="uniconta_bulk_retry",
+                actor_user_id=getattr(admin, "id", None),
+                actor_email=getattr(admin, "email", None),
+                payload_json=json.dumps(
+                    {
+                        "ok": bool(result.get("ok")),
+                        "uniconta_sync_status": doc.uniconta_sync_status,
+                        "uniconta_invoice_number": doc.uniconta_invoice_number,
+                    },
+                    default=str,
+                    ensure_ascii=False,
+                ),
+                note=str(result.get("message") or "") or None,
+                request_ip=request.client.host if request.client else None,
+            )
+        )
+        results.append(
+            {
+                "sequence_no": doc.sequence_no,
+                "ok": bool(result.get("ok")),
+                "message": result.get("message"),
+                "uniconta_sync_status": doc.uniconta_sync_status,
+                "uniconta_invoice_number": doc.uniconta_invoice_number,
+            }
+        )
+    await db.commit()
+    return UnicontaBulkRetryOut(
+        attempted=attempted,
+        succeeded=succeeded,
+        failed=failed,
+        results=results,
+    )
+
+
+@router.get("/uniconta/health", response_model=UnicontaHealthOut)
+async def get_uniconta_health_v2(
+    _: User = Depends(require_admin),
+) -> UnicontaHealthOut:
+    """Token + son çağrı sağlığı (memory snapshot, no remote ping)."""
+    from app.services.uniconta_service import get_uniconta_client
+
+    snap = get_uniconta_client().get_health_snapshot()
+    return UnicontaHealthOut(**snap)
+
+
+@router.post("/uniconta/invoice/from-pos/{sequence_no}")
+async def post_uniconta_invoice_from_pos_v2(
+    sequence_no: int,
+    request: Request,
+    force: bool = Query(default=False, description="True ise zaten 'synced' olan PosDocument bile yeniden Uniconta'ya gönderilir (duplicate riski operatöre)."),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict[str, object]:
+    """Manuel "Tekrar Dene" — başarısız Uniconta sync için yeniden gönderim.
+
+    Idempotency: default `force=False` ise zaten synced kayıt için Uniconta'ya
+    yeni istek atmadan mevcut bilgi döner (duplicate koruması).
+    """
+    from pathlib import Path as _Path
+
+    from app.models.pos_document import PosDocument
+    from app.models.pos_document_audit import PosDocumentAudit
+    from app.models.pos_session import PosSession
+    from app.models.pos_session_line import PosSessionLine
+    from app.services.uniconta_service import sync_pos_document_to_uniconta
+
+    stmt = select(PosDocument).where(PosDocument.sequence_no == sequence_no)
+    pos_document = (await db.execute(stmt)).scalar_one_or_none()
+    if pos_document is None:
+        raise HTTPException(status_code=404, detail="PosDocument bulunamadi.")
+
+    session_stmt = select(PosSession).where(PosSession.id == pos_document.pos_session_id)
+    pos_session = (await db.execute(session_stmt)).scalar_one_or_none()
+    if pos_session is None:
+        raise HTTPException(status_code=404, detail="PosSession bulunamadi.")
+
+    lines_stmt = (
+        select(PosSessionLine)
+        .where(PosSessionLine.pos_session_id == pos_session.id)
+        .order_by(PosSessionLine.line_no.asc())
+    )
+    pos_lines = list((await db.execute(lines_stmt)).scalars().all())
+
+    settings = get_settings()
+    cache_dir = str(_Path(settings.document_root_path()) / "uniconta")
+    result = await sync_pos_document_to_uniconta(
+        db,
+        pos_document,
+        pos_session=pos_session,
+        pos_lines=pos_lines,
+        pdf_cache_dir=cache_dir,
+        force=force,
+    )
+
+    db.add(
+        PosDocumentAudit(
+            sequence_no=sequence_no,
+            pos_session_id=pos_session.id,
+            action="uniconta_retry",
+            actor_user_id=getattr(admin, "id", None),
+            actor_email=getattr(admin, "email", None),
+            payload_json=json.dumps(
+                {
+                    "ok": bool(result.get("ok")),
+                    "uniconta_sync_status": pos_document.uniconta_sync_status,
+                    "uniconta_invoice_number": pos_document.uniconta_invoice_number,
+                },
+                default=str,
+                ensure_ascii=False,
+            ),
+            note=str(result.get("message") or "") or None,
+            request_ip=request.client.host if request.client else None,
+        )
+    )
+    await db.commit()
+    await db.refresh(pos_document)
+    return {
+        "ok": bool(result.get("ok")),
+        "message": result.get("message"),
+        "idempotent": bool(result.get("idempotent")),
+        "uniconta_sync_status": pos_document.uniconta_sync_status,
+        "uniconta_invoice_number": pos_document.uniconta_invoice_number,
+        "uniconta_sync_error": pos_document.uniconta_sync_error,
+    }
 
 
 @router.get("/musteriler", response_model=CustomerListResponse)
@@ -1445,6 +1907,65 @@ async def get_musteri_history_v2(
     admin: User = Depends(require_admin),
 ) -> list[PosDocumentListItemOut]:
     return await legacy_get_customer_history(customer_id=customer_id, limit=limit, db=db, _=admin)
+
+
+@router.get("/musteriler/{customer_id}/alis-summary", response_model=CustomerAlisSummaryOut)
+async def get_musteri_alis_summary_v2(
+    customer_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> CustomerAlisSummaryOut:
+    from datetime import timedelta, timezone
+
+    from app.models.pos_session_line import PosSessionLine
+
+    base_stmt = (
+        select(PosDocument)
+        .join(PosSession, PosSession.id == PosDocument.pos_session_id)
+        .where(PosSession.customer_id == customer_id)
+    )
+    documents = (await db.execute(base_stmt)).scalars().all()
+
+    total_documents = len(documents)
+    total_amount = sum((doc.gross_amount_dkk or Decimal("0")) for doc in documents)
+    total_amount_dec = Decimal(total_amount) if not isinstance(total_amount, Decimal) else total_amount
+    avg_amount = (total_amount_dec / Decimal(total_documents)) if total_documents else Decimal("0")
+
+    issued_dates = [doc.issued_at for doc in documents if doc.issued_at is not None]
+    last_purchase_at = max(issued_dates).isoformat() if issued_dates else None
+    first_purchase_at = min(issued_dates).isoformat() if issued_dates else None
+
+    weight_stmt = (
+        select(func.coalesce(func.sum(PosSessionLine.weight_grams), 0))
+        .select_from(PosSessionLine)
+        .join(PosSession, PosSession.id == PosSessionLine.pos_session_id)
+        .join(PosDocument, PosDocument.pos_session_id == PosSession.id)
+        .where(PosSession.customer_id == customer_id)
+    )
+    total_weight_value = (await db.execute(weight_stmt)).scalar_one()
+    total_weight = Decimal(total_weight_value or 0)
+
+    now = datetime.now(timezone.utc)
+    cutoff_30 = now - timedelta(days=30)
+    cutoff_365 = now - timedelta(days=365)
+    docs_30 = [d for d in documents if d.issued_at and d.issued_at >= cutoff_30]
+    docs_365 = [d for d in documents if d.issued_at and d.issued_at >= cutoff_365]
+    amount_30 = sum((d.gross_amount_dkk or Decimal("0")) for d in docs_30)
+    amount_365 = sum((d.gross_amount_dkk or Decimal("0")) for d in docs_365)
+
+    return CustomerAlisSummaryOut(
+        customer_id=str(customer_id),
+        total_documents=total_documents,
+        total_amount_dkk=f"{total_amount_dec:.2f}",
+        total_weight_grams=f"{total_weight:.2f}",
+        last_purchase_at=last_purchase_at,
+        first_purchase_at=first_purchase_at,
+        avg_amount_dkk=f"{avg_amount:.2f}",
+        last_30d_documents=len(docs_30),
+        last_30d_amount_dkk=f"{Decimal(amount_30):.2f}",
+        last_365d_documents=len(docs_365),
+        last_365d_amount_dkk=f"{Decimal(amount_365):.2f}",
+    )
 
 
 @router.put("/musteriler/{customer_id}", response_model=CustomerOut)
