@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
 import { getAccessToken } from '@/lib/auth';
-import { apiRequest, buildWsUrl, downloadAuthedDocument, openAuthedDocument } from '@/lib/api';
-import { emitArtifactSync, listenArtifactSync } from '@/lib/artifactSync';
+import { apiRequest, buildWsUrl, downloadAuthedDocument, fetchAuthedPdfBlob, openAuthedDocument } from '@/lib/api';
+import { useToast } from '@/lib/toast';
+import { useConfirm } from '@/components/ConfirmDialog';
+import { emitArtifactSync, listenArtifactSync, signalMatches } from '@/lib/artifactSync';
 import { openOfficeDock } from '@/lib/officeDock';
 import type {
   CustomerOut,
@@ -519,8 +521,16 @@ function computedPreviewSilverRowsPayload(rows: EditableSilverRow[], marketRates
 export function useAlisMakeState(): AlisPageProps {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [workspace, setWorkspace] = useState<PosWorkspace | null>(null);
   const [draftWorkspace, setDraftWorkspace] = useState<PosWorkspace | null>(null);
+  const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>({
+    url: null,
+    filename: '',
+    loading: false,
+    error: null,
+  });
   const [detailPurchase, setDetailPurchase] = useState<PosSavedPurchaseListItem | null>(null);
   const [actionSequenceNo, setActionSequenceNo] = useState<number | null>(null);
   const [purchaseSearchTerm, setPurchaseSearchTerm] = useState('');
@@ -719,7 +729,7 @@ export function useAlisMakeState(): AlisPageProps {
     },
     onError: (error) => {
       setActionSequenceNo(null);
-      window.alert(error instanceof Error ? error.message : 'Belge düzenleme workspacei acilamadi.');
+      toast.error('Belge düzenleme açılamadı', error instanceof Error ? error.message : undefined);
     },
   });
 
@@ -739,9 +749,55 @@ export function useAlisMakeState(): AlisPageProps {
     },
     onError: (error) => {
       setActionSequenceNo(null);
-      window.alert(error instanceof Error ? error.message : 'Belge iptal edilemedi.');
+      toast.error('Belge iptal edilemedi', error instanceof Error ? error.message : undefined);
     },
   });
+
+  const retryUnicontaSyncMutation = useMutation({
+    mutationFn: (sequenceNo: number) =>
+      apiRequest<{
+        ok: boolean;
+        message?: string | null;
+        idempotent?: boolean;
+        uniconta_sync_status?: string | null;
+        uniconta_invoice_number?: string | null;
+        uniconta_sync_error?: string | null;
+      }>(`/api/v2/uniconta/invoice/from-pos/${sequenceNo}`, {
+        method: 'POST',
+      }),
+    onSuccess: (result) => {
+      if (result?.idempotent) {
+        toast.info(
+          'Zaten senkronize',
+          result.uniconta_invoice_number
+            ? `Bu belge daha önce Uniconta'ya gönderilmiş (fatura no: ${result.uniconta_invoice_number}). Tekrar göndermek için force gerekir.`
+            : 'Bu belge daha önce senkronize edilmiş.',
+        );
+      } else if (result?.ok) {
+        toast.success(
+          'Uniconta sync başarılı',
+          result.uniconta_invoice_number ? `Fatura no: ${result.uniconta_invoice_number}` : undefined,
+        );
+      } else {
+        toast.warning(
+          'Uniconta sync tamamlanamadı',
+          result?.uniconta_sync_error || result?.message || undefined,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['uniconta', 'invoices'] });
+      // M2 — cross-module: uniconta retry alış listesinin sync_status'unu değiştirir
+      emitArtifactSync({ kind: 'uniconta', key: 'live', source: 'alis-ui' });
+    },
+    onError: (error) => {
+      toast.error('Uniconta sync hatası', error instanceof Error ? error.message : undefined);
+    },
+  });
+
+  const handleRetryUnicontaSync = (item: PosSavedPurchaseListItem) => {
+    if (retryUnicontaSyncMutation.isPending) return;
+    retryUnicontaSyncMutation.mutate(item.sequence_no);
+  };
 
   const selectCustomerMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
@@ -936,7 +992,7 @@ export function useAlisMakeState(): AlisPageProps {
           payment_method: paymentMethod,
         }),
       }),
-    onSuccess: async () => {
+    onSuccess: async (response) => {
       const closedSessionId = workspace?.session.id || null;
       setWorkspace(null);
       initializedSessionRef.current = null;
@@ -947,12 +1003,31 @@ export function useAlisMakeState(): AlisPageProps {
       if (closedSessionId) {
         emitWorkspaceArtifactSync(closedSessionId, 'alis-ui');
       }
+      // M2 — Finalize sonrası log + depolama'ya cross-module sinyal yolla.
+      // DEFAULT_CROSS_TRIGGERS['alis'] = ['log', 'depolama'] otomatik enjekte edilir.
+      emitArtifactSync({
+        kind: 'alis',
+        key: response?.document_sequence_no ? String(response.document_sequence_no) : 'live',
+        source: 'alis-ui',
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] }),
         queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] }),
         queryClient.invalidateQueries({ queryKey: ['pos', 'documents'] }),
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
       ]);
+      const docNumber = response?.document_number ? `#${response.document_number}` : 'Belge';
+      const ucStatus = (response as PosWorkspaceFinalizeResponse & { uniconta_sync_status?: string | null })?.uniconta_sync_status;
+      if (ucStatus === 'failed') {
+        toast.warning(`${docNumber} kaydedildi`, 'Uniconta senkronizasyonu başarısız — daha sonra tekrar denenebilir.');
+      } else if (ucStatus === 'synced') {
+        toast.success(`${docNumber} kaydedildi`, 'Uniconta senkronizasyonu tamamlandı.');
+      } else {
+        toast.success(`${docNumber} kaydedildi`);
+      }
+    },
+    onError: (error) => {
+      toast.error('Belge kaydedilemedi', error instanceof Error ? error.message : undefined);
     },
   });
 
@@ -974,6 +1049,10 @@ export function useAlisMakeState(): AlisPageProps {
         queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] }),
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
       ]);
+      toast.info('Taslak iptal edildi');
+    },
+    onError: (error) => {
+      toast.error('Taslak iptal edilemedi', error instanceof Error ? error.message : undefined);
     },
   });
 
@@ -1000,28 +1079,40 @@ export function useAlisMakeState(): AlisPageProps {
 
   useEffect(() => {
     return listenArtifactSync((signal) => {
-      if (signal.kind !== 'alis-workspace') return;
       if (signal.source === 'alis-ui') return;
 
-      const activeSessionId = workspace?.session.id || null;
-      const draftSessionId = draftWorkspace?.session.id || null;
-      if (!activeSessionId && !draftSessionId) return;
-      if (signal.key !== activeSessionId && signal.key !== draftSessionId) return;
+      // 1) Office/Excel workbook senkronizasyonu: yalnız alis-workspace kind + session key match
+      if (signal.kind === 'alis-workspace') {
+        const activeSessionId = workspace?.session.id || null;
+        const draftSessionId = draftWorkspace?.session.id || null;
+        if (!activeSessionId && !draftSessionId) return;
+        if (signal.key !== activeSessionId && signal.key !== draftSessionId) return;
 
-      if (activeSessionId && signal.key === activeSessionId) {
-        void apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${activeSessionId}`).then((data) => {
-          if (initializedSessionRef.current !== data.session.id) return;
-          setWorkspace(data);
-          applyWorkspace(data);
-        });
+        if (activeSessionId && signal.key === activeSessionId) {
+          void apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${activeSessionId}`).then((data) => {
+            if (initializedSessionRef.current !== data.session.id) return;
+            setWorkspace(data);
+            applyWorkspace(data);
+          });
+        }
+
+        if (signal.key === draftSessionId) {
+          void workspaceQuery.refetch().then((result) => {
+            if (result.data) {
+              setDraftWorkspace(result.data);
+            }
+          });
+        }
       }
 
-      if (signal.key === draftSessionId) {
-        void workspaceQuery.refetch().then((result) => {
-          if (result.data) {
-            setDraftWorkspace(result.data);
-          }
-        });
+      // 2) Cross-module sync: log/depolama/uniconta tarafından tetiklenen değişiklikler
+      //    saved purchases listesini (uniconta_sync_status, line.product_id atamaları vs.) etkiler.
+      if (signalMatches(signal, 'alis')) {
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] }),
+          queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
+        ]);
+        return;
       }
 
       void Promise.all([
@@ -1094,7 +1185,9 @@ export function useAlisMakeState(): AlisPageProps {
     invoiceMiscRows,
     afgNote,
     calculators,
-    updateSectionsMutation,
+    // updateSectionsMutation referansı her render'da yeni — dep'ten çıkarıldı,
+    // queueSectionsSave closure üzerinden günceli okur.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
   useEffect(() => {
@@ -1115,14 +1208,15 @@ export function useAlisMakeState(): AlisPageProps {
       queueCustomerSave(nextPayload);
     }, AUTOSAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
+    // updateCustomerMutation / updateDraftCustomerMutation referansları her
+    // render'da yeni — dep'ten çıkarıldı, queue closure üzerinden günceli okur.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     workspace?.session.id,
     workspace?.customer.customer_id,
     customerMode,
     customerForm,
     newCustomer,
-    updateCustomerMutation,
-    updateDraftCustomerMutation,
   ]);
 
   useEffect(() => {
@@ -1219,6 +1313,55 @@ export function useAlisMakeState(): AlisPageProps {
       force_new_session: true,
     });
   }
+
+  // Klavye kısayolları — workspace varsa Ctrl+S finalize / Esc cancel; yoksa Ctrl+N yeni AFG
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+      if (target.isContentEditable) return true;
+      return false;
+    };
+    const handler = (event: KeyboardEvent) => {
+      const meta = event.ctrlKey || event.metaKey;
+      const hasWorkspace = Boolean(workspace);
+      const editable = isEditableTarget(event.target);
+      // Ctrl+S — kaydet (workspace varsa, müşteri seçili ise)
+      if (meta && event.key.toLowerCase() === 's') {
+        if (hasWorkspace && workspace?.customer.customer_id) {
+          event.preventDefault();
+          if (!finalizeMutation.isPending) {
+            finalizeMutation.mutate();
+          }
+        }
+        return;
+      }
+      // Ctrl+N — yeni AFG (workspace yoksa)
+      if (meta && event.key.toLowerCase() === 'n') {
+        if (!hasWorkspace && !openWorkspaceMutation.isPending) {
+          event.preventDefault();
+          handleStartBlankWorkspace();
+        }
+        return;
+      }
+      // Esc — taslak iptal (workspace varsa, input içinde değilse)
+      if (event.key === 'Escape' && hasWorkspace && !editable && !cancelMutation.isPending) {
+        void confirm({
+          title: 'Taslak iptal edilsin mi?',
+          message: 'Girilen veriler kaydedilmeyecek.',
+          confirmText: 'Taslağı iptal et',
+          cancelText: 'Vazgeç',
+          variant: 'warning',
+        }).then((ok) => {
+          if (ok) cancelMutation.mutate();
+        });
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace, workspace?.customer.customer_id, finalizeMutation.isPending, cancelMutation.isPending, openWorkspaceMutation.isPending]);
 
   function handleSelectExistingCustomer(customerId: string) {
     if (!workspace?.session.id || !customerId) return;
@@ -1339,8 +1482,31 @@ export function useAlisMakeState(): AlisPageProps {
     );
   }
 
+  async function openUnicontaPdfModal(sequenceNo: number, htmlFallbackPath: string) {
+    setPdfState((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const { url } = await fetchAuthedPdfBlob(`/api/v2/uniconta/invoice-pdf/from-pos/${sequenceNo}`);
+      setPdfState({ url, filename: `uniconta-${sequenceNo}.pdf`, loading: false, error: null });
+    } catch (exc) {
+      // Sync henüz tamamlanmadıysa veya hata → HTML fallback (yeni tab)
+      setPdfState({ url: null, filename: '', loading: false, error: null });
+      void openAuthedDocument(htmlFallbackPath);
+      void exc; // explicit ignore
+    }
+  }
+
+  function closePdfModal() {
+    setPdfState((current) => {
+      if (current.url) URL.revokeObjectURL(current.url);
+      return { url: null, filename: '', loading: false, error: null };
+    });
+  }
+
   function handlePrintDocument(item: PosSavedPurchaseListItem) {
-    void openAuthedDocument(`/api/v2/alis/documents/${item.sequence_no}/print?format=html`);
+    void openUnicontaPdfModal(
+      item.sequence_no,
+      `/api/v2/alis/documents/${item.sequence_no}/print?format=html`,
+    );
   }
 
   function handleOpenWorkspaceExcelPreview() {
@@ -1431,10 +1597,15 @@ export function useAlisMakeState(): AlisPageProps {
     editDocumentMutation.mutate(item.sequence_no);
   }
 
-  function handleDeleteDocument(item: PosSavedPurchaseListItem) {
-    if (!window.confirm(`${item.document_number} numarali alis kaydi iptal edilsin mi?`)) {
-      return;
-    }
+  async function handleDeleteDocument(item: PosSavedPurchaseListItem) {
+    const ok = await confirm({
+      title: 'Alış kaydı iptal edilsin mi?',
+      message: `${item.document_number} numaralı alış kaydı iptal edilecek. Bu işlem audit'e yazılır.`,
+      confirmText: 'Kaydı iptal et',
+      cancelText: 'Vazgeç',
+      variant: 'danger',
+    });
+    if (!ok) return;
     setActionSequenceNo(item.sequence_no);
     deleteDocumentMutation.mutate(item.sequence_no);
   }
@@ -1461,7 +1632,10 @@ export function useAlisMakeState(): AlisPageProps {
     },
     onPrintDetail: () => {
       if (!detailDocumentQuery.data) return;
-      void openAuthedDocument(`/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/print?format=html`);
+      void openUnicontaPdfModal(
+        detailDocumentQuery.data.sequence_no,
+        `/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/print?format=html`,
+      );
     },
     onOpenDetailExcelPreview: () => {
       if (!detailDocumentQuery.data) return;
@@ -1485,6 +1659,10 @@ export function useAlisMakeState(): AlisPageProps {
     onStartFromCustomer: handleStartFromCustomer,
     onEditDocument: handleEditDocument,
     onDeleteDocument: handleDeleteDocument,
+    onRetryUnicontaSync: handleRetryUnicontaSync,
+    retryPendingSequenceNo: retryUnicontaSyncMutation.isPending
+      ? (retryUnicontaSyncMutation.variables ?? null)
+      : null,
     listLoading: savedPurchasesQuery.isLoading,
     actionPendingSequenceNo: actionSequenceNo,
     customerMode,
@@ -1546,5 +1724,7 @@ export function useAlisMakeState(): AlisPageProps {
     startPending: openWorkspaceMutation.isPending,
     priceOpen,
     setPriceOpen,
+    pdfState,
+    onClosePdfModal: closePdfModal,
   };
 }

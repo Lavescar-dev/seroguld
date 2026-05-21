@@ -15,6 +15,7 @@ import {
 
 import { downloadAuthedDocument } from '@/lib/api';
 import { formatDate } from '@/lib/format';
+import { useToast } from '@/lib/toast';
 
 import type {
   GdprJob,
@@ -213,6 +214,7 @@ export function MakeGdprPage({
   onExecute,
   onUpdatePolicy,
 }: GdprPageProps) {
+  const toast = useToast();
   const [decisionReason, setDecisionReason] = useState('');
   const [policyDrafts, setPolicyDrafts] = useState<Record<string, { retention_days: string; action: string; is_enabled: boolean }>>({});
   const [jobStatusFilter, setJobStatusFilter] = useState<'all' | 'queued' | 'running' | 'failed' | 'completed'>('all');
@@ -272,7 +274,7 @@ export function MakeGdprPage({
       }, 1800);
     } catch (error) {
       console.error('Copy failed', error);
-      window.alert('Metin panoya kopyalanamadı.');
+      toast.error('Pano kopyalanamadı', 'Metin panoya yazılamadı; tarayıcı izinlerini kontrol edin.');
     }
   };
 

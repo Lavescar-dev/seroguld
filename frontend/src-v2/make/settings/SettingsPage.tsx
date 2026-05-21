@@ -19,6 +19,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
+import { useConfirm } from '@/components/ConfirmDialog';
 import type { ApiConfig } from './types';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
@@ -133,7 +134,7 @@ function TextInput({
   );
 }
 
-function LocalStorageInfo() {
+function LocalStorageInfo({ confirm }: { confirm: ReturnType<typeof useConfirm> }) {
   const [info, setInfo] = useState<Array<{ key: string; size: number }>>([]);
   const [totalSize, setTotalSize] = useState(0);
 
@@ -159,8 +160,14 @@ function LocalStorageInfo() {
 
   const fmtSize = (bytes: number) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`);
 
-  const clearKey = (key: string) => {
-    if (!window.confirm(`"${key}" verisini silmek istiyor musunuz?`)) return;
+  const clearKey = async (key: string) => {
+    const ok = await confirm({
+      title: 'LocalStorage anahtarını sil',
+      message: `"${key}" verisini silmek istiyor musunuz?`,
+      confirmText: 'Sil',
+      variant: 'danger',
+    });
+    if (!ok) return;
     window.localStorage.removeItem(key);
     refresh();
   };
@@ -237,6 +244,7 @@ export function MakeSettingsPage({
   onExport,
   onImport,
 }: MakeSettingsPageProps) {
+  const confirm = useConfirm();
   const statusChip = isSaving
     ? {
         label: 'Kaydediliyor',
@@ -469,7 +477,7 @@ export function MakeSettingsPage({
           color="border-slate-300 bg-slate-100"
           description="localStorage veri boyutu ve temizleme islemleri"
         >
-          <LocalStorageInfo />
+          <LocalStorageInfo confirm={confirm} />
         </SettingsSection>
       </div>
     </div>

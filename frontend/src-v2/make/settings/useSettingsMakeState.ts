@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { apiRequest } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 
 import type { ApiConfig } from './types';
 
@@ -36,6 +37,7 @@ const DEFAULT_CONFIG: ApiConfig = {
 };
 
 export function useSettingsMakeState() {
+  const toast = useToast();
   const settingsQuery = useQuery({
     queryKey: ['settings-v2'],
     queryFn: () => apiRequest<ApiConfig>('/api/v2/settings'),
@@ -122,7 +124,7 @@ export function useSettingsMakeState() {
             },
           });
         } catch {
-          window.alert('Gecersiz JSON dosyasi!');
+          toast.error('Geçersiz JSON dosyası', 'İçeri aktarılan dosya çözümlenemedi.');
         }
       };
       reader.readAsText(file);

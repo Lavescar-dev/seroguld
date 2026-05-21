@@ -28,6 +28,7 @@ import {
 } from '@/lib/format';
 import type { CustomerOut, PosDocumentDetail, PosDocumentListItem } from '@/types';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import type { CustomerDraft, CustomerHistoryLogMeta, CustomersPageProps } from './types';
 
 const cellInput =
@@ -570,6 +571,7 @@ export function CustomersPage({
   onPreviewOpen,
   onPreviewClose,
 }: CustomersPageProps) {
+  const confirm = useConfirm();
   return (
     <div className="flex min-h-full flex-col bg-white">
       {previewSequenceNo !== null ? (
@@ -724,9 +726,15 @@ export function CustomersPage({
                           </button>
                           <button
                             type="button"
-                            onClick={(event) => {
+                            onClick={async (event) => {
                               event.stopPropagation();
-                              if (!window.confirm(`${customer.name} kaydını pasife almak istiyor musunuz?`)) return;
+                              const ok = await confirm({
+                                title: 'Müşteriyi pasife al',
+                                message: `${customer.name} kaydını pasife almak istiyor musunuz?`,
+                                confirmText: 'Pasife al',
+                                variant: 'warning',
+                              });
+                              if (!ok) return;
                               onDelete(customer);
                             }}
                             className={`p-1 transition-colors ${isSelected ? 'text-red-300 hover:text-red-100' : 'text-red-400 hover:text-red-700'}`}
