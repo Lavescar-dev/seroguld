@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +39,38 @@ from app.utils.security import get_password_hash
 settings = get_settings()
 
 
+def _configure_app_logging() -> None:
+    """App logger'larına RotatingFileHandler ekle.
+
+    data/logs/app.log (10 MB × 5 backup). uvicorn stdout/stderr ayrı kalır
+    (shell redirect ile .run/backend.log'a yazılır), bu Python tarafından
+    üretilen log'ları yakalar ve disk dolmasını önler.
+    """
+    log_dir = Path(settings.log_dir) if settings.log_dir else Path("data/logs")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    target = log_dir / "app.log"
+    root = logging.getLogger()
+    for existing in root.handlers:
+        if isinstance(existing, RotatingFileHandler) and Path(existing.baseFilename) == target.resolve():
+            return
+    handler = RotatingFileHandler(
+        target,
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
+        encoding="utf-8",
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    handler.setLevel(logging.INFO)
+    root.addHandler(handler)
+    if root.level == logging.NOTSET or root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+
+
 async def ensure_initial_admin() -> None:
     if not settings.should_auto_seed_initial_admin():
         return
@@ -60,6 +95,13 @@ async def ensure_initial_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _configure_app_logging()
+    logging.getLogger("app.startup").info(
+        "backend started (log_dir=%s, max_bytes=%s, backups=%s)",
+        settings.log_dir,
+        settings.log_max_bytes,
+        settings.log_backup_count,
+    )
     settings.validate_runtime_configuration()
     if settings.database_auto_create:
         async with engine.begin() as conn:

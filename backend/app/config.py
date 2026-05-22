@@ -107,6 +107,10 @@ class Settings(BaseSettings):
 
     backup_root_dir: str = str(ROOT_DIR / "data" / "backups")
     backup_restore_drill_dir: str = str(ROOT_DIR / "data" / "restore-drill")
+
+    log_dir: str = str(ROOT_DIR / "data" / "logs")
+    log_max_bytes: int = 10 * 1024 * 1024  # 10 MB
+    log_backup_count: int = 5  # 10 MB × 5 backup = 50 MB ceiling
     backup_offsite_enabled: bool = False
     backup_offsite_status_file: str = str(ROOT_DIR / ".run" / "backup-offsite-last-sync.json")
     backup_health_max_age_minutes: int = 180
