@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     uniconta_password: str = ""
     uniconta_company_id: str = ""
     uniconta_api_key: str = ""
+    # Otomatik fatura gönderim toggle'ları — UI ayarlanır, .env'e yazılır.
+    uniconta_send_email_on_finalize: bool = False
+    uniconta_send_xml_on_finalize: bool = False
 
     invoice_number_prefix: str = "SG"
     invoice_default_currency: str = "DKK"

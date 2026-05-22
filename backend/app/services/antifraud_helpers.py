@@ -19,8 +19,27 @@ from app.schemas.antifraud import (
 from app.services.woocommerce import WooCommerceService
 from app.utils.helpers import utc_now
 
-_RISK_META_KEYWORDS = ("fraud", "risk", "opmc", "anti", "wc_af", "whitelist", "_ai_")
 _RISK_NOTE_KEYWORDS = ("fraud", "risk", "anti-fraud", "antifraud", "whitelist", "manual review")
+
+# O4 — Risk meta key whitelist'i. Geniş keyword araması yerine bilinen alanlar.
+# `risk` substring'i çok geniş ve `_billing_risk_band`, `_wc_user_risk` gibi
+# alakasız meta'ları toplayıp `_extract_score_from_value`'nun text-regex
+# match'iyle hatalı skor üretiyordu (bu yıllarca güvenli müşteriye
+# "100" risk atayan asıl bug'ı tetikleyen kaynak).
+_RISK_META_EXACT_KEYS = {
+    # OPMC plugin (Woo Anti-Fraud)
+    "wc_af_score",
+    "wc_af_failed_rules",
+    "_wc_af_waiting",
+    "_wc_af_recommended_status",
+    "_wc_af_ip_multiple_data",
+    "_wc_af_manual_override",        # O9 — yeni
+    "whitelist_action",
+    # AI risk skorlama
+    "_ai_risk_score",
+    "_ai_explanations",
+}
+_RISK_META_PREFIXES = ("_wc_af_", "wc_af_")
 _RISK_LEVEL_LABELS_TR = {
     "high": "Yüksek",
     "medium": "Orta",
@@ -87,50 +106,79 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
+def _clamp_score(score: int | None) -> int | None:
+    """O2 — 0-100 dışındaki değerleri reddet."""
+    if score is None:
+        return None
+    if score < 0 or score > 100:
+        return None
+    return score
+
+
 def _extract_score_from_value(value: Any) -> int | None:
+    """Risk skorunu tek bir değerden çıkarır.
+
+    O1 — text içinden regex ile sayı yakalama davranışı KALDIRILDI; AI
+    açıklamasındaki "100% safe" gibi metinleri yanlışlıkla skor olarak işliyordu.
+    Sadece:
+      - direkt numeric tipler (int / float)
+      - dict["score"|"risk_score"|"wc_af_score"] gibi açık key'ler
+      - tamamı sayı olan stringler ("100", "12.5") veya parse edilebilen JSON
+    O2 — sonuç 0-100 aralığına clamp edilir; dışındaysa None.
+    """
     if value is None:
         return None
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return int(round(float(value)))
+        return _clamp_score(int(round(float(value))))
     if isinstance(value, dict):
+        # Sadece açık keylere bak; recursive walk yapmıyoruz.
         for key in ("risk_score", "score", "wc_af_score"):
             if key in value:
-                nested = _extract_score_from_value(value.get(key))
-                if nested is not None:
-                    return nested
-        for nested_value in value.values():
-            nested = _extract_score_from_value(nested_value)
-            if nested is not None:
-                return nested
+                nested_raw = value.get(key)
+                if isinstance(nested_raw, (int, float)) and not isinstance(nested_raw, bool):
+                    return _clamp_score(int(round(float(nested_raw))))
+                if isinstance(nested_raw, str):
+                    cleaned = nested_raw.strip()
+                    if cleaned.replace(".", "", 1).replace(",", "", 1).lstrip("-").isdigit():
+                        try:
+                            return _clamp_score(int(round(float(cleaned.replace(",", ".")))))
+                        except ValueError:
+                            continue
         return None
     if isinstance(value, list):
+        # Liste içinde sadece direkt numeric tipleri kabul et.
         for item in value:
-            nested = _extract_score_from_value(item)
-            if nested is not None:
-                return nested
+            if isinstance(item, (int, float)) and not isinstance(item, bool):
+                clamped = _clamp_score(int(round(float(item))))
+                if clamped is not None:
+                    return clamped
         return None
 
-    text = _strip_code_fence(str(value))
+    # String — sadece pure-numeric (regex yok!) veya JSON-encoded number/dict.
+    text = _strip_code_fence(str(value)).strip()
     if not text:
         return None
 
+    # Pure number string'i kabul et: "100", "-5", "12.50", "12,5"
+    candidate = text.replace(",", ".").lstrip("-")
+    if candidate.replace(".", "", 1).isdigit():
+        try:
+            return _clamp_score(int(round(float(text.replace(",", ".")))))
+        except ValueError:
+            pass
+
+    # JSON-encoded değer (örn "{\"score\": 42}" veya "[42]")
     try:
         loaded = json.loads(text)
-        nested = _extract_score_from_value(loaded)
-        if nested is not None:
-            return nested
     except Exception:
-        pass
-
-    match = re.search(r"(-?\d+(?:[.,]\d+)?)", text)
-    if not match:
         return None
-    try:
-        return int(round(float(match.group(1).replace(",", "."))))
-    except ValueError:
-        return None
+    if isinstance(loaded, (int, float)) and not isinstance(loaded, bool):
+        return _clamp_score(int(round(float(loaded))))
+    if isinstance(loaded, (dict, list)):
+        return _extract_score_from_value(loaded)
+    return None
 
 
 def _is_truthy(value: Any) -> bool:
@@ -157,6 +205,11 @@ def _to_int(value: Any) -> int | None:
 
 
 def _extract_risk_meta(order: dict[str, Any]) -> list[AntiFraudRiskMetaOut]:
+    """O4 — Risk meta'sını exact-match keys + güvenli prefix listesinden çıkarır.
+
+    Eski geniş substring araması ("risk", "fraud") yanlış meta toplayıp
+    `_extract_score_from_value` üzerinden hatalı skor üretiyordu.
+    """
     result: list[AntiFraudRiskMetaOut] = []
     for item in order.get("meta_data") or []:
         if not isinstance(item, dict):
@@ -165,7 +218,13 @@ def _extract_risk_meta(order: dict[str, Any]) -> list[AntiFraudRiskMetaOut]:
         if not key:
             continue
         lower = key.lower()
-        if not any(token in lower for token in _RISK_META_KEYWORDS):
+        is_match = (
+            lower in _RISK_META_EXACT_KEYS
+            or any(lower.startswith(prefix) for prefix in _RISK_META_PREFIXES)
+            or lower == "_ai_risk_score"
+            or lower == "_ai_explanations"
+        )
+        if not is_match:
             continue
         result.append(
             AntiFraudRiskMetaOut(
@@ -177,27 +236,82 @@ def _extract_risk_meta(order: dict[str, Any]) -> list[AntiFraudRiskMetaOut]:
 
 
 def _resolve_risk_score(risk_meta: list[AntiFraudRiskMetaOut]) -> int | None:
+    """Risk skorunu öncelikli kaynaklarla seçer.
+
+    O3 — OPMC plugin kural-tabanlı ve test edilmiş; AI yorumlamaya açık olduğu
+    için (bazen halüsinasyon yapıyor) priority TERS çevrildi:
+      OPMC (wc_af_score)     → 100
+      AI   (_ai_risk_score)  → 90
+    """
     candidates: list[tuple[int, int]] = []
     for item in risk_meta:
         lower = item.key.lower()
         score = _extract_score_from_value(item.value)
         if score is None:
             continue
-        if lower == "_ai_risk_score":
+        if lower == "wc_af_score":
             priority = 100
-        elif lower == "wc_af_score":
+        elif lower == "_ai_risk_score":
             priority = 90
         elif "risk_score" in lower:
-            priority = 85
-        elif "score" in lower:
             priority = 80
+        elif "score" in lower:
+            priority = 70
         else:
-            priority = 60
+            continue  # bilinmeyen alanları sayıya çevirme (O1+O4 ile uyumlu)
         candidates.append((priority, score))
     if not candidates:
         return None
     candidates.sort(key=lambda entry: entry[0], reverse=True)
     return candidates[0][1]
+
+
+# O5 — Whitelist override mantığı
+def _is_whitelisted(risk_meta: list[AntiFraudRiskMetaOut]) -> bool:
+    """Müşteri WC OPMC tarafından whitelist'e alınmışsa True döner."""
+    for item in risk_meta:
+        if item.key.lower().strip() != "whitelist_action":
+            continue
+        text = str(item.value or "").strip()
+        if text:
+            return True
+    return False
+
+
+# O7 — Blacklist tespiti (OPMC meta'sından)
+def _is_blacklisted(risk_meta: list[AntiFraudRiskMetaOut]) -> bool:
+    """Müşteri kara listede mi (IP/email blacklist meta'sı varsa)."""
+    for item in risk_meta:
+        lower = item.key.lower().strip()
+        if lower in {"_wc_af_blacklisted", "_wc_af_ip_blacklisted", "_wc_af_email_blacklisted"}:
+            if _is_truthy(item.value):
+                return True
+    return False
+
+
+# O9 — Manuel override kontrolü
+def _has_manual_override(risk_meta: list[AntiFraudRiskMetaOut]) -> tuple[bool, str | None]:
+    """Operatör false-positive flag'lediyse override edilmiş skoru döner.
+
+    Order meta_data içine `_wc_af_manual_override` key'i `{"level":"low",
+    "by":"...","at":"..."}` JSON şeklinde yazılır. Sadece `level` alanı
+    "low" / "medium" / "high" değerleri kabul edilir.
+    """
+    for item in risk_meta:
+        if item.key.lower().strip() != "_wc_af_manual_override":
+            continue
+        raw = item.value
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                return False, None
+        if not isinstance(raw, dict):
+            continue
+        level = str(raw.get("level") or "").strip().lower()
+        if level in {"low", "medium", "high"}:
+            return True, level
+    return False, None
 
 
 def _resolve_risk_level(score: int | None) -> str:
@@ -208,6 +322,53 @@ def _resolve_risk_level(score: int | None) -> str:
     if score >= 35:
         return "medium"
     return "low"
+
+
+def _resolve_effective_risk(
+    *,
+    score: int | None,
+    risk_meta: list[AntiFraudRiskMetaOut],
+    customer_history: dict | None = None,
+) -> tuple[str, int | None, list[str]]:
+    """Whitelist/blacklist/override/customer_history override mantığı.
+
+    Returns (effective_level, effective_score, override_reasons[])
+    """
+    reasons: list[str] = []
+
+    # 1) Manuel override en yüksek öncelik (operatör kararı)
+    has_override, override_level = _has_manual_override(risk_meta)
+    if has_override and override_level:
+        score_map = {"low": 10, "medium": 50, "high": 90}
+        reasons.append(f"Manuel override (operatör kararı): {override_level}")
+        return override_level, score_map.get(override_level, score), reasons
+
+    # 2) Kara liste → mutlak high
+    if _is_blacklisted(risk_meta):
+        reasons.append("Kara liste işareti (IP/email/manuel).")
+        return "high", max(score or 0, 90), reasons
+
+    # 3) Whitelist → low (skor yüksek olsa bile)
+    if _is_whitelisted(risk_meta):
+        reasons.append("Müşteri beyaz listede (ödeme/IP/email whitelist).")
+        return "low", min(score or 0, 25), reasons
+
+    # 4) Bilinen müşteri pre-empt
+    if customer_history and customer_history.get("known_safe"):
+        successful = customer_history.get("successful_orders", 0)
+        reasons.append(
+            f"Bilinen müşteri: {successful} başarılı sipariş geçmişi."
+        )
+        # high → medium düşür, medium → low düşür
+        base_level = _resolve_risk_level(score)
+        if base_level == "high":
+            return "medium", min(score or 70, 60), reasons
+        if base_level == "medium":
+            return "low", min(score or 35, 30), reasons
+        return "low", score, reasons
+
+    # 5) Varsayılan davranış
+    return _resolve_risk_level(score), score, reasons
 
 
 def _extract_customer_name(order: dict[str, Any]) -> str | None:

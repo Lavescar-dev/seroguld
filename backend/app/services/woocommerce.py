@@ -512,6 +512,49 @@ class WooCommerceService:
             )
         return payload
 
+    async def update_order_meta(
+        self,
+        *,
+        order_id: int,
+        meta_key: str,
+        value: Any,
+    ) -> dict[str, Any]:
+        """Tek bir meta_data alanını günceller (upsert).
+
+        Önce mevcut order'ı çekip aynı `meta_key`'i bulup günceller; yoksa ekler.
+        Diğer meta'ları korumak için PUT /orders/{id} `meta_data` array'ini
+        gönderir.
+        """
+        existing = await self.fetch_order(order_id=order_id)
+        meta_list = existing.get("meta_data") or []
+        if not isinstance(meta_list, list):
+            meta_list = []
+        updated_list: list[dict[str, Any]] = []
+        found = False
+        for item in meta_list:
+            if not isinstance(item, dict):
+                updated_list.append(item)  # passthrough
+                continue
+            if str(item.get("key") or "") == meta_key:
+                updated_list.append({**item, "key": meta_key, "value": value})
+                found = True
+            else:
+                updated_list.append(item)
+        if not found:
+            updated_list.append({"key": meta_key, "value": value})
+
+        payload = await self._wc_request(
+            "PUT",
+            f"/orders/{int(order_id)}",
+            json_payload={"meta_data": updated_list},
+        )
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="WooCommerce sipariş güncelleme yanıtı beklenen formatta değil.",
+            )
+        return payload
+
     async def fetch_customers(self, *, limit: int = 1000) -> list[dict[str, Any]]:
         target = max(1, min(int(limit or 0), 5000))
         per_page = min(100, target)

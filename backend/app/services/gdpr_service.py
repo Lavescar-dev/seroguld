@@ -66,6 +66,30 @@ DEFAULT_RETENTION_POLICIES = (
         "retention_days": 365 * 5,
     },
     {
+        "policy_key": "afg_purchase_documents",
+        "title": "AFG Afregningsbilag (DK bogføringsloven)",
+        "description": (
+            "Danish Bogføringsloven §10: alış belgeleri (AFG / Afregningsbilag) "
+            "ile bağlı PosSession ve PosSessionLine kayıtları en az 5 yıl saklanır. "
+            "Müşteri silinse bile bu kayıtlar pseudonymize edilerek korunur."
+        ),
+        "applies_to": "pos_documents,pos_sessions,pos_session_lines,pos_document_audit",
+        "action": "keep_restrict",
+        "retention_days": 365 * 5,
+    },
+    {
+        "policy_key": "afg_melt_lots",
+        "title": "AFG Eritme Lotları (DK bogføringsloven)",
+        "description": (
+            "Eritme operasyonu (AfgMeltLot) ve bağlı history kayıtları, "
+            "Bogføringsloven §10 ve KYC takip zorunluluğu nedeniyle "
+            "en az 5 yıl saklanır; finalize edilen lotlar değiştirilemez."
+        ),
+        "applies_to": "afg_melt_lots,afg_melt_lot_history,transaction_lines",
+        "action": "keep_restrict",
+        "retention_days": 365 * 5,
+    },
+    {
         "policy_key": "customer_master",
         "title": "Customer master",
         "description": "Müşteri ana veri kaydı yasal pencere sonrası pseudonymize edilir.",

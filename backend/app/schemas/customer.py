@@ -97,3 +97,17 @@ class CustomerDetailOut(CustomerOut):
 
 class CustomerListResponse(PaginatedResponse[CustomerOut]):
     pass
+
+
+class CustomerAlisSummaryOut(AppBaseModel):
+    customer_id: str
+    total_documents: int
+    total_amount_dkk: str
+    total_weight_grams: str
+    last_purchase_at: str | None = None
+    first_purchase_at: str | None = None
+    avg_amount_dkk: str
+    last_30d_documents: int
+    last_30d_amount_dkk: str
+    last_365d_documents: int
+    last_365d_amount_dkk: str

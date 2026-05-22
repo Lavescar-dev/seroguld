@@ -23,6 +23,18 @@ class AntiFraudHumanFieldOut(AppBaseModel):
     value: str
 
 
+class AntiFraudCustomerHistoryOut(AppBaseModel):
+    customer_id: int | None = None
+    total_orders: int = 0
+    successful_orders: int = 0
+    cancelled_orders: int = 0
+    failed_orders: int = 0
+    first_order_at: datetime | None = None
+    last_order_at: datetime | None = None
+    known_safe: bool = False  # 3+ başarılı sipariş + son 90gün içinde
+    matched_by: str | None = None  # "customer_id" | "email"
+
+
 class AntiFraudOrderOut(AppBaseModel):
     order_id: int
     order_number: str
@@ -33,6 +45,7 @@ class AntiFraudOrderOut(AppBaseModel):
     payment_method: str | None = None
     customer_name: str | None = None
     customer_email: str | None = None
+    customer_id: int | None = None
     ip_address: str | None = None
     billing_country: str | None = None
     billing_city: str | None = None
@@ -41,6 +54,9 @@ class AntiFraudOrderOut(AppBaseModel):
     risk_score: int | None = None
     ai_risk_score: int | None = None
     opmc_risk_score: int | None = None
+    # O8 — Skor kaynağı UI badge'i için
+    risk_score_source: str | None = None  # "opmc" | "ai" | "manual_override" | "whitelist" | "blacklist" | "unknown"
+    raw_risk_score: int | None = None  # override öncesi orijinal skor
     risk_level: str
     requires_manual_review: bool
     risk_meta: list[AntiFraudRiskMetaOut]
@@ -50,6 +66,13 @@ class AntiFraudOrderOut(AppBaseModel):
     ai_explanations_human: list[str]
     risk_meta_human: list[AntiFraudHumanFieldOut]
     whitelist_action_human: str | None = None
+    # O5/O7/O9 yeni alanlar
+    override_reasons: list[str] = []
+    is_whitelisted: bool = False
+    is_blacklisted: bool = False
+    has_manual_override: bool = False
+    # O10 — Müşteri geçmişi mini panel
+    customer_history: AntiFraudCustomerHistoryOut | None = None
 
 
 class AntiFraudSummaryOut(AppBaseModel):

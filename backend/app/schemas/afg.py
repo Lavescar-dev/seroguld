@@ -144,8 +144,41 @@ class AfgMeltLotOut(AppBaseModel):
     net_after_costs_dkk: Decimal | None = None
     bridge_difference_dkk: Decimal | None = None
     advance_per_gram_dkk: Decimal | None = None
+    # Yeni lifecycle alanları
+    status: str = "draft"
+    finalized_at: datetime | None = None
+    finalized_by_user_id: UUID | None = None
+    # Bu lot'a bağlı transaction line sayısı (UI'da rozet için)
+    line_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class AfgMeltLotHistoryOut(AppBaseModel):
+    id: UUID
+    lot_id: UUID
+    action: str
+    old_value: dict | None = None
+    new_value: dict | None = None
+    performed_by: UUID | None = None
+    performed_by_email: str | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+class AfgMeltLotLineOut(AppBaseModel):
+    """Bu lot içindeki transaction line özetidir — drawer'da listelenir."""
+
+    line_id: UUID
+    document_sequence_no: int
+    document_number: str
+    line_no: int
+    weight_grams: Decimal | None = None
+    pure_gold_grams: Decimal | None = None
+    line_total_dkk: Decimal | None = None
+    customer_name: str | None = None
+    product_number: str | None = None
+    reference_number: str | None = None
 
 
 class AfgLogBucketOut(AppBaseModel):
@@ -191,6 +224,18 @@ class AfgRouteBatchApplyRequest(AppBaseModel):
     line_decisions: list[AfgRouteDecision] = Field(min_length=1)
 
 
+class AfgRouteBatchPartialFailure(AppBaseModel):
+    line_id: UUID
+    error: str
+
+
+class AfgRouteBatchApplyResponse(AppBaseModel):
+    workspace: AfgLogWorkspaceOut
+    succeeded: int = 0
+    failed: int = 0
+    failures: list[AfgRouteBatchPartialFailure] = Field(default_factory=list)
+
+
 class AfgMeltLotCreateRequest(AppBaseModel):
     metal_bucket: MetalBucket
     sent_date: date | None = None
@@ -210,3 +255,5 @@ class AfgMeltLotUpdateRequest(AppBaseModel):
     exchange_rate_dkk: Decimal | None = None
     payout_total_dkk: Decimal | None = None
     notes: str | None = Field(default=None, max_length=1000)
+    # Optimistic concurrency
+    expected_updated_at: datetime | None = None

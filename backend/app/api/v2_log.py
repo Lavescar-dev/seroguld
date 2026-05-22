@@ -7,9 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.afg import (
-    apply_afg_route_requests,
+    apply_afg_route_requests_safe,
     build_log_workspace,
     create_afg_melt_lot,
+    delete_afg_melt_lot,
+    finalize_afg_melt_lot,
+    list_afg_melt_lot_history,
+    list_afg_melt_lot_lines,
     post_afg_lines_route as legacy_post_afg_lines_route,
     update_afg_melt_lot,
 )
@@ -23,9 +27,13 @@ from app.models.user import User
 from app.schemas.afg import (
     AfgLogWorkspaceOut,
     AfgMeltLotCreateRequest,
+    AfgMeltLotHistoryOut,
+    AfgMeltLotLineOut,
     AfgMeltLotOut,
     AfgMeltLotUpdateRequest,
     AfgRouteBatchApplyRequest,
+    AfgRouteBatchApplyResponse,
+    AfgRouteBatchPartialFailure,
     AfgRouteRequest,
     AfgRouteResponse,
 )
@@ -56,12 +64,13 @@ async def get_log_recent_v2(
 @router.get("/log/workspace", response_model=AfgLogWorkspaceOut)
 async def get_log_workspace_v2(
     q: str | None = None,
+    year: int | None = Query(default=None, ge=2000, le=2100),
     limit: int = 200,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> AfgLogWorkspaceOut:
-    workspace = await build_log_workspace(db, q=q, limit=limit)
-    if not q:
+    workspace = await build_log_workspace(db, q=q, year=year, limit=limit)
+    if not q and year is None:
         await _ensure_log_artifact(
             db,
             workspace,
@@ -90,12 +99,12 @@ async def post_log_lines_route_v2(
     return response
 
 
-@router.post("/log/routes/batch-apply", response_model=AfgLogWorkspaceOut)
+@router.post("/log/routes/batch-apply", response_model=AfgRouteBatchApplyResponse)
 async def post_log_routes_batch_apply_v2(
     payload: AfgRouteBatchApplyRequest,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
-) -> AfgLogWorkspaceOut:
+) -> AfgRouteBatchApplyResponse:
     line_ids = [decision.line_id for decision in payload.line_decisions]
     if len(set(line_ids)) != len(line_ids):
         raise HTTPException(status_code=400, detail="Aynı satır birden fazla kez gönderilemez")
@@ -123,7 +132,7 @@ async def post_log_routes_batch_apply_v2(
         )
         for decision in payload.line_decisions
     ]
-    await apply_afg_route_requests(
+    response, failures = await apply_afg_route_requests_safe(
         db=db,
         route_requests=route_requests,
         actor_id=admin.id,
@@ -137,16 +146,24 @@ async def post_log_routes_batch_apply_v2(
         create_snapshot=True,
         force_sync=True,
     )
-    return workspace
+    return AfgRouteBatchApplyResponse(
+        workspace=workspace,
+        succeeded=len(response.processed_line_ids),
+        failed=len(failures),
+        failures=[
+            AfgRouteBatchPartialFailure(line_id=lid, error=err)
+            for lid, err in failures
+        ],
+    )
 
 
 @router.post("/log/melt-lots", response_model=AfgMeltLotOut)
 async def post_log_melt_lot_v2(
     payload: AfgMeltLotCreateRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> AfgMeltLotOut:
-    lot = await create_afg_melt_lot(db, payload=payload)
+    lot = await create_afg_melt_lot(db, payload=payload, actor=admin)
     workspace = await build_log_workspace(db, q=None, limit=200)
     await _ensure_log_artifact(
         db,
@@ -163,9 +180,9 @@ async def put_log_melt_lot_v2(
     lot_id: UUID,
     payload: AfgMeltLotUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> AfgMeltLotOut:
-    lot = await update_afg_melt_lot(db, lot_id=lot_id, payload=payload)
+    lot = await update_afg_melt_lot(db, lot_id=lot_id, payload=payload, actor=admin)
     workspace = await build_log_workspace(db, q=None, limit=200)
     await _ensure_log_artifact(
         db,
@@ -175,6 +192,89 @@ async def put_log_melt_lot_v2(
         force_sync=True,
     )
     return lot
+
+
+@router.post("/log/melt-lots/{lot_id}/finalize", response_model=AfgMeltLotOut)
+async def post_log_melt_lot_finalize_v2(
+    lot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> AfgMeltLotOut:
+    lot = await finalize_afg_melt_lot(db, lot_id=lot_id, actor=admin, reverse=False)
+    workspace = await build_log_workspace(db, q=None, limit=200)
+    await _ensure_log_artifact(
+        db,
+        workspace,
+        year=_default_artifact_year(None),
+        create_snapshot=True,
+        force_sync=True,
+    )
+    return lot
+
+
+@router.post("/log/melt-lots/{lot_id}/reopen", response_model=AfgMeltLotOut)
+async def post_log_melt_lot_reopen_v2(
+    lot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> AfgMeltLotOut:
+    return await finalize_afg_melt_lot(db, lot_id=lot_id, actor=admin, reverse=True)
+
+
+@router.delete("/log/melt-lots/{lot_id}", status_code=204, response_class=Response)
+async def delete_log_melt_lot_v2(
+    lot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> Response:
+    await delete_afg_melt_lot(db, lot_id=lot_id, actor=admin)
+    return Response(status_code=204)
+
+
+@router.get("/log/melt-lots/{lot_id}/history", response_model=list[AfgMeltLotHistoryOut])
+async def get_log_melt_lot_history_v2(
+    lot_id: UUID,
+    limit: int = Query(default=50, ge=1, le=300),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[AfgMeltLotHistoryOut]:
+    return await list_afg_melt_lot_history(db, lot_id=lot_id, limit=limit)
+
+
+@router.get("/log/melt-lots/{lot_id}/lines", response_model=list[AfgMeltLotLineOut])
+async def get_log_melt_lot_lines_v2(
+    lot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[AfgMeltLotLineOut]:
+    return await list_afg_melt_lot_lines(db, lot_id=lot_id)
+
+
+@router.get("/log/melt-lots/{lot_id}/pdf")
+async def get_log_melt_lot_pdf_v2(
+    lot_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> Response:
+    """Eritme lot kartı PDF — vergi muhasebesi için."""
+    from app.api.afg import _melt_lot_out
+    from app.models.afg_melt_lot import AfgMeltLot
+    from app.services.lot_card_pdf import build_lot_card_pdf
+
+    lot = await db.get(AfgMeltLot, lot_id)
+    if lot is None:
+        raise HTTPException(status_code=404, detail="Eritme lotu bulunamadı")
+    lot_out = _melt_lot_out(lot)
+    lines = await list_afg_melt_lot_lines(db, lot_id=lot_id)
+    pdf_bytes = build_lot_card_pdf(lot_out, lines)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="lot-{lot_id}.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/log/workbook")

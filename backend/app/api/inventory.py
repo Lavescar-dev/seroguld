@@ -204,9 +204,24 @@ async def put_inventory_market_prices(
 @router.get("/workspace", response_model=InventoryWorkspaceOut)
 async def get_inventory_workspace(
     q: str | None = Query(default=None),
+    category: str | None = Query(default=None, pattern=r"^(kulce|sikke|taki|gumus|platin_pd)$"),
+    subcategory: str | None = Query(default=None, max_length=30),
+    location: str | None = Query(default=None, max_length=100),
+    needs_cleaning: bool | None = Query(default=None),
+    gdpr_locked: bool | None = Query(default=None),
+    date_from: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    weight_min: Decimal | None = Query(default=None, ge=0),
+    weight_max: Decimal | None = Query(default=None, ge=0),
+    price_min: Decimal | None = Query(default=None, ge=0),
+    price_max: Decimal | None = Query(default=None, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: object = Depends(require_admin),
 ) -> InventoryWorkspaceOut:
+    from sqlalchemy import and_
+
     prices = _get_market_prices()
     stmt = (
         select(Product)
@@ -222,8 +237,34 @@ async def get_inventory_workspace(
                 Product.reference_number.ilike(pattern),
                 Product.display_name.ilike(pattern),
                 Product.producer.ilike(pattern),
+                Product.notes.ilike(pattern),
+                Product.storage_location.ilike(pattern),
             )
         )
+    if category:
+        stmt = stmt.where(Product.inventory_category == category)
+    if subcategory:
+        stmt = stmt.where(Product.inventory_subcategory == subcategory)
+    if location:
+        stmt = stmt.where(Product.storage_location.ilike(f"%{location.strip()}%"))
+    if needs_cleaning is not None:
+        stmt = stmt.where(Product.needs_cleaning == needs_cleaning)
+    if gdpr_locked is not None:
+        stmt = stmt.where(Product.is_gdpr_locked == gdpr_locked)
+    if date_from:
+        stmt = stmt.where(Product.purchase_date >= f"{date_from}T00:00:00")
+    if date_to:
+        stmt = stmt.where(Product.purchase_date <= f"{date_to}T23:59:59")
+    if weight_min is not None:
+        stmt = stmt.where(Product.weight_grams >= weight_min)
+    if weight_max is not None:
+        stmt = stmt.where(Product.weight_grams <= weight_max)
+    if price_min is not None:
+        stmt = stmt.where(Product.purchase_price_dkk >= price_min)
+    if price_max is not None:
+        stmt = stmt.where(Product.purchase_price_dkk <= price_max)
+
+    stmt = stmt.limit(limit).offset(offset)
     products = list((await db.scalars(stmt)).unique().all())
     rows = [_inventory_row(item, prices) for item in products]
     return InventoryWorkspaceOut(

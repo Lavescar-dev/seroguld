@@ -108,6 +108,8 @@ class UnicontaConfigOut(AppBaseModel):
     configured: bool
     lastRefreshedAt: str | None = None
     message: str | None = None
+    sendEmailOnFinalize: bool = False
+    sendXmlOnFinalize: bool = False
 
 
 class UnicontaConnectIn(AppBaseModel):
@@ -117,6 +119,8 @@ class UnicontaConnectIn(AppBaseModel):
     env: str
     apiUrl: str
     apiKey: str
+    sendEmailOnFinalize: bool = False
+    sendXmlOnFinalize: bool = False
 
 
 class UnicontaConnectOut(AppBaseModel):
@@ -124,6 +128,49 @@ class UnicontaConnectOut(AppBaseModel):
     configured: bool
     message: str
     config: UnicontaConfigOut
+
+
+class UnicontaSyncSummaryOut(AppBaseModel):
+    """U7 — Son N saatte sync istatistikleri."""
+
+    period_hours: int
+    total: int
+    synced: int
+    failed: int
+    skipped: int
+    pending: int
+    by_error_category: dict[str, int] = {}
+    last_synced_at: str | None = None
+    last_failure_at: str | None = None
+
+
+class UnicontaFailedSyncRowOut(AppBaseModel):
+    sequence_no: int
+    document_number: str | None = None
+    issued_at: str | None = None
+    customer_name: str | None = None
+    gross_amount_dkk: str | None = None
+    uniconta_sync_status: str | None = None
+    uniconta_sync_error: str | None = None
+    uniconta_synced_at: str | None = None
+
+
+class UnicontaBulkRetryOut(AppBaseModel):
+    attempted: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    skipped_locked: int = 0
+    results: list[dict] = []
+
+
+class UnicontaHealthOut(AppBaseModel):
+    configured: bool
+    has_token: bool
+    access_expires_at: str | None = None
+    refresh_expires_at: str | None = None
+    last_call_at: str | None = None
+    last_call_ok: bool | None = None
+    minutes_to_expiry: int | None = None
 
 
 class UnicontaInvoiceCustomerOut(AppBaseModel):

@@ -93,6 +93,9 @@ class ProductUpdate(AppBaseModel):
     operation_classification: str | None = Field(default=None, max_length=40)
     ai_description: str | None = None
     ai_description_approved: bool | None = None
+    # Optimistic concurrency — caller'ın gördüğü son updated_at; sunucudaki ile
+    # eşleşmezse 409 döner. None ise check yapılmaz (geriye uyumlu).
+    expected_updated_at: datetime | None = None
 
 
 class ProductStatusUpdate(AppBaseModel):
@@ -100,6 +103,7 @@ class ProductStatusUpdate(AppBaseModel):
     sale_price_dkk: Decimal | None = Field(default=None, gt=0)
     buyer_customer_id: UUID | None = None
     melt_reason: str | None = Field(default=None, max_length=200)
+    expected_updated_at: datetime | None = None
 
 
 class ProductAIDescriptionUpdate(AppBaseModel):
@@ -180,6 +184,34 @@ class ProductOut(AppBaseModel):
     import_source_type: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ProductHistoryEntryOut(AppBaseModel):
+    id: UUID
+    product_id: UUID
+    action: str
+    old_value: dict | None = None
+    new_value: dict | None = None
+    performed_by: UUID | None = None
+    performed_by_email: str | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+class ProductSourceAfgOut(AppBaseModel):
+    pos_session_id: UUID
+    sequence_no: int | None = None
+    document_number: str | None = None
+    issued_at: datetime | None = None
+    customer_id: UUID | None = None
+    customer_name: str | None = None
+    # Detaylı AFG iz (M5): hangi satırdan + ağırlık + tutar
+    line_no: int | None = None
+    line_weight_grams: str | None = None
+    line_pure_gold_grams: str | None = None
+    line_total_dkk: str | None = None
+    rate_dkk: str | None = None
+    transaction_id: UUID | None = None
 
 
 class ProductListResponse(PaginatedResponse[ProductOut]):

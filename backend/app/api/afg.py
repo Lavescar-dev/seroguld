@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_admin
 from app.database import get_db
 from app.models.afg_melt_lot import AfgMeltLot
+from app.models.afg_melt_lot_history import AfgMeltLotHistory
 from app.models.enums import MetalTypeEnum, PosDocumentTypeEnum, ProductStatusEnum, ProductTypeEnum
 from app.models.pos_document import PosDocument
 from app.models.pos_session import PosSession
@@ -348,7 +349,7 @@ def _melt_queue(lines: list[AfgWorkspaceLineOut]) -> AfgMeltQueueOut:
     )
 
 
-def _melt_lot_out(lot: AfgMeltLot) -> AfgMeltLotOut:
+def _melt_lot_out(lot: AfgMeltLot, line_count: int = 0) -> AfgMeltLotOut:
     cost_total = quantize_2(to_decimal(lot.insurance_dkk) + to_decimal(lot.shipping_dkk) + to_decimal(lot.refining_dkk))
     estimated_sale_value = None
     if lot.quote_eur is not None:
@@ -389,12 +390,40 @@ def _melt_lot_out(lot: AfgMeltLot) -> AfgMeltLotOut:
         net_after_costs_dkk=net_after_costs,
         bridge_difference_dkk=bridge_difference,
         advance_per_gram_dkk=advance_per_gram,
+        status=getattr(lot, "status", "draft") or "draft",
+        finalized_at=getattr(lot, "finalized_at", None),
+        finalized_by_user_id=getattr(lot, "finalized_by_user_id", None),
+        line_count=line_count,
         created_at=lot.created_at,
         updated_at=lot.updated_at,
     )
 
 
+async def _log_lot_history(
+    db: AsyncSession,
+    *,
+    lot_id: UUID,
+    action: str,
+    actor: User | None = None,
+    old_value: dict | None = None,
+    new_value: dict | None = None,
+    notes: str | None = None,
+) -> None:
+    entry = AfgMeltLotHistory(
+        lot_id=lot_id,
+        action=action,
+        old_value=old_value,
+        new_value=new_value,
+        performed_by=(actor.id if actor else None),
+        performed_by_email=(actor.email if actor else None),
+        notes=notes,
+    )
+    db.add(entry)
+
+
 async def _load_melt_lots(db: AsyncSession, metal_bucket: str) -> list[AfgMeltLotOut]:
+    from sqlalchemy import func as sa_func
+
     lots = (
         await db.execute(
             select(AfgMeltLot)
@@ -402,7 +431,15 @@ async def _load_melt_lots(db: AsyncSession, metal_bucket: str) -> list[AfgMeltLo
             .order_by(AfgMeltLot.sent_date.desc(), AfgMeltLot.created_at.desc())
         )
     ).scalars().all()
-    return [_melt_lot_out(lot) for lot in lots]
+    if not lots:
+        return []
+    counts_stmt = (
+        select(TransactionLine.melt_lot_id, sa_func.count(TransactionLine.id))
+        .where(TransactionLine.melt_lot_id.in_([lot.id for lot in lots]))
+        .group_by(TransactionLine.melt_lot_id)
+    )
+    counts: dict[UUID, int] = {row[0]: int(row[1]) for row in (await db.execute(counts_stmt)).all() if row[0]}
+    return [_melt_lot_out(lot, line_count=counts.get(lot.id, 0)) for lot in lots]
 
 
 def _bucket_documents(documents: list[AfgWorkspaceDocumentOut], metal_bucket: str) -> list[AfgWorkspaceDocumentOut]:
@@ -460,10 +497,14 @@ async def build_log_workspace(
     db: AsyncSession,
     *,
     q: str | None = None,
+    year: int | None = None,
     limit: int = 200,
 ) -> AfgLogWorkspaceOut:
     bundles = await _fetch_document_bundle(db, q=q, limit=limit)
     documents = [_workspace_document(document, session, transaction, lines) for document, session, transaction, lines in bundles]
+
+    if year is not None:
+        documents = [d for d in documents if d.issued_at and d.issued_at.year == year]
 
     gold_documents = _bucket_documents(documents, "gold")
     silver_documents = _bucket_documents(documents, "silver")
@@ -502,6 +543,7 @@ async def create_afg_melt_lot(
     db: AsyncSession,
     *,
     payload: AfgMeltLotCreateRequest,
+    actor: User | None = None,
 ) -> AfgMeltLotOut:
     workspace = await build_log_workspace(db, limit=400)
     bucket = workspace.gold if payload.metal_bucket == "gold" else workspace.silver
@@ -519,9 +561,64 @@ async def create_afg_melt_lot(
         notes=(payload.notes.strip() if payload.notes else None),
     )
     db.add(lot)
+    await db.flush()
+
+    # Eritme kuyruğundaki bağlanmamış transaction line'ları bu lot'a otomatik bağla
+    attach_stmt = (
+        select(TransactionLine.id)
+        .join(Product, Product.id == TransactionLine.product_id)
+        .where(
+            Product.status == ProductStatusEnum.MELTED,
+            TransactionLine.melt_lot_id.is_(None),
+            (Product.metal_type == MetalTypeEnum.SILVER)
+            if payload.metal_bucket == "silver"
+            else (Product.metal_type != MetalTypeEnum.SILVER),
+        )
+    )
+    line_ids = list((await db.execute(attach_stmt)).scalars().all())
+    if line_ids:
+        await db.execute(
+            TransactionLine.__table__.update()
+            .where(TransactionLine.id.in_(line_ids))
+            .values(melt_lot_id=lot.id)
+        )
+
+    await _log_lot_history(
+        db,
+        lot_id=lot.id,
+        action="created",
+        actor=actor,
+        new_value={
+            "metal_bucket": lot.metal_bucket,
+            "sent_date": lot.sent_date.isoformat(),
+            "before_pure_gold_grams": str(lot.before_pure_gold_grams),
+            "attached_line_count": len(line_ids),
+        },
+    )
     await db.commit()
     await db.refresh(lot)
-    return _melt_lot_out(lot)
+    return _melt_lot_out(lot, line_count=len(line_ids))
+
+
+def _serialize_lot_snapshot(lot: AfgMeltLot) -> dict:
+    return {
+        "sent_date": lot.sent_date.isoformat() if lot.sent_date else None,
+        "purchased_from_date": (
+            lot.purchased_from_date.isoformat() if lot.purchased_from_date else None
+        ),
+        "after_pure_gold_grams": str(lot.after_pure_gold_grams or 0),
+        "insurance_dkk": str(lot.insurance_dkk or 0),
+        "shipping_dkk": str(lot.shipping_dkk or 0),
+        "refining_dkk": str(lot.refining_dkk or 0),
+        "sale_date": lot.sale_date.isoformat() if lot.sale_date else None,
+        "quote_eur": (str(lot.quote_eur) if lot.quote_eur is not None else None),
+        "exchange_rate_dkk": str(lot.exchange_rate_dkk or 0),
+        "payout_total_dkk": (
+            str(lot.payout_total_dkk) if lot.payout_total_dkk is not None else None
+        ),
+        "notes": lot.notes,
+        "status": getattr(lot, "status", "draft"),
+    }
 
 
 async def update_afg_melt_lot(
@@ -529,19 +626,235 @@ async def update_afg_melt_lot(
     *,
     lot_id: UUID,
     payload: AfgMeltLotUpdateRequest,
+    actor: User | None = None,
 ) -> AfgMeltLotOut:
     lot = await db.get(AfgMeltLot, lot_id)
     if lot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eritme lotu bulunamadı")
 
+    if getattr(lot, "status", "draft") == "finalized":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Finalize edilmiş lot düzenlenemez. Önce close'u geri al.",
+        )
+
+    if payload.expected_updated_at is not None and lot.updated_at is not None:
+        expected = payload.expected_updated_at
+        current = lot.updated_at
+        try:
+            if expected.tzinfo is None:
+                expected = expected.replace(tzinfo=current.tzinfo)
+            diff = abs((current - expected).total_seconds())
+        except Exception:  # noqa: BLE001
+            diff = None
+        if diff is None or diff > 1.0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "stale_lot",
+                    "message": "Bu lot başka bir kullanıcı tarafından güncellenmiş.",
+                    "current_updated_at": current.isoformat(),
+                },
+            )
+
+    old_snapshot = _serialize_lot_snapshot(lot)
+
     for field_name, value in payload.model_dump(exclude_unset=True).items():
+        if field_name == "expected_updated_at":
+            continue
         if value is None and field_name in {"sent_date", "exchange_rate_dkk"}:
             continue
         setattr(lot, field_name, value)
 
+    await _log_lot_history(
+        db,
+        lot_id=lot.id,
+        action="updated",
+        actor=actor,
+        old_value=old_snapshot,
+        new_value=_serialize_lot_snapshot(lot),
+    )
     await db.commit()
     await db.refresh(lot)
-    return _melt_lot_out(lot)
+
+    from sqlalchemy import func as sa_func
+
+    line_count = int(
+        (
+            await db.execute(
+                select(sa_func.count(TransactionLine.id)).where(
+                    TransactionLine.melt_lot_id == lot.id
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    return _melt_lot_out(lot, line_count=line_count)
+
+
+async def finalize_afg_melt_lot(
+    db: AsyncSession,
+    *,
+    lot_id: UUID,
+    actor: User | None = None,
+    reverse: bool = False,
+) -> AfgMeltLotOut:
+    lot = await db.get(AfgMeltLot, lot_id)
+    if lot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eritme lotu bulunamadı")
+
+    current_status = getattr(lot, "status", "draft") or "draft"
+    if reverse:
+        if current_status != "finalized":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lot zaten draft. Geri alma uygulanmadı.",
+            )
+        lot.status = "draft"
+        lot.finalized_at = None
+        lot.finalized_by_user_id = None
+        action = "reopened"
+    else:
+        if current_status == "finalized":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lot zaten finalize edilmiş.",
+            )
+        # Sale_date + payout_total + quote alanları dolu olmalı
+        if lot.payout_total_dkk is None or lot.sale_date is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Finalize için payout_total_dkk ve sale_date zorunlu.",
+            )
+        lot.status = "finalized"
+        lot.finalized_at = utc_now()
+        lot.finalized_by_user_id = actor.id if actor else None
+        action = "finalized"
+
+    await _log_lot_history(
+        db,
+        lot_id=lot.id,
+        action=action,
+        actor=actor,
+        new_value={"status": lot.status},
+    )
+    await db.commit()
+    await db.refresh(lot)
+
+    from sqlalchemy import func as sa_func
+
+    line_count = int(
+        (
+            await db.execute(
+                select(sa_func.count(TransactionLine.id)).where(
+                    TransactionLine.melt_lot_id == lot.id
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    return _melt_lot_out(lot, line_count=line_count)
+
+
+async def delete_afg_melt_lot(
+    db: AsyncSession,
+    *,
+    lot_id: UUID,
+    actor: User | None = None,
+) -> None:
+    lot = await db.get(AfgMeltLot, lot_id)
+    if lot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eritme lotu bulunamadı")
+    if getattr(lot, "status", "draft") == "finalized":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Finalize edilmiş lot silinemez. Önce reopen.",
+        )
+
+    # Bağlı satırlarda lot referansını temizle
+    await db.execute(
+        TransactionLine.__table__.update()
+        .where(TransactionLine.melt_lot_id == lot.id)
+        .values(melt_lot_id=None)
+    )
+
+    # History log (silmeden önce, FK temiz)
+    await _log_lot_history(
+        db,
+        lot_id=lot.id,
+        action="deleted",
+        actor=actor,
+        old_value=_serialize_lot_snapshot(lot),
+    )
+    await db.flush()
+
+    await db.delete(lot)
+    await db.commit()
+
+
+async def list_afg_melt_lot_history(
+    db: AsyncSession,
+    *,
+    lot_id: UUID,
+    limit: int = 50,
+):
+    from app.schemas.afg import AfgMeltLotHistoryOut
+
+    stmt = (
+        select(AfgMeltLotHistory)
+        .where(AfgMeltLotHistory.lot_id == lot_id)
+        .order_by(AfgMeltLotHistory.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        AfgMeltLotHistoryOut(
+            id=entry.id,
+            lot_id=entry.lot_id,
+            action=entry.action,
+            old_value=entry.old_value if isinstance(entry.old_value, dict) else None,
+            new_value=entry.new_value if isinstance(entry.new_value, dict) else None,
+            performed_by=entry.performed_by,
+            performed_by_email=entry.performed_by_email,
+            notes=entry.notes,
+            created_at=entry.created_at,
+        )
+        for entry in rows
+    ]
+
+
+async def list_afg_melt_lot_lines(
+    db: AsyncSession,
+    *,
+    lot_id: UUID,
+):
+    from app.schemas.afg import AfgMeltLotLineOut
+
+    stmt = (
+        select(TransactionLine, Transaction, PosDocument, PosSession, User)
+        .join(Transaction, Transaction.id == TransactionLine.transaction_id)
+        .join(PosDocument, PosDocument.sequence_no == Transaction.pos_document_sequence_no)
+        .join(PosSession, PosSession.id == PosDocument.pos_session_id)
+        .outerjoin(User, User.id == PosSession.customer_id)
+        .where(TransactionLine.melt_lot_id == lot_id)
+        .order_by(PosDocument.sequence_no.asc(), TransactionLine.line_no.asc())
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        AfgMeltLotLineOut(
+            line_id=line.id,
+            document_sequence_no=doc.sequence_no,
+            document_number=getattr(doc, "document_number", "") or "",
+            line_no=line.line_no,
+            weight_grams=line.weight_grams,
+            pure_gold_grams=line.pure_gold_grams,
+            line_total_dkk=line.line_total_dkk,
+            customer_name=getattr(customer, "name", None) if customer else None,
+            product_number=line.product_number,
+            reference_number=line.reference_number,
+        )
+        for line, _tx, doc, _sess, customer in rows
+    ]
 
 
 @router.get("/workspace", response_model=AfgWorkspaceOut)
@@ -603,6 +916,78 @@ async def _get_route_product_or_404(db: AsyncSession, product_id: UUID) -> Produ
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ürün bulunamadı")
     return product
+
+
+async def apply_afg_route_requests_safe(
+    *,
+    db: AsyncSession,
+    route_requests: list[AfgRouteRequest],
+    actor_id,
+) -> tuple[AfgRouteResponse, list[tuple[UUID, str]]]:
+    """`apply_afg_route_requests`'in partial-failure raporlayan varyantı.
+
+    Tek bir savepoint açar; her satır hatasında savepoint'e rollback edip
+    failure listesine ekler. Başarılı satırlar persist olur. AtomicAll-or-Nothing
+    isteyen çağıranlar `apply_afg_route_requests` kullanmaya devam etmeli.
+    """
+    failures: list[tuple[UUID, str]] = []
+
+    if not route_requests:
+        return AfgRouteResponse(), failures
+
+    successes: list[AfgRouteRequest] = []
+    for req in route_requests:
+        try:
+            async with db.begin_nested():
+                resp = await apply_afg_route_requests(
+                    db=db,
+                    route_requests=[req],
+                    actor_id=actor_id,
+                )
+                successes.extend(req for _ in resp.processed_line_ids)
+        except HTTPException as exc:  # noqa: PERF203
+            for line_id in req.line_ids:
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                failures.append((line_id, detail))
+        except Exception as exc:  # noqa: BLE001
+            for line_id in req.line_ids:
+                failures.append((line_id, str(exc)))
+
+    # build aggregate AfgRouteResponse
+    processed: list[UUID] = []
+    product_ids: list[UUID] = []
+    statuses: dict[str, int] = {}
+    if successes:
+        # Tüm başarılı satırlar zaten persist; sayım için son state'i sorgula
+        from sqlalchemy import func as sa_func
+
+        all_ids: list[UUID] = []
+        for req in successes:
+            all_ids.extend(req.line_ids)
+        processed = list({lid for lid in all_ids})
+
+        rows = (
+            await db.execute(
+                select(TransactionLine.product_id, Product.status)
+                .join(Product, Product.id == TransactionLine.product_id)
+                .where(TransactionLine.id.in_(processed))
+            )
+        ).all()
+        for pid, status_enum in rows:
+            if pid is not None:
+                product_ids.append(pid)
+            key = status_enum.value if hasattr(status_enum, "value") else str(status_enum)
+            statuses[key] = statuses.get(key, 0) + 1
+        _ = sa_func  # unused
+
+    return (
+        AfgRouteResponse(
+            processed_line_ids=processed,
+            product_ids=list({pid for pid in product_ids}),
+            statuses=statuses,
+        ),
+        failures,
+    )
 
 
 async def apply_afg_route_requests(
@@ -747,6 +1132,26 @@ async def apply_afg_route_requests(
             line.product_id = linked_product.id
             line.product_number = linked_product.product_number
             line.reference_number = linked_product.reference_number
+
+            # M3 — Eğer satır eritmeye gidiyorsa ve aynı metal bucket için açık bir
+            # draft lot varsa otomatik bağla. Yoksa orphan kalır (sonraki create_afg_melt_lot
+            # bunu zaten yakalar).
+            if payload.destination == "melt":
+                metal_bucket = "silver" if linked_product.metal_type == MetalTypeEnum.SILVER else "gold"
+                draft_lot_id = (
+                    await db.execute(
+                        select(AfgMeltLot.id)
+                        .where(
+                            AfgMeltLot.metal_bucket == metal_bucket,
+                            AfgMeltLot.status == "draft",
+                        )
+                        .order_by(AfgMeltLot.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if draft_lot_id is not None and line.melt_lot_id is None:
+                    line.melt_lot_id = draft_lot_id
+
             await db.flush()
 
             processed_line_ids.append(line.id)

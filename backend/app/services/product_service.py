@@ -458,6 +458,27 @@ async def update_product(
     *,
     commit: bool = True,
 ) -> ProductOut:
+    if payload.expected_updated_at is not None and product.updated_at is not None:
+        # Tolerans yok — milisaniye farkı bile başka bir kullanıcı güncellemesidir.
+        expected = payload.expected_updated_at
+        current = product.updated_at
+        # tz-aware karşılaştırma için her ikisini UTC'ye düşür
+        try:
+            if expected.tzinfo is None:
+                expected = expected.replace(tzinfo=current.tzinfo)
+            diff = abs((current - expected).total_seconds())
+        except Exception:  # noqa: BLE001
+            diff = None
+        if diff is None or diff > 1.0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "stale_product",
+                    "message": "Bu ürün başka bir kullanıcı tarafından güncellenmiş. Lütfen sayfayı yenileyin.",
+                    "current_updated_at": current.isoformat(),
+                },
+            )
+
     old_snapshot = {
         "reference_number": product.reference_number,
         "display_name": product.display_name,
@@ -599,6 +620,25 @@ async def update_status(
     *,
     commit: bool = True,
 ) -> ProductOut:
+    if payload.expected_updated_at is not None and product.updated_at is not None:
+        expected = payload.expected_updated_at
+        current = product.updated_at
+        try:
+            if expected.tzinfo is None:
+                expected = expected.replace(tzinfo=current.tzinfo)
+            diff = abs((current - expected).total_seconds())
+        except Exception:  # noqa: BLE001
+            diff = None
+        if diff is None or diff > 1.0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "stale_product",
+                    "message": "Bu ürünün durumu başka bir kullanıcı tarafından güncellenmiş.",
+                    "current_updated_at": current.isoformat(),
+                },
+            )
+
     await refresh_gdpr_state(session, product)
 
     current_status = product.status
