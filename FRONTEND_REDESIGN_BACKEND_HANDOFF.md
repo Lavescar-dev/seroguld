@@ -1,6 +1,17 @@
 # Sero Guld CRM Frontend Redesign Handoff
 
-## Goal
+> ⚠️ **ARCHIVED (2026-03)** — Bu doküman Next.js → Vite/React Router geçişi sırasında backend kontratlarını dondurmak için yazılmıştır. Redesign **tamamlandı**; kanonik aktif frontend `frontend/src-v2/` altındadır.
+>
+> Güncel sistem bilgisi için:
+> - `docs/PROJECT_SYSTEM_GUIDE_TR.md` — Ana sistem dokümantasyonu
+> - `docs/HANDOVER.md` — Detaylı teknisyen devir kılavuzu
+> - `docs/PROJECT_HEALTH_AUDIT.md` — Proje sağlık denetimi
+>
+> Bu dosya tarihsel referans için saklanır; içeriği güncel duruma tamamen yansımayabilir.
+
+---
+
+## Goal (orijinal, 2026-03)
 
 We are redesigning the frontend from scratch in React against the existing backend.
 

@@ -1,134 +1,289 @@
 # Sero Guld Production Desktop Runbook
 
-Bu belge ilk prod-grade hedef olan `desktop-first` runtime icin operasyon adimlarini toplar.
+> **Son güncellenme:** 2026-05-18
+> **Hedef sürüm:** v0.2.0
+> **Migration head:** `0019_log_module_audit`
+
+Bu belge ilk prod-grade hedef olan **desktop-first** runtime için operasyon adımlarını toplar.
 
 Kapsam:
-
 - signed/release Tauri paketi
-- yerel backend + yerel veri klasorleri
-- guvenli `.env` bootstrap
+- yerel backend + yerel veri klasörleri
+- güvenli `.env` bootstrap
 - ilk admin bootstrap
-- readiness kontrolu
-- backup / verify / restore proseduru
+- readiness kontrolü
+- backup / verify / restore prosedürü
+- üretim öncesi güvenlik kontrol listesi (yeni)
 
-Bu belge `docker-compose` web stack'ini kanonik production hedef olarak kabul etmez.
+Bu belge `docker-compose` web stack'ini kanonik production hedef olarak kabul etmez. Web mod opsiyoneldir.
+
+---
 
 ## 1. Hedef Runtime
 
-Ilk production hedef:
+İlk production hedef:
+- **masaüstü uygulama:** Tauri 2 (release build)
+- **frontend:** build edilmiş Vite bundle (Tauri içinde embedded)
+- **backend:** aynı makinede çalışan FastAPI runtime (uvicorn `--workers 1`)
+- **veri:** yerel path'ler (`data/`)
+- **office runtime:** local/edge service olarak yönetilen `ONLYOFFICE` / `Collabora`
 
-- masaustu uygulama: Tauri
-- frontend: build edilmis Vite bundle
-- backend: ayni makinede calisan FastAPI runtime
-- veri: yerel path'ler (`data/`)
-- office runtime: local/edge service olarak yonetilen `ONLYOFFICE` / `Collabora`
+**Önemli:**
+- Production'da `uvicorn --workers 1` zorunlu (Uniconta singleton cache + OPMC orders cache + DebtorClient cache process-local).
+- SQLite veya PostgreSQL kullanılabilir; tek-makinede SQLite önerilir.
 
-## 2. Ilk Kurulum Sirasi
+---
 
-1. Guvenli production env hazirla:
+## 2. İlk Kurulum Sırası
 
+### 2.1 Güvenli production env hazırla
 ```bash
 make prod-bootstrap
 ```
 
-2. Veritabani migration uygula:
+Bu komut `.env`'i güvenli default'larla doldurur. **Manuel kontrol gereken alanlar:**
+- `JWT_ACCESS_SECRET` ve `JWT_REFRESH_SECRET` — en az 32 byte, rastgele
+- `FIELD_ENCRYPTION_KEY` — base64 32 byte, rastgele
+- `ONLYOFFICE_JWT_SECRET` — değiştir
+- `INITIAL_ADMIN_EMAIL` ve `INITIAL_ADMIN_PASSWORD` — güçlü parola
+- `INITIAL_ADMIN_AUTO_SEED=false` (prod'da)
+- `DATABASE_AUTO_CREATE=false` (prod'da)
+- Entegrasyon credential'ları (WC, Uniconta, OpenAI, WP) gerçek değerler
 
+### 2.2 Veritabanı migration uygula
 ```bash
 cd backend
 .venv/bin/python -m alembic upgrade head
 ```
+Beklenen head: `0019_log_module_audit`.
 
-3. Ilk admini olustur/guncelle:
-
+### 2.3 İlk admini oluştur/güncelle
 ```bash
 make bootstrap-admin
 ```
 
-4. Runtime readiness kontrolu:
-
+### 2.4 Runtime readiness kontrolü
 ```bash
 make readiness-smoke
 ```
 
-## 3. Production Guardrail'ler
+---
 
-`ENV=production` altinda backend boot etmeden once su kurallari validate eder:
+## 3. Production Guardrail'leri
 
-- `JWT_ACCESS_SECRET` guvenli olmali
-- `JWT_REFRESH_SECRET` guvenli olmali
-- `FIELD_ENCRYPTION_KEY` guvenli olmali
-- `ONLYOFFICE_JWT_SECRET` guvenli olmali
-- `INITIAL_ADMIN_PASSWORD` guvenli olmali
-- `DATABASE_AUTO_CREATE=false`
-- `INITIAL_ADMIN_AUTO_SEED=false`
+`ENV=production` altında backend boot etmeden önce şu kuralları validate eder:
 
-Bu kosullar saglanmazsa backend bilincli olarak boot etmez.
+| Kural | Açıklama |
+|---|---|
+| `JWT_ACCESS_SECRET` | `change-me-*` değil ve uzunluk ≥32 |
+| `JWT_REFRESH_SECRET` | Aynı |
+| `FIELD_ENCRYPTION_KEY` | base64 32 byte |
+| `ONLYOFFICE_JWT_SECRET` | Default değil |
+| `INITIAL_ADMIN_PASSWORD` | Güvenli (en az 8 char + karışık) |
+| `DATABASE_AUTO_CREATE` | `false` olmalı |
+| `INITIAL_ADMIN_AUTO_SEED` | `false` olmalı |
 
-## 4. Readiness Yuzeyleri
+Bu koşullar sağlanmazsa backend bilinçli olarak boot etmez.
 
-Public readiness:
+---
 
-```text
+## 4. Readiness Yüzeyleri
+
+### 4.1 Public readiness
+```
 GET /readyz
 ```
 
-Admin readiness:
-
-```text
+### 4.2 Admin readiness
+```
 GET /api/v2/runtime/readiness
 ```
 
-Kontrol edilen ana alanlar:
-
-- database baglantisi
-- media/documents/backup/restore-drill write testi
+### 4.3 Kontrol edilen alanlar
+- database bağlantısı
+- media / documents / backup / restore-drill write testi
 - backup freshness
 - restore-drill freshness
 - offsite sync freshness
 - office runtime availability
+- migration head doğru mu
+
+---
 
 ## 5. Backup ve Restore
 
-Lokal backup:
-
+### 5.1 Lokal backup
 ```bash
-make backup
-make backup-verify
-make backup-restore-drill
+make backup                  # GFS rotasyonlu (hourly+daily+weekly)
+make backup-verify           # son backup integrity check
+make backup-restore-drill    # restore tatbikatı
 ```
 
-Kontrollu restore:
+### 5.2 Offsite mirror
+```bash
+make backup-rclone-setup     # rclone binary indir + config
+make backup-offsite          # rclone sync hedef'e
+```
 
+### 5.3 Cron kurulumu
+```bash
+make backup-cron-install     # crontab'a 4 cron job
+make backup-cron-uninstall   # kaldır
+```
+
+### 5.4 Kontrollü restore
 ```bash
 make restore-from-backup
-```
-
-Opsiyonel olarak belirli bir arsiv ve hedef dizin verilebilir:
-
-```bash
+# veya:
 bash scripts/restore-from-backup.sh /path/to/archive.tar.gz /safe/restore/dir
 ```
 
+### 5.5 ⚠️ Üretim öncesi eksik
+- **Backup encryption yok** — yedek dosyalar plaintext, CPR/kimlik bilgisi açık.
+  - Çözüm: `gpg --symmetric` veya `age` ile yedek tar'ları şifrele.
+  - Detay: `docs/PROJECT_HEALTH_AUDIT.md` §2.1.A #9
+
+---
+
 ## 6. Release Build
 
-Release gate:
-
-- backend pytest green
-- frontend typecheck green
-- frontend build green
+### 6.1 Release gate (her biri yeşil olmalı)
+- backend pytest green: `make backend-test`
+- frontend typecheck green: `cd frontend && npm run typecheck`
+- frontend vitest green: `cd frontend && npm test`
+- frontend build green: `cd frontend && npm run build`
 - Tauri release build green
 
-Komut:
-
+### 6.2 Tek komut
 ```bash
 make release-desktop
 ```
 
-Bu komut sirasiyla backend test, frontend typecheck, frontend build ve Tauri release build calistirir.
+Bu komut sırasıyla backend test, frontend typecheck, frontend build ve Tauri release build çalıştırır.
 
-## 7. Operasyon Notlari
+### 6.3 Çıktı yerleri
+- Linux: `desktop/src-tauri/target/release/bundle/{deb,appimage}/`
+- Windows: `desktop/src-tauri/target/release/bundle/{msi,nsis}/`
+- macOS: `desktop/src-tauri/target/release/bundle/{macos,dmg}/`
 
-- Default admin seed production'da otomatik calismaz.
-- `Base.metadata.create_all()` production'da otomatik calismaz.
-- Web/compose stack secondary kabul edilir; production desktop icin ana teslim yolu degildir.
-- Backup health veya restore drill stale ise runtime teknik olarak acilsa bile operasyonel olarak `ready` sayilmaz.
+### 6.4 ⚠️ Eksik: Code signing
+- Windows: SignTool ile imzala (yoksa "unknown publisher" uyarısı)
+- macOS: codesign + notarize (yoksa Gatekeeper engeller)
+- Linux: AppImage detached signature (opsiyonel)
+
+> Detay: `docs/PROJECT_HEALTH_AUDIT.md` §2.1 — Tauri prod hardening
+
+---
+
+## 7. Operasyon Notları
+
+### 7.1 Critical guardrails
+- Default admin seed production'da otomatik çalışmaz (`INITIAL_ADMIN_AUTO_SEED=false`)
+- `Base.metadata.create_all()` production'da otomatik çalışmaz (`DATABASE_AUTO_CREATE=false`)
+- Web/compose stack secondary kabul edilir; production desktop için ana teslim yolu değildir
+- Backup health veya restore drill stale ise runtime teknik olarak açılsa bile operasyonel olarak `ready` sayılmaz
+
+### 7.2 Multi-worker uyarısı
+Uniconta + OPMC + DebtorClient cache'ler process-singleton. Production'da `uvicorn --workers 1` zorunlu. Eğer çoklu worker gerekiyorsa:
+- Redis backed cache implementasyonu eklenmelidir
+- Şu an `.env` yorum bloğunda not edilmiştir
+
+### 7.3 Uniconta toggle'ları
+`POST /api/v2/uniconta/connect` ile UI'dan yazılır:
+- `UNICONTA_SEND_EMAIL_ON_FINALIZE` — finalize sonrası müşteriye email
+- `UNICONTA_SEND_XML_ON_FINALIZE` — OIOUBL e-fatura XML gönderim
+
+### 7.4 Office runtime
+OnlyOffice + Collabora docker compose ile başlatılır:
+```bash
+docker compose -f docker-compose.yml up -d onlyoffice collabora
+```
+Health: `GET /api/v2/office-runtime/status?kind=alis-workspace`
+
+---
+
+## 8. Üretim Öncesi Güvenlik Checklist (KRİTİK)
+
+Production'a çıkmadan önce şu liste 100% tamamlanmalı:
+
+> Detay: `docs/PROJECT_HEALTH_AUDIT.md` §2.1.A
+
+- [ ] **`.env` credential'ları repo'dan temizlendi** (git history rewrite)
+- [ ] OpenAI API key rotate edildi
+- [ ] WC consumer key/secret rotate edildi
+- [ ] WP application password rotate edildi
+- [ ] Uniconta password rotate edildi
+- [ ] `JWT_ACCESS_SECRET` prod'da değiştirildi (≥32 byte)
+- [ ] `JWT_REFRESH_SECRET` prod'da değiştirildi (≥32 byte)
+- [ ] `FIELD_ENCRYPTION_KEY` prod'da değiştirildi
+- [ ] `ONLYOFFICE_JWT_SECRET` prod'da değiştirildi
+- [ ] `INITIAL_ADMIN_PASSWORD` güçlendirildi
+- [ ] `INITIAL_ADMIN_AUTO_SEED=false`
+- [ ] `DATABASE_AUTO_CREATE=false`
+- [ ] Nginx HTTPS + HSTS kuruldu (web stack için)
+- [ ] CSP daraltıldı (Tauri prod build için `unsafe-eval` çıkartıldı)
+- [ ] Backup encryption (gpg/age) eklendi
+- [ ] Backup cron aktif (`make backup-cron-install`)
+- [ ] GDPR runner systemd timer aktif (`make gdpr-systemd-install`)
+- [ ] Rate limit middleware (FastAPI slowapi) eklendi
+- [ ] CSRF protection (fastapi-csrf) eklendi
+- [ ] Sentry / error tracking entegre edildi
+- [ ] `/readyz` ve `/api/v2/runtime/readiness` yeşil
+- [ ] Restore drill başarılı (`make backup-restore-drill`)
+
+---
+
+## 9. Operasyonel Bakım
+
+### 9.1 Günlük (operatör)
+```bash
+make desktop-dev          # Sabah başlat
+# ... çalışma ...
+make desktop-stop         # Akşam kapat
+```
+
+### 9.2 Haftalık (admin)
+```bash
+make backup-verify
+make backup-offsite
+make gdpr-scan
+make readiness-smoke
+```
+
+### 9.3 Aylık (admin)
+```bash
+make backup-restore-drill
+# .env credential rotation (3 ay'da bir)
+# DB index audit (slow query log)
+```
+
+### 9.4 Acil durum: Backend çökmüş
+```bash
+make desktop-restart                   # Full restart
+journalctl --user -u seroguld-backend -n 100   # systemd ise log
+tail -f .run/desktop-dev.log                    # dev modunda
+sqlite3 data/desktop.db "PRAGMA integrity_check;"
+cd backend && .venv/bin/alembic current
+```
+
+### 9.5 Veri kurtarma
+```bash
+make restore-from-backup
+# Manuel SQLite:
+cp data/backups/YYYY-MM-DD/desktop.db data/desktop.db.recovery
+sqlite3 data/desktop.db.recovery "PRAGMA integrity_check;"
+mv data/desktop.db data/desktop.db.broken
+mv data/desktop.db.recovery data/desktop.db
+make desktop-restart
+```
+
+---
+
+## 10. İlgili dökümanlar
+
+- `docs/PROJECT_SYSTEM_GUIDE_TR.md` — Ana sistem dokümantasyonu
+- `docs/HANDOVER.md` — Detaylı teknisyen devir kılavuzu
+- `docs/PROJECT_HEALTH_AUDIT.md` — Üretim öncesi açıkların tam listesi
+- `docs/DEV_RUNTIME_PROTOCOL.md` — Dev runtime protokolü
+- `docs/DESKTOP_SMOKE_PREREQUISITES_TR.md` — Smoke test önkoşullar
+- `docs/GDPR_TAURI_SMOKE_TR.md` — GDPR smoke akışı
