@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  Activity,
   AlertCircle,
   AlertTriangle,
   Building2,
   Calendar,
   Check,
   CheckCircle,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Clock,
   Copy,
   Download,
   ExternalLink,
@@ -18,6 +21,7 @@ import {
   Mail,
   ReceiptText,
   RefreshCw,
+  RotateCw,
   Search,
   Send,
   Settings,
@@ -25,6 +29,8 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
+import { PdfViewerModal } from '@/components/PdfViewerModal';
+import { fetchAuthedPdfBlob } from '@/lib/api';
 import { useUnicontaMakeState } from './useUnicontaMakeState';
 import type {
   BaglantiDurumu,
@@ -183,6 +189,41 @@ const res = await fetch("https://www.uniconta.com/api/query", {
             </div>
           </div>
 
+          {/* U10 — Email/eFatura gönderim toggle'ları */}
+          <div className="space-y-2 border border-slate-300 bg-slate-50 px-4 py-3">
+            <p className="text-xs font-black uppercase tracking-widest text-slate-700">
+              Otomatik Gönderim (Finalize sonrası)
+            </p>
+            <label className="flex items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(lokal.sendEmailOnFinalize)}
+                onChange={(event) =>
+                  setLokal((current) => ({ ...current, sendEmailOnFinalize: event.target.checked }))
+                }
+                className="h-4 w-4"
+              />
+              <Mail className="h-3.5 w-3.5 text-slate-500" />
+              <span>
+                <strong>E-posta otomatik gönder</strong> — Müşteriye Uniconta fatura PDF'i e-posta ile yollar.
+              </span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(lokal.sendXmlOnFinalize)}
+                onChange={(event) =>
+                  setLokal((current) => ({ ...current, sendXmlOnFinalize: event.target.checked }))
+                }
+                className="h-4 w-4"
+              />
+              <Send className="h-3.5 w-3.5 text-slate-500" />
+              <span>
+                <strong>OIOUBL e-fatura (XML) gönder</strong> — Danimarka standardı e-fatura.
+              </span>
+            </label>
+          </div>
+
           {baglantiDurumu !== 'bagli_degil' ? (
             <div
               className={`flex items-center gap-3 border px-4 py-3 ${
@@ -268,7 +309,17 @@ const res = await fetch("https://www.uniconta.com/api/query", {
   );
 }
 
-function FaturaDetay({ fatura, onKapat }: { fatura: Fatura; onKapat: () => void }) {
+function FaturaDetay({
+  fatura,
+  onKapat,
+  onPdfRequest,
+  pdfLoading,
+}: {
+  fatura: Fatura;
+  onKapat: () => void;
+  onPdfRequest: (fatura: Fatura) => void;
+  pdfLoading: boolean;
+}) {
   const ts = TIP_STYLE[fatura.type];
 
   return (
@@ -286,8 +337,13 @@ function FaturaDetay({ fatura, onKapat }: { fatura: Fatura; onKapat: () => void 
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1.5 border border-brand-600 bg-brand-700 px-3 py-1.5 text-xs font-bold text-brand-200 hover:bg-brand-600">
-              <Download className="h-3.5 w-3.5" />
+            <button
+              type="button"
+              onClick={() => onPdfRequest(fatura)}
+              disabled={pdfLoading}
+              className="flex items-center gap-1.5 border border-brand-600 bg-brand-700 px-3 py-1.5 text-xs font-bold text-brand-200 transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pdfLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
               PDF
             </button>
             <button onClick={onKapat} className="border border-brand-700 p-1.5 hover:bg-brand-700">
@@ -399,6 +455,50 @@ function FaturaDetay({ fatura, onKapat }: { fatura: Fatura; onKapat: () => void 
               <p className="text-sm text-amber-800">{fatura.note}</p>
             </div>
           ) : null}
+
+          {/* U12 — Invoice timeline (basit, mevcut alanlardan inşa) */}
+          <div className="border border-brand-200 bg-white">
+            <div className="border-b border-brand-200 bg-brand-50 px-3 py-2">
+              <p className="text-xs font-black uppercase tracking-widest text-brand-700">Fatura Zaman Çizelgesi</p>
+            </div>
+            <ul className="divide-y divide-brand-100">
+              <li className="flex items-center gap-3 px-3 py-2 text-xs">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                <span className="flex-1 text-brand-800">Fatura oluşturuldu</span>
+                <span className="text-brand-500" style={monoStyle}>
+                  {new Date(fatura.fakturadato).toLocaleDateString('da-DK')}
+                </span>
+              </li>
+              {fatura.mailSendt ? (
+                <li className="flex items-center gap-3 px-3 py-2 text-xs">
+                  <Mail className="h-3.5 w-3.5 text-emerald-600" />
+                  <span className="flex-1 text-brand-800">E-posta gönderildi</span>
+                  <span className="text-brand-500" style={monoStyle}>
+                    {fatura.mailSendt}
+                  </span>
+                </li>
+              ) : (
+                <li className="flex items-center gap-3 px-3 py-2 text-xs">
+                  <Mail className="h-3.5 w-3.5 text-brand-300" />
+                  <span className="flex-1 text-brand-400">E-posta gönderilmedi</span>
+                </li>
+              )}
+              {fatura.eFakturaSendt ? (
+                <li className="flex items-center gap-3 px-3 py-2 text-xs">
+                  <Send className="h-3.5 w-3.5 text-emerald-600" />
+                  <span className="flex-1 text-brand-800">E-fatura (OIOUBL XML) gönderildi</span>
+                  <span className="text-brand-500" style={monoStyle}>
+                    {fatura.eFakturaSendt}
+                  </span>
+                </li>
+              ) : (
+                <li className="flex items-center gap-3 px-3 py-2 text-xs">
+                  <Send className="h-3.5 w-3.5 text-brand-300" />
+                  <span className="flex-1 text-brand-400">E-fatura gönderilmedi</span>
+                </li>
+              )}
+            </ul>
+          </div>
         </div>
       </div>
     </div>
@@ -436,11 +536,70 @@ function UnicontaPageView({
   baglan,
   yenile,
   sort,
+  syncSummary,
+  syncSummaryLoading,
+  failedSyncs,
+  failedSyncsLoading,
+  pendingSyncCount,
+  onRetryAll,
+  retryingAll,
+  lastBulkRetryResult,
+  health,
+  onRetryFailed,
+  retryingSingleSeq,
 }: UseUnicontaMakeStateResult) {
+  const [failedPanelOpen, setFailedPanelOpen] = useState(false);
+  const [lastPdfFatura, setLastPdfFatura] = useState<Fatura | null>(null);
   const sortIcon = (key: SortKey) =>
     sortKey === key ? (sortDir === 'asc' ? <ChevronUp className="ml-0.5 inline h-3 w-3" /> : <ChevronDown className="ml-0.5 inline h-3 w-3" />) : null;
 
   const thCls = 'cursor-pointer whitespace-nowrap px-3 py-2 text-left text-xs font-black uppercase tracking-wider text-brand-500 transition-colors hover:bg-brand-200 hover:text-brand-900 select-none';
+
+  const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>(
+    { url: null, filename: '', loading: false, error: null },
+  );
+
+  const handlePdfRequest = async (fatura: Fatura) => {
+    setLastPdfFatura(fatura);
+    setPdfState((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const params = new URLSearchParams({
+        invoiceNumber: String(fatura.fakturanummer),
+        account: fatura.konto,
+        date: fatura.fakturadato,
+      });
+      const { url } = await fetchAuthedPdfBlob(`/api/v2/uniconta/invoice-pdf?${params.toString()}`);
+      setPdfState({ url, filename: `uniconta-${fatura.fakturanummer}.pdf`, loading: false, error: null });
+    } catch (exc) {
+      const raw = exc instanceof Error ? exc.message : 'PDF yüklenemedi.';
+      // U5 — Friendly error parse (basit Türkçe eşleştirme)
+      let message = raw;
+      if (raw.includes('401') || raw.toLowerCase().includes('auth')) message = 'Uniconta oturumu süresi dolmuş. Bağlanıp tekrar deneyin.';
+      else if (raw.includes('404')) message = 'Bu fatura için PDF Uniconta\'da bulunamadı.';
+      else if (raw.toLowerCase().includes('timeout')) message = 'Uniconta yanıt vermedi. Tekrar deneyin.';
+      else if (raw.toLowerCase().includes('network')) message = 'Ağ bağlantınızı kontrol edin.';
+      else if (raw.toLowerCase().includes('5')) message = 'Uniconta sunucu hatası — geçici olabilir.';
+      setPdfState({ url: null, filename: '', loading: false, error: message });
+    }
+  };
+
+  const handlePdfRetry = () => {
+    if (lastPdfFatura) void handlePdfRequest(lastPdfFatura);
+  };
+
+  const handlePdfClose = () => {
+    setPdfState((current) => {
+      if (current.url) URL.revokeObjectURL(current.url);
+      return { url: null, filename: '', loading: false, error: null };
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pdfState.url) URL.revokeObjectURL(pdfState.url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="flex min-h-full flex-col bg-white" style={sansStyle}>
@@ -496,15 +655,172 @@ function UnicontaPageView({
       </div>
 
       {baglantiDurumu === 'bagli_degil' ? (
-        <div className="flex items-center gap-3 border-b border-amber-300 bg-amber-50 px-6 py-2.5">
-          <Info className="h-4 w-4 flex-shrink-0 text-amber-600" />
-          <p className="flex-1 text-xs text-amber-800">
-            <strong>Demo Modu:</strong> Gerçek Uniconta API bağlantısı yok — örnek faturalar gösteriliyor.
-            API Ayarları&apos;ndan Company ID, kullanıcı adı ve şifrenizi girerek bağlanın.
-          </p>
-          <button onClick={() => setAyarlarAcik(true)} className="flex-shrink-0 text-xs font-black text-amber-800 underline hover:no-underline">
-            Şimdi Bağlan
-          </button>
+        <div className="flex flex-col items-stretch gap-4 border-b border-amber-300 bg-amber-50 px-6 py-6">
+          <div className="flex items-center gap-3">
+            <Info className="h-5 w-5 flex-shrink-0 text-amber-600" />
+            <div className="flex-1">
+              <p className="text-sm font-black uppercase tracking-widest text-amber-800">Uniconta Yapılandırılmamış</p>
+              <p className="mt-1 text-xs text-amber-700">
+                Aşağıdaki demo veriler örnek; canlı fatura akışını başlatmak için API ayarlarınızı girin.
+              </p>
+            </div>
+            <button
+              onClick={() => setAyarlarAcik(true)}
+              className="flex-shrink-0 inline-flex items-center gap-2 border border-amber-700 bg-amber-700 px-3 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-800"
+            >
+              <Settings className="h-3.5 w-3.5" /> API Ayarlarını Aç
+            </button>
+          </div>
+          <ol className="grid gap-2 text-xs text-amber-800 sm:grid-cols-3">
+            <li className="border border-amber-300 bg-white px-3 py-2">1. Company ID + kullanıcı + şifreyi girin.</li>
+            <li className="border border-amber-300 bg-white px-3 py-2">2. "Test ve Kaydet" ile canlı bağlantıyı doğrulayın.</li>
+            <li className="border border-amber-300 bg-white px-3 py-2">3. Alış finalize edildiğinde otomatik DebtorInvoice çıkacak.</li>
+          </ol>
+        </div>
+      ) : null}
+
+      {/* U7 + U8 + U9 + U11 + U6 — Sync summary + pending list + bulk retry + health */}
+      {baglantiDurumu !== 'bagli_degil' && syncSummary ? (
+        <div className="border-b border-brand-200 bg-white">
+          <div className="flex flex-wrap items-center gap-4 px-6 py-3">
+            <Activity className="h-4 w-4 text-emerald-700" />
+            <span className="text-xs font-black uppercase tracking-widest text-brand-700">
+              Son 24 Saat Sync
+            </span>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 border border-emerald-300 bg-emerald-50 px-2 py-1 font-black uppercase tracking-widest text-emerald-800">
+                <CheckCircle2 className="h-3 w-3" />
+                {syncSummary.synced} sync
+              </span>
+              {syncSummary.failed > 0 ? (
+                <span className="inline-flex items-center gap-1 border border-rose-300 bg-rose-50 px-2 py-1 font-black uppercase tracking-widest text-rose-800">
+                  <AlertTriangle className="h-3 w-3" />
+                  {syncSummary.failed} hata
+                </span>
+              ) : null}
+              {syncSummary.skipped > 0 ? (
+                <span className="inline-flex items-center gap-1 border border-amber-300 bg-amber-50 px-2 py-1 font-black uppercase tracking-widest text-amber-800">
+                  {syncSummary.skipped} atlandı
+                </span>
+              ) : null}
+              {pendingSyncCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setFailedPanelOpen((open) => !open)}
+                  className="inline-flex items-center gap-1 border border-amber-500 bg-amber-100 px-2 py-1 font-black uppercase tracking-widest text-amber-900 hover:bg-amber-200"
+                  title="Sync bekleyen AFG'leri göster"
+                >
+                  <AlertCircle className="h-3 w-3" />
+                  {pendingSyncCount} bekliyor
+                  {failedPanelOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </button>
+              ) : null}
+            </div>
+
+            {syncSummary.last_synced_at ? (
+              <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-brand-500" style={monoStyle}>
+                <Clock className="h-3 w-3" />
+                Son: {new Date(syncSummary.last_synced_at).toLocaleString('tr-TR', { hour12: false })}
+              </span>
+            ) : null}
+
+            {health && health.has_token && health.minutes_to_expiry != null ? (
+              <span
+                className={`inline-flex items-center gap-1 border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
+                  health.minutes_to_expiry > 10
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-amber-300 bg-amber-50 text-amber-800'
+                }`}
+              >
+                Token {health.minutes_to_expiry}dk
+              </span>
+            ) : null}
+
+            {pendingSyncCount > 0 ? (
+              <button
+                type="button"
+                onClick={onRetryAll}
+                disabled={retryingAll}
+                className="inline-flex items-center gap-1.5 border border-amber-700 bg-amber-600 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-white hover:bg-amber-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                {retryingAll ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+                Tümünü Tekrar Dene
+              </button>
+            ) : null}
+          </div>
+
+          {failedPanelOpen && pendingSyncCount > 0 ? (
+            <div className="border-t border-brand-200 bg-rose-50/30 px-6 py-3">
+              {failedSyncsLoading ? (
+                <div className="text-xs text-brand-500">Yükleniyor...</div>
+              ) : failedSyncs.length === 0 ? (
+                <div className="text-xs text-brand-400">Bekleyen sync yok.</div>
+              ) : (
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-brand-200">
+                      <th className="px-2 py-1.5 text-left font-black uppercase tracking-wider text-brand-600">AFG</th>
+                      <th className="px-2 py-1.5 text-left font-black uppercase tracking-wider text-brand-600">Tarih</th>
+                      <th className="px-2 py-1.5 text-left font-black uppercase tracking-wider text-brand-600">Müşteri</th>
+                      <th className="px-2 py-1.5 text-right font-black uppercase tracking-wider text-brand-600">Tutar</th>
+                      <th className="px-2 py-1.5 text-left font-black uppercase tracking-wider text-brand-600">Durum</th>
+                      <th className="px-2 py-1.5 text-left font-black uppercase tracking-wider text-brand-600">Hata</th>
+                      <th className="px-2 py-1.5 text-center font-black uppercase tracking-wider text-brand-600">Aksiyon</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failedSyncs.slice(0, 25).map((row) => (
+                      <tr key={row.sequence_no} className="border-b border-brand-100">
+                        <td className="px-2 py-1.5 text-brand-900" style={monoStyle}>
+                          {row.document_number || `#${row.sequence_no}`}
+                        </td>
+                        <td className="px-2 py-1.5 text-brand-600" style={monoStyle}>
+                          {row.issued_at ? new Date(row.issued_at).toLocaleDateString('da-DK') : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 text-brand-700">{row.customer_name || '—'}</td>
+                        <td className="px-2 py-1.5 text-right text-brand-800" style={monoStyle}>
+                          {row.gross_amount_dkk ? Number(row.gross_amount_dkk).toFixed(0) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span
+                            className={`inline-flex border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest ${
+                              row.uniconta_sync_status === 'failed'
+                                ? 'border-rose-300 bg-rose-100 text-rose-800'
+                                : 'border-amber-300 bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {row.uniconta_sync_status || '—'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 max-w-xs truncate text-rose-700" title={row.uniconta_sync_error || ''}>
+                          {row.uniconta_sync_error || '—'}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => onRetryFailed(row.sequence_no)}
+                            disabled={retryingSingleSeq === row.sequence_no}
+                            className="inline-flex items-center gap-1 border border-amber-400 bg-white px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-800 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {retryingSingleSeq === row.sequence_no ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RotateCw className="h-3 w-3" />
+                            )}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {lastBulkRetryResult ? (
+                <div className="mt-2 border border-brand-200 bg-white px-3 py-2 text-[11px] text-brand-600">
+                  Son toplu retry: <strong>{lastBulkRetryResult.succeeded}</strong> başarılı / <strong>{lastBulkRetryResult.failed}</strong> başarısız (toplam {lastBulkRetryResult.attempted})
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -512,8 +828,6 @@ function UnicontaPageView({
         {[
           { label: 'Toplam Fatura', value: String(stats.toplam), icon: <FileText className="h-4 w-4 text-brand-500" />, color: 'text-brand-900' },
           { label: 'Toplam Kredit', value: fmtMoney(stats.toplamKredit), icon: <ReceiptText className="h-4 w-4 text-brand-500" />, color: 'text-brand-900' },
-          { label: 'Mail sendt', value: `${stats.mailGonderildi} / ${stats.toplam}`, icon: <Mail className={`h-4 w-4 ${stats.mailGonderildi === stats.toplam ? 'text-emerald-600' : 'text-amber-600'}`} />, color: stats.mailGonderildi === stats.toplam ? 'text-emerald-800' : 'text-amber-700' },
-          { label: 'E-faktura sendt', value: `${stats.eFakturaGonderildi} / ${stats.toplam}`, icon: <Send className={`h-4 w-4 ${stats.eFakturaGonderildi === stats.toplam ? 'text-emerald-600' : 'text-amber-600'}`} />, color: stats.eFakturaGonderildi === stats.toplam ? 'text-emerald-800' : 'text-amber-700' },
         ].map((item) => (
           <div key={item.label} className="flex flex-shrink-0 items-center gap-2 border-r border-brand-200 pr-4 last:border-r-0 last:pr-0">
             {item.icon}
@@ -657,8 +971,6 @@ function UnicontaPageView({
               <th className={thCls} onClick={() => sort('konto')}>Konto {sortIcon('konto')}</th>
               <th className={thCls} onClick={() => sort('kunde')}>Kontonavn {sortIcon('kunde')}</th>
               <th className={thCls} onClick={() => sort('fakturadato')}>Dato {sortIcon('fakturadato')}</th>
-              <th className={thCls}>Mail sendt</th>
-              <th className={thCls}>E-faktura sendt</th>
               <th className={thCls} onClick={() => sort('fakturanummer')}>Faktura No {sortIcon('fakturanummer')}</th>
               <th className={`${thCls} text-right`} onClick={() => sort('total')}>Kredit {sortIcon('total')}</th>
             </tr>
@@ -666,7 +978,7 @@ function UnicontaPageView({
           <tbody>
             {filtrelenmis.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-12 text-center text-sm text-brand-400">
+                <td colSpan={5} className="px-6 py-12 text-center text-sm text-brand-400">
                   {faturalar.length === 0 ? "Uniconta'ya bağlanarak faturalara erişin." : 'Filtrelerle eşleşen fatura bulunamadı.'}
                 </td>
               </tr>
@@ -692,12 +1004,6 @@ function UnicontaPageView({
                   </td>
                   <td className="px-3 py-2.5 text-sm text-brand-700" style={monoStyle}>
                     {fmtDate(fatura.fakturadato)}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs font-bold text-brand-700" style={monoStyle}>
-                    {fatura.mailSendt ? fmtDate(fatura.mailSendt) : <span className="text-brand-300">—</span>}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs font-bold text-brand-700" style={monoStyle}>
-                    {fatura.eFakturaSendt ? fmtDate(fatura.eFakturaSendt) : <span className="text-brand-300">—</span>}
                   </td>
                   <td className="px-3 py-2.5">
                     <span className="text-sm font-black text-brand-900" style={monoStyle}>
@@ -740,7 +1046,51 @@ function UnicontaPageView({
           baglantiDurumu={baglantiDurumu}
         />
       ) : null}
-      {secilenFatura ? <FaturaDetay fatura={secilenFatura} onKapat={() => setSecilenFatura(null)} /> : null}
+      {secilenFatura ? (
+        <FaturaDetay
+          fatura={secilenFatura}
+          onKapat={() => setSecilenFatura(null)}
+          onPdfRequest={handlePdfRequest}
+          pdfLoading={pdfState.loading}
+        />
+      ) : null}
+      <PdfViewerModal
+        open={Boolean(pdfState.url)}
+        pdfUrl={pdfState.url}
+        filename={pdfState.filename}
+        title="Uniconta Fatura PDF"
+        onClose={handlePdfClose}
+      />
+      {pdfState.error ? (
+        <div className="fixed bottom-4 right-4 z-[60] max-w-md border border-rose-300 bg-rose-50 px-4 py-3 text-xs text-rose-700 shadow-lg">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="font-bold uppercase tracking-wider">PDF Hatası</p>
+              <p className="mt-1">{pdfState.error}</p>
+              <div className="mt-2 flex items-center gap-2">
+                {lastPdfFatura ? (
+                  <button
+                    type="button"
+                    onClick={handlePdfRetry}
+                    className="inline-flex items-center gap-1 border border-rose-400 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-rose-700 hover:bg-rose-100"
+                  >
+                    <RotateCw className="h-3 w-3" />
+                    Tekrar Dene
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setPdfState((current) => ({ ...current, error: null }))}
+                  className="inline-flex items-center gap-1 border border-brand-300 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-brand-700 hover:bg-brand-50"
+                >
+                  Kapat
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

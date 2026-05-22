@@ -1,11 +1,14 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 
 import { ApiError, TransportError, apiRequest } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 import type { AntiFraudOrder } from '@/types';
 
 export function useOpmcDetailMakeState() {
   const params = useParams();
+  const queryClient = useQueryClient();
+  const toast = useToast();
   const orderId = Number(params.id);
   const hasValidOrderId = Number.isFinite(orderId) && orderId > 0;
 
@@ -17,6 +20,23 @@ export function useOpmcDetailMakeState() {
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
+  });
+
+  const overrideMutation = useMutation({
+    mutationFn: (payload: { level: 'low' | 'medium' | 'high'; reason?: string }) =>
+      apiRequest<AntiFraudOrder>(`/api/v2/opmc/orders/${orderId}/override`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['opmc', 'detail-page', orderId], data);
+      void queryClient.invalidateQueries({ queryKey: ['opmc'] });
+      toast.success('Risk seviyesi güncellendi', `Yeni seviye: ${data.risk_level}`);
+    },
+    onError: (error) => {
+      const msg = error instanceof Error ? error.message : 'Override hatası';
+      toast.error('Override yapılamadı', msg);
+    },
   });
 
   const hasData = Boolean(detailQuery.data);
@@ -50,5 +70,8 @@ export function useOpmcDetailMakeState() {
     onRefresh: () => {
       void detailQuery.refetch();
     },
+    onOverride: (level: 'low' | 'medium' | 'high', reason?: string) =>
+      overrideMutation.mutate({ level, reason }),
+    overriding: overrideMutation.isPending,
   };
 }

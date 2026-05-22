@@ -37,12 +37,20 @@ export function useDisplayLiveMakeState() {
       }, 1_000);
     };
 
+    const stopSyncPolling = () => {
+      if (syncTimer) {
+        window.clearInterval(syncTimer);
+        syncTimer = null;
+      }
+    };
+
     const connect = () => {
       if (!token) return;
       setConnection('connecting');
       socket = new WebSocket(buildWsUrl(`/api/v2/display/${token}/ws`));
       socket.onopen = () => {
         setConnection('live');
+        stopSyncPolling();
       };
       socket.onmessage = (event) => {
         try {
@@ -56,9 +64,13 @@ export function useDisplayLiveMakeState() {
           // ignore malformed frames
         }
       };
+      socket.onerror = () => {
+        startSyncPolling();
+      };
       socket.onclose = () => {
         if (!mounted) return;
         setConnection('offline');
+        startSyncPolling();
         reconnectRef.current = window.setTimeout(connect, 1500);
       };
     };

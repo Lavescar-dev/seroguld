@@ -1,17 +1,28 @@
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useMemo, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Download,
   FileSpreadsheet,
   FileText,
   Flame,
+  History,
   Layers,
+  Link2,
+  Loader2,
+  Lock,
   Package,
   Plus,
+  RefreshCcw,
   Save,
   Search,
+  Trash2,
   TrendingUp,
+  Unlock,
+  X,
 } from 'lucide-react';
 
 import { openAuthedDocument } from '@/lib/api';
@@ -25,7 +36,15 @@ import {
   labelProductType,
   statusTone,
 } from '@/lib/format';
-import type { AfgWorkspaceDocument, AfgWorkspaceLine, LogBucketWorkspace, LogMeltLot, LogWorkspace } from '@/types';
+import type {
+  AfgWorkspaceDocument,
+  AfgWorkspaceLine,
+  LogBucketWorkspace,
+  LogMeltLot,
+  LogMeltLotHistory,
+  LogMeltLotLine,
+  LogWorkspace,
+} from '@/types';
 import { MakeOfficeDocumentPage } from '../office/OfficeDocumentPage';
 import { useOfficeDocumentState } from '../office/useOfficeDocumentState';
 
@@ -265,6 +284,7 @@ export interface LogPageProps {
   workspace?: LogWorkspace;
   isLoading: boolean;
   isError: boolean;
+  onRetryWorkspace: () => void;
   activeView: LogSurfaceView;
   onActiveViewChange: (view: LogSurfaceView) => void;
   activeTab: LogActiveTab;
@@ -282,6 +302,8 @@ export interface LogPageProps {
   routeBusy: boolean;
   meltBusy: boolean;
   createMeltBusy: boolean;
+  finalizeBusy: boolean;
+  deleteBusy: boolean;
   pendingRouteCount: number;
   pendingRouteSummary: { count: number; weight: number; amount: number; pure: number };
   onDiscardRouteReview: () => void;
@@ -289,12 +311,28 @@ export interface LogPageProps {
   onRoute: (line: AfgWorkspaceLine, destination: 'inventory' | 'undecided' | 'melt') => void;
   onSaveLot: (lotId: string) => void;
   onCreateMeltLot: () => void;
+  onFinalizeLot: (lotId: string, reverse: boolean) => void;
+  onDeleteLot: (lotId: string) => void;
+  onDownloadLotPdf: (lotId: string) => void;
+  onOpenLotHistory: (lotId: string) => void;
+  onCloseLotHistory: () => void;
+  historyLotId: string | null;
+  lotHistory: LogMeltLotHistory[];
+  lotHistoryLoading: boolean;
+  onOpenLotLines: (lotId: string) => void;
+  onCloseLotLines: () => void;
+  linesLotId: string | null;
+  lotLines: LogMeltLotLine[];
+  lotLinesLoading: boolean;
+  selectedYear: number;
+  onSelectedYearChange: (year: number) => void;
 }
 
 export function LogPage({
   workspace,
   isLoading,
   isError,
+  onRetryWorkspace,
   activeView,
   onActiveViewChange,
   activeTab,
@@ -312,6 +350,8 @@ export function LogPage({
   routeBusy,
   meltBusy,
   createMeltBusy,
+  finalizeBusy,
+  deleteBusy,
   pendingRouteCount,
   pendingRouteSummary,
   onDiscardRouteReview,
@@ -319,25 +359,50 @@ export function LogPage({
   onRoute,
   onSaveLot,
   onCreateMeltLot,
+  onFinalizeLot,
+  onDeleteLot,
+  onDownloadLotPdf,
+  onOpenLotHistory,
+  onCloseLotHistory,
+  historyLotId,
+  lotHistory,
+  lotHistoryLoading,
+  onOpenLotLines,
+  onCloseLotLines,
+  linesLotId,
+  lotLines,
+  lotLinesLoading,
+  selectedYear,
+  onSelectedYearChange,
 }: LogPageProps) {
   const goldBucket = workspace?.gold;
   const silverBucket = workspace?.silver;
   const activeBucket = activeTab === 'silver' ? silverBucket : goldBucket;
-  const workbookYear = new Date().getFullYear();
+  const workbookYear = selectedYear;
   const cards = useMemo(
     () => summaryCards(activeBucket, activeBucket?.summary.total_documents || 0, activeTab),
     [activeBucket, activeTab],
   );
   const workbookStatus = formatWorkbookYearLabel(workbookYear);
   const systemContent = isLoading ? (
-    <div className="border-b-2 border-brand-200 bg-white px-6 py-12 text-center">
-      <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Workspace</p>
-      <p className="mt-2 text-sm text-brand-600">Log workspace hazirlaniyor.</p>
+    <div className="border-b-2 border-brand-200 bg-white px-6 py-16 text-center">
+      <Loader2 className="mx-auto h-6 w-6 animate-spin text-brand-400" />
+      <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-brand-500">Workspace</p>
+      <p className="mt-1 text-sm text-brand-600">Log workspace hazırlanıyor...</p>
     </div>
   ) : isError || !workspace ? (
-    <div className="border-b-2 border-brand-200 bg-white px-6 py-12 text-center">
-      <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Workspace</p>
-      <p className="mt-2 text-sm text-brand-600">Log workspace alinamadi.</p>
+    <div className="border-b-2 border-rose-200 bg-rose-50 px-6 py-12 text-center">
+      <AlertTriangle className="mx-auto h-6 w-6 text-rose-500" />
+      <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-rose-600">Workspace</p>
+      <p className="mt-1 text-sm text-rose-700">Log workspace alınamadı. Bağlantıyı kontrol edin.</p>
+      <button
+        type="button"
+        onClick={onRetryWorkspace}
+        className="mt-4 inline-flex items-center gap-2 border border-rose-400 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 hover:bg-rose-100"
+      >
+        <RefreshCcw className="h-3 w-3" />
+        Tekrar Dene
+      </button>
     </div>
   ) : (
     <>
@@ -378,6 +443,8 @@ export function LogPage({
           routeBusy={routeBusy}
           meltBusy={meltBusy}
           createMeltBusy={createMeltBusy}
+          finalizeBusy={finalizeBusy}
+          deleteBusy={deleteBusy}
           pendingRouteCount={pendingRouteCount}
           pendingRouteSummary={pendingRouteSummary}
           onQueryChange={onQueryChange}
@@ -390,12 +457,25 @@ export function LogPage({
           onLotDraftChange={onLotDraftChange}
           onSaveLot={onSaveLot}
           onCreateMeltLot={onCreateMeltLot}
+          onFinalizeLot={onFinalizeLot}
+          onDeleteLot={onDeleteLot}
+          onDownloadLotPdf={onDownloadLotPdf}
+          onOpenLotHistory={onOpenLotHistory}
+          onOpenLotLines={onOpenLotLines}
         />
       ) : (
         <div className="px-6 py-16 text-center text-sm text-brand-500">Log workspace alınamadı.</div>
       )}
     </>
   );
+
+  const yearOptions = useMemo(() => {
+    const current = new Date().getFullYear();
+    const list: number[] = [];
+    for (let y = current; y >= current - 5; y--) list.push(y);
+    if (!list.includes(selectedYear)) list.unshift(selectedYear);
+    return list;
+  }, [selectedYear]);
 
   return (
     <div style={sansStyle} className="min-h-full bg-white">
@@ -411,6 +491,21 @@ export function LogPage({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div className="border border-brand-300 bg-white px-3 py-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Yıl</p>
+              <select
+                value={selectedYear}
+                onChange={(event) => onSelectedYearChange(Number(event.target.value))}
+                className="mono mt-0.5 border-0 bg-transparent p-0 text-sm font-black text-brand-900 focus:outline-none"
+                style={monoStyle}
+              >
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="min-w-[12rem] border border-emerald-200 bg-emerald-50 px-3 py-2">
               <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Log Workbook</p>
               <div className="mt-1 flex items-center gap-2">
@@ -445,6 +540,161 @@ export function LogPage({
         pendingRouteCount={pendingRouteCount}
       />
       {activeView === 'excel' ? <LogExcelSurface year={workbookYear} /> : systemContent}
+
+      {historyLotId ? (
+        <LotHistoryDrawer
+          entries={lotHistory}
+          loading={lotHistoryLoading}
+          onClose={onCloseLotHistory}
+        />
+      ) : null}
+      {linesLotId ? (
+        <LotLinesDrawer
+          entries={lotLines}
+          loading={lotLinesLoading}
+          onClose={onCloseLotLines}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const HISTORY_ACTION_LABEL: Record<string, string> = {
+  created: 'Oluşturuldu',
+  updated: 'Güncellendi',
+  deleted: 'Silindi',
+  finalized: 'Finalize edildi',
+  reopened: 'Tekrar açıldı',
+  line_attached: 'Satır bağlandı',
+  line_detached: 'Satır ayrıldı',
+};
+
+function LotHistoryDrawer({
+  entries,
+  loading,
+  onClose,
+}: {
+  entries: LogMeltLotHistory[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-brand-950/20">
+      <button type="button" className="flex-1 cursor-default" aria-label="History overlay" onClick={onClose} />
+      <aside className="relative h-full w-full max-w-[28rem] overflow-y-auto border-l-2 border-brand-300 bg-white shadow-2xl">
+        <div className="sticky top-0 border-b border-brand-200 bg-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Lot Geçmişi</p>
+              <h3 className="mt-1 text-base font-black text-brand-900">Audit Trail</h3>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="border border-brand-300 bg-white p-1.5 text-brand-700 hover:bg-brand-50"
+              aria-label="Kapat"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+        {loading ? (
+          <div className="px-4 py-6 text-sm text-brand-500">Yükleniyor...</div>
+        ) : entries.length === 0 ? (
+          <div className="px-4 py-6 text-sm text-brand-400">Bu lot için henüz history kaydı yok.</div>
+        ) : (
+          <ol className="space-y-2 px-4 py-4">
+            {entries.map((entry) => (
+              <li key={entry.id} className="border border-brand-200 bg-white px-3 py-2 text-xs">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-black uppercase tracking-widest text-brand-700">
+                    {HISTORY_ACTION_LABEL[entry.action] || entry.action}
+                  </span>
+                  <span className="mono text-[10px] text-brand-400">
+                    {new Date(entry.created_at).toLocaleString('da-DK')}
+                  </span>
+                </div>
+                {entry.performed_by_email ? (
+                  <p className="mt-0.5 text-[10px] text-brand-500">{entry.performed_by_email}</p>
+                ) : null}
+                {entry.notes ? <p className="mt-1 text-[11px] text-brand-700">{entry.notes}</p> : null}
+              </li>
+            ))}
+          </ol>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function LotLinesDrawer({
+  entries,
+  loading,
+  onClose,
+}: {
+  entries: LogMeltLotLine[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-brand-950/20">
+      <button type="button" className="flex-1 cursor-default" aria-label="Lines overlay" onClick={onClose} />
+      <aside className="relative h-full w-full max-w-[36rem] overflow-y-auto border-l-2 border-brand-300 bg-white shadow-2xl">
+        <div className="sticky top-0 border-b border-brand-200 bg-white px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Bağlı AFG Satırları</p>
+              <h3 className="mt-1 text-base font-black text-brand-900">{entries.length} satır</h3>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="border border-brand-300 bg-white p-1.5 text-brand-700 hover:bg-brand-50"
+              aria-label="Kapat"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+        {loading ? (
+          <div className="px-4 py-6 text-sm text-brand-500">Yükleniyor...</div>
+        ) : entries.length === 0 ? (
+          <div className="px-4 py-6 text-sm text-brand-400">Bu lot'a henüz bağlı satır yok.</div>
+        ) : (
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-brand-200 bg-brand-50">
+                <th className="px-2 py-2 text-left font-black uppercase tracking-wider text-brand-600">AFG</th>
+                <th className="px-2 py-2 text-center font-black uppercase tracking-wider text-brand-600">#</th>
+                <th className="px-2 py-2 text-right font-black uppercase tracking-wider text-brand-600">Gram</th>
+                <th className="px-2 py-2 text-right font-black uppercase tracking-wider text-brand-600">Has</th>
+                <th className="px-2 py-2 text-right font-black uppercase tracking-wider text-brand-600">DKK</th>
+                <th className="px-2 py-2 text-left font-black uppercase tracking-wider text-brand-600">Müşteri</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((line) => (
+                <tr key={line.line_id} className="border-b border-brand-100">
+                  <td className="px-2 py-1.5 text-brand-900" style={monoStyle}>
+                    {line.document_number || `#${line.document_sequence_no}`}
+                  </td>
+                  <td className="px-2 py-1.5 text-center text-brand-400">{line.line_no}</td>
+                  <td className="px-2 py-1.5 text-right" style={monoStyle}>
+                    {formatNumber(line.weight_grams, ' g')}
+                  </td>
+                  <td className="px-2 py-1.5 text-right" style={monoStyle}>
+                    {formatNumber(line.pure_gold_grams, ' g')}
+                  </td>
+                  <td className="px-2 py-1.5 text-right" style={monoStyle}>
+                    {formatMoney(line.line_total_dkk)}
+                  </td>
+                  <td className="px-2 py-1.5 text-brand-700">{line.customer_name || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </aside>
     </div>
   );
 }
@@ -540,6 +790,8 @@ function BucketWorkspaceView({
   routeBusy,
   meltBusy,
   createMeltBusy,
+  finalizeBusy,
+  deleteBusy,
   pendingRouteCount,
   pendingRouteSummary,
   onQueryChange,
@@ -552,6 +804,11 @@ function BucketWorkspaceView({
   onLotDraftChange,
   onSaveLot,
   onCreateMeltLot,
+  onFinalizeLot,
+  onDeleteLot,
+  onDownloadLotPdf,
+  onOpenLotHistory,
+  onOpenLotLines,
 }: {
   activeTab: LogActiveTab;
   bucket: LogBucketWorkspace;
@@ -563,6 +820,8 @@ function BucketWorkspaceView({
   routeBusy: boolean;
   meltBusy: boolean;
   createMeltBusy: boolean;
+  finalizeBusy: boolean;
+  deleteBusy: boolean;
   pendingRouteCount: number;
   pendingRouteSummary: { count: number; weight: number; amount: number; pure: number };
   onQueryChange: (value: string) => void;
@@ -575,6 +834,11 @@ function BucketWorkspaceView({
   onLotDraftChange: (lotId: string, patch: Partial<MeltLotDraft>) => void;
   onSaveLot: (lotId: string) => void;
   onCreateMeltLot: () => void;
+  onFinalizeLot: (lotId: string, reverse: boolean) => void;
+  onDeleteLot: (lotId: string) => void;
+  onDownloadLotPdf: (lotId: string) => void;
+  onOpenLotHistory: (lotId: string) => void;
+  onOpenLotLines: (lotId: string) => void;
 }) {
   const meta = bucketMeta(activeTab);
   const documents = bucket.documents;
@@ -667,8 +931,18 @@ function BucketWorkspaceView({
 
         {documents.length === 0 ? (
           <div className="px-6 py-16 text-center">
+            <FileText className="mx-auto mb-3 h-8 w-8 text-brand-300" />
             <p className="text-sm font-semibold text-brand-500">{meta.emptyTitle}</p>
             <p className="mt-1 text-xs text-brand-400">{meta.emptySubtitle}</p>
+            {query ? (
+              <button
+                type="button"
+                onClick={() => onQueryChange('')}
+                className="mt-4 inline-flex items-center gap-2 border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-brand-700 hover:bg-brand-50"
+              >
+                Aramayı Temizle
+              </button>
+            ) : null}
           </div>
         ) : (
           <>
@@ -891,11 +1165,18 @@ function BucketWorkspaceView({
         show={showMeltSection}
         createBusy={createMeltBusy}
         updateBusy={meltBusy}
+        finalizeBusy={finalizeBusy}
+        deleteBusy={deleteBusy}
         lotDrafts={lotDrafts}
         onToggle={onToggleMeltSection}
         onCreate={onCreateMeltLot}
         onDraftChange={onLotDraftChange}
         onSave={onSaveLot}
+        onFinalize={onFinalizeLot}
+        onDelete={onDeleteLot}
+        onDownloadPdf={onDownloadLotPdf}
+        onOpenHistory={onOpenLotHistory}
+        onOpenLines={onOpenLotLines}
       />
     </div>
   );
@@ -1038,21 +1319,35 @@ function MeltSection({
   show,
   createBusy,
   updateBusy,
+  finalizeBusy,
+  deleteBusy,
   lotDrafts,
   onToggle,
   onCreate,
   onDraftChange,
   onSave,
+  onFinalize,
+  onDelete,
+  onDownloadPdf,
+  onOpenHistory,
+  onOpenLines,
 }: {
   bucket: LogBucketWorkspace;
   show: boolean;
   createBusy: boolean;
   updateBusy: boolean;
+  finalizeBusy: boolean;
+  deleteBusy: boolean;
   lotDrafts: Record<string, MeltLotDraft>;
   onToggle: () => void;
   onCreate: () => void;
   onDraftChange: (lotId: string, patch: Partial<MeltLotDraft>) => void;
   onSave: (lotId: string) => void;
+  onFinalize: (lotId: string, reverse: boolean) => void;
+  onDelete: (lotId: string) => void;
+  onDownloadPdf: (lotId: string) => void;
+  onOpenHistory: (lotId: string) => void;
+  onOpenLines: (lotId: string) => void;
 }) {
   return (
     <div>
@@ -1104,8 +1399,15 @@ function MeltSection({
                 lot={lot}
                 draft={lotDrafts[lot.id] || toLotDraft(lot)}
                 busy={updateBusy}
+                finalizeBusy={finalizeBusy}
+                deleteBusy={deleteBusy}
                 onDraftChange={(patch) => onDraftChange(lot.id, patch)}
                 onSave={() => onSave(lot.id)}
+                onFinalize={(reverse) => onFinalize(lot.id, reverse)}
+                onDelete={() => onDelete(lot.id)}
+                onDownloadPdf={() => onDownloadPdf(lot.id)}
+                onOpenHistory={() => onOpenHistory(lot.id)}
+                onOpenLines={() => onOpenLines(lot.id)}
               />
             ))
           )}
@@ -1295,22 +1597,57 @@ function MeltLotCard({
   lot,
   draft,
   busy,
+  finalizeBusy,
+  deleteBusy,
   onDraftChange,
   onSave,
+  onFinalize,
+  onDelete,
+  onDownloadPdf,
+  onOpenHistory,
+  onOpenLines,
 }: {
   index: number;
   lot: LogMeltLot;
   draft: MeltLotDraft;
   busy: boolean;
+  finalizeBusy: boolean;
+  deleteBusy: boolean;
   onDraftChange: (patch: Partial<MeltLotDraft>) => void;
   onSave: () => void;
+  onFinalize: (reverse: boolean) => void;
+  onDelete: () => void;
+  onDownloadPdf: () => void;
+  onOpenHistory: () => void;
+  onOpenLines: () => void;
 }) {
+  const isFinalized = lot.status === 'finalized';
+  const lineCount = lot.line_count || 0;
+
+  // L13 — Payout variance uyarısı: estimated vs payout %5+ fark
+  const payoutNum = toFloat(lot.payout_total_dkk);
+  const estimatedNum = toFloat(lot.estimated_sale_value_dkk);
+  const variancePct =
+    payoutNum > 0 && estimatedNum > 0
+      ? Math.abs((payoutNum - estimatedNum) / estimatedNum) * 100
+      : 0;
+  const showVariance = payoutNum > 0 && estimatedNum > 0 && variancePct >= 5;
+
   return (
     <div className="overflow-hidden border border-orange-300 bg-white">
-      <div className="flex items-center justify-between bg-orange-600 px-4 py-2.5">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-orange-600 px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-3">
           <Flame className="h-4 w-4 text-orange-200" />
           <span className="text-xs font-black uppercase tracking-widest text-orange-200">Lot #{index + 1}</span>
+          {isFinalized ? (
+            <span className="inline-flex items-center gap-1 border border-emerald-400 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-emerald-800">
+              <Lock className="h-2.5 w-2.5" /> Finalize
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-800">
+              <Unlock className="h-2.5 w-2.5" /> Draft
+            </span>
+          )}
           <div className="h-4 w-px bg-orange-500" />
           <span className="font-black text-white" style={monoStyle}>{formatDate(lot.sent_date)}</span>
           <span className="text-xs text-orange-300">— Sendt den</span>
@@ -1321,18 +1658,102 @@ function MeltLotCard({
             </>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={busy}
-          className="inline-flex items-center gap-2 border border-orange-500 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-orange-100 transition hover:border-white hover:bg-orange-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Save className="h-3.5 w-3.5" />
-          Kaydet
-        </button>
+        <div className="flex flex-wrap items-center gap-1">
+          <button
+            type="button"
+            onClick={onOpenLines}
+            className="inline-flex items-center gap-1 border border-orange-500 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-100 hover:bg-orange-700"
+            title="Bağlı AFG satırları"
+          >
+            <Link2 className="h-3 w-3" /> {lineCount}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className="inline-flex items-center gap-1 border border-orange-500 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-100 hover:bg-orange-700"
+            title="Geçmiş"
+          >
+            <History className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            className="inline-flex items-center gap-1 border border-orange-500 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-100 hover:bg-orange-700"
+            title="PDF olarak indir"
+          >
+            <Download className="h-3 w-3" />
+            PDF
+          </button>
+          {!isFinalized ? (
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={busy}
+              className="inline-flex items-center gap-1 border border-orange-500 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-100 hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Lot'u kaydet"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              Kaydet
+            </button>
+          ) : null}
+          {!isFinalized ? (
+            <button
+              type="button"
+              onClick={() => onFinalize(false)}
+              disabled={finalizeBusy}
+              className="inline-flex items-center gap-1 border border-emerald-400 bg-emerald-700 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Lot'u finalize et (kilitle)"
+            >
+              {finalizeBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+              Finalize
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onFinalize(true)}
+              disabled={finalizeBusy}
+              className="inline-flex items-center gap-1 border border-amber-400 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Reopen (draft'a geri al)"
+            >
+              <Unlock className="h-3 w-3" />
+              Reopen
+            </button>
+          )}
+          {!isFinalized && lineCount === 0 ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={deleteBusy}
+              className="inline-flex items-center gap-1 border border-rose-400 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-orange-100 hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Lot'u sil"
+            >
+              {deleteBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <div className="grid divide-x divide-orange-100 xl:grid-cols-3">
+      {showVariance ? (
+        <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2.5">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-700" />
+          <div className="flex-1 text-xs">
+            <p className="font-black uppercase tracking-widest text-amber-800">
+              Payout sapması: %{variancePct.toFixed(1)}
+            </p>
+            <p className="mt-0.5 text-amber-700">
+              Tahmini {formatMoney(lot.estimated_sale_value_dkk)} · Gerçek {formatMoney(lot.payout_total_dkk)}.
+              Fark {formatMoney(payoutNum - estimatedNum)}. Lütfen quote/kurs/payout girişlerini doğrulayın.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <fieldset
+        disabled={isFinalized}
+        className={`grid divide-x divide-orange-100 xl:grid-cols-3 ${
+          isFinalized ? 'opacity-70 [&_input]:cursor-not-allowed [&_textarea]:cursor-not-allowed' : ''
+        }`}
+      >
         <div className="space-y-3 p-4">
           <SectionTinyHeader title="Gram & Has Altın" />
           <DateField label="Gönderim Tarihi" value={draft.sent_date} onChange={(value) => onDraftChange({ sent_date: value })} />
@@ -1426,7 +1847,7 @@ function MeltLotCard({
             <textarea value={draft.notes} onChange={(event) => onDraftChange({ notes: event.target.value })} rows={2} className="mt-2 w-full border border-brand-300 bg-white px-3 py-2 text-sm text-brand-800 outline-none transition focus:border-brand-700" />
           </div>
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }

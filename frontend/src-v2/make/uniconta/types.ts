@@ -10,6 +10,8 @@ export interface UnicontaKimlik {
   username: string;
   password: string;
   env: 'production' | 'sandbox';
+  sendEmailOnFinalize?: boolean;
+  sendXmlOnFinalize?: boolean;
 }
 
 export interface UnicontaConfigResponse extends UnicontaKimlik {
@@ -19,6 +21,55 @@ export interface UnicontaConfigResponse extends UnicontaKimlik {
   configured: boolean;
   lastRefreshedAt?: string | null;
   message?: string | null;
+  sendEmailOnFinalize: boolean;
+  sendXmlOnFinalize: boolean;
+}
+
+export interface UnicontaSyncSummary {
+  period_hours: number;
+  total: number;
+  synced: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+  by_error_category: Record<string, number>;
+  last_synced_at?: string | null;
+  last_failure_at?: string | null;
+}
+
+export interface UnicontaFailedSyncRow {
+  sequence_no: number;
+  document_number?: string | null;
+  issued_at?: string | null;
+  customer_name?: string | null;
+  gross_amount_dkk?: string | null;
+  uniconta_sync_status?: string | null;
+  uniconta_sync_error?: string | null;
+  uniconta_synced_at?: string | null;
+}
+
+export interface UnicontaBulkRetry {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  skipped_locked?: number;
+  results: Array<{
+    sequence_no: number;
+    ok: boolean;
+    message?: string | null;
+    uniconta_sync_status?: string | null;
+    uniconta_invoice_number?: string | null;
+  }>;
+}
+
+export interface UnicontaHealth {
+  configured: boolean;
+  has_token: boolean;
+  access_expires_at?: string | null;
+  refresh_expires_at?: string | null;
+  last_call_at?: string | null;
+  last_call_ok?: boolean | null;
+  minutes_to_expiry?: number | null;
 }
 
 export interface UnicontaConnectResponse {
@@ -108,5 +159,18 @@ export interface UseUnicontaMakeStateResult {
   baglan: () => void;
   yenile: () => void;
   sort: (key: SortKey) => void;
+  // Yeni (U7-U11)
+  syncSummary: UnicontaSyncSummary | null;
+  syncSummaryLoading: boolean;
+  failedSyncs: UnicontaFailedSyncRow[];
+  failedSyncsLoading: boolean;
+  pendingSyncCount: number;
+  onRetryAll: () => void;
+  retryingAll: boolean;
+  lastBulkRetryResult: UnicontaBulkRetry | null;
+  health: UnicontaHealth | null;
+  healthLoading: boolean;
+  onRetryFailed: (sequenceNo: number) => void;
+  retryingSingleSeq: number | null;
 }
 import type { Dispatch, SetStateAction } from 'react';

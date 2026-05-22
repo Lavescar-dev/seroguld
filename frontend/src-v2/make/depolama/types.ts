@@ -35,6 +35,15 @@ export interface StokItem {
   referenceNumber?: string | null;
   productNumber?: string;
   needsCleaning?: boolean;
+  /** Backend'den gelen authoritative değerler — client tarafında tekrar hesaplama yapılmaz */
+  spotDegeri?: number;
+  hasMetalGrams?: number;
+  toplamGram?: number;
+  shopFark?: number;
+  isGdprLocked?: boolean;
+  productStatus?: string;
+  /** Yeni eklenen field — düzenleme dispatch'i için optimistic concurrency */
+  updatedAt?: string;
 }
 
 export interface CategoryTotals {
@@ -44,3 +53,44 @@ export interface CategoryTotals {
   spotSum: number;
   shopSum: number;
 }
+
+export type InventorySortKey =
+  | 'lager_dato'
+  | 'urun'
+  | 'birim_gram'
+  | 'toplam_gram'
+  | 'alis_fiyati'
+  | 'spot_degeri'
+  | 'shop_fiyati'
+  | 'storage_location';
+
+export interface InventorySortState {
+  key: InventorySortKey;
+  direction: 'asc' | 'desc';
+}
+
+export interface InventoryFilterState {
+  q: string;
+  dateFrom: string;
+  dateTo: string;
+  weightMin: string;
+  weightMax: string;
+  priceMin: string;
+  priceMax: string;
+  location: string;
+  needsCleaning: boolean;
+  gdprLocked: 'all' | 'locked' | 'unlocked';
+}
+
+export const EMPTY_FILTERS: InventoryFilterState = {
+  q: '',
+  dateFrom: '',
+  dateTo: '',
+  weightMin: '',
+  weightMax: '',
+  priceMin: '',
+  priceMax: '',
+  location: '',
+  needsCleaning: false,
+  gdprLocked: 'all',
+};

@@ -2,13 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
-import { apiRequest } from '@/lib/api';
-import { emitArtifactSync, listenArtifactSync } from '@/lib/artifactSync';
-import type { InventoryGridRow, InventoryWorkspace, OfficeRuntimeStatus, ProductOut } from '@/types';
+import { apiRequest, downloadAuthedDocument } from '@/lib/api';
+import { emitArtifactSync, listenArtifactSync, signalMatches } from '@/lib/artifactSync';
+import { useToast } from '@/lib/toast';
+import type {
+  InventoryGridRow,
+  InventoryWorkspace,
+  OfficeRuntimeStatus,
+  ProductHistoryEntry,
+  ProductOut,
+  ProductSourceAfg,
+} from '@/types';
 
 import type { DepolamaPageProps } from './DepolamaPage';
 import type {
+  InventoryFilterState,
   InventoryLifecycleStatus,
+  InventorySortKey,
+  InventorySortState,
   InventorySurfaceView,
   MainCategory,
   MarketPrices,
@@ -67,6 +78,7 @@ function toMarketPrices(workspace: InventoryWorkspace | null | undefined): Marke
 
 function rowToStokItem(row: InventoryGridRow): StokItem {
   const mainKat = row.main_category as MainCategory;
+  const spotDegeri = numeric(row.spot_degeri_dkk);
   return {
     id: row.id,
     stokNo: row.reference_number || '',
@@ -79,6 +91,13 @@ function rowToStokItem(row: InventoryGridRow): StokItem {
     birimGram: numeric(row.birim_gram),
     adet: row.adet || 1,
     alisFiyati: numeric(row.alis_fiyati_dkk),
+    spotDegeri,
+    hasMetalGrams: row.has_metal_grams ? numeric(row.has_metal_grams) : undefined,
+    toplamGram: numeric(row.toplam_gram),
+    shopFark: row.shop_fiyati_dkk ? numeric(row.shop_fiyati_dkk) - spotDegeri : undefined,
+    storageLocation: row.storage_location || undefined,
+    isGdprLocked: row.is_gdpr_locked,
+    productStatus: row.status,
     shopFiyati: row.shop_fiyati_dkk ? numeric(row.shop_fiyati_dkk) : undefined,
     shopDurumu: (row.shop_sync_status as StokItem['shopDurumu']) || undefined,
     olcuUzunluk: row.length_cm || undefined,
@@ -249,12 +268,55 @@ function toPatchPayload(item: StokItem) {
     producer: item.uretici || null,
     inventory_category: spec.inventory_category,
     inventory_subcategory: spec.inventory_subcategory,
+    expected_updated_at: item.updatedAt || null,
   };
 }
+
+const SORT_KEY_TO_FIELD: Record<InventorySortKey, (item: StokItem) => number | string> = {
+  lager_dato: (item) => item.lagerDato,
+  urun: (item) => (item.urun || '').toLocaleLowerCase('tr'),
+  birim_gram: (item) => item.birimGram,
+  toplam_gram: (item) => item.toplamGram ?? item.birimGram * item.adet,
+  alis_fiyati: (item) => item.alisFiyati,
+  spot_degeri: (item) => item.spotDegeri ?? 0,
+  shop_fiyati: (item) => item.shopFiyati ?? 0,
+  storage_location: (item) => (item.storageLocation || '').toLocaleLowerCase('tr'),
+};
+
+function sortItems(items: StokItem[], sort: InventorySortState): StokItem[] {
+  const getKey = SORT_KEY_TO_FIELD[sort.key];
+  const direction = sort.direction === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => {
+    const av = getKey(a);
+    const bv = getKey(b);
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * direction;
+    return String(av).localeCompare(String(bv), 'tr') * direction;
+  });
+}
+
+function buildWorkspaceQueryParams(filters: InventoryFilterState, category: MainCategory, subcategory: string | null): string {
+  const params = new URLSearchParams();
+  if (filters.q.trim()) params.set('q', filters.q.trim());
+  params.set('category', category);
+  if (subcategory) params.set('subcategory', subcategory);
+  if (filters.location.trim()) params.set('location', filters.location.trim());
+  if (filters.needsCleaning) params.set('needs_cleaning', 'true');
+  if (filters.gdprLocked !== 'all') params.set('gdpr_locked', filters.gdprLocked === 'locked' ? 'true' : 'false');
+  if (filters.dateFrom) params.set('date_from', filters.dateFrom);
+  if (filters.dateTo) params.set('date_to', filters.dateTo);
+  if (filters.weightMin.trim()) params.set('weight_min', filters.weightMin.trim().replace(',', '.'));
+  if (filters.weightMax.trim()) params.set('weight_max', filters.weightMax.trim().replace(',', '.'));
+  if (filters.priceMin.trim()) params.set('price_min', filters.priceMin.trim().replace(',', '.'));
+  if (filters.priceMax.trim()) params.set('price_max', filters.priceMax.trim().replace(',', '.'));
+  return params.toString();
+}
+
+import { EMPTY_FILTERS } from './types';
 
 export function useDepolamaMakeState(): DepolamaPageProps {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const toast = useToast();
   const [prices, setPrices] = useState<MarketPrices>(DEFAULT_MARKET_PRICES);
   const [priceOpen, setPriceOpen] = useState(false);
   const [activeKat, setActiveKat] = useState<MainCategory>('kulce');
@@ -265,6 +327,10 @@ export function useDepolamaMakeState(): DepolamaPageProps {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [opdateret, setOpdateret] = useState<string>(() => readUpdated());
 
+  const [filters, setFilters] = useState<InventoryFilterState>(EMPTY_FILTERS);
+  const [sort, setSort] = useState<InventorySortState>({ key: 'lager_dato', direction: 'desc' });
+  const [retryingLabelId, setRetryingLabelId] = useState<string | null>(null);
+
   useEffect(() => {
     void queryClient.prefetchQuery({
       queryKey: ['office-runtime-status', 'depolama'],
@@ -273,9 +339,17 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     });
   }, [queryClient]);
 
+  const subcategory =
+    activeKat === 'gumus' ? gumusAlt : activeKat === 'platin_pd' ? platinAlt : null;
+
+  const workspaceParams = useMemo(
+    () => buildWorkspaceQueryParams(filters, activeKat, subcategory),
+    [filters, activeKat, subcategory],
+  );
+
   const workspaceQuery = useQuery({
-    queryKey: ['depolama', 'workspace'],
-    queryFn: () => apiRequest<InventoryWorkspace>('/api/v2/depolama/workspace'),
+    queryKey: ['depolama', 'workspace', workspaceParams],
+    queryFn: () => apiRequest<InventoryWorkspace>(`/api/v2/depolama/workspace?${workspaceParams}`),
   });
 
   const visibleRows = useMemo(
@@ -283,11 +357,24 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     [workspaceQuery.data?.rows],
   );
 
-  const stokList = useMemo(() => visibleRows.map(rowToStokItem), [visibleRows]);
+  const stokList = useMemo(
+    () => sortItems(visibleRows.map(rowToStokItem), sort),
+    [visibleRows, sort],
+  );
   const detailQuery = useQuery({
     queryKey: ['depolama', 'product', selectedProductId],
     enabled: Boolean(selectedProductId),
     queryFn: () => apiRequest<ProductOut>(`/api/v2/depolama/products/${selectedProductId}`),
+  });
+  const historyQuery = useQuery({
+    queryKey: ['depolama', 'product', selectedProductId, 'history'],
+    enabled: Boolean(selectedProductId),
+    queryFn: () => apiRequest<ProductHistoryEntry[]>(`/api/v2/depolama/products/${selectedProductId}/history?limit=30`),
+  });
+  const sourceAfgQuery = useQuery({
+    queryKey: ['depolama', 'product', selectedProductId, 'source-afg'],
+    enabled: Boolean(selectedProductId),
+    queryFn: () => apiRequest<ProductSourceAfg | null>(`/api/v2/depolama/products/${selectedProductId}/source-afg`),
   });
 
   useEffect(() => {
@@ -317,7 +404,9 @@ export function useDepolamaMakeState(): DepolamaPageProps {
 
   useEffect(() => {
     return listenArtifactSync((signal) => {
-      if (signal.kind !== 'depolama' || signal.source === 'depolama-ui') return;
+      if (signal.source === 'depolama-ui') return;
+      // Hem direkt depolama sinyali hem alış/log'dan tetiklenen cross-module sinyali yakala
+      if (!signalMatches(signal, 'depolama')) return;
       void invalidateDepolama();
     });
   }, [queryClient, workspaceQuery.data]);
@@ -340,6 +429,24 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     writeUpdated(now);
   }
 
+  const extractApiMessage = (error: unknown, fallback: string): string => {
+    if (error instanceof Error) {
+      try {
+        const parsed = JSON.parse(error.message);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.detail && typeof parsed.detail === 'object' && parsed.detail.message) {
+            return String(parsed.detail.message);
+          }
+          if (typeof parsed.detail === 'string') return parsed.detail;
+        }
+      } catch {
+        // fall through
+      }
+      return error.message || fallback;
+    }
+    return fallback;
+  };
+
   const savePricesMutation = useMutation({
     mutationFn: (payload: MarketPrices) =>
       apiRequest('/api/v2/depolama/market-prices', {
@@ -356,6 +463,10 @@ export function useDepolamaMakeState(): DepolamaPageProps {
       markUpdatedNow();
       emitArtifactSync({ kind: 'depolama', key: 'live', source: 'depolama-ui' });
       setPriceOpen(false);
+      toast.success('Piyasa fiyatları güncellendi');
+    },
+    onError: (error) => {
+      toast.error('Piyasa fiyatları kaydedilemedi', extractApiMessage(error, 'Sunucu hatası'));
     },
   });
 
@@ -373,6 +484,10 @@ export function useDepolamaMakeState(): DepolamaPageProps {
       if (item.mainKat === 'gumus') setGumusAlt(item.gumusAlt || 'smykker');
       if (item.mainKat === 'platin_pd') setPlatinAlt(item.platinAlt || 'platin');
       setEditing(null);
+      toast.success('Ürün oluşturuldu', product.product_number || product.display_name || undefined);
+    },
+    onError: (error) => {
+      toast.error('Ürün oluşturulamadı', extractApiMessage(error, 'Sunucu hatası'));
     },
   });
 
@@ -387,6 +502,16 @@ export function useDepolamaMakeState(): DepolamaPageProps {
       markUpdatedNow();
       emitArtifactSync({ kind: 'depolama', key: 'live', source: 'depolama-ui' });
       setEditing(null);
+      toast.success('Ürün güncellendi', product.product_number || undefined);
+    },
+    onError: (error) => {
+      const msg = extractApiMessage(error, 'Sunucu hatası');
+      if (msg.includes('stale_product') || msg.toLowerCase().includes('başka bir kullanıcı')) {
+        toast.warning('Çakışma', 'Ürün başka bir kullanıcı tarafından güncellenmiş. Lütfen sayfayı yenileyin.');
+        setEditing(null);
+      } else {
+        toast.error('Ürün güncellenemedi', msg);
+      }
     },
   });
 
@@ -400,6 +525,10 @@ export function useDepolamaMakeState(): DepolamaPageProps {
       markUpdatedNow();
       emitArtifactSync({ kind: 'depolama', key: 'live', source: 'depolama-ui' });
       setEditing((current) => (current?.id === productId ? null : current));
+      toast.success('Ürün silindi');
+    },
+    onError: (error) => {
+      toast.error('Ürün silinemedi', extractApiMessage(error, 'Sunucu hatası'));
     },
   });
 
@@ -408,16 +537,25 @@ export function useDepolamaMakeState(): DepolamaPageProps {
       productId,
       status,
       meltReason,
+      expectedUpdatedAt,
+      salePriceDkk,
+      buyerCustomerId,
     }: {
       productId: string;
       status: InventoryLifecycleStatus;
       meltReason?: string | null;
+      expectedUpdatedAt?: string | null;
+      salePriceDkk?: number | null;
+      buyerCustomerId?: string | null;
     }) =>
       apiRequest<ProductOut>(`/api/v2/depolama/products/${productId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({
           status,
           melt_reason: meltReason || null,
+          sale_price_dkk: salePriceDkk || null,
+          buyer_customer_id: buyerCustomerId || null,
+          expected_updated_at: expectedUpdatedAt || null,
         }),
       }),
     onSuccess: async (product) => {
@@ -427,8 +565,62 @@ export function useDepolamaMakeState(): DepolamaPageProps {
       if (product.status === 'melted' || product.status === 'sold') {
         setSelectedProductId(null);
       }
+      toast.success('Ürün durumu güncellendi', product.status);
+    },
+    onError: (error) => {
+      const msg = extractApiMessage(error, 'Sunucu hatası');
+      if (msg.includes('stale_product')) {
+        toast.warning('Çakışma', 'Ürün durumu başka bir kullanıcı tarafından güncellenmiş.');
+      } else {
+        toast.error('Durum güncellenemedi', msg);
+      }
     },
   });
+
+  const uploadPhotosMutation = useMutation({
+    mutationFn: async ({ productId, files }: { productId: string; files: FileList | File[] }) => {
+      const fd = new FormData();
+      Array.from(files).forEach((file) => fd.append('files', file));
+      return apiRequest<ProductOut>(`/api/products/${productId}/photos`, {
+        method: 'POST',
+        body: fd,
+      });
+    },
+    onSuccess: async (product) => {
+      await invalidateDepolama(product.id);
+      toast.success('Fotoğraflar yüklendi');
+    },
+    onError: (error) => {
+      toast.error('Fotoğraf yüklenemedi', extractApiMessage(error, 'Sunucu hatası'));
+    },
+  });
+
+  const deletePhotoMutation = useMutation({
+    mutationFn: ({ productId, photoId }: { productId: string; photoId: string }) =>
+      apiRequest(`/api/products/${productId}/photos/${photoId}`, { method: 'DELETE' }),
+    onSuccess: async (_, vars) => {
+      await invalidateDepolama(vars.productId);
+      toast.success('Fotoğraf silindi');
+    },
+    onError: (error) => {
+      toast.error('Fotoğraf silinemedi', extractApiMessage(error, 'Sunucu hatası'));
+    },
+  });
+
+  async function printLabel(productId: string, productLabel: string) {
+    setRetryingLabelId(productId);
+    try {
+      await downloadAuthedDocument(
+        `/api/v2/depolama/products/${productId}/label`,
+        `etiket-${productLabel || productId}.escpos`,
+      );
+      toast.success('Etiket indirildi', 'Thermal printera gönderebilirsiniz.');
+    } catch (error) {
+      toast.error('Etiket alınamadı', extractApiMessage(error, 'Sunucu hatası'));
+    } finally {
+      setRetryingLabelId(null);
+    }
+  }
 
   function startNew() {
     setActiveView('system');
@@ -439,14 +631,26 @@ export function useDepolamaMakeState(): DepolamaPageProps {
   function saveItem() {
     if (!editing) return;
     if (!editing.urun.trim()) {
-      if (typeof window !== 'undefined') {
-        window.alert('Ürün adı zorunludur!');
-      }
+      toast.warning('Ürün adı zorunlu', 'Lütfen "Ürün / Vare" alanını doldurun.');
+      return;
+    }
+    if (editing.birimGram <= 0) {
+      toast.warning('Birim gram zorunlu', 'Gram değeri 0\'dan büyük olmalıdır.');
+      return;
+    }
+    if (editing.alisFiyati <= 0) {
+      toast.warning('Alış fiyatı zorunlu', 'Alış fiyatı 0\'dan büyük olmalıdır.');
       return;
     }
     const exists = stokList.some((item) => item.id === editing.id);
     if (exists) {
-      updateProductMutation.mutate({ productId: editing.id, item: editing });
+      // Optimistic concurrency için detailQuery'den updated_at iletilir
+      const detail = detailQuery.data;
+      const updatedAt = detail && detail.id === editing.id ? detail.updated_at : undefined;
+      updateProductMutation.mutate({
+        productId: editing.id,
+        item: { ...editing, updatedAt },
+      });
       return;
     }
     createProductMutation.mutate(editing);
@@ -469,8 +673,25 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     navigate(`/woocommerce?product=${encodeURIComponent(productId)}`);
   }
 
-  function updateProductStatus(productId: string, status: InventoryLifecycleStatus, meltReason?: string | null) {
-    updateStatusMutation.mutate({ productId, status, meltReason });
+  function updateProductStatus(
+    productId: string,
+    nextStatus: InventoryLifecycleStatus,
+    meltReason?: string | null,
+    salePriceDkk?: number | null,
+  ) {
+    const detail = detailQuery.data;
+    const expectedUpdatedAt = detail && detail.id === productId ? detail.updated_at : null;
+    updateStatusMutation.mutate({
+      productId,
+      status: nextStatus,
+      meltReason,
+      expectedUpdatedAt,
+      salePriceDkk,
+    });
+  }
+
+  function resetFilters() {
+    setFilters(EMPTY_FILTERS);
   }
 
   return {
@@ -493,6 +714,10 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     selectedProductId,
     selectedProduct: detailQuery.data ?? null,
     loadingSelectedProduct: detailQuery.isLoading,
+    productHistory: historyQuery.data ?? [],
+    productHistoryLoading: historyQuery.isLoading,
+    productSourceAfg: sourceAfgQuery.data ?? null,
+    productSourceAfgLoading: sourceAfgQuery.isLoading,
     opdateret,
     startNew,
     saveItem,
@@ -507,5 +732,18 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     deletingItem: deleteProductMutation.isPending,
     savingPrices: savePricesMutation.isPending,
     updatingStatus: updateStatusMutation.isPending,
+    filters,
+    setFilters,
+    resetFilters,
+    sort,
+    setSort,
+    onPrintLabel: printLabel,
+    printingLabelForId: retryingLabelId,
+    onUploadPhotos: (productId: string, files: FileList | File[]) =>
+      uploadPhotosMutation.mutate({ productId, files }),
+    uploadingPhotos: uploadPhotosMutation.isPending,
+    onDeletePhoto: (productId: string, photoId: string) =>
+      deletePhotoMutation.mutate({ productId, photoId }),
+    deletingPhoto: deletePhotoMutation.isPending,
   };
 }

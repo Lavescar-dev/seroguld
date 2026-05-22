@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { PdfViewerModal } from '@/components/PdfViewerModal';
 import {
   ensureCustomerDisplayWindow,
   getDesktopMonitorSetup,
@@ -65,12 +66,27 @@ export function PosPage() {
   }, [refreshDesktopDisplayState]);
 
   return (
-    <MakeAlisPage
-      {...alisState}
-      desktopDisplayState={desktopDisplayState}
-      expectedDisplayRoute={expectedDisplayRoute}
-      routeMatches={isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute)}
-      onOpenCustomerDisplay={openCustomerDisplay}
-    />
+    <>
+      <MakeAlisPage
+        {...alisState}
+        desktopDisplayState={desktopDisplayState}
+        expectedDisplayRoute={expectedDisplayRoute}
+        routeMatches={isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute)}
+        onOpenCustomerDisplay={openCustomerDisplay}
+      />
+      <PdfViewerModal
+        open={Boolean(alisState.pdfState.url)}
+        pdfUrl={alisState.pdfState.url}
+        filename={alisState.pdfState.filename}
+        title="Alış Belgesi PDF"
+        onClose={alisState.onClosePdfModal}
+      />
+      {alisState.pdfState.error ? (
+        <div className="fixed bottom-4 right-4 z-[60] max-w-md border border-rose-300 bg-rose-50 px-4 py-3 text-xs text-rose-700 shadow-lg">
+          <p className="font-bold uppercase tracking-wider">PDF Hatası</p>
+          <p className="mt-1">{alisState.pdfState.error}</p>
+        </div>
+      ) : null}
+    </>
   );
 }

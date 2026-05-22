@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useId } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useId, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { formatNumber } from '@/lib/format';
@@ -23,9 +23,13 @@ export const SILVER_MATRIX_ROWS = [
 
 const GOLD_RATE_ORDER = ['8', '14', '18', '21', '21.6', '22', '24'] as const;
 const SILVER_RATE_ORDER = ['999', '925', '830', '800'] as const;
+type MatrixRateDrafts = { gold: Record<string, string>; silver: Record<string, string> };
 
 export function normalizeTextInput(value: string): string {
-  return value.replace(',', '.');
+  // Virgül -> nokta + işaret (minus) karakterini kaldır.
+  // Alış akışında negatif gram/oran anlamlı değil; kullanıcı UI'da '-' yazsa bile
+  // state'e sayısal olarak yazılır, downstream hesaplar pozitif/sıfır olur.
+  return value.replace(',', '.').replace(/-/g, '');
 }
 
 export function parseDecimalValue(value: string | number | null | undefined) {
@@ -39,6 +43,21 @@ export function formatDecimalFixed(value: string | number | null | undefined) {
 
 function formatMatrixRate(value: string | number | null | undefined) {
   return parseDecimalValue(value).toFixed(4);
+}
+
+function formatRatePlaceholder(value: string | number | null | undefined) {
+  const text = String(value ?? '').trim();
+  if (!text || parseDecimalValue(text) === 0) {
+    return '0.0000';
+  }
+  return text;
+}
+
+function buildEmptyMatrixRateDrafts(): MatrixRateDrafts {
+  return {
+    gold: Object.fromEntries(GOLD_RATE_ORDER.map((key) => [key, ''])) as Record<string, string>,
+    silver: Object.fromEntries(SILVER_RATE_ORDER.map((key) => [key, ''])) as Record<string, string>,
+  };
 }
 
 export function syncMarketRateState(
@@ -98,6 +117,15 @@ export function MarketRatesEditor({
   variant?: 'light' | 'dark';
 }) {
   const panelId = useId();
+  const [activeRateField, setActiveRateField] = useState<string | null>(null);
+  const [rateDrafts, setRateDrafts] = useState<MatrixRateDrafts>(() => buildEmptyMatrixRateDrafts());
+
+  useEffect(() => {
+    if (!activeRateField) {
+      setRateDrafts(buildEmptyMatrixRateDrafts());
+    }
+  }, [activeRateField, marketRates]);
+
   const triggerClassName =
     variant === 'dark'
       ? 'flex items-center gap-2 border border-brand-600 bg-brand-950/40 px-3 py-2 text-[11px] font-black uppercase tracking-widest transition hover:bg-brand-900'
@@ -158,22 +186,38 @@ export function MarketRatesEditor({
       : 'flex flex-wrap items-center justify-between gap-3 border-t border-brand-200 pt-3';
 
   const updateGoldRate = (rateKey: string, value: string) => {
+    const normalizedValue = normalizeTextInput(value);
+    setRateDrafts((current) => ({
+      ...current,
+      gold: {
+        ...current.gold,
+        [rateKey]: normalizedValue,
+      },
+    }));
     setMarketRates((current) =>
       syncMarketRateState(current, {
         gold_rates_eur: {
           ...current.gold_rates_eur,
-          [rateKey]: normalizeTextInput(value),
+          [rateKey]: normalizedValue,
         },
       }),
     );
   };
 
   const updateSilverRate = (rateKey: string, value: string) => {
+    const normalizedValue = normalizeTextInput(value);
+    setRateDrafts((current) => ({
+      ...current,
+      silver: {
+        ...current.silver,
+        [rateKey]: normalizedValue,
+      },
+    }));
     setMarketRates((current) =>
       syncMarketRateState(current, {
         silver_rates_eur: {
           ...current.silver_rates_eur,
-          [rateKey]: normalizeTextInput(value),
+          [rateKey]: normalizedValue,
         },
       }),
     );
@@ -268,8 +312,11 @@ export function MarketRatesEditor({
                           <input
                             id={`${panelId}-gold-${row.key}`}
                             type="text"
-                            value={marketRates.gold_rates_eur?.[row.key] || ''}
+                            value={rateDrafts.gold[row.key] ?? ''}
+                            placeholder={formatRatePlaceholder(marketRates.gold_rates_eur?.[row.key])}
                             onChange={(event) => updateGoldRate(row.key, event.target.value)}
+                            onFocus={() => setActiveRateField(`gold:${row.key}`)}
+                            onBlur={() => setActiveRateField(null)}
                             className={fieldInputClassName}
                             aria-label={`${row.label} Gold EUR / G`}
                           />
@@ -304,8 +351,11 @@ export function MarketRatesEditor({
                           <input
                             id={`${panelId}-silver-${row.key}`}
                             type="text"
-                            value={marketRates.silver_rates_eur?.[row.key] || ''}
+                            value={rateDrafts.silver[row.key] ?? ''}
+                            placeholder={formatRatePlaceholder(marketRates.silver_rates_eur?.[row.key])}
                             onChange={(event) => updateSilverRate(row.key, event.target.value)}
+                            onFocus={() => setActiveRateField(`silver:${row.key}`)}
+                            onBlur={() => setActiveRateField(null)}
                             className={fieldInputClassName}
                             aria-label={`${row.label} EUR / G`}
                           />

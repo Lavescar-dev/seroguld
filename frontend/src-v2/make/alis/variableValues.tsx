@@ -52,6 +52,8 @@ export function VariableValuesSheetEditor({
   title = 'Variable værdier',
   description = 'AFG v3 contract: EUR truth, FX, AFG notu ve calculator blokları burada tutulur.',
   layout = 'full',
+  showSettings = true,
+  showCalculators = true,
 }: {
   numbering: EditableWorkspaceNumbering;
   onUpdateNumbering: (field: keyof EditableWorkspaceNumbering, value: string) => void;
@@ -66,6 +68,8 @@ export function VariableValuesSheetEditor({
   title?: string;
   description?: string;
   layout?: 'full' | 'compactSidebar';
+  showSettings?: boolean;
+  showCalculators?: boolean;
 }) {
   const fx = parseDecimalValue(marketRates.eur_dkk_fx) || 1;
   const goldMatrixRows = GOLD_MATRIX_ROWS.map((row) => {
@@ -166,6 +170,8 @@ export function VariableValuesSheetEditor({
   if (layout === 'compactSidebar') {
     return (
       <div className="space-y-3">
+        {showSettings ? (
+        <>
         <div className="border border-brand-200 bg-white px-4 py-3 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
@@ -224,67 +230,10 @@ export function VariableValuesSheetEditor({
             placeholder="Bu alışa özel notlar..."
           />
         </div>
+        </>
+        ) : null}
 
-        <div className="space-y-3">
-          <div className="border border-brand-200 bg-white px-4 py-3 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Gold Rates</p>
-                <p className="mt-1 text-[11px] leading-5 text-brand-600">EUR truth, DKK derived.</p>
-              </div>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {goldMatrixRows.map((row) => (
-                <label key={row.key} className="block border border-brand-200 bg-brand-50 px-2.5 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="mono text-[11px] font-black uppercase tracking-wider text-brand-900">{row.label}</span>
-                    <span className="mono text-[10px] text-brand-500">{row.lodighed}</span>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={row.eur_per_gram}
-                      onChange={(event) => updateGoldRate(row.key, event.target.value)}
-                      className="mono h-8 min-w-0 flex-1 border border-brand-300 bg-white px-2.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
-                    />
-                    <span className="mono shrink-0 text-[10px] font-black uppercase tracking-wider text-brand-500">EUR/g</span>
-                  </div>
-                  <p className="mono mt-1 text-[10px] font-semibold text-emerald-700">DKK/g {row.dkk_per_gram}</p>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="border border-brand-200 bg-white px-4 py-3 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Silver Rates</p>
-                <p className="mt-1 text-[11px] leading-5 text-brand-600">EUR truth, DKK derived.</p>
-              </div>
-            </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {silverMatrixRows.map((row) => (
-                <label key={row.key} className="block border border-brand-200 bg-brand-50 px-2.5 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-black text-brand-900">{row.label}</span>
-                    <span className="mono text-[10px] text-brand-500">{row.lodighed}</span>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={row.eur_per_gram}
-                      onChange={(event) => updateSilverRate(row.key, event.target.value)}
-                      className="mono h-8 min-w-0 flex-1 border border-brand-300 bg-white px-2.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
-                    />
-                    <span className="mono shrink-0 text-[10px] font-black uppercase tracking-wider text-brand-500">EUR/g</span>
-                  </div>
-                  <p className="mono mt-1 text-[10px] font-semibold text-emerald-700">DKK/g {row.dkk_per_gram}</p>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
-
+        {showCalculators ? (
         <div className="space-y-3">
           <div className="border border-brand-200 bg-white shadow-sm">
             <div className="border-b border-brand-200 bg-brand-50 px-4 py-2.5">
@@ -422,6 +371,7 @@ export function VariableValuesSheetEditor({
             </div>
           </div>
         </div>
+        ) : null}
       </div>
     );
   }

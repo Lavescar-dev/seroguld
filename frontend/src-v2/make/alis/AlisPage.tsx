@@ -1,4 +1,4 @@
-import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useRef, useState } from 'react';
+import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Calendar,
@@ -8,6 +8,7 @@ import {
   Eye,
   FileSpreadsheet,
   FilterX,
+  Loader2,
   Pencil,
   Plus,
   Printer,
@@ -25,7 +26,7 @@ import {
   normalizeDesktopDisplayRoute,
   type DesktopDisplayWindowState,
 } from '@/lib/desktop';
-import { formatMoney, formatNumber } from '@/lib/format';
+import { formatMoney, formatNumber, formatRelativeTime } from '@/lib/format';
 import type {
   CustomerOut,
   PosDocumentDetail,
@@ -42,6 +43,7 @@ import {
   MarketRatesEditor,
   parseDecimalValue,
 } from './marketRates';
+import { CustomerAlisSummaryStrip } from './CustomerAlisSummaryStrip';
 import { CustomerEditorTable, CustomerInfoTable } from './customerEditors';
 import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor } from './sheetEditors';
 import type {
@@ -96,6 +98,76 @@ function formatSavedPurchasePreviewLabel(item: PosSavedPurchaseListItem['gold_pr
   return purityLabel || '—';
 }
 
+function UnicontaSyncBadge({
+  status,
+  invoiceNumber,
+  error,
+}: {
+  status?: string | null;
+  invoiceNumber?: string | null;
+  error?: string | null;
+}) {
+  if (!status) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 bg-slate-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-700"
+        title="Uniconta'ya henüz gönderilmedi"
+      >
+        UC: —
+      </span>
+    );
+  }
+  if (status === 'synced') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 bg-emerald-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-800"
+        title={invoiceNumber ? `Uniconta fatura no: ${invoiceNumber}` : 'Uniconta sync başarılı'}
+      >
+        <CheckCircle2 className="h-3 w-3" />
+        UC{invoiceNumber ? ` ${invoiceNumber}` : ''}
+      </span>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 bg-rose-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-rose-800"
+        title={error ? `Uniconta sync hatası: ${error}` : 'Uniconta sync başarısız'}
+      >
+        <AlertCircle className="h-3 w-3" />
+        UC HATA
+      </span>
+    );
+  }
+  if (status === 'skipped') {
+    return (
+      <span
+        className="inline-flex items-center gap-1 bg-amber-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-800"
+        title={error || 'Uniconta sync atlandı'}
+      >
+        UC ATLANDI
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 bg-slate-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-700"
+      title={`Uniconta durum: ${status}`}
+    >
+      UC: {status}
+    </span>
+  );
+}
+
+type SavedPurchaseSortKey =
+  | 'sequence_no'
+  | 'issued_at'
+  | 'customer_name'
+  | 'gross_amount'
+  | 'uniconta_status';
+
+type SavedPurchaseSortState = { key: SavedPurchaseSortKey; direction: 'asc' | 'desc' };
+
 type SavedPurchaseListActionProps = {
   onOpenCustomer: (item: PosSavedPurchaseListItem) => void;
   onViewDocument: (item: PosSavedPurchaseListItem) => void;
@@ -105,12 +177,16 @@ type SavedPurchaseListActionProps = {
   onStartFromCustomer: (item: PosSavedPurchaseListItem) => void;
   onEditDocument: (item: PosSavedPurchaseListItem) => void;
   onDeleteDocument: (item: PosSavedPurchaseListItem) => void;
+  onRetryUnicontaSync: (item: PosSavedPurchaseListItem) => void;
+  retryPendingSequenceNo: number | null;
   actionPendingSequenceNo: number | null;
 };
 
 type SavedPurchaseListRendererProps = SavedPurchaseListActionProps & {
   documents: PosSavedPurchaseListItem[];
   listLoading: boolean;
+  sortConfig?: SavedPurchaseSortState;
+  onToggleSort?: (key: SavedPurchaseSortKey) => void;
 };
 
 type StartWorkspaceViewProps = SavedPurchaseListRendererProps & {
@@ -122,7 +198,16 @@ type StartWorkspaceViewProps = SavedPurchaseListRendererProps & {
   setPurchaseDate: Dispatch<SetStateAction<string>>;
 };
 
+export type AlisPdfModalState = {
+  url: string | null;
+  filename: string;
+  loading: boolean;
+  error: string | null;
+};
+
 export type AlisPageProps = {
+  pdfState: AlisPdfModalState;
+  onClosePdfModal: () => void;
   detailPurchase: PosSavedPurchaseListItem | null;
   detail: PosDocumentDetail | null;
   detailLoading: boolean;
@@ -149,6 +234,8 @@ export type AlisPageProps = {
   onStartFromCustomer: (item: PosSavedPurchaseListItem) => void;
   onEditDocument: (item: PosSavedPurchaseListItem) => void;
   onDeleteDocument: (item: PosSavedPurchaseListItem) => void;
+  onRetryUnicontaSync: (item: PosSavedPurchaseListItem) => void;
+  retryPendingSequenceNo: number | null;
   listLoading: boolean;
   actionPendingSequenceNo: number | null;
   customerMode: 'existing' | 'new' | null;
@@ -211,6 +298,8 @@ export type AlisPageProps = {
 };
 
 export function AlisPage(props: AlisPageProps) {
+  // pdfState ve onClosePdfModal PosPage wrapper'ında PdfViewerModal için kullanılıyor.
+  // Burada destructure edilmiyor, sadece tip kontrolü için interface'te tanımlı.
   const {
     detailPurchase,
     detail,
@@ -238,6 +327,8 @@ export function AlisPage(props: AlisPageProps) {
     onStartFromCustomer,
     onEditDocument,
     onDeleteDocument,
+    onRetryUnicontaSync,
+    retryPendingSequenceNo,
     listLoading,
     actionPendingSequenceNo,
     customerMode,
@@ -419,6 +510,8 @@ export function AlisPage(props: AlisPageProps) {
           onStartFromCustomer={onStartFromCustomer}
           onEditDocument={onEditDocument}
           onDeleteDocument={onDeleteDocument}
+          onRetryUnicontaSync={onRetryUnicontaSync}
+          retryPendingSequenceNo={retryPendingSequenceNo}
           listLoading={listLoading}
           actionPendingSequenceNo={actionPendingSequenceNo}
         />
@@ -542,8 +635,14 @@ function ActiveWorkspaceView(props: {
     onOpenCustomerDisplay,
   } = props;
   const hasSelectedCustomer = Boolean(workspace.customer.customer_id);
-  const liveTotalWeight = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
-  const liveTotalAmount = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.line_total_dkk), 0);
+  const liveTotalWeight = useMemo(
+    () => [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0),
+    [goldRows, silverRows],
+  );
+  const liveTotalAmount = useMemo(
+    () => [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.line_total_dkk), 0),
+    [goldRows, silverRows],
+  );
   const actualRoute = desktopDisplayState?.active_route ? normalizeDesktopDisplayRoute(desktopDisplayState.active_route) : '—';
   const workspaceWorkbookName = buildWorkspaceWorkbookName(workspace);
   const displayStatusTone = routeMatches
@@ -576,6 +675,9 @@ function ActiveWorkspaceView(props: {
             <div className="min-w-[6rem]">
               <span className="block text-xs uppercase tracking-widest text-brand-500">Dato</span>
               <span className="mono text-base font-bold text-brand-100">{formatDateOnly(workspace.session.updated_at)}</span>
+              <span className="mt-0.5 block text-[10px] text-brand-400" title={workspace.session.updated_at}>
+                Son güncelleme: {formatRelativeTime(workspace.session.updated_at)}
+              </span>
             </div>
             <MarketRatesEditor
               marketRates={marketRates}
@@ -611,9 +713,11 @@ function ActiveWorkspaceView(props: {
               type="button"
               onClick={onCancel}
               disabled={cancelPending}
-              className="whitespace-nowrap border border-brand-700 px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-300 transition-colors hover:border-brand-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 whitespace-nowrap border border-brand-700 px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-300 transition-colors hover:border-brand-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              title="Taslağı iptal et (Esc)"
             >
-              {cancelPending ? 'İptal...' : 'İptal Et'}
+              {cancelPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {cancelPending ? 'İptal ediliyor...' : 'İptal Et'}
             </button>
             <button
               type="button"
@@ -622,8 +726,13 @@ function ActiveWorkspaceView(props: {
               }}
               disabled={finalizePending || !hasSelectedCustomer}
               className="inline-flex items-center whitespace-nowrap border border-green-600 bg-green-700 px-5 py-2 text-xs font-black uppercase tracking-widest text-white transition-colors hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Kaydet (Ctrl+S)"
             >
-              <Save className="mr-2 h-4 w-4" />
+              {finalizePending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
               {finalizePending ? 'Kaydediliyor...' : 'Kaydet'}
             </button>
           </div>
@@ -677,7 +786,7 @@ function ActiveWorkspaceView(props: {
 
       {activeWorkspaceView === 'system' ? (
         <>
-          <div className="grid border-b-2 border-brand-300 xl:grid-cols-[0.86fr_1.14fr] xl:divide-x-2 xl:divide-brand-200">
+          <div className="grid border-b-2 border-brand-300 xl:grid-cols-[0.86fr_1.14fr] xl:items-start xl:divide-x-2 xl:divide-brand-200">
             <div className="bg-brand-50 px-6 py-4">
               <div className="space-y-4 xl:sticky xl:top-4">
                 <div className="border-b border-brand-200 pb-4">
@@ -704,6 +813,7 @@ function ActiveWorkspaceView(props: {
                   title="Document Settings"
                   description="AFG v3 contract: müşteri dışı doküman ayarları, EUR bazlı piyasa matrisi, AFG notu ve calculator blokları burada tutulur."
                   layout="compactSidebar"
+                  showCalculators={false}
                 />
 
                 <div className="border border-brand-200 bg-white px-4 py-4 shadow-sm">
@@ -751,15 +861,18 @@ function ActiveWorkspaceView(props: {
               </div>
             </div>
 
-            <div className="bg-white">
+            <div className="bg-white xl:self-start">
               {hasSelectedCustomer ? (
-                <CustomerInfoTable
-                  customer={customerForm}
-                  setCustomer={setCustomerForm}
-                  onBlur={onCustomerBlur}
-                  bankInfo={bankInfo}
-                  setBankInfo={setBankInfo}
-                />
+                <>
+                  <CustomerAlisSummaryStrip customerId={workspace.customer.customer_id} />
+                  <CustomerInfoTable
+                    customer={customerForm}
+                    setCustomer={setCustomerForm}
+                    onBlur={onCustomerBlur}
+                    bankInfo={bankInfo}
+                    setBankInfo={setBankInfo}
+                  />
+                </>
               ) : (
                 <div className="print:hidden">
                   <div className="border-b border-brand-200 bg-brand-50 px-4 py-2">
@@ -878,6 +991,22 @@ function ActiveWorkspaceView(props: {
                   ) : null}
                 </div>
               )}
+              <div className="border-t-2 border-brand-200 px-4 py-3">
+                <VariableValuesSheetEditor
+                  numbering={numbering}
+                  onUpdateNumbering={onUpdateNumbering}
+                  marketRates={marketRates}
+                  setMarketRates={setMarketRates}
+                  afgNote={afgNote}
+                  setAfgNote={setAfgNote}
+                  calculators={calculators}
+                  setCalculators={setCalculators}
+                  onUpdateGoldRow={onUpdateGoldRow}
+                  onUpdateSilverRow={onUpdateSilverRow}
+                  layout="compactSidebar"
+                  showSettings={false}
+                />
+              </div>
             </div>
           </div>
 
@@ -983,11 +1112,73 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
     onStartFromCustomer,
     onEditDocument,
     onDeleteDocument,
+    onRetryUnicontaSync,
+    retryPendingSequenceNo,
     listLoading,
     actionPendingSequenceNo,
   } = props;
   const savedPurchaseContainerRef = useRef<HTMLDivElement | null>(null);
   const [savedPurchaseLayout, setSavedPurchaseLayout] = useState<'table' | 'cards'>('table');
+  const [sortConfig, setSortConfig] = useState<{ key: SavedPurchaseSortKey; direction: 'asc' | 'desc' }>(
+    { key: 'sequence_no', direction: 'desc' },
+  );
+  const [amountMin, setAmountMin] = useState('');
+  const [amountMax, setAmountMax] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const toggleSort = (key: SavedPurchaseSortKey) => {
+    setSortConfig((current) => {
+      if (current.key === key) {
+        return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: key === 'sequence_no' || key === 'issued_at' || key === 'gross_amount' ? 'desc' : 'asc' };
+    });
+  };
+
+  const sanitizedAmountMin = useMemo(() => {
+    const v = Number(amountMin.replace(',', '.'));
+    return Number.isFinite(v) && amountMin.trim() !== '' ? v : null;
+  }, [amountMin]);
+  const sanitizedAmountMax = useMemo(() => {
+    const v = Number(amountMax.replace(',', '.'));
+    return Number.isFinite(v) && amountMax.trim() !== '' ? v : null;
+  }, [amountMax]);
+
+  const filteredAndSorted = useMemo(() => {
+    let working = documents;
+    if (dateTo) {
+      const dateToEnd = `${dateTo}T23:59:59.999`;
+      working = working.filter((doc) => doc.issued_at <= dateToEnd);
+    }
+    if (sanitizedAmountMin !== null) {
+      working = working.filter((doc) => Number(doc.gross_amount_dkk || 0) >= sanitizedAmountMin);
+    }
+    if (sanitizedAmountMax !== null) {
+      working = working.filter((doc) => Number(doc.gross_amount_dkk || 0) <= sanitizedAmountMax);
+    }
+    const direction = sortConfig.direction === 'asc' ? 1 : -1;
+    const sorted = [...working].sort((a, b) => {
+      switch (sortConfig.key) {
+        case 'sequence_no':
+          return (a.sequence_no - b.sequence_no) * direction;
+        case 'issued_at':
+          return a.issued_at.localeCompare(b.issued_at) * direction;
+        case 'customer_name':
+          return (a.customer_name || '').localeCompare(b.customer_name || '', 'tr', { sensitivity: 'base' }) * direction;
+        case 'gross_amount':
+          return (Number(a.gross_amount_dkk || 0) - Number(b.gross_amount_dkk || 0)) * direction;
+        case 'uniconta_status': {
+          const order = (s?: string | null) => (s === 'synced' ? 0 : s === 'failed' ? 1 : s === 'skipped' ? 2 : 3);
+          return (order(a.uniconta_sync_status) - order(b.uniconta_sync_status)) * direction;
+        }
+        default:
+          return 0;
+      }
+    });
+    return sorted;
+  }, [documents, dateTo, sanitizedAmountMin, sanitizedAmountMax, sortConfig]);
+
+  const hasExtraFilters = Boolean(amountMin || amountMax || dateTo);
 
   useEffect(() => {
     const node = savedPurchaseContainerRef.current;
@@ -1045,7 +1236,9 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
             <div className="flex items-center gap-3">
               <p className="text-xs font-black uppercase tracking-widest text-brand-700">Kayıtlı Alışlar</p>
               <span className="mono inline-flex items-center border border-brand-300 bg-white px-2 py-0.5 text-[11px] font-black uppercase tracking-widest text-brand-500">
-                {documents.length} kayıt
+                {filteredAndSorted.length === documents.length
+                  ? `${documents.length} kayıt`
+                  : `${filteredAndSorted.length} / ${documents.length} kayıt`}
               </span>
             </div>
 
@@ -1060,21 +1253,59 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
                   className="w-full border border-brand-300 py-1 pl-7 pr-2 text-xs focus:border-brand-500 focus:outline-none sm:w-48"
                 />
               </div>
-              <div className="relative min-w-[11rem] flex-1 sm:flex-none">
+              <div className="relative min-w-[8.5rem] flex-1 sm:flex-none" title="Başlangıç tarihi (gün)">
                 <Calendar className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-brand-400" />
                 <input
                   type="date"
                   value={purchaseDate}
                   onChange={(event) => setPurchaseDate(event.target.value)}
                   className="mono w-full border border-brand-300 py-1 pl-7 pr-2 text-xs focus:border-brand-500 focus:outline-none sm:w-auto"
+                  placeholder="Tarih"
                 />
               </div>
-              {purchaseSearchTerm || purchaseDate ? (
+              <span className="text-[10px] font-bold text-brand-400">→</span>
+              <div className="relative min-w-[8.5rem] flex-1 sm:flex-none" title="Bitiş tarihi (gün)">
+                <Calendar className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-brand-400" />
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(event) => setDateTo(event.target.value)}
+                  className="mono w-full border border-brand-300 py-1 pl-7 pr-2 text-xs focus:border-brand-500 focus:outline-none sm:w-auto"
+                  placeholder="Bitiş"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  value={amountMin}
+                  onChange={(event) => setAmountMin(event.target.value)}
+                  placeholder="Min DKK"
+                  className="mono w-20 border border-brand-300 py-1 px-2 text-xs focus:border-brand-500 focus:outline-none"
+                  title="Tutar alt sınır (DKK)"
+                />
+                <span className="text-[10px] font-bold text-brand-400">→</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  value={amountMax}
+                  onChange={(event) => setAmountMax(event.target.value)}
+                  placeholder="Max DKK"
+                  className="mono w-20 border border-brand-300 py-1 px-2 text-xs focus:border-brand-500 focus:outline-none"
+                  title="Tutar üst sınır (DKK)"
+                />
+              </div>
+              {purchaseSearchTerm || purchaseDate || hasExtraFilters ? (
                 <button
                   type="button"
                   onClick={() => {
                     setPurchaseSearchTerm('');
                     setPurchaseDate('');
+                    setDateTo('');
+                    setAmountMin('');
+                    setAmountMax('');
                   }}
                   className="border border-transparent p-1 text-brand-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-500"
                   title="Filtreleri Temizle"
@@ -1087,7 +1318,7 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
 
           {savedPurchaseLayout === 'cards' ? (
             <SavedPurchaseCardList
-              documents={documents}
+              documents={filteredAndSorted}
               listLoading={listLoading}
               onViewDocument={onViewDocument}
               onOpenDocumentExcelPreview={onOpenDocumentExcelPreview}
@@ -1097,11 +1328,13 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
               onStartFromCustomer={onStartFromCustomer}
               onEditDocument={onEditDocument}
               onDeleteDocument={onDeleteDocument}
+              onRetryUnicontaSync={onRetryUnicontaSync}
+              retryPendingSequenceNo={retryPendingSequenceNo}
               actionPendingSequenceNo={actionPendingSequenceNo}
             />
           ) : (
             <SavedPurchaseTable
-              documents={documents}
+              documents={filteredAndSorted}
               listLoading={listLoading}
               onViewDocument={onViewDocument}
               onOpenDocumentExcelPreview={onOpenDocumentExcelPreview}
@@ -1111,7 +1344,11 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
               onStartFromCustomer={onStartFromCustomer}
               onEditDocument={onEditDocument}
               onDeleteDocument={onDeleteDocument}
+              onRetryUnicontaSync={onRetryUnicontaSync}
+              retryPendingSequenceNo={retryPendingSequenceNo}
               actionPendingSequenceNo={actionPendingSequenceNo}
+              sortConfig={sortConfig}
+              onToggleSort={toggleSort}
             />
           )}
         </div>
@@ -1131,18 +1368,54 @@ function SavedPurchaseTable({
   onStartFromCustomer,
   onEditDocument,
   onDeleteDocument,
+  onRetryUnicontaSync,
+  retryPendingSequenceNo,
   actionPendingSequenceNo,
+  sortConfig,
+  onToggleSort,
 }: SavedPurchaseListRendererProps) {
+  const sortArrow = (key: SavedPurchaseSortKey) => {
+    if (!sortConfig || sortConfig.key !== key) return '↕';
+    return sortConfig.direction === 'asc' ? '↑' : '↓';
+  };
+  const headerSortClass = (key: SavedPurchaseSortKey) =>
+    sortConfig && sortConfig.key === key
+      ? 'cursor-pointer select-none bg-brand-200 hover:bg-brand-300'
+      : 'cursor-pointer select-none hover:bg-brand-200';
   return (
     <table className="w-full border-collapse">
       <thead>
         <tr className="border-b-2 border-brand-400">
-          <th className="w-[100px] border border-brand-300 bg-brand-100 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600">Afg. Nr.</th>
-          <th className="w-[120px] border border-brand-300 bg-brand-100 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600">Dato</th>
-          <th className="w-[240px] border border-brand-300 bg-brand-100 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600">Müşteri</th>
+          <th
+            onClick={onToggleSort ? () => onToggleSort('sequence_no') : undefined}
+            className={`w-[100px] border border-brand-300 bg-brand-100 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600 ${onToggleSort ? headerSortClass('sequence_no') : ''}`}
+            title="Afg numarasına göre sırala"
+          >
+            Afg. Nr.{onToggleSort ? <span className="ml-1 text-brand-400">{sortArrow('sequence_no')}</span> : null}
+          </th>
+          <th
+            onClick={onToggleSort ? () => onToggleSort('issued_at') : undefined}
+            className={`w-[120px] border border-brand-300 bg-brand-100 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600 ${onToggleSort ? headerSortClass('issued_at') : ''}`}
+            title="Tarihe göre sırala"
+          >
+            Dato{onToggleSort ? <span className="ml-1 text-brand-400">{sortArrow('issued_at')}</span> : null}
+          </th>
+          <th
+            onClick={onToggleSort ? () => onToggleSort('customer_name') : undefined}
+            className={`w-[240px] border border-brand-300 bg-brand-100 px-4 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600 ${onToggleSort ? headerSortClass('customer_name') : ''}`}
+            title="Müşteri adına göre sırala"
+          >
+            Müşteri{onToggleSort ? <span className="ml-1 text-brand-400">{sortArrow('customer_name')}</span> : null}
+          </th>
           <th className="border border-amber-300 bg-amber-50 px-4 py-2.5 text-center text-xs font-black uppercase tracking-wider text-amber-700">Guld — Karat</th>
           <th className="border border-slate-300 bg-slate-100 px-4 py-2.5 text-center text-xs font-black uppercase tracking-wider text-slate-600">Sølv — Lødighed</th>
-          <th className="w-[140px] border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-right text-xs font-black uppercase tracking-wider text-emerald-700">I alt (DKK)</th>
+          <th
+            onClick={onToggleSort ? () => onToggleSort('gross_amount') : undefined}
+            className={`w-[140px] border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-right text-xs font-black uppercase tracking-wider text-emerald-700 ${onToggleSort ? 'cursor-pointer select-none hover:bg-emerald-100' : ''}`}
+            title="Tutara göre sırala"
+          >
+            I alt (DKK){onToggleSort ? <span className="ml-1 text-emerald-400">{sortArrow('gross_amount')}</span> : null}
+          </th>
           <th className="w-[156px] border border-brand-300 bg-brand-100 px-2 py-2.5 text-center text-xs font-black uppercase tracking-wider text-brand-600">İşlemler</th>
         </tr>
       </thead>
@@ -1156,8 +1429,9 @@ function SavedPurchaseTable({
         ) : documents.length === 0 ? (
           <tr>
             <td colSpan={7} className="px-4 py-14 text-center">
-              <p className="text-sm font-semibold text-brand-400">Henüz kayıtlı alış yok</p>
-              <p className="mt-1 text-xs text-brand-300">Yeni alış başlatmak için yukarıdaki butonu kullanın</p>
+              <Plus className="mx-auto h-8 w-8 text-brand-300" />
+              <p className="mt-3 text-sm font-semibold text-brand-500">Henüz kayıtlı alış yok</p>
+              <p className="mt-1 text-xs text-brand-400">Müşteri geldiğinde yukarıdaki <span className="font-bold text-brand-700">Yeni Alış Başlat</span> butonuna bas veya <kbd className="mx-1 border border-brand-300 bg-white px-1 py-0.5 text-[10px] font-bold">Ctrl + N</kbd> kısayolunu kullan</p>
             </td>
           </tr>
         ) : (
@@ -1269,12 +1543,17 @@ function SavedPurchaseTable({
               </td>
               <td className="mono border border-emerald-300 bg-emerald-50 px-4 py-3 text-right text-sm font-black text-emerald-900">
                 {formatMoney(document.gross_amount_dkk)}
-                <div className="mt-1">
+                <div className="mt-1 flex flex-wrap items-center justify-end gap-1">
                   {document.payment_method === 'cash' ? (
                     <span className="inline-block bg-emerald-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-800">Nakit</span>
                   ) : (
                     <span className="inline-block bg-brand-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-brand-700">Banka</span>
                   )}
+                  <UnicontaSyncBadge
+                    status={document.uniconta_sync_status}
+                    invoiceNumber={document.uniconta_invoice_number}
+                    error={document.uniconta_sync_error}
+                  />
                 </div>
               </td>
               <td className="border border-brand-200 px-2 py-2.5">
@@ -1345,6 +1624,22 @@ function SavedPurchaseTable({
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
+                  {document.uniconta_sync_status === 'failed' || document.uniconta_sync_status === 'skipped' ? (
+                    <button
+                      type="button"
+                      disabled={retryPendingSequenceNo === document.sequence_no}
+                      onClick={() => onRetryUnicontaSync(document)}
+                      className="flex h-5 w-5 items-center justify-center border border-transparent text-amber-700 transition hover:border-amber-400 hover:bg-amber-50 hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-35"
+                      title={`Uniconta'ya tekrar gönder${document.uniconta_sync_error ? ` — ${document.uniconta_sync_error}` : ''}`}
+                      aria-label="Uniconta'ya tekrar gönder"
+                    >
+                      {retryPendingSequenceNo === document.sequence_no ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCcw className="h-3 w-3" />
+                      )}
+                    </button>
+                  ) : null}
                 </div>
               </td>
             </tr>
@@ -1366,6 +1661,8 @@ function SavedPurchaseCardList({
   onStartFromCustomer,
   onEditDocument,
   onDeleteDocument,
+  onRetryUnicontaSync,
+  retryPendingSequenceNo,
   actionPendingSequenceNo,
 }: SavedPurchaseListRendererProps) {
   if (listLoading) {
@@ -1445,9 +1742,16 @@ function SavedPurchaseCardList({
 
               <div className="flex flex-wrap items-center justify-between gap-2 border border-brand-200 bg-brand-50 px-3 py-2">
                 <span className="text-[10px] font-black uppercase tracking-widest text-brand-500">Ödeme Tipi</span>
-                <span className={`inline-flex px-2 py-1 text-[10px] font-black uppercase tracking-widest ${paymentTone}`}>
-                  {document.payment_method === 'cash' ? 'Nakit' : 'Banka'}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`inline-flex px-2 py-1 text-[10px] font-black uppercase tracking-widest ${paymentTone}`}>
+                    {document.payment_method === 'cash' ? 'Nakit' : 'Banka'}
+                  </span>
+                  <UnicontaSyncBadge
+                    status={document.uniconta_sync_status}
+                    invoiceNumber={document.uniconta_invoice_number}
+                    error={document.uniconta_sync_error}
+                  />
+                </div>
               </div>
 
               <SavedPurchaseCardActions
@@ -1460,6 +1764,8 @@ function SavedPurchaseCardList({
                 onStartFromCustomer={onStartFromCustomer}
                 onEditDocument={onEditDocument}
                 onDeleteDocument={onDeleteDocument}
+                onRetryUnicontaSync={onRetryUnicontaSync}
+                retryPendingSequenceNo={retryPendingSequenceNo}
                 actionPendingSequenceNo={actionPendingSequenceNo}
               />
             </div>
@@ -1536,12 +1842,17 @@ function SavedPurchaseCardActions({
   onStartFromCustomer,
   onEditDocument,
   onDeleteDocument,
+  onRetryUnicontaSync,
+  retryPendingSequenceNo,
   actionPendingSequenceNo,
 }: SavedPurchaseListActionProps & {
   document: PosSavedPurchaseListItem;
 }) {
   const isEditDisabled = !document.can_edit || actionPendingSequenceNo === document.sequence_no;
   const isDeleteDisabled = !document.can_delete || actionPendingSequenceNo === document.sequence_no;
+  const canRetrySync =
+    document.uniconta_sync_status === 'failed' || document.uniconta_sync_status === 'skipped';
+  const retryPending = retryPendingSequenceNo === document.sequence_no;
 
   return (
     <div className="grid gap-2 sm:grid-cols-2">
@@ -1599,11 +1910,23 @@ function SavedPurchaseCardActions({
         type="button"
         disabled={isDeleteDisabled}
         onClick={() => onDeleteDocument(document)}
-        className="inline-flex items-center justify-center gap-1.5 border border-rose-300 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-700 transition hover:border-rose-400 hover:bg-rose-100 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-35 sm:col-span-2"
+        className={`inline-flex items-center justify-center gap-1.5 border border-rose-300 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-700 transition hover:border-rose-400 hover:bg-rose-100 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-35 ${canRetrySync ? '' : 'sm:col-span-2'}`}
       >
         <Trash2 className="h-3.5 w-3.5" />
         Sil
       </button>
+      {canRetrySync ? (
+        <button
+          type="button"
+          disabled={retryPending}
+          onClick={() => onRetryUnicontaSync(document)}
+          className="inline-flex items-center justify-center gap-1.5 border border-amber-400 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-amber-800 transition hover:border-amber-500 hover:bg-amber-100 hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-35"
+          title={document.uniconta_sync_error || "Uniconta'ya tekrar gönder"}
+        >
+          {retryPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+          Uniconta'ya Gönder
+        </button>
+      ) : null}
     </div>
   );
 }

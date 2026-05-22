@@ -330,6 +330,46 @@ export function MakeOpmcPage({
                               {tone.label}
                               <span style={monoStyle}>· {item.risk_score ?? '—'}</span>
                             </span>
+                            {/* O8 — Skor kaynağı badge */}
+                            {item.risk_score_source && item.risk_score_source !== 'unknown' ? (
+                              <span
+                                className={`border px-1 py-0.5 text-[9px] font-black uppercase tracking-wider ${
+                                  item.risk_score_source === 'manual_override'
+                                    ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                                    : item.risk_score_source === 'whitelist'
+                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                                      : item.risk_score_source === 'blacklist'
+                                        ? 'border-rose-300 bg-rose-50 text-rose-700'
+                                        : item.risk_score_source === 'known_customer'
+                                          ? 'border-sky-300 bg-sky-50 text-sky-700'
+                                          : item.risk_score_source === 'opmc'
+                                            ? 'border-brand-300 bg-brand-100 text-brand-700'
+                                            : 'border-amber-300 bg-amber-50 text-amber-700'
+                                }`}
+                                title={
+                                  item.raw_risk_score != null && item.raw_risk_score !== item.risk_score
+                                    ? `Override: ham skor ${item.raw_risk_score}, etkin ${item.risk_score}`
+                                    : undefined
+                                }
+                              >
+                                {item.risk_score_source === 'manual_override'
+                                  ? 'Manuel'
+                                  : item.risk_score_source === 'whitelist'
+                                    ? 'Beyaz Liste'
+                                    : item.risk_score_source === 'blacklist'
+                                      ? 'Kara Liste'
+                                      : item.risk_score_source === 'known_customer'
+                                        ? 'Bilinen Müşteri'
+                                        : item.risk_score_source === 'opmc'
+                                          ? 'OPMC'
+                                          : 'AI'}
+                              </span>
+                            ) : null}
+                            {item.customer_history?.known_safe ? (
+                              <span className="border border-sky-300 bg-sky-50 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-sky-700">
+                                {item.customer_history.successful_orders} eski sipariş
+                              </span>
+                            ) : null}
                             {item.requires_manual_review ? <span className="border border-orange-300 bg-orange-100 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-orange-700">MANUEL İNCELEME</span> : null}
                           </div>
                         </td>

@@ -98,6 +98,8 @@ type MakeOpmcDetailPageProps = {
   isNotFound: boolean;
   errorMessage: string;
   onRefresh: () => void;
+  onOverride?: (level: 'low' | 'medium' | 'high', reason?: string) => void;
+  overriding?: boolean;
 };
 
 export function MakeOpmcDetailPage({
@@ -111,6 +113,8 @@ export function MakeOpmcDetailPage({
   isNotFound,
   errorMessage,
   onRefresh,
+  onOverride,
+  overriding,
 }: MakeOpmcDetailPageProps) {
   const showLoadingState = isLoading && !hasData;
   const showErrorState = isError && !hasData;
@@ -356,6 +360,157 @@ export function MakeOpmcDetailPage({
                 )}
               </div>
             </div>
+
+            {/* O8 — Skor kaynağı + override gerekçeleri panel */}
+            {(detail.override_reasons && detail.override_reasons.length > 0) ||
+            (detail.raw_risk_score != null && detail.raw_risk_score !== detail.risk_score) ||
+            detail.risk_score_source ? (
+              <div className="overflow-hidden border border-emerald-300">
+                <div className="flex items-center gap-2 border-b border-emerald-200 bg-emerald-50 px-4 py-2">
+                  <ShieldAlert className="h-3.5 w-3.5 text-emerald-700" />
+                  <span className="text-xs font-black uppercase tracking-widest text-emerald-800">
+                    Skor Kaynağı & Override Zinciri
+                  </span>
+                </div>
+                <div className="grid gap-2 bg-white p-3 sm:grid-cols-3">
+                  <div className="border border-brand-200 bg-brand-50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Kaynak</p>
+                    <p className="mt-0.5 text-sm font-black text-brand-900">
+                      {detail.risk_score_source === 'manual_override'
+                        ? 'Manuel Override'
+                        : detail.risk_score_source === 'whitelist'
+                          ? 'Beyaz Liste'
+                          : detail.risk_score_source === 'blacklist'
+                            ? 'Kara Liste'
+                            : detail.risk_score_source === 'known_customer'
+                              ? 'Bilinen Müşteri'
+                              : detail.risk_score_source === 'opmc'
+                                ? 'OPMC Plugin'
+                                : detail.risk_score_source === 'ai'
+                                  ? 'AI Modeli'
+                                  : 'Belirsiz'}
+                    </p>
+                  </div>
+                  <div className="border border-brand-200 bg-brand-50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Ham Skor</p>
+                    <p className="mt-0.5 text-sm font-black text-brand-900" style={monoStyle}>
+                      {detail.raw_risk_score ?? '—'}
+                    </p>
+                  </div>
+                  <div className="border border-emerald-300 bg-emerald-50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Etkin Skor</p>
+                    <p className="mt-0.5 text-sm font-black text-emerald-900" style={monoStyle}>
+                      {detail.risk_score ?? '—'}
+                    </p>
+                  </div>
+                </div>
+                {detail.override_reasons && detail.override_reasons.length > 0 ? (
+                  <ul className="divide-y divide-emerald-50 border-t border-emerald-200 bg-emerald-50/30">
+                    {detail.override_reasons.map((reason, i) => (
+                      <li key={i} className="flex items-start gap-2 px-4 py-2 text-xs text-emerald-900">
+                        <span className="mt-0.5 text-emerald-600">→</span>
+                        <span>{reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* O10 — Customer history mini panel */}
+            {detail.customer_history && detail.customer_history.total_orders > 0 ? (
+              <div className="overflow-hidden border border-sky-300">
+                <div className="flex items-center gap-2 border-b border-sky-200 bg-sky-50 px-4 py-2">
+                  <User className="h-3.5 w-3.5 text-sky-700" />
+                  <span className="text-xs font-black uppercase tracking-widest text-sky-800">
+                    Müşteri Geçmişi {detail.customer_history.known_safe ? '· Bilinen Güvenli' : ''}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 bg-white p-3 sm:grid-cols-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Toplam</p>
+                    <p className="mt-0.5 text-sm font-black text-brand-900" style={monoStyle}>
+                      {detail.customer_history.total_orders}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Başarılı</p>
+                    <p className="mt-0.5 text-sm font-black text-emerald-800" style={monoStyle}>
+                      {detail.customer_history.successful_orders}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">İptal/İade</p>
+                    <p className="mt-0.5 text-sm font-black text-amber-800" style={monoStyle}>
+                      {detail.customer_history.cancelled_orders}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-rose-700">Başarısız</p>
+                    <p className="mt-0.5 text-sm font-black text-rose-800" style={monoStyle}>
+                      {detail.customer_history.failed_orders}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 border-t border-sky-100 bg-sky-50/40 px-3 py-2 text-[11px] text-sky-800">
+                  {detail.customer_history.first_order_at ? (
+                    <span>İlk: {new Date(detail.customer_history.first_order_at).toLocaleDateString('da-DK')}</span>
+                  ) : null}
+                  {detail.customer_history.last_order_at ? (
+                    <span>Son: {new Date(detail.customer_history.last_order_at).toLocaleDateString('da-DK')}</span>
+                  ) : null}
+                  {detail.customer_history.matched_by ? (
+                    <span className="ml-auto text-sky-600">
+                      Eşleşme: {detail.customer_history.matched_by === 'customer_id' ? 'Kayıtlı kullanıcı' : 'E-posta'}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {/* O9 — Manuel override kontrol paneli */}
+            {onOverride ? (
+              <div className="overflow-hidden border border-indigo-300">
+                <div className="flex items-center gap-2 border-b border-indigo-200 bg-indigo-50 px-4 py-2">
+                  <ShieldAlert className="h-3.5 w-3.5 text-indigo-700" />
+                  <span className="text-xs font-black uppercase tracking-widest text-indigo-800">
+                    Manuel Risk Seviyesi (Override)
+                  </span>
+                </div>
+                <div className="space-y-2 bg-white p-3">
+                  <p className="text-xs text-brand-600">
+                    Bu sipariş için hatalı bir risk skoru gördüğünüze inanıyorsanız, manuel olarak
+                    risk seviyesini değiştirebilirsiniz. Karar Woo'ya audit ile yazılır.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={overriding}
+                      onClick={() => onOverride('low', 'Operatör manuel: false-positive')}
+                      className="inline-flex items-center gap-1 border border-emerald-400 bg-emerald-50 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                    >
+                      Düşük (False Positive)
+                    </button>
+                    <button
+                      type="button"
+                      disabled={overriding}
+                      onClick={() => onOverride('medium', 'Operatör manuel: orta')}
+                      className="inline-flex items-center gap-1 border border-amber-400 bg-amber-50 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                    >
+                      Orta
+                    </button>
+                    <button
+                      type="button"
+                      disabled={overriding}
+                      onClick={() => onOverride('high', 'Operatör manuel: yüksek')}
+                      className="inline-flex items-center gap-1 border border-rose-400 bg-rose-50 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-800 hover:bg-rose-100 disabled:opacity-50"
+                    >
+                      Yüksek
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {detail.ai_explanations_human.length > 0 ? (
               <div className="overflow-hidden border border-brand-300">

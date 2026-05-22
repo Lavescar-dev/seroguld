@@ -1,7 +1,8 @@
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, Pencil, RefreshCcw, ScanLine, Zap } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
+import { validateCpr } from '@/lib/cpr';
 import type { PosPostalLookup, PosWorkspaceBankInfo } from '@/types';
 
 import type { EditableCustomer, PaymentMethod } from './types';
@@ -238,50 +239,121 @@ function CprInput({
   const prefix = parts[0] || '';
   const suffix = parts.length > 1 ? parts.slice(1).join('-') : '';
 
+  const validation = useMemo(() => validateCpr(value), [value]);
+  const isPartial = suffix === '????' || validation.digits.length !== 10;
+  const showValidation = !isPartial && Boolean(value);
+  const validationTone = !showValidation
+    ? null
+    : validation.formatOk && validation.mod11Ok
+      ? 'ok'
+      : validation.formatOk
+        ? 'warn'
+        : 'err';
+
+  const validationIcon =
+    validationTone === 'ok' ? (
+      <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600" />
+    ) : validationTone === 'warn' ? (
+      <AlertCircle className="h-3 w-3 flex-shrink-0 text-amber-600" />
+    ) : validationTone === 'err' ? (
+      <AlertCircle className="h-3 w-3 flex-shrink-0 text-red-600" />
+    ) : null;
+
+  const validationMessage =
+    validationTone === 'ok'
+      ? 'CPR mod-11 doğrulandı'
+      : validationTone === 'warn'
+        ? validation.reason || 'Mod-11 kontrolü başarısız (uyarı)'
+        : validationTone === 'err'
+          ? validation.reason || 'CPR geçersiz'
+          : null;
+
+  const validationTextClass =
+    validationTone === 'ok'
+      ? 'text-emerald-700'
+      : validationTone === 'warn'
+        ? 'text-amber-700'
+        : 'text-red-700';
+
   if (value && value.includes('-')) {
+    const suffixInputCls = `${className} !w-16 text-center !px-1 ${
+      suffix === '????' ? 'border-red-300 bg-red-50 text-red-600 ring-1 ring-red-400' : ''
+    } ${
+      validationTone === 'ok'
+        ? 'border-emerald-300 bg-emerald-50 ring-1 ring-emerald-300'
+        : validationTone === 'warn'
+          ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-300'
+          : validationTone === 'err'
+            ? 'border-red-300 bg-red-50 ring-1 ring-red-300'
+            : ''
+    }`;
     return (
-      <div className="flex items-center gap-1">
-        <input
-          value={prefix}
-          onChange={(event) => {
-            let next = event.target.value.replace(/\D/g, '');
-            if (next.length > 6) next = next.slice(0, 6);
-            onChange(next + (suffix || next.length === 6 ? `-${suffix}` : ''));
-          }}
-          onBlur={onBlur}
-          className={`${className} !w-20 text-center !px-1`}
-          style={style}
-          placeholder="DDMMYY"
-        />
-        <span className="font-bold text-brand-500">-</span>
-        <input
-          value={suffix}
-          onChange={(event) => onChange(`${prefix}-${event.target.value.slice(0, 4)}`)}
-          onFocus={(event) => {
-            if (event.target.value === '????') onChange(`${prefix}-`);
-          }}
-          onBlur={onBlur}
-          className={`${className} !w-16 text-center !px-1 ${
-            suffix === '????' ? 'border-red-300 bg-red-50 text-red-600 ring-1 ring-red-400' : ''
-          }`}
-          style={style}
-          placeholder="0000"
-          maxLength={4}
-        />
-        {suffix === '????' ? <span className="ml-1 hidden text-[10px] font-bold text-red-500 sm:inline">Eksik!</span> : null}
+      <div className="space-y-1">
+        <div className="flex items-center gap-1">
+          <input
+            value={prefix}
+            onChange={(event) => {
+              let next = event.target.value.replace(/\D/g, '');
+              if (next.length > 6) next = next.slice(0, 6);
+              onChange(next + (suffix || next.length === 6 ? `-${suffix}` : ''));
+            }}
+            onBlur={onBlur}
+            className={`${className} !w-20 text-center !px-1`}
+            style={style}
+            placeholder="DDMMYY"
+          />
+          <span className="font-bold text-brand-500">-</span>
+          <input
+            value={suffix}
+            onChange={(event) => onChange(`${prefix}-${event.target.value.slice(0, 4)}`)}
+            onFocus={(event) => {
+              if (event.target.value === '????') onChange(`${prefix}-`);
+            }}
+            onBlur={onBlur}
+            className={suffixInputCls}
+            style={style}
+            placeholder="0000"
+            maxLength={4}
+          />
+          {suffix === '????' ? (
+            <span className="ml-1 hidden text-[10px] font-bold text-red-500 sm:inline">Eksik!</span>
+          ) : null}
+          {validationIcon}
+        </div>
+        {showValidation && validationMessage ? (
+          <p className={`text-[10px] font-semibold ${validationTextClass}`}>{validationMessage}</p>
+        ) : null}
       </div>
     );
   }
 
+  const baseInputCls = `${className} ${
+    validationTone === 'ok'
+      ? 'border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200'
+      : validationTone === 'warn'
+        ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-200'
+        : validationTone === 'err'
+          ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+          : ''
+  }`;
+
   return (
-    <input
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      onBlur={onBlur}
-      className={className}
-      style={style}
-      placeholder="120385-1234"
-    />
+    <div className="space-y-1">
+      <div className="flex items-center gap-1">
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={onBlur}
+          className={baseInputCls}
+          style={style}
+          placeholder="120385-1234"
+        />
+        {validationIcon}
+      </div>
+      {showValidation && validationMessage ? (
+        <p className={`text-[10px] font-semibold ${validationTextClass}`}>{validationMessage}</p>
+      ) : null}
+    </div>
   );
 }
 
