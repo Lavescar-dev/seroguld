@@ -7,6 +7,7 @@ import {
   Keyboard,
   LayoutDashboard,
   Menu,
+  MessageSquare,
   Monitor,
   Moon,
   Package,
@@ -39,6 +40,26 @@ type MakeRootProps = {
   onCloseOfficeDock: () => void;
   onResizeOfficeDock: (nextWidth: number) => void;
 };
+
+function buildFeedbackMailto(locationHref: string, pathname: string, runtime: RuntimeDiagnosticsState): string {
+  const email = import.meta.env.VITE_FEEDBACK_EMAIL?.trim() || 'info@seroguld.dk';
+  const channel = import.meta.env.VITE_FEEDBACK_CHANNEL?.trim() || 'desktop-feedback';
+  const subject = `Sero Guld CRM feedback - ${pathname || '/'}`;
+  const body = [
+    'Not:',
+    '',
+    '',
+    '---',
+    `Kanal: ${channel}`,
+    `Ekran: ${locationHref}`,
+    `API: ${runtime.frontend.api_base_url}`,
+    `Frontend: ${formatRuntimeLabel(runtime.frontend.frontend_mode)} / ${runtime.frontend.frontend_built_at}`,
+    `Desktop: ${runtime.desktop ? formatRuntimeLabel(runtime.desktop.runtime_mode) : 'Web / Yok'}`,
+    `Tarih: ${new Date().toISOString()}`,
+  ].join('\n');
+
+  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
 
 export function MakeRoot({
   stats,
@@ -90,6 +111,10 @@ export function MakeRoot({
     if (path === '/' && location.pathname === '/') return true;
     if (path !== '/' && location.pathname.startsWith(path)) return true;
     return false;
+  };
+
+  const openFeedback = () => {
+    window.location.href = buildFeedbackMailto(window.location.href, location.pathname, runtime);
   };
 
   const getHoverData = (to: string, currentStats: SidebarStats): Array<{ label: string; value: string; color?: string }> => {
@@ -367,7 +392,9 @@ export function MakeRoot({
               <div className="text-[10px] text-brand-500" style={monoStyle}>
                 {runtime.backend?.desktop_session
                   ? `${formatRuntimeLabel(runtime.backend.desktop_session.mode)} · 3300/8100`
-                  : 'desktop-dev session yok'}
+                  : runtime.desktop?.runtime_mode === 'embedded-app'
+                    ? 'VPS backend / embedded app'
+                    : 'desktop-dev session yok'}
               </div>
               {runtime.warnings.length > 0 ? (
                 <div className="space-y-1 border-t border-amber-700/50 pt-2">
@@ -390,6 +417,13 @@ export function MakeRoot({
       <div className="flex items-center justify-between border-t border-brand-800 bg-brand-950 px-3 py-2">
         <div className="flex items-center gap-2">
           <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Sero Guld</p>
+          <button
+            onClick={openFeedback}
+            className="p-1 text-brand-500 transition-colors hover:text-emerald-300"
+            title="Geri Bildirim"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={onToggleDarkMode}
             className="p-1 text-brand-500 transition-colors hover:text-amber-400"

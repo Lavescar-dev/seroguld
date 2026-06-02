@@ -8,7 +8,7 @@ VENV_DIR := $(BACKEND_DIR)/.venv
 PYTHON ?= python3
 VENV_PY := $(VENV_DIR)/bin/python
 
-.PHONY: help setup backend-venv backend-install backend-test frontend-install frontend-typecheck frontend-build frontend-smoke frontend-truth desktop-dev desktop-status desktop-stop desktop-restart desktop-smoke desktop-smoke-doctor seed-mock demo-start demo-stop demo-seed demo-check demo-ready integration-smoke backup backup-verify backup-rclone-setup backup-offsite backup-restore-drill backup-cron-install backup-cron-uninstall prod-bootstrap bootstrap-admin readiness-smoke release-desktop restore-from-backup gdpr-scan gdpr-runner gdpr-smoke gdpr-smoke-live gdpr-systemd-install gdpr-systemd-status gdpr-systemd-uninstall test check clean
+.PHONY: help setup backend-venv backend-install backend-test frontend-install frontend-typecheck frontend-build frontend-smoke frontend-truth desktop-dev desktop-status desktop-stop desktop-restart desktop-smoke desktop-smoke-doctor seed-mock demo-start demo-stop demo-seed demo-check demo-ready integration-smoke backup backup-verify backup-rclone-setup backup-offsite backup-restore-drill backup-cron-install backup-cron-uninstall prod-bootstrap bootstrap-admin readiness-smoke release-desktop release-desktop-feedback restore-from-backup gdpr-scan gdpr-runner gdpr-smoke gdpr-smoke-live gdpr-systemd-install gdpr-systemd-status gdpr-systemd-uninstall test check clean
 
 help:
 	@echo "Kullanılabilir komutlar:"
@@ -23,6 +23,7 @@ help:
 	@echo "  make bootstrap-admin   -> Env içindeki admin bilgileriyle ilk admini oluşturur/günceller"
 	@echo "  make readiness-smoke   -> /readyz readiness kontrolünü doğrular"
 	@echo "  make release-desktop   -> Frontend + Tauri production build alır"
+	@echo "  make release-desktop-feedback -> VPS bağlı müşteri feedback EXE build alır"
 	@echo "  make restore-from-backup -> Backup arşivini kontrollü dizine açar"
 	@echo "  make gdpr-scan         -> GDPR retention scan runner'ını çalıştırır"
 	@echo "  make gdpr-runner       -> GDPR queued job runner'ını çalıştırır"
@@ -153,6 +154,9 @@ readiness-smoke:
 
 release-desktop:
 	@bash scripts/release-desktop.sh
+
+release-desktop-feedback:
+	@bash scripts/release-desktop-feedback.sh
 
 restore-from-backup:
 	@bash scripts/restore-from-backup.sh

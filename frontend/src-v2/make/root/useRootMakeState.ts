@@ -177,13 +177,16 @@ export function useRootMakeState() {
   }, []);
 
   const runtimeWarnings: string[] = [];
-  if (isTauriRuntime() && !runtimeQuery.data?.desktop_session) {
+  const desktopRuntimeMode = desktopRuntime?.runtime_mode || '';
+  const expectsDesktopDevSession =
+    isTauriRuntime() && (desktopRuntimeMode === 'tauri-dev-url' || frontendRuntime.frontend_mode === 'vite-dev');
+  if (expectsDesktopDevSession && !runtimeQuery.data?.desktop_session) {
     runtimeWarnings.push('Kanonik desktop-dev oturumu algılanmadı. Görünen ekran eski veya ad-hoc açılmış olabilir.');
   }
   if (runtimeQuery.data?.desktop_session && runtimeQuery.data.desktop_session.frontend_mode !== frontendRuntime.frontend_mode) {
     runtimeWarnings.push('Frontend runtime modu desktop session kaydıyla uyuşmuyor. Açık ekran beklediğin bundle olmayabilir.');
   }
-  if (desktopRuntime?.runtime_mode === 'tauri-dev-url' && frontendRuntime.frontend_mode !== 'vite-dev') {
+  if (desktopRuntimeMode === 'tauri-dev-url' && frontendRuntime.frontend_mode !== 'vite-dev') {
     runtimeWarnings.push('Tauri dev URL açık ama frontend Vite dev olarak görünmüyor. Değişiklikler beklediğin gibi yansımayabilir.');
   }
 
