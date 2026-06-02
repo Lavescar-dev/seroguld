@@ -371,7 +371,6 @@ export function InventoryDataTable({
 }: InventoryDataTableProps) {
   const columns = useMemo(() => buildColumns(kat, platinAlt), [kat, platinAlt]);
   const colspanIndex = Math.max(0, columns.findIndex((c) => c.footer != null));
-  const totalCols = columns.length + 1; // +1 actions
 
   return (
     <table className="w-full border-collapse text-sm">
@@ -465,5 +464,3 @@ export function InventoryDataTable({
 }
 
 export { Sparkles };
-const _unused = totalCols; // keep referenced
-void _unused;

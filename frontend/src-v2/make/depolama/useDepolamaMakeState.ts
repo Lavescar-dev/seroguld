@@ -105,7 +105,6 @@ function rowToStokItem(row: InventoryGridRow): StokItem {
     olcuKalinlik: row.thickness_mm ? numeric(row.thickness_mm) : undefined,
     uretici: row.producer || undefined,
     notlar: row.notes || undefined,
-    storageLocation: row.storage_location || undefined,
     referenceNumber: row.reference_number || null,
     productNumber: row.product_number,
     needsCleaning: row.needs_cleaning,
@@ -646,7 +645,7 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     if (exists) {
       // Optimistic concurrency için detailQuery'den updated_at iletilir
       const detail = detailQuery.data;
-      const updatedAt = detail && detail.id === editing.id ? detail.updated_at : undefined;
+      const updatedAt = detail && detail.id === editing.id ? detail.updated_at ?? undefined : undefined;
       updateProductMutation.mutate({
         productId: editing.id,
         item: { ...editing, updatedAt },

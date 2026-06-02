@@ -178,6 +178,7 @@ export interface ProductOut {
   gdpr_release_date: string;
   is_gdpr_locked: boolean;
   status: string;
+  updated_at?: string | null;
   sale_date?: string | null;
   sale_price_dkk?: string | null;
   buyer_name?: string | null;
