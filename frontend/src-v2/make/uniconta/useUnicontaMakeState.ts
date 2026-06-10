@@ -22,6 +22,9 @@ import type {
   MailFiltre,
 } from './types';
 
+const UNICONTA_INVOICE_PAGE_SIZE = 500;
+const UNICONTA_INVOICE_MAX_PAGES = 30;
+
 function normalizeEnv(value: string | null | undefined): UnicontaKimlik['env'] {
   return value === 'sandbox' ? 'sandbox' : 'production';
 }
@@ -60,6 +63,33 @@ function extractApiMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+async function fetchRemoteInvoices(): Promise<UnicontaInvoicesResponse> {
+  const invoices: Fatura[] = [];
+  let generatedAt = new Date().toISOString();
+  let source = 'uniconta_remote';
+
+  for (let page = 0; page < UNICONTA_INVOICE_MAX_PAGES; page += 1) {
+    const skip = page * UNICONTA_INVOICE_PAGE_SIZE;
+    const response = await apiRequest<UnicontaInvoicesResponse>(
+      `/api/v2/uniconta/invoices?source=remote&limit=${UNICONTA_INVOICE_PAGE_SIZE}&skip=${skip}`,
+    );
+    source = response.source;
+    generatedAt = response.generatedAt;
+    invoices.push(...response.invoices);
+    if (response.invoices.length < UNICONTA_INVOICE_PAGE_SIZE) break;
+  }
+
+  const seen = new Set<string>();
+  const uniqueInvoices = invoices.filter((invoice) => {
+    const key = invoice.id || `${invoice.fakturanummer}:${invoice.konto}:${invoice.fakturadato}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { source, generatedAt, invoices: uniqueInvoices };
+}
+
 export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -93,8 +123,8 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   });
 
   const invoicesQuery = useQuery({
-    queryKey: ['uniconta-invoices-v2'],
-    queryFn: () => apiRequest<UnicontaInvoicesResponse>('/api/v2/uniconta/invoices?source=remote&limit=50'),
+    queryKey: ['uniconta', 'invoices-v2'],
+    queryFn: fetchRemoteInvoices,
   });
 
   const syncSummaryQuery = useQuery({

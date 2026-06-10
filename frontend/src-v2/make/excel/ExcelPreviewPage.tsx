@@ -381,7 +381,6 @@ export function MakeExcelPreviewPage({
                                       className="w-full border-0 bg-transparent px-1 py-0.5 text-sm font-bold text-brand-900 outline-none"
                                     >
                                       <option value="Overførsel">Overførsel</option>
-                                      <option value="Kontant">Kontant</option>
                                     </select>
                                   ) : (
                                     <input

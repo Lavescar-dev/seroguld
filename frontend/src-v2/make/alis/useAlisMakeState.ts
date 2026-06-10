@@ -163,12 +163,12 @@ function normalizeTextInput(value: string): string {
   return value.replace(',', '.');
 }
 
-function readStoredPaymentMethod(): PaymentMethod {
-  if (typeof window === 'undefined') return 'bank';
+function clearLegacyPaymentMethodPreference() {
+  if (typeof window === 'undefined') return;
   try {
-    return window.localStorage.getItem(PAYMENT_METHOD_STORAGE_KEY) === 'cash' ? 'cash' : 'bank';
+    window.localStorage.removeItem(PAYMENT_METHOD_STORAGE_KEY);
   } catch {
-    return 'bank';
+    // Legacy preference cleanup is best-effort only.
   }
 }
 
@@ -179,7 +179,7 @@ function workspaceRowsPayload(
   marketRates: PosWorkspaceMarketRates,
   afgNote: string,
   calculators: PosWorkspaceCalculators,
-  paymentMethod: PaymentMethod,
+  _paymentMethod: PaymentMethod,
   numbering: EditableWorkspaceNumbering,
   invoiceGoldMode: CompanionMode,
   invoiceGoldRows: EditableInvoiceGoldRow[],
@@ -228,7 +228,7 @@ function workspaceRowsPayload(
         target_row_key: row.target_row_key || null,
       })),
     },
-    payment_method: paymentMethod,
+    payment_method: 'bank' as const,
     numbering: {
       afregnings_number_next: numbering.afregnings_number_next.trim(),
       invoice_number_next: numbering.invoice_number_next.trim(),
@@ -563,7 +563,7 @@ export function useAlisMakeState(): AlisPageProps {
   );
   const [afgNote, setAfgNote] = useState('');
   const [calculators, setCalculators] = useState<PosWorkspaceCalculators>({ gold_rows: [], silver_rows: [] });
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(readStoredPaymentMethod);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank');
   const [priceOpen, setPriceOpen] = useState(false);
   const goldRowsRef = useRef<EditableGoldRow[]>([]);
   const silverRowsRef = useRef<EditableSilverRow[]>([]);
@@ -578,7 +578,6 @@ export function useAlisMakeState(): AlisPageProps {
   const autosaveKeyRef = useRef('');
   const customerAutosaveKeyRef = useRef('');
   const initializedSessionRef = useRef<string | null>(null);
-  const pendingPaymentMethodRef = useRef<PaymentMethod | null>(null);
   const queuedSectionsPayloadRef = useRef<ReturnType<typeof workspaceRowsPayload> | null>(null);
   const queuedCustomerPayloadRef = useRef<EditableCustomer | null>(null);
   const sectionsSaveInFlightRef = useRef(false);
@@ -628,7 +627,7 @@ export function useAlisMakeState(): AlisPageProps {
 
   function applyWorkspace(
     data: PosWorkspace,
-    options?: {
+    _options?: {
       paymentMethodOverride?: PaymentMethod;
     },
   ) {
@@ -653,7 +652,7 @@ export function useAlisMakeState(): AlisPageProps {
     setMarketRates(normalizeMarketRatesInput(data.market_rates));
     setAfgNote(data.afg_note || '');
     setCalculators(data.calculators);
-    const resolvedPaymentMethod = options?.paymentMethodOverride || data.payment_method || readStoredPaymentMethod();
+    const resolvedPaymentMethod: PaymentMethod = 'bank';
     setPaymentMethod(resolvedPaymentMethod);
     setCustomerMode(hasDraftCustomerShadow ? 'new' : null);
     autosaveKeyRef.current = JSON.stringify(
@@ -684,14 +683,12 @@ export function useAlisMakeState(): AlisPageProps {
   ) {
     queuedSectionsPayloadRef.current = null;
     queuedCustomerPayloadRef.current = null;
-    const paymentOverride = options?.paymentMethodOverride ?? pendingPaymentMethodRef.current ?? undefined;
     setWorkspace(data);
     setDraftWorkspace(null);
     setActiveWorkspaceViewState('system');
     applyWorkspace(data, {
-      paymentMethodOverride: paymentOverride,
+      paymentMethodOverride: options?.paymentMethodOverride ?? 'bank',
     });
-    pendingPaymentMethodRef.current = null;
     setCustomerSearchTerm('');
   }
 
@@ -799,6 +796,75 @@ export function useAlisMakeState(): AlisPageProps {
     retryUnicontaSyncMutation.mutate(item.sequence_no);
   };
 
+  const cancelUnicontaMutation = useMutation({
+    mutationFn: (payload: { sequence_no: number; reason: string }) =>
+      apiRequest<{
+        ok: boolean;
+        message?: string | null;
+        idempotent?: boolean;
+        credit_note_number?: string | null;
+        cancelled_at?: string | null;
+        cancel_reason?: string | null;
+        uniconta_sync_status?: string | null;
+      }>(`/api/v2/uniconta/invoice/cancel-from-pos/${payload.sequence_no}`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: payload.reason }),
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    onSuccess: (result) => {
+      if (result?.idempotent) {
+        toast.info(
+          'Zaten iptal edilmiş',
+          result.credit_note_number
+            ? `Bu belge daha önce Uniconta'da iptal edilmiş (kreditnota no: ${result.credit_note_number}).`
+            : 'Bu belge daha önce iptal edilmiş.',
+        );
+      } else if (result?.ok) {
+        toast.success(
+          'Uniconta iptal başarılı',
+          result.credit_note_number ? `Kreditnota no: ${result.credit_note_number}` : undefined,
+        );
+      } else {
+        toast.warning('Uniconta iptal tamamlanamadı', result?.message || undefined);
+      }
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'detail'] });
+      void queryClient.invalidateQueries({ queryKey: ['uniconta', 'invoices'] });
+      emitArtifactSync({ kind: 'uniconta', key: 'live', source: 'alis-ui' });
+    },
+    onError: (error) => {
+      toast.error('Uniconta iptal hatası', error instanceof Error ? error.message : undefined);
+    },
+  });
+
+  const handleCancelUnicontaInvoice = async (item: PosSavedPurchaseListItem) => {
+    if (cancelUnicontaMutation.isPending) return;
+    if (item.uniconta_sync_status !== 'synced' || !item.uniconta_invoice_number) {
+      toast.warning(
+        'İptal yapılamaz',
+        'Bu belge Uniconta\'ya senkronize edilmemiş; iptal edilecek fatura yok.',
+      );
+      return;
+    }
+    const result = await confirm({
+      title: 'Uniconta faturasını iptal et',
+      message:
+        `Fatura #${item.uniconta_invoice_number} için Uniconta'da kreditnota oluşturulacak.\n` +
+        `Bu işlem geri alınamaz.`,
+      confirmText: 'Kreditnota oluştur',
+      cancelText: 'Vazgeç',
+      variant: 'danger',
+      input: {
+        label: 'İptal sebebi (Uniconta audit\'inde görünür)',
+        placeholder: `Faktura #${item.uniconta_invoice_number} iptal — operatör onayı`,
+        required: true,
+        multiline: true,
+      },
+    });
+    if (typeof result !== 'string' || !result.trim()) return;
+    cancelUnicontaMutation.mutate({ sequence_no: item.sequence_no, reason: result.trim() });
+  };
+
   const selectCustomerMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
       apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/customer/select`, {
@@ -854,7 +920,7 @@ export function useAlisMakeState(): AlisPageProps {
       setMarketRates(normalizeMarketRatesInput(data.market_rates));
       setAfgNote(data.afg_note || '');
       setCalculators(data.calculators);
-      setPaymentMethod((data.payment_method as PaymentMethod) || readStoredPaymentMethod());
+      setPaymentMethod('bank');
       autosaveKeyRef.current = JSON.stringify(payload);
       emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
     },
@@ -989,7 +1055,7 @@ export function useAlisMakeState(): AlisPageProps {
             reg_number: bankInfo.reg_number || '',
             account_number: bankInfo.account_number || '',
           },
-          payment_method: paymentMethod,
+          payment_method: 'bank',
         }),
       }),
     onSuccess: async (response) => {
@@ -1287,9 +1353,8 @@ export function useAlisMakeState(): AlisPageProps {
   }, [marketRates.eur_dkk_fx, marketRates.gold_24k_dkk, marketRates.silver_dkk]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(PAYMENT_METHOD_STORAGE_KEY, paymentMethod);
-  }, [paymentMethod]);
+    clearLegacyPaymentMethodPreference();
+  }, []);
 
   const candidateCustomers = useMemo(() => {
     const term = customerSearchTerm.trim().toLocaleLowerCase('tr-TR');
@@ -1307,9 +1372,8 @@ export function useAlisMakeState(): AlisPageProps {
   }, [customerSearchTerm, customersQuery.data, recentCustomersQuery.data?.items]);
 
   function handleStartBlankWorkspace() {
-    pendingPaymentMethodRef.current = paymentMethod;
     openWorkspaceMutation.mutate({
-      payment_method: paymentMethod,
+      payment_method: 'bank',
       force_new_session: true,
     });
   }
@@ -1578,11 +1642,9 @@ export function useAlisMakeState(): AlisPageProps {
 
   function handleStartFromCustomer(item: PosSavedPurchaseListItem) {
     if (!item.customer_id) return;
-    const nextPayment = (item.payment_method as PaymentMethod | null) || paymentMethod;
-    pendingPaymentMethodRef.current = nextPayment;
     openWorkspaceMutation.mutate({
       customer_id: item.customer_id,
-      payment_method: nextPayment,
+      payment_method: 'bank',
       force_new_session: true,
     });
   }
@@ -1662,6 +1724,10 @@ export function useAlisMakeState(): AlisPageProps {
     onRetryUnicontaSync: handleRetryUnicontaSync,
     retryPendingSequenceNo: retryUnicontaSyncMutation.isPending
       ? (retryUnicontaSyncMutation.variables ?? null)
+      : null,
+    onCancelUnicontaInvoice: handleCancelUnicontaInvoice,
+    cancelPendingSequenceNo: cancelUnicontaMutation.isPending
+      ? (cancelUnicontaMutation.variables?.sequence_no ?? null)
       : null,
     listLoading: savedPurchasesQuery.isLoading,
     actionPendingSequenceNo: actionSequenceNo,

@@ -3,7 +3,6 @@ import { expect, test } from '@playwright/test';
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/#/login');
   await expect(page.getByRole('heading', { name: /Desktop Sign In/i })).toBeVisible();
-  await page.getByLabel('E-posta').fill('admin@seroguld.dk');
   await page.getByLabel('Şifre').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
   await expect(page.getByRole('button', { name: /Yeni Alış Başlat/i })).toBeVisible();

@@ -74,31 +74,19 @@ function parseMrzLines(raw: string): MRZResult {
 }
 
 export function PaymentMethodToggle({
-  paymentMethod,
   setPaymentMethod,
 }: {
   paymentMethod: PaymentMethod;
   setPaymentMethod: Dispatch<SetStateAction<PaymentMethod>>;
 }) {
   return (
-    <div className="inline-flex overflow-hidden border border-brand-300 bg-white shadow-sm">
+    <div className="inline-flex overflow-hidden border border-emerald-300 bg-white shadow-sm">
       <button
         type="button"
         onClick={() => setPaymentMethod('bank')}
-        className={`min-w-[128px] px-3 py-1.5 text-xs font-black uppercase tracking-widest transition ${
-          paymentMethod === 'bank' ? 'bg-brand-900 text-white' : 'text-brand-600 hover:bg-brand-50'
-        }`}
+        className="min-w-[148px] bg-emerald-700 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-white transition hover:bg-emerald-800"
       >
         Bankoverførsel
-      </button>
-      <button
-        type="button"
-        onClick={() => setPaymentMethod('cash')}
-        className={`min-w-[108px] border-l border-brand-300 px-3 py-1.5 text-xs font-black uppercase tracking-widest transition ${
-          paymentMethod === 'cash' ? 'bg-brand-900 text-white' : 'text-brand-600 hover:bg-brand-50'
-        }`}
-      >
-        Kontant
       </button>
     </div>
   );
@@ -845,7 +833,7 @@ export function CustomerEditorTable({
               <PaymentMethodToggle paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} />
             </div>
             <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">
-              {paymentMethod === 'cash' ? 'Nakit seçili' : bankInfo.reg_number || bankInfo.account_number ? 'Banka bağlı' : 'Banka bekleniyor'}
+              {bankInfo.reg_number || bankInfo.account_number ? 'Banka bağlı' : 'Banka bekleniyor'}
             </span>
           </div>
         </div>

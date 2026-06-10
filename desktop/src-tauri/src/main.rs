@@ -455,6 +455,17 @@ async fn export_document_bytes(
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            if let Ok(route) = env::var("SEROGULD_DESKTOP_START_ROUTE") {
+                let route = route.trim();
+                if !route.is_empty() {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.navigate(app_window_hash_url(route));
+                    }
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_monitor_setup,
             ensure_customer_display_window,

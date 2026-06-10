@@ -1,5 +1,5 @@
-import { type Dispatch, type SetStateAction, useEffect, useId, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { type Dispatch, type SetStateAction, useEffect, useId, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
 import { formatNumber } from '@/lib/format';
 import type { PosWorkspaceMarketRates } from '@/types';
@@ -117,6 +117,7 @@ export function MarketRatesEditor({
   variant?: 'light' | 'dark';
 }) {
   const panelId = useId();
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [activeRateField, setActiveRateField] = useState<string | null>(null);
   const [rateDrafts, setRateDrafts] = useState<MatrixRateDrafts>(() => buildEmptyMatrixRateDrafts());
 
@@ -126,14 +127,20 @@ export function MarketRatesEditor({
     }
   }, [activeRateField, marketRates]);
 
+  useEffect(() => {
+    if (priceOpen) {
+      panelRef.current?.scrollTo({ top: 0, left: 0 });
+    }
+  }, [priceOpen]);
+
   const triggerClassName =
     variant === 'dark'
-      ? 'flex items-center gap-2 border border-brand-600 bg-brand-950/40 px-3 py-2 text-[11px] font-black uppercase tracking-widest transition hover:bg-brand-900'
-      : 'flex items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-widest transition hover:bg-brand-50';
+      ? 'flex max-w-full flex-wrap items-center gap-2 border border-brand-600 bg-brand-950/40 px-3 py-2 text-[11px] font-black uppercase tracking-widest transition hover:bg-brand-900'
+      : 'flex max-w-full flex-wrap items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-widest transition hover:bg-brand-50';
   const panelClassName =
     variant === 'dark'
-      ? 'absolute right-0 top-full z-20 mt-2 w-[min(58rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] rounded-lg border border-brand-700 bg-brand-950 p-4 shadow-2xl'
-      : 'absolute right-0 top-full z-20 mt-2 w-[min(58rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] rounded-lg border border-brand-200 bg-stone-50 p-4 shadow-[0_18px_48px_rgba(61,41,19,0.14)]';
+      ? 'fixed inset-x-2 bottom-3 top-[4.75rem] z-[80] overflow-y-auto rounded-lg border border-brand-700 bg-brand-950 p-3 shadow-2xl overscroll-contain sm:inset-x-4 sm:p-4 min-[1180px]:absolute min-[1180px]:inset-auto min-[1180px]:right-0 min-[1180px]:top-full min-[1180px]:mt-2 min-[1180px]:max-h-[min(42rem,calc(100dvh-5rem))] min-[1180px]:w-[min(58rem,calc(100vw-1rem))]'
+      : 'fixed inset-x-2 bottom-3 top-[4.75rem] z-[80] overflow-y-auto rounded-lg border border-brand-200 bg-stone-50 p-3 shadow-[0_18px_48px_rgba(61,41,19,0.14)] overscroll-contain sm:inset-x-4 sm:p-4 min-[1180px]:absolute min-[1180px]:inset-auto min-[1180px]:right-0 min-[1180px]:top-full min-[1180px]:mt-2 min-[1180px]:max-h-[min(42rem,calc(100dvh-5rem))] min-[1180px]:w-[min(58rem,calc(100vw-1rem))]';
   const headingClassName =
     variant === 'dark'
       ? 'text-xs font-black uppercase tracking-[0.16em] text-brand-100'
@@ -144,8 +151,8 @@ export function MarketRatesEditor({
       : 'inline-flex min-w-32 items-center justify-center rounded-sm bg-brand-800 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-white transition hover:bg-brand-900';
   const sectionClassName =
     variant === 'dark'
-      ? 'rounded-md border border-brand-700 bg-brand-900/70 p-4'
-      : 'rounded-md border border-brand-200 bg-white/80 p-4';
+      ? 'rounded-md border border-brand-700 bg-brand-900/70 p-3 sm:p-4'
+      : 'rounded-md border border-brand-200 bg-white/80 p-3 sm:p-4';
   const sectionTitleClassName =
     variant === 'dark'
       ? 'text-[11px] font-black uppercase tracking-[0.14em] text-brand-300'
@@ -158,20 +165,20 @@ export function MarketRatesEditor({
     variant === 'dark'
       ? 'rounded-sm border border-brand-700/90 bg-brand-950/55 px-3 py-3'
       : 'rounded-sm border border-brand-200 bg-white px-3 py-3';
-  const fieldCardBodyClassName = 'flex flex-col gap-2.5';
-  const fieldInputRowClassName = 'flex w-full items-center gap-2';
+  const fieldCardBodyClassName = 'flex min-w-0 flex-col gap-2.5';
+  const fieldInputRowClassName = 'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2';
   const fieldTitleClassName =
     variant === 'dark'
-      ? 'text-[17px] font-bold tracking-[-0.01em] text-white'
-      : 'text-[17px] font-bold tracking-[-0.01em] text-brand-900';
+      ? 'text-[15px] font-bold text-white sm:text-[17px]'
+      : 'text-[15px] font-bold text-brand-900 sm:text-[17px]';
   const fieldMetaClassName =
     variant === 'dark'
       ? 'mt-1 text-[12px] font-medium text-brand-400'
       : 'mt-1 text-[12px] font-medium text-brand-500';
   const fieldInputClassName =
     variant === 'dark'
-      ? 'mono min-w-0 flex-1 rounded-sm border border-brand-600 bg-brand-900 px-3 py-2 text-right text-base font-semibold text-white outline-none focus:border-brand-400 focus:bg-brand-800'
-      : 'mono min-w-0 flex-1 rounded-sm border border-brand-300 bg-white px-3 py-2 text-right text-base font-semibold text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50';
+      ? 'mono min-w-0 rounded-sm border border-brand-600 bg-brand-900 px-3 py-2 text-right text-base font-semibold text-white outline-none focus:border-brand-400 focus:bg-brand-800'
+      : 'mono min-w-0 rounded-sm border border-brand-300 bg-white px-3 py-2 text-right text-base font-semibold text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50';
   const unitClassName =
     variant === 'dark'
       ? 'inline-flex shrink-0 items-center rounded-sm border border-brand-700 bg-brand-900 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-brand-300'
@@ -256,10 +263,28 @@ export function MarketRatesEditor({
       </button>
 
       {priceOpen ? (
-        <div id={panelId} className={panelClassName}>
-          <div className="mb-3">
-            <p className={headingClassName}>Gunluk Piyasa Fiyatlari</p>
-            <p className={sectionMetaClassName}>EUR truth burada tutulur. Workbook Variable værdier ve AFG satır fiyatları aynı state&apos;ten beslenir.</p>
+        <div ref={panelRef} id={panelId} className={panelClassName}>
+          <div
+            className={`sticky top-0 z-10 -mx-3 -mt-3 mb-3 flex items-start justify-between gap-3 border-b px-3 py-3 sm:-mx-4 sm:-mt-4 sm:px-4 ${
+              variant === 'dark' ? 'border-brand-700 bg-brand-950' : 'border-brand-200 bg-stone-50'
+            }`}
+          >
+            <div className="min-w-0">
+              <p className={headingClassName}>Gunluk Piyasa Fiyatlari</p>
+              <p className={`${sectionMetaClassName} mt-1`}>EUR truth burada tutulur. Workbook Variable værdier ve AFG satır fiyatları aynı state&apos;ten beslenir.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPriceOpen(false)}
+              className={`shrink-0 rounded-sm border p-2 transition ${
+                variant === 'dark'
+                  ? 'border-brand-700 bg-brand-900 text-brand-200 hover:bg-brand-800'
+                  : 'border-brand-200 bg-white text-brand-700 hover:bg-brand-50'
+              }`}
+              aria-label="Piyasa fiyatları panelini kapat"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
           <div className="space-y-3">
             <div className={sectionClassName}>
@@ -268,7 +293,7 @@ export function MarketRatesEditor({
                   <p className={fieldTitleClassName}>EUR / DKK FX</p>
                   <p className={fieldMetaClassName}>Canlı dönüşüm kuru</p>
                 </div>
-                <div className="flex w-full items-center gap-2 sm:w-auto sm:min-w-[12rem]">
+                <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:w-[min(100%,18rem)]">
                   <label htmlFor={`${panelId}-fx`} className="sr-only">
                     EUR / DKK FX
                   </label>
@@ -288,7 +313,7 @@ export function MarketRatesEditor({
               </div>
             </div>
 
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(19rem,0.85fr)]">
+            <div className="grid gap-3 min-[1180px]:grid-cols-[minmax(0,1.15fr)_minmax(19rem,0.85fr)]">
               <div className={sectionClassName}>
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
@@ -297,7 +322,7 @@ export function MarketRatesEditor({
                   </div>
                   <span className={sectionCountClassName}>7 karat</span>
                 </div>
-                <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid gap-2 lg:grid-cols-2">
                   {GOLD_MATRIX_ROWS.map((row) => (
                     <div key={row.key} className={fieldCardClassName}>
                       <div className={fieldCardBodyClassName}>

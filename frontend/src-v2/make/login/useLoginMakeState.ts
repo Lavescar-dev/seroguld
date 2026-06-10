@@ -6,10 +6,11 @@ import { apiRequest } from '@/lib/api';
 import { setAuth } from '@/lib/auth';
 import type { AuthTokenResponse } from '@/types';
 
+const DEMO_LOGIN_EMAIL = 'info@seroguld.dk';
+
 export function useLoginMakeState() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@seroguld.dk');
-  const [password, setPassword] = useState('Admin123!');
+  const [password, setPassword] = useState('');
 
   const loginMutation = useMutation({
     mutationFn: (payload: { email: string; password: string }) =>
@@ -26,13 +27,12 @@ export function useLoginMakeState() {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    loginMutation.mutate({ email, password });
+    loginMutation.mutate({ email: DEMO_LOGIN_EMAIL, password });
   };
 
   return {
-    email,
+    email: DEMO_LOGIN_EMAIL,
     password,
-    onEmailChange: setEmail,
     onPasswordChange: setPassword,
     onSubmit: handleSubmit,
     errorMessage: loginMutation.error?.message ?? null,

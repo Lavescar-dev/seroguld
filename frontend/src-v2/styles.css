@@ -10,23 +10,23 @@
   background: #f5f3ef;
 
   /* Customer Display tasarım token'ları (Palet 3 — Minimal White + Yeşil) */
-  --display-surface-page: #f5f5f2;
-  --display-surface-card: #ffffff;
-  --display-surface-sidebar: #fafaf7;
-  --display-surface-logo: #f0f0ec;
+  --display-surface-page: #f4efe7;
+  --display-surface-card: #fbfaf6;
+  --display-surface-sidebar: #fffdfa;
+  --display-surface-logo: #ffffff;
   --display-ink-strong: #18181b;
   --display-ink-muted: #71717a;
   --display-ink-on-card: #18181b;
   --display-accent: #1f6b3f;
   --display-accent-soft: #d8edd8;
-  --display-border-subtle: #e5e5e2;
-  --display-border-sidebar: #e5e5e2;
-  --display-border-strong: #c7c7c2;
+  --display-border-subtle: #ded3c3;
+  --display-border-sidebar: #d8c9b7;
+  --display-border-strong: #b9a68d;
   --display-metal-gold: #c5a96d;
   --display-metal-silver: #e4e3dd;
   --display-metal-platin: #bcbbb8;
-  --display-metal-gold-tint: #f0e8d8;
-  --display-metal-silver-tint: #f4f4f1;
+  --display-metal-gold-tint: #f5ead0;
+  --display-metal-silver-tint: #f1f3f1;
   --display-gradient-divider-from: #1f6b3f;
   --display-gradient-divider-to: #ffffff;
   --display-gradient-footer-from: #1f6b3f;
@@ -38,12 +38,15 @@ html,
 body,
 #root {
   min-height: 100%;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 body {
   margin: 0;
   background: #f5f3ef;
   color: #302018;
+  overflow-x: hidden;
 }
 
 * {
@@ -63,6 +66,14 @@ select,
 textarea,
 button {
   font: inherit;
+}
+
+input[data-zeroish-value='true']:not(:focus) {
+  color: #9aa3b2;
+}
+
+input[data-zeroish-value='true']:focus {
+  color: inherit;
 }
 
 button {

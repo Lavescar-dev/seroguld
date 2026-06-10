@@ -372,7 +372,7 @@ export interface PosDocumentDetail extends PosDocumentListItem {
   bank_reg_number?: string | null;
   bank_account_number?: string | null;
   notes?: string | null;
-  payment_method?: 'bank' | 'cash' | null;
+  payment_method?: 'bank' | null;
   market_rates: PosWorkspaceMarketRates;
   numbering_preview: PosWorkspaceNumbering;
   invoice_gold: PosWorkspaceInvoiceGoldSheet;
@@ -996,7 +996,7 @@ export interface PosWorkspace {
   session: PosSession;
   customer: PosWorkspaceCustomer;
   bank_info: PosWorkspaceBankInfo;
-  payment_method: 'bank' | 'cash';
+  payment_method: 'bank';
   market_rates: PosWorkspaceMarketRates;
   afg_note?: string | null;
   calculators: PosWorkspaceCalculators;
@@ -1046,7 +1046,7 @@ export interface PosSavedPurchaseListItem {
   gross_amount_dkk: string;
   total_weight_grams?: string | null;
   line_count: number;
-  payment_method?: 'bank' | 'cash' | null;
+  payment_method?: 'bank' | null;
   gold_preview_items: PosSavedPurchasePreviewRow[];
   silver_preview_items: PosSavedPurchasePreviewRow[];
   can_edit: boolean;
@@ -1054,6 +1054,9 @@ export interface PosSavedPurchaseListItem {
   uniconta_sync_status?: string | null;
   uniconta_invoice_number?: string | null;
   uniconta_sync_error?: string | null;
+  uniconta_credit_note_number?: string | null;
+  uniconta_cancelled_at?: string | null;
+  uniconta_cancel_reason?: string | null;
 }
 
 export interface ReportSummary {

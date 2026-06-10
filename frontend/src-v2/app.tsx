@@ -1,4 +1,4 @@
-import { Suspense, lazy, type ComponentType, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
 import {
   Navigate,
   Outlet,
@@ -11,6 +11,8 @@ import { AppShell } from '@/components/AppShell';
 import { getAccessToken } from '@/lib/auth';
 
 const desktopSmokeEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DESKTOP_SMOKE === '1';
+const ZEROISH_INPUT_RE = /^[-+]?0+(?:[.,]0+)?$/;
+const DECIMAL_ZEROISH_INPUT_RE = /^[-+]?0+[.,]0+$/;
 
 function lazyPage<TModule extends Record<string, unknown>, TKey extends keyof TModule>(
   loader: () => Promise<TModule>,
@@ -78,6 +80,122 @@ function ShellLayout() {
   return <AppShell />;
 }
 
+function isZeroishEditableNumericInput(input: HTMLInputElement) {
+  if (input.disabled || input.readOnly) return false;
+  const value = input.value.trim();
+  if (!value || !ZEROISH_INPUT_RE.test(value)) return false;
+
+  return (
+    input.type === 'number' ||
+    input.inputMode === 'decimal' ||
+    input.inputMode === 'numeric' ||
+    DECIMAL_ZEROISH_INPUT_RE.test(value)
+  );
+}
+
+function markZeroishInput(input: HTMLInputElement) {
+  if (isZeroishEditableNumericInput(input)) {
+    input.dataset.zeroishValue = 'true';
+  } else {
+    delete input.dataset.zeroishValue;
+  }
+}
+
+function selectInputValue(input: HTMLInputElement) {
+  try {
+    input.select();
+  } catch {
+    try {
+      input.setSelectionRange(0, input.value.length);
+    } catch {
+      // Number inputs in some runtimes do not expose text selection APIs.
+    }
+  }
+}
+
+function installZeroishInputErgonomics() {
+  let refreshFrame = 0;
+
+  const refreshInputs = () => {
+    if (refreshFrame) return;
+    refreshFrame = window.requestAnimationFrame(() => {
+      refreshFrame = 0;
+      document.querySelectorAll<HTMLInputElement>('input').forEach(markZeroishInput);
+    });
+  };
+
+  const handleEditableInputEvent = (event: Event) => {
+    if (event.target instanceof HTMLInputElement) {
+      markZeroishInput(event.target);
+    }
+  };
+
+  const handleFocusIn = (event: FocusEvent) => {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const input = event.target;
+    markZeroishInput(input);
+    if (!isZeroishEditableNumericInput(input)) return;
+
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === input && isZeroishEditableNumericInput(input)) {
+        selectInputValue(input);
+      }
+    });
+  };
+
+  const handlePointerEnd = (event: Event) => {
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const input = event.target;
+    if (document.activeElement !== input || !isZeroishEditableNumericInput(input)) return;
+
+    window.setTimeout(() => {
+      if (document.activeElement === input && isZeroishEditableNumericInput(input)) {
+        selectInputValue(input);
+      }
+    }, 0);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const input = event.target;
+    if (isZeroishEditableNumericInput(input)) {
+      selectInputValue(input);
+    }
+  };
+
+  const observer = new MutationObserver(refreshInputs);
+  observer.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['value', 'type', 'inputmode', 'disabled', 'readonly'],
+  });
+
+  refreshInputs();
+  document.addEventListener('focusin', handleFocusIn, true);
+  document.addEventListener('focusout', handleEditableInputEvent, true);
+  document.addEventListener('input', handleEditableInputEvent, true);
+  document.addEventListener('change', handleEditableInputEvent, true);
+  document.addEventListener('keydown', handleKeyDown, true);
+  document.addEventListener('mouseup', handlePointerEnd, true);
+  document.addEventListener('touchend', handlePointerEnd, true);
+
+  return () => {
+    if (refreshFrame) {
+      window.cancelAnimationFrame(refreshFrame);
+    }
+    observer.disconnect();
+    document.removeEventListener('focusin', handleFocusIn, true);
+    document.removeEventListener('focusout', handleEditableInputEvent, true);
+    document.removeEventListener('input', handleEditableInputEvent, true);
+    document.removeEventListener('change', handleEditableInputEvent, true);
+    document.removeEventListener('keydown', handleKeyDown, true);
+    document.removeEventListener('mouseup', handlePointerEnd, true);
+    document.removeEventListener('touchend', handlePointerEnd, true);
+  };
+}
+
 const router = createHashRouter([
   { path: '/login', element: renderLazyPage(<LoginPage />) },
   { path: '/display/idle', element: renderLazyPage(<DisplayIdlePage />) },
@@ -123,5 +241,7 @@ const router = createHashRouter([
 ]);
 
 export function App() {
+  useEffect(() => installZeroishInputErgonomics(), []);
+
   return <RouterProvider router={router} />;
 }

@@ -181,31 +181,31 @@ export function MakeRoot({
       <div className="group/nav relative">
         <Link
           to={to}
-          className={`group flex items-center justify-between border-b border-brand-800 px-3 py-2 transition-all duration-150 ${
+          className={`group flex items-center justify-between border-b border-brand-200 px-3 py-2 transition-all duration-150 ${
             active
-              ? 'border-l-[4px] border-l-amber-500 bg-brand-900'
-              : 'border-l-[4px] border-l-transparent hover:border-l-amber-500/50 hover:bg-brand-900/50'
+              ? 'border-l-[4px] border-l-amber-600 bg-amber-50'
+              : 'border-l-[4px] border-l-transparent hover:border-l-amber-300 hover:bg-white'
           }`}
         >
           <div className="flex min-w-0 items-center gap-2.5">
             <span
               className={`flex-shrink-0 transition-transform duration-150 group-hover/nav:scale-110 ${
-                active ? 'text-amber-400' : 'text-brand-500 group-hover:text-brand-300'
+                active ? 'text-amber-700' : 'text-brand-500 group-hover:text-amber-700'
               }`}
             >
               {icon}
             </span>
             <div className="flex min-w-0 flex-col">
-              <span className={`truncate text-[13px] font-bold ${active ? 'text-white' : 'text-brand-300'}`} style={monoStyle}>
+              <span className={`truncate text-[13px] font-bold ${active ? 'text-brand-950' : 'text-brand-700'}`} style={monoStyle}>
                 {label}
               </span>
-              <span className="truncate text-[10px] uppercase tracking-widest text-brand-600">{sublabel}</span>
+              <span className="truncate text-[10px] uppercase tracking-widest text-brand-500">{sublabel}</span>
             </div>
           </div>
           {badge !== undefined && badge !== 0 ? (
             <span
-              className={`ml-2 flex-shrink-0 border border-brand-700 px-1.5 py-0.5 text-xs font-black transition-transform duration-150 group-hover/nav:scale-105 ${
-                badgeColor || 'bg-brand-950 text-brand-300'
+              className={`ml-2 flex-shrink-0 border border-brand-200 px-1.5 py-0.5 text-xs font-black transition-transform duration-150 group-hover/nav:scale-105 ${
+                badgeColor || 'bg-white text-brand-700'
               }`}
               style={monoStyle}
             >
@@ -215,17 +215,17 @@ export function MakeRoot({
         </Link>
         {hoverData.length > 0 ? (
           <div
-            className="pointer-events-none absolute left-full top-0 z-[60] ml-1 hidden w-52 border border-brand-700 bg-brand-950 opacity-0 shadow-xl transition-all duration-200 group-hover/nav:pointer-events-auto group-hover/nav:opacity-100 lg:block"
+            className="pointer-events-none absolute left-full top-0 z-[60] ml-1 hidden w-52 border border-brand-200 bg-white opacity-0 shadow-xl transition-all duration-200 group-hover/nav:pointer-events-auto group-hover/nav:opacity-100 lg:block"
             style={monoStyle}
           >
-            <div className="flex items-center gap-2 border-b border-brand-700 bg-brand-900 px-3 py-1.5">
-              <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">{label}</span>
+            <div className="flex items-center gap-2 border-b border-brand-200 bg-amber-50 px-3 py-1.5">
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-800">{label}</span>
             </div>
             <div className="space-y-1 px-3 py-2">
               {hoverData.map((item) => (
                 <div key={`${to}-${item.label}`} className="flex items-center justify-between">
-                  <span className="text-[10px] text-brand-400">{item.label}</span>
-                  <span className={`text-[11px] font-black ${item.color || 'text-brand-200'}`}>{item.value}</span>
+                  <span className="text-[10px] text-brand-500">{item.label}</span>
+                  <span className={`text-[11px] font-black ${item.color || 'text-brand-700'}`}>{item.value}</span>
                 </div>
               ))}
             </div>
@@ -237,59 +237,54 @@ export function MakeRoot({
 
   const sidebarContent = (
     <>
-      <div className="flex items-center justify-between border-b-2 border-brand-800 bg-brand-950 px-4 py-4 lg:justify-center">
-        <div className="flex flex-col items-center">
-          <span
-            className="text-xl font-black uppercase tracking-[0.2em]"
-            style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#c0b296' }}
-          >
-            SEROGULD
-          </span>
-          <span className="mt-1 text-[10px] uppercase tracking-widest text-brand-500" style={monoStyle}>
-            ERP SYSTEM V2
+      <div className="flex items-center justify-between border-b-2 border-brand-200 bg-white px-4 py-4 lg:justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <img src="/seroguld-logo.png" alt="Sero Guld" className="h-9 w-auto" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-brand-500" style={monoStyle}>
+            CRM
           </span>
         </div>
-        <button onClick={onCloseSidebar} className="p-1 text-brand-400 hover:text-white lg:hidden">
+        <button onClick={onCloseSidebar} className="p-1 text-brand-500 hover:text-brand-950 lg:hidden">
           <X className="h-5 w-5" />
         </button>
       </div>
 
-      <div className="flex divide-x divide-brand-800 border-b border-brand-800 bg-brand-900 text-xs">
+      <div className="flex divide-x divide-brand-200 border-b border-brand-200 bg-[#fbfaf6] text-xs">
         <div className="flex flex-1 flex-col items-center justify-center px-2 py-1.5">
           <span className="mb-0.5 text-[10px] font-bold text-amber-500">Au</span>
-          <span className="font-black text-brand-200" style={monoStyle}>
+          <span className="font-black text-brand-900" style={monoStyle}>
             {stats.goldPrice}
           </span>
         </div>
         <div className="flex flex-1 flex-col items-center justify-center px-2 py-1.5">
           <span className="mb-0.5 text-[10px] font-bold text-slate-400">Ag</span>
-          <span className="font-black text-brand-200" style={monoStyle}>
+          <span className="font-black text-brand-900" style={monoStyle}>
             {stats.silverPrice}
           </span>
         </div>
         <div className="flex flex-1 flex-col items-center justify-center px-2 py-1.5">
           <span className="mb-0.5 text-[10px] font-bold text-zinc-400">Pt</span>
-          <span className="font-black text-brand-200" style={monoStyle}>
+          <span className="font-black text-brand-900" style={monoStyle}>
             {stats.platinPrice}
           </span>
         </div>
       </div>
 
-      <nav className="custom-scrollbar flex flex-1 flex-col overflow-y-auto">
+      <nav className="custom-scrollbar flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         <div className="px-3 pb-1 pt-3">
-          <p className="mb-1 border-b border-brand-800 pb-1 text-[10px] font-black uppercase tracking-widest text-brand-500">
+          <p className="mb-1 border-b border-brand-200 pb-1 text-[10px] font-black uppercase tracking-widest text-brand-500">
             Moduller
           </p>
         </div>
         {navItem('/dashboard', <LayoutDashboard className="h-4 w-4" />, 'Dashboard', 'Genel Bakis')}
-        {navItem('/', <Package className="h-4 w-4" />, 'Alis', 'Afregningsbilag', stats.alisList, 'bg-amber-900/50 text-amber-400')}
+        {navItem('/', <Package className="h-4 w-4" />, 'Alis', 'Afregningsbilag', stats.alisList, 'border-amber-200 bg-amber-100 text-amber-800')}
         {navItem('/depolama', <Database className="h-4 w-4" />, 'Depolama', 'Lager / Envanter', stats.depoCount)}
         {navItem('/log', <FileText className="h-4 w-4" />, 'Log Sistemi', 'AFG -> Eritme akisi', stats.logCount)}
         {navItem('/musteriler', <Users className="h-4 w-4" />, 'Musteriler', 'Kundedatabase', stats.customerCount)}
         {navItem('/gdpr', <ShieldCheck className="h-4 w-4" />, 'GDPR', 'Retention & Privacy')}
 
         <div className="px-3 pb-1 pt-4">
-          <p className="mb-1 border-b border-brand-800 pb-1 text-[10px] font-black uppercase tracking-widest text-brand-500">
+          <p className="mb-1 border-b border-brand-200 pb-1 text-[10px] font-black uppercase tracking-widest text-brand-500">
             Entegrasyonlar
           </p>
         </div>
@@ -298,7 +293,7 @@ export function MakeRoot({
         {navItem('/uniconta', <Building2 className="h-4 w-4" />, 'Uniconta', 'Fatura & ERP')}
 
         <div className="px-3 pb-1 pt-4">
-          <p className="mb-1 border-b border-brand-800 pb-1 text-[10px] font-black uppercase tracking-widest text-brand-500">
+          <p className="mb-1 border-b border-brand-200 pb-1 text-[10px] font-black uppercase tracking-widest text-brand-500">
             Harici & Sistem
           </p>
         </div>
@@ -307,9 +302,9 @@ export function MakeRoot({
 
         <div className="mt-auto space-y-3 px-3 pb-2 pt-6">
           {stats.finguld > 0 || stats.finsolv > 0 ? (
-            <div className="overflow-hidden rounded-sm border border-brand-700 bg-brand-900">
-              <div className="border-b border-brand-700 bg-brand-800/80 px-2 py-1">
-                <p className="text-[10px] font-black uppercase tracking-widest text-brand-400">Depo Ozeti</p>
+            <div className="overflow-hidden rounded-sm border border-brand-200 bg-white">
+              <div className="border-b border-brand-200 bg-brand-50 px-2 py-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Depo Ozeti</p>
               </div>
               <div className="space-y-1 p-2">
                 {stats.finguld > 0 ? (
@@ -333,15 +328,15 @@ export function MakeRoot({
           ) : null}
 
           {stats.ayirmaCount > 0 || stats.eritmeCount > 0 ? (
-            <div className="overflow-hidden rounded-sm border border-brand-700 bg-brand-900">
-              <div className="border-b border-brand-700 bg-brand-800/80 px-2 py-1">
-                <p className="text-[10px] font-black uppercase tracking-widest text-brand-400">Log Ozeti</p>
+            <div className="overflow-hidden rounded-sm border border-brand-200 bg-white">
+              <div className="border-b border-brand-200 bg-brand-50 px-2 py-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Log Ozeti</p>
               </div>
               <div className="space-y-1 p-2">
                 {stats.ayirmaCount > 0 ? (
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-brand-400">Ayristirma</span>
-                    <span className="text-xs font-black text-brand-300" style={monoStyle}>
+                    <span className="text-[11px] font-bold text-brand-600">Ayristirma</span>
+                    <span className="text-xs font-black text-brand-800" style={monoStyle}>
                       {stats.ayirmaCount}
                     </span>
                   </div>
@@ -358,14 +353,14 @@ export function MakeRoot({
             </div>
           ) : null}
 
-          <div className="overflow-hidden rounded-sm border border-brand-700 bg-brand-900">
-            <div className="border-b border-brand-700 bg-brand-800/80 px-2 py-1">
-              <p className="text-[10px] font-black uppercase tracking-widest text-brand-400">Runtime</p>
+          <div className="overflow-hidden rounded-sm border border-brand-200 bg-white">
+            <div className="border-b border-brand-200 bg-brand-50 px-2 py-1">
+              <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Runtime</p>
             </div>
             <div className="space-y-1.5 p-2">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10px] uppercase tracking-widest text-brand-500">Frontend</span>
-                <span className="text-right text-[11px] font-black text-brand-200" style={monoStyle}>
+                <span className="text-right text-[11px] font-black text-brand-800" style={monoStyle}>
                   {formatRuntimeLabel(runtime.frontend.frontend_mode)}
                 </span>
               </div>
@@ -374,7 +369,7 @@ export function MakeRoot({
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10px] uppercase tracking-widest text-brand-500">Desktop</span>
-                <span className="text-right text-[11px] font-black text-brand-200" style={monoStyle}>
+                <span className="text-right text-[11px] font-black text-brand-800" style={monoStyle}>
                   {runtime.desktop ? formatRuntimeLabel(runtime.desktop.runtime_mode) : 'Web / Yok'}
                 </span>
               </div>
@@ -385,7 +380,7 @@ export function MakeRoot({
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10px] uppercase tracking-widest text-brand-500">Backend</span>
-                <span className="text-right text-[11px] font-black text-brand-200" style={monoStyle}>
+                <span className="text-right text-[11px] font-black text-brand-800" style={monoStyle}>
                   {runtime.backend ? formatRuntimeDateTime(runtime.backend.backend_started_at) : 'Yok'}
                 </span>
               </div>
@@ -397,15 +392,15 @@ export function MakeRoot({
                     : 'desktop-dev session yok'}
               </div>
               {runtime.warnings.length > 0 ? (
-                <div className="space-y-1 border-t border-amber-700/50 pt-2">
+                <div className="space-y-1 border-t border-amber-200 pt-2">
                   {runtime.warnings.map((warning) => (
-                    <p key={warning} className="text-[10px] leading-4 text-amber-300">
+                    <p key={warning} className="text-[10px] leading-4 text-amber-700">
                       {warning}
                     </p>
                   ))}
                 </div>
               ) : (
-                <p className="border-t border-brand-800 pt-2 text-[10px] leading-4 text-emerald-300">
+                <p className="border-t border-brand-200 pt-2 text-[10px] leading-4 text-emerald-700">
                   Runtime zinciri tutarlı görünüyor.
                 </p>
               )}
@@ -414,19 +409,19 @@ export function MakeRoot({
         </div>
       </nav>
 
-      <div className="flex items-center justify-between border-t border-brand-800 bg-brand-950 px-3 py-2">
+      <div className="flex items-center justify-between border-t border-brand-200 bg-white px-3 py-2">
         <div className="flex items-center gap-2">
           <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Sero Guld</p>
           <button
             onClick={openFeedback}
-            className="p-1 text-brand-500 transition-colors hover:text-emerald-300"
+            className="p-1 text-brand-500 transition-colors hover:text-emerald-700"
             title="Geri Bildirim"
           >
             <MessageSquare className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={onToggleDarkMode}
-            className="p-1 text-brand-500 transition-colors hover:text-amber-400"
+            className="p-1 text-brand-500 transition-colors hover:text-amber-700"
             title={darkMode ? 'Açık Tema' : 'Koyu Tema'}
           >
             {darkMode ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
@@ -434,7 +429,7 @@ export function MakeRoot({
         </div>
         <div className="flex items-center gap-2">
           <span
-            className="hidden border border-brand-700 px-1 py-0.5 text-[9px] text-brand-600 lg:inline"
+            className="hidden border border-brand-200 bg-brand-50 px-1 py-0.5 text-[9px] text-brand-600 lg:inline"
             style={monoStyle}
             title="Ctrl+N: Yeni Alış | Ctrl+S: Kaydet"
           >
@@ -450,26 +445,26 @@ export function MakeRoot({
   );
 
   return (
-    <div className="flex min-h-dvh bg-[#ece5db] dark:bg-[#1a1410]">
+    <div className="flex h-dvh w-full overflow-hidden bg-[#f4efe7]">
       {sidebarOpen ? <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={onCloseSidebar} /> : null}
 
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 w-[260px] flex-shrink-0 transform border-r-2 border-brand-800 bg-brand-950 text-brand-100 transition-transform duration-200 ease-in-out lg:static
+          fixed inset-y-0 left-0 z-50 w-[260px] flex-shrink-0 transform overflow-hidden border-r-2 border-brand-200 bg-[#f8f3eb] text-brand-900 transition-transform duration-200 ease-in-out lg:static
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
         style={{ minHeight: '100vh' }}
       >
-        <div className="flex h-full flex-col">{sidebarContent}</div>
+        <div className="flex h-full min-w-0 flex-col overflow-hidden">{sidebarContent}</div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="sticky top-0 z-30 flex items-center justify-between border-b-2 border-brand-800 bg-brand-950 px-3 py-2 lg:hidden">
-          <button onClick={onOpenSidebar} className="p-1 text-brand-300 hover:text-white">
+        <div className="sticky top-0 z-30 flex items-center justify-between border-b-2 border-brand-200 bg-white px-3 py-2 lg:hidden">
+          <button onClick={onOpenSidebar} className="p-1 text-brand-600 hover:text-brand-950">
             <Menu className="h-5 w-5" />
           </button>
           <div className="text-center">
-            <span className="block text-sm font-black uppercase tracking-[0.15em]" style={{ ...monoStyle, color: '#c0b296' }}>
+            <span className="block text-sm font-black uppercase tracking-[0.15em]" style={{ ...monoStyle, color: '#6f5233' }}>
               SEROGULD
             </span>
             <span className="block text-[9px] uppercase tracking-[0.22em] text-brand-500" style={monoStyle}>
@@ -478,12 +473,12 @@ export function MakeRoot({
           </div>
           <div className="flex items-center gap-2 text-[10px]" style={monoStyle}>
             <span className="font-black text-amber-500">Au</span>
-            <span className="font-black text-brand-300">{stats.goldPrice}</span>
+            <span className="font-black text-brand-800">{stats.goldPrice}</span>
           </div>
         </div>
 
         <div className="min-h-0 flex flex-1 overflow-hidden">
-          <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f0ebe2] dark:bg-[#1a1410]">
+          <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f4efe7]">
             <Outlet />
           </main>
           {hasOfficeDock && officeDock.document ? (

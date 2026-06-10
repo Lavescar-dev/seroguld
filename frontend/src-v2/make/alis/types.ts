@@ -35,7 +35,7 @@ export type EditableSilverRow = {
   line_total_dkk: string;
 };
 
-export type PaymentMethod = 'bank' | 'cash';
+export type PaymentMethod = 'bank';
 export type CompanionMode = 'auto' | 'manual';
 export type WorkspaceSurfaceView = 'system' | 'excel';
 

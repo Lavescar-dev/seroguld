@@ -27,7 +27,26 @@ async function waitForSessionFile(targetPath) {
   throw new Error(`Desktop session dosyası oluşmadı: ${targetPath}`);
 }
 
+async function readSmokeState(driver) {
+  return driver.executeScript(() => {
+    const summary = document.querySelector('[data-testid="desktop-smoke-summary"]')?.textContent?.trim() || '';
+    const steps = Array.from(document.querySelectorAll('[data-testid^="desktop-step-"]')).map((node) => {
+      const badge = node.querySelector('span')?.textContent?.trim() || '';
+      const labels = Array.from(node.querySelectorAll('p')).map((item) => item.textContent?.trim() || '');
+      return {
+        key: node.getAttribute('data-testid') || '',
+        label: labels[0] || '',
+        detail: labels[1] || '',
+        state: badge,
+      };
+    });
+    return { summary, steps };
+  });
+}
+
 const capabilities = {
+  browserName: 'wry',
+  pageLoadStrategy: 'none',
   'tauri:options': {
     application: path.resolve(application),
   },
@@ -37,8 +56,8 @@ let driver;
 
 try {
   driver = await new Builder().usingServer(serverUrl).withCapabilities(capabilities).build();
+  await driver.manage().setTimeouts({ pageLoad: 15_000, script: 30_000 });
   await waitForSessionFile(sessionFile);
-  await driver.get(baseUrl);
 
   const summary = await driver.wait(
     until.elementLocated(By.css('[data-testid="desktop-smoke-summary"]')),
@@ -49,10 +68,15 @@ try {
     return text.trim().length > 0;
   }, timeoutMs);
 
-  await driver.wait(
-    until.elementLocated(By.css('[data-testid="desktop-smoke-shell-ok"]')),
-    timeoutMs,
-  );
+  try {
+    await driver.wait(
+      until.elementLocated(By.css('[data-testid="desktop-smoke-shell-ok"]')),
+      timeoutMs,
+    );
+  } catch (error) {
+    const state = await readSmokeState(driver);
+    throw new Error(`Desktop smoke tamamlanmadı: ${JSON.stringify(state)}`, { cause: error });
+  }
 } finally {
   if (driver) {
     await driver.quit();

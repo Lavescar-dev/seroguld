@@ -468,14 +468,8 @@ export function MakeDashboardPage({
                             {fmtKr(alis.total)}
                           </td>
                           <td className="border border-brand-200 px-3 py-2 text-center">
-                            <span
-                              className={`px-1.5 py-0.5 text-xs font-black ${
-                                alis.paymentMethod === 'cash'
-                                  ? 'border border-emerald-300 bg-emerald-100 text-emerald-700'
-                                  : 'border border-sky-300 bg-sky-100 text-sky-700'
-                              }`}
-                            >
-                              {alis.paymentMethod === 'cash' ? 'Nakit' : 'Banka'}
+                            <span className="border border-sky-300 bg-sky-100 px-1.5 py-0.5 text-xs font-black text-sky-700">
+                              Banka
                             </span>
                           </td>
                         </tr>

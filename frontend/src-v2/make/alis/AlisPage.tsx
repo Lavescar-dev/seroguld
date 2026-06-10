@@ -1,6 +1,7 @@
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  Ban,
   Calendar,
   CheckCircle2,
   ChevronDown,
@@ -179,6 +180,8 @@ type SavedPurchaseListActionProps = {
   onDeleteDocument: (item: PosSavedPurchaseListItem) => void;
   onRetryUnicontaSync: (item: PosSavedPurchaseListItem) => void;
   retryPendingSequenceNo: number | null;
+  onCancelUnicontaInvoice: (item: PosSavedPurchaseListItem) => void;
+  cancelPendingSequenceNo: number | null;
   actionPendingSequenceNo: number | null;
 };
 
@@ -236,6 +239,8 @@ export type AlisPageProps = {
   onDeleteDocument: (item: PosSavedPurchaseListItem) => void;
   onRetryUnicontaSync: (item: PosSavedPurchaseListItem) => void;
   retryPendingSequenceNo: number | null;
+  onCancelUnicontaInvoice: (item: PosSavedPurchaseListItem) => void;
+  cancelPendingSequenceNo: number | null;
   listLoading: boolean;
   actionPendingSequenceNo: number | null;
   customerMode: 'existing' | 'new' | null;
@@ -329,6 +334,8 @@ export function AlisPage(props: AlisPageProps) {
     onDeleteDocument,
     onRetryUnicontaSync,
     retryPendingSequenceNo,
+    onCancelUnicontaInvoice,
+    cancelPendingSequenceNo,
     listLoading,
     actionPendingSequenceNo,
     customerMode,
@@ -408,13 +415,13 @@ export function AlisPage(props: AlisPageProps) {
       ) : null}
 
       {!workspace ? (
-        <div className="flex items-center justify-between border-b-2 border-brand-300 bg-brand-50 px-6 py-4">
-          <div className="space-y-0.5">
+        <div className="flex flex-col gap-3 border-b-2 border-brand-300 bg-brand-50 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0 space-y-0.5">
             <h2 className="text-lg font-black uppercase tracking-[0.18em] text-brand-900">Alış — Afregningsbilag</h2>
             <p className="text-[11px] font-medium text-brand-600">Müşteriden altın / gümüş alım belgesi</p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
             <MarketRatesEditor
               marketRates={marketRates}
               setMarketRates={setMarketRates}
@@ -425,7 +432,7 @@ export function AlisPage(props: AlisPageProps) {
             <button
               type="button"
               onClick={onStartBlankWorkspace}
-              className="flex items-center gap-2 border border-brand-900 bg-brand-800 px-5 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-900"
+              className="flex shrink-0 items-center justify-center gap-2 border border-brand-900 bg-brand-800 px-5 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-900"
             >
               <Plus className="h-4 w-4" />
               {startPending ? 'Hazırlanıyor...' : 'Yeni Alış Başlat'}
@@ -512,6 +519,8 @@ export function AlisPage(props: AlisPageProps) {
           onDeleteDocument={onDeleteDocument}
           onRetryUnicontaSync={onRetryUnicontaSync}
           retryPendingSequenceNo={retryPendingSequenceNo}
+          onCancelUnicontaInvoice={onCancelUnicontaInvoice}
+          cancelPendingSequenceNo={cancelPendingSequenceNo}
           listLoading={listLoading}
           actionPendingSequenceNo={actionPendingSequenceNo}
         />
@@ -1114,6 +1123,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
     onDeleteDocument,
     onRetryUnicontaSync,
     retryPendingSequenceNo,
+    onCancelUnicontaInvoice,
+    cancelPendingSequenceNo,
     listLoading,
     actionPendingSequenceNo,
   } = props;
@@ -1330,6 +1341,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
               onDeleteDocument={onDeleteDocument}
               onRetryUnicontaSync={onRetryUnicontaSync}
               retryPendingSequenceNo={retryPendingSequenceNo}
+              onCancelUnicontaInvoice={onCancelUnicontaInvoice}
+              cancelPendingSequenceNo={cancelPendingSequenceNo}
               actionPendingSequenceNo={actionPendingSequenceNo}
             />
           ) : (
@@ -1346,6 +1359,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
               onDeleteDocument={onDeleteDocument}
               onRetryUnicontaSync={onRetryUnicontaSync}
               retryPendingSequenceNo={retryPendingSequenceNo}
+              onCancelUnicontaInvoice={onCancelUnicontaInvoice}
+              cancelPendingSequenceNo={cancelPendingSequenceNo}
               actionPendingSequenceNo={actionPendingSequenceNo}
               sortConfig={sortConfig}
               onToggleSort={toggleSort}
@@ -1370,6 +1385,8 @@ function SavedPurchaseTable({
   onDeleteDocument,
   onRetryUnicontaSync,
   retryPendingSequenceNo,
+  onCancelUnicontaInvoice,
+  cancelPendingSequenceNo,
   actionPendingSequenceNo,
   sortConfig,
   onToggleSort,
@@ -1544,11 +1561,7 @@ function SavedPurchaseTable({
               <td className="mono border border-emerald-300 bg-emerald-50 px-4 py-3 text-right text-sm font-black text-emerald-900">
                 {formatMoney(document.gross_amount_dkk)}
                 <div className="mt-1 flex flex-wrap items-center justify-end gap-1">
-                  {document.payment_method === 'cash' ? (
-                    <span className="inline-block bg-emerald-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-800">Nakit</span>
-                  ) : (
-                    <span className="inline-block bg-brand-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-brand-700">Banka</span>
-                  )}
+                  <span className="inline-block bg-brand-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-brand-700">Banka</span>
                   <UnicontaSyncBadge
                     status={document.uniconta_sync_status}
                     invoiceNumber={document.uniconta_invoice_number}
@@ -1640,6 +1653,30 @@ function SavedPurchaseTable({
                       )}
                     </button>
                   ) : null}
+                  {document.uniconta_sync_status === 'synced' && document.uniconta_invoice_number ? (
+                    <button
+                      type="button"
+                      disabled={cancelPendingSequenceNo === document.sequence_no}
+                      onClick={() => onCancelUnicontaInvoice(document)}
+                      className="flex h-5 w-5 items-center justify-center border border-transparent text-rose-700 transition hover:border-rose-400 hover:bg-rose-50 hover:text-rose-900 disabled:cursor-not-allowed disabled:opacity-35"
+                      title={`Uniconta faturasını iptal et — kreditnota oluşturur (Faktura #${document.uniconta_invoice_number})`}
+                      aria-label="Uniconta faturasını iptal et"
+                    >
+                      {cancelPendingSequenceNo === document.sequence_no ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Ban className="h-3 w-3" />
+                      )}
+                    </button>
+                  ) : null}
+                  {document.uniconta_sync_status === 'cancelled' && document.uniconta_credit_note_number ? (
+                    <span
+                      className="flex h-5 items-center px-1.5 text-[9px] font-black uppercase tracking-widest text-rose-700"
+                      title={`İptal edildi — kreditnota #${document.uniconta_credit_note_number}`}
+                    >
+                      KN#{document.uniconta_credit_note_number}
+                    </span>
+                  ) : null}
                 </div>
               </td>
             </tr>
@@ -1663,6 +1700,8 @@ function SavedPurchaseCardList({
   onDeleteDocument,
   onRetryUnicontaSync,
   retryPendingSequenceNo,
+  onCancelUnicontaInvoice,
+  cancelPendingSequenceNo,
   actionPendingSequenceNo,
 }: SavedPurchaseListRendererProps) {
   if (listLoading) {
@@ -1681,10 +1720,7 @@ function SavedPurchaseCardList({
   return (
     <div className="space-y-4 bg-brand-50/40 p-4">
       {documents.map((document) => {
-        const paymentTone =
-          document.payment_method === 'cash'
-            ? 'bg-emerald-200 text-emerald-800'
-            : 'bg-brand-200 text-brand-700';
+        const paymentTone = 'bg-brand-200 text-brand-700';
 
         return (
           <article key={document.sequence_no} className="overflow-hidden border-2 border-brand-200 bg-white shadow-[0_12px_24px_rgba(30,41,59,0.08)]">
@@ -1744,7 +1780,7 @@ function SavedPurchaseCardList({
                 <span className="text-[10px] font-black uppercase tracking-widest text-brand-500">Ödeme Tipi</span>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`inline-flex px-2 py-1 text-[10px] font-black uppercase tracking-widest ${paymentTone}`}>
-                    {document.payment_method === 'cash' ? 'Nakit' : 'Banka'}
+                    Banka
                   </span>
                   <UnicontaSyncBadge
                     status={document.uniconta_sync_status}
@@ -1766,6 +1802,8 @@ function SavedPurchaseCardList({
                 onDeleteDocument={onDeleteDocument}
                 onRetryUnicontaSync={onRetryUnicontaSync}
                 retryPendingSequenceNo={retryPendingSequenceNo}
+                onCancelUnicontaInvoice={onCancelUnicontaInvoice}
+                cancelPendingSequenceNo={cancelPendingSequenceNo}
                 actionPendingSequenceNo={actionPendingSequenceNo}
               />
             </div>
@@ -1844,6 +1882,8 @@ function SavedPurchaseCardActions({
   onDeleteDocument,
   onRetryUnicontaSync,
   retryPendingSequenceNo,
+  onCancelUnicontaInvoice,
+  cancelPendingSequenceNo,
   actionPendingSequenceNo,
 }: SavedPurchaseListActionProps & {
   document: PosSavedPurchaseListItem;
@@ -1853,6 +1893,8 @@ function SavedPurchaseCardActions({
   const canRetrySync =
     document.uniconta_sync_status === 'failed' || document.uniconta_sync_status === 'skipped';
   const retryPending = retryPendingSequenceNo === document.sequence_no;
+  const canCancelInvoice = document.uniconta_sync_status === 'synced' && Boolean(document.uniconta_invoice_number);
+  const cancelPending = cancelPendingSequenceNo === document.sequence_no;
 
   return (
     <div className="grid gap-2 sm:grid-cols-2">
@@ -1926,6 +1968,24 @@ function SavedPurchaseCardActions({
           {retryPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
           Uniconta'ya Gönder
         </button>
+      ) : null}
+      {canCancelInvoice ? (
+        <button
+          type="button"
+          disabled={cancelPending}
+          onClick={() => onCancelUnicontaInvoice(document)}
+          className="inline-flex items-center justify-center gap-1.5 border border-rose-400 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-800 transition hover:border-rose-500 hover:bg-rose-100 hover:text-rose-900 disabled:cursor-not-allowed disabled:opacity-35"
+          title={`Uniconta faturasını iptal et — kreditnota oluşturur (Faktura #${document.uniconta_invoice_number})`}
+        >
+          {cancelPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+          Kreditnota
+        </button>
+      ) : null}
+      {document.uniconta_sync_status === 'cancelled' && document.uniconta_credit_note_number ? (
+        <div className="inline-flex items-center justify-center gap-1.5 border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-700 sm:col-span-2">
+          <Ban className="h-3.5 w-3.5" />
+          KN#{document.uniconta_credit_note_number}
+        </div>
       ) : null}
     </div>
   );
@@ -2065,7 +2125,6 @@ function SavedPurchaseDetailModal({
   onPrint: () => void;
   actionPending: boolean;
 }) {
-  const paymentMethod = detail?.payment_method || source?.payment_method || null;
   const documentWorkbookName = buildDocumentWorkbookName(source?.document_number);
   const customerAddress = [
     detail?.customer_address,
@@ -2217,37 +2276,27 @@ function SavedPurchaseDetailModal({
                         <span className="text-[10px] font-black uppercase tracking-wider text-brand-400">Ödeme Şekli</span>
                       </td>
                       <td className="border border-brand-200 px-3 py-2">
-                        {paymentMethod === 'cash' ? (
-                          <span className="inline-flex border border-emerald-400 bg-emerald-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-emerald-800">
-                            Kontant — Nakit
-                          </span>
-                        ) : (
-                          <span className="inline-flex border border-blue-400 bg-blue-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-blue-800">
-                            Bankoverførsel — Havale
-                          </span>
-                        )}
+                        <span className="inline-flex border border-blue-400 bg-blue-100 px-3 py-1 text-xs font-black uppercase tracking-wider text-blue-800">
+                          Bankoverførsel — Havale
+                        </span>
                       </td>
                     </tr>
-                    {paymentMethod !== 'cash' ? (
-                      <>
-                        <tr className="bg-brand-50">
-                          <td className="w-40 border border-brand-200 bg-brand-50 px-3 py-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-brand-400">Reg.nr.</span>
-                          </td>
-                          <td className="border border-brand-200 px-3 py-2 text-sm text-brand-700" style={monoStyle}>
-                            {detail?.bank_reg_number || '—'}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="w-40 border border-brand-200 bg-brand-50 px-3 py-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-brand-400">Kontonr.</span>
-                          </td>
-                          <td className="border border-brand-200 px-3 py-2 text-sm text-brand-700" style={monoStyle}>
-                            {detail?.bank_account_number || '—'}
-                          </td>
-                        </tr>
-                      </>
-                    ) : null}
+                    <tr className="bg-brand-50">
+                      <td className="w-40 border border-brand-200 bg-brand-50 px-3 py-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-brand-400">Reg.nr.</span>
+                      </td>
+                      <td className="border border-brand-200 px-3 py-2 text-sm text-brand-700" style={monoStyle}>
+                        {detail?.bank_reg_number || '—'}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="w-40 border border-brand-200 bg-brand-50 px-3 py-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-brand-400">Kontonr.</span>
+                      </td>
+                      <td className="border border-brand-200 px-3 py-2 text-sm text-brand-700" style={monoStyle}>
+                        {detail?.bank_account_number || '—'}
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>

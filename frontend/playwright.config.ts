@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const useSystemChrome = process.env.PLAYWRIGHT_USE_SYSTEM_CHROME === '1';
+
 export default defineConfig({
   testDir: './tests',
   timeout: 60_000,
@@ -19,7 +21,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(useSystemChrome ? { channel: 'chrome' } : {}),
+      },
     },
   ],
 });

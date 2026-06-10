@@ -1,4 +1,12 @@
+import { isTauri as isTauriCore } from '@tauri-apps/api/core';
+
 type TauriInvoke = <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
+
+type TauriGlobal = typeof globalThis & {
+  __TAURI__?: unknown;
+  __TAURI_INTERNALS__?: unknown;
+  isTauri?: boolean;
+};
 
 export type DesktopDisplayWindowState = {
   has_secondary_monitor: boolean;
@@ -47,7 +55,13 @@ async function getInvoke(): Promise<TauriInvoke | null> {
 
 export function isTauriRuntime(): boolean {
   if (typeof window === 'undefined') return false;
-  return navigator.userAgent.includes('Tauri');
+  const tauriGlobal = globalThis as TauriGlobal;
+  return (
+    isTauriCore() ||
+    tauriGlobal.isTauri === true ||
+    Boolean(tauriGlobal.__TAURI__ || tauriGlobal.__TAURI_INTERNALS__) ||
+    navigator.userAgent.includes('Tauri')
+  );
 }
 
 async function invokeDesktop<T = unknown>(command: string, args?: Record<string, unknown>): Promise<T> {

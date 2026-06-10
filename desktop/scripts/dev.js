@@ -209,6 +209,10 @@ function buildTauriEnv() {
     env.WEBKIT_DISABLE_DMABUF_RENDERER = '1';
   }
 
+  if (process.env.SEROGULD_DESKTOP_START_ROUTE) {
+    env.SEROGULD_DESKTOP_START_ROUTE = process.env.SEROGULD_DESKTOP_START_ROUTE;
+  }
+
   return env;
 }
 

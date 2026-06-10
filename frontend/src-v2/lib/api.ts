@@ -43,11 +43,17 @@ function trimSlash(value: string): string {
 
 export function resolveApiBaseUrl(): string {
   const configured = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (configured === 'auto' && typeof window !== 'undefined') {
+    return trimSlash(window.location.origin);
+  }
   return trimSlash(configured || 'http://127.0.0.1:8100');
 }
 
 export function resolveWsBaseUrl(): string {
   const configured = import.meta.env.VITE_WS_BASE_URL?.trim();
+  if (configured === 'auto') {
+    return resolveApiBaseUrl();
+  }
   return trimSlash(configured || resolveApiBaseUrl());
 }
 

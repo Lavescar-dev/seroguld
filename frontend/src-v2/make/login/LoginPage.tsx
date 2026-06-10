@@ -4,7 +4,6 @@ import { ArrowRight, LockKeyhole, ShieldCheck } from 'lucide-react';
 type MakeLoginPageProps = {
   email: string;
   password: string;
-  onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onSubmit: FormEventHandler<HTMLFormElement>;
   errorMessage: string | null;
@@ -14,7 +13,6 @@ type MakeLoginPageProps = {
 export function MakeLoginPage({
   email,
   password,
-  onEmailChange,
   onPasswordChange,
   onSubmit,
   errorMessage,
@@ -41,7 +39,7 @@ export function MakeLoginPage({
 
           <div className="mt-10 space-y-6">
             <div className="border border-brand-800 bg-brand-950/70 px-5 py-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Admin Access</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Sero Guld Access</p>
               <p className="mt-3 max-w-md text-sm leading-7 text-brand-200">
                 Masaustu operasyonlari, piyasa oranlari, entegrasyonlar ve musterili alim akislari bu oturumdan
                 yonetilir.
@@ -52,7 +50,7 @@ export function MakeLoginPage({
               <div className="flex items-start gap-3 border border-brand-800 bg-brand-900/40 px-4 py-3">
                 <LockKeyhole className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
                 <div>
-                  <p className="font-semibold text-brand-100">Güvenli admin oturumu</p>
+                  <p className="font-semibold text-brand-100">Güvenli oturum</p>
                   <p className="mt-1 text-xs leading-6 text-brand-400">
                     API anahtarlari, entegrasyon baglantilari ve ERP ayarlari yalniz bu oturumdan duzenlenir.
                   </p>
@@ -62,10 +60,9 @@ export function MakeLoginPage({
               <div className="flex items-start gap-3 border border-brand-800 bg-brand-900/40 px-4 py-3">
                 <ArrowRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
                 <div>
-                  <p className="font-semibold text-brand-100">Hazir giris bilgileri</p>
+                  <p className="font-semibold text-brand-100">Sero Guld hesabi</p>
                   <p className="mt-1 text-xs leading-6 text-brand-400">
-                    Demo admin bilgileri formda onceden dolduruldu; istersen bu ekran uzerinden dogrudan giris
-                    yapabilirsin.
+                    Demo hesabi info@seroguld.dk olarak hazirlandi; devam etmek icin yalniz sifre gerekir.
                   </p>
                 </div>
               </div>
@@ -94,24 +91,18 @@ export function MakeLoginPage({
           </div>
 
           <div className="hidden lg:block">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-brand-400">Admin Login</p>
+            <p className="text-[11px] uppercase tracking-[0.3em] text-brand-400">Sero Guld Login</p>
             <h2 className="mt-3 text-3xl font-semibold text-white">Desktop Sign In</h2>
             <p className="mt-3 max-w-md text-sm leading-7 text-brand-300">
-              Sero Guld operasyon paneline erismek icin admin hesabinizla oturum acin.
+              Sero Guld operasyon paneline erismek icin sifrenizi girin.
             </p>
           </div>
 
           <form className="mt-8 space-y-4" onSubmit={onSubmit}>
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-brand-200">E-posta</span>
-              <input
-                value={email}
-                onChange={(event) => onEmailChange(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-amber-400/40 focus:bg-white/10"
-                type="email"
-                autoComplete="username"
-              />
-            </label>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <span className="block text-xs uppercase tracking-[0.24em] text-brand-400">Kullanici</span>
+              <span className="mt-1 block font-medium text-brand-100">{email}</span>
+            </div>
 
             <label className="block">
               <span className="mb-2 block text-sm font-medium text-brand-200">Şifre</span>
@@ -130,7 +121,7 @@ export function MakeLoginPage({
               </p>
             ) : (
               <div className="rounded-2xl border border-brand-800 bg-brand-950/70 px-4 py-3 text-xs leading-6 text-brand-400">
-                Admin oturumu acildiginda shell, entegrasyonlar ve admin ekranlari ayni masaustu akisi icinde yuklenir.
+                Oturum acildiginda shell, entegrasyonlar ve operasyon ekranlari ayni masaustu akisi icinde yuklenir.
               </div>
             )}
 

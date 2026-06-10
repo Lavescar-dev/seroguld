@@ -3,7 +3,6 @@ import { type Dispatch, type SetStateAction } from 'react';
 import { formatNumber } from '@/lib/format';
 import type { PosWorkspace, PosWorkspaceBankInfo, PosWorkspaceMarketRates } from '@/types';
 
-import { PaymentMethodToggle } from './customerEditors';
 import { formatDecimalFixed, parseDecimalValue } from './marketRates';
 import type {
   CompanionMode,
@@ -92,8 +91,6 @@ export function AfregningsSheetEditor({
   onUpdateSilverRow,
   bankInfo,
   setBankInfo,
-  paymentMethod,
-  setPaymentMethod,
 }: {
   workspace: PosWorkspace;
   customerForm: EditableCustomer;
@@ -286,69 +283,55 @@ export function AfregningsSheetEditor({
       <div className="grid grid-cols-2 divide-x-2 divide-brand-200 border-t-2 border-brand-300">
         <div className="bg-brand-50 px-6 py-4">
           <div className="mb-4 flex items-center gap-2">
-            <PaymentMethodToggle paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} />
-            {paymentMethod !== 'cash' ? (
-              <span className="ml-auto inline-flex items-center gap-1 border border-emerald-300 bg-emerald-100 px-2 py-0.5">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Profiline Bağlı</span>
-              </span>
-            ) : null}
+            <span className="inline-flex items-center gap-2 border border-emerald-300 bg-emerald-100 px-3 py-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="text-xs font-black uppercase tracking-widest text-emerald-800">Bankoverførsel</span>
+            </span>
+            <span className="ml-auto inline-flex items-center gap-1 border border-emerald-300 bg-white px-2 py-0.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Profiline Bağlı</span>
+            </span>
           </div>
 
-          {paymentMethod === 'cash' ? (
-            <div className="overflow-hidden border border-emerald-300 bg-white">
-              <div className="flex items-center justify-between border-b border-emerald-200 bg-emerald-50 px-4 py-2">
-                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Kontant — Nakit</span>
-                <span className="mono bg-emerald-700 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-white">Udbetales</span>
-              </div>
-              <div className="space-y-1.5 px-4 py-3">
-                <p className="mono text-sm font-black text-emerald-900">KASA ÖDEMESİ</p>
-                <p className="text-xs leading-relaxed text-brand-500">
-                  Bu alış tutarı müşteriye kasadan nakit olarak ödenecektir. Banka transfer bilgisi kullanılmayacak.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <table className="w-full border-collapse">
-              <tbody>
-                <tr className="border-b border-brand-200">
-                  <td className="w-28 border-r border-brand-200 bg-brand-100 px-3 py-2 pr-4">
-                    <span className="text-xs font-bold uppercase tracking-wider text-brand-500">Reg.nr.</span>
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      type="text"
-                      placeholder="0000"
-                      value={bankInfo.reg_number || ''}
-                      onChange={(event) => setBankInfo((current) => ({ ...current, reg_number: event.target.value }))}
-                      className="mono w-full border border-brand-300 bg-white px-2 py-1.5 text-sm text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50"
-                    />
-                  </td>
-                </tr>
-                <tr className="border-b border-brand-200">
-                  <td className="border-r border-brand-200 bg-brand-100 px-3 py-2 pr-4">
-                    <span className="text-xs font-bold uppercase tracking-wider text-brand-500">Kontonr.</span>
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      type="text"
-                      placeholder="0000 0000 0000"
-                      value={bankInfo.account_number || ''}
-                      onChange={(event) => setBankInfo((current) => ({ ...current, account_number: event.target.value }))}
-                      className="mono w-full border border-brand-300 bg-white px-2 py-1.5 text-sm text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50"
-                    />
-                  </td>
-                </tr>
-                <tr>
-                  <td colSpan={2} className="pt-2">
-                    <p className="text-[10px] italic text-brand-400">
-                      Bu bilgiler müşteri profiline kaydedilir ve mevcut müşteri seçildiğinde otomatik dolar.
-                    </p>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          )}
+          <table className="w-full border-collapse">
+            <tbody>
+              <tr className="border-b border-brand-200">
+                <td className="w-28 border-r border-brand-200 bg-brand-100 px-3 py-2 pr-4">
+                  <span className="text-xs font-bold uppercase tracking-wider text-brand-500">Reg.nr.</span>
+                </td>
+                <td className="px-2 py-2">
+                  <input
+                    type="text"
+                    placeholder="0000"
+                    value={bankInfo.reg_number || ''}
+                    onChange={(event) => setBankInfo((current) => ({ ...current, reg_number: event.target.value }))}
+                    className="mono w-full border border-brand-300 bg-white px-2 py-1.5 text-sm text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50"
+                  />
+                </td>
+              </tr>
+              <tr className="border-b border-brand-200">
+                <td className="border-r border-brand-200 bg-brand-100 px-3 py-2 pr-4">
+                  <span className="text-xs font-bold uppercase tracking-wider text-brand-500">Kontonr.</span>
+                </td>
+                <td className="px-2 py-2">
+                  <input
+                    type="text"
+                    placeholder="0000 0000 0000"
+                    value={bankInfo.account_number || ''}
+                    onChange={(event) => setBankInfo((current) => ({ ...current, account_number: event.target.value }))}
+                    className="mono w-full border border-brand-300 bg-white px-2 py-1.5 text-sm text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50"
+                  />
+                </td>
+              </tr>
+              <tr>
+                <td colSpan={2} className="pt-2">
+                  <p className="text-[10px] italic text-brand-400">
+                    Bu bilgiler müşteri profiline kaydedilir ve mevcut müşteri seçildiğinde otomatik dolar.
+                  </p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <div className="px-6 py-4">
@@ -377,16 +360,14 @@ export function AfregningsSheetEditor({
           </table>
           <div className="mt-3 flex items-center justify-between bg-emerald-800 p-2.5">
             <p className="text-xs uppercase tracking-wider text-emerald-400">
-              {paymentMethod === 'cash' ? 'Udbetales (Nakit)' : 'Overføres til konto'}
+              Overføres til konto
             </p>
             <p className="mono text-sm font-black text-white">
-              {paymentMethod === 'cash'
-                ? 'KONTANT'
-                : bankInfo.reg_number && bankInfo.account_number
-                  ? `${bankInfo.reg_number} — ${bankInfo.account_number}`
-                  : bankInfo.reg_number || bankInfo.account_number
-                    ? `${bankInfo.reg_number || '????'}  ${bankInfo.account_number || '?????????????????????'}`
-                    : '—'}
+              {bankInfo.reg_number && bankInfo.account_number
+                ? `${bankInfo.reg_number} — ${bankInfo.account_number}`
+                : bankInfo.reg_number || bankInfo.account_number
+                  ? `${bankInfo.reg_number || '????'}  ${bankInfo.account_number || '?????????????????????'}`
+                  : '—'}
             </p>
           </div>
         </div>

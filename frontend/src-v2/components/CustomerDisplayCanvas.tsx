@@ -179,6 +179,30 @@ function GroupHeader({ title }: { title: string }) {
   );
 }
 
+function DisplayWaitingPanel({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div
+      className="flex w-[980px] flex-col items-center justify-center border px-16 py-20 text-center"
+      style={{
+        backgroundColor: 'var(--display-surface-logo)',
+        borderColor: 'var(--display-border-subtle)',
+        boxShadow: '0 30px 70px rgba(48, 32, 24, 0.08)',
+      }}
+    >
+      <img src="/seroguld-logo.png" alt="SERO GULD" className="mb-12 h-24 w-auto" />
+      <p
+        className="text-[30px] font-bold uppercase tracking-[0.18em]"
+        style={{ color: 'var(--display-ink-strong)', fontFamily: FONT_STACK_SERIF }}
+      >
+        {title}
+      </p>
+      <p className="mt-5 text-[18px] uppercase tracking-[0.16em]" style={{ color: 'var(--display-ink-muted)' }}>
+        {subtitle}
+      </p>
+    </div>
+  );
+}
+
 type T5RowProps =
   | { kind: 'gold'; row: PosWorkspaceGoldRow }
   | { kind: 'silver'; row: PosWorkspaceSilverRow };
@@ -276,26 +300,27 @@ export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: 
       </aside>
 
       <main
-        className="flex flex-1 flex-col items-center justify-center gap-12"
+        className="flex flex-1 flex-col items-center justify-center gap-10 px-16"
         style={{ backgroundColor: 'var(--display-surface-card)' }}
       >
+        <DisplayWaitingPanel title="Alış hazırlanıyor" subtitle="Kundevisning er klar" />
         <div className="flex items-center gap-6">
           <span
-            className="h-[3px] w-32"
+            className="h-[3px] w-28"
             style={{
               background:
                 'linear-gradient(to right, var(--display-gradient-divider-from), var(--display-gradient-divider-to))',
             }}
           />
           <span
-            className="text-[28px] uppercase tracking-[0.25em]"
+            className="text-[22px] uppercase tracking-[0.22em]"
             style={{ color: 'var(--display-ink-strong)', fontFamily: FONT_STACK_SERIF }}
           >
             Aktuelle Guld og Sølvpriser
           </span>
         </div>
         <p
-          className="tabular-nums text-[120px] font-bold leading-none"
+          className="tabular-nums text-[76px] font-bold leading-none"
           style={{ color: 'var(--display-ink-strong)' }}
         >
           {timeLabel(now)}
@@ -467,13 +492,8 @@ export function CustomerDisplayLiveView({
         {/* TODO: backend PosSessionDisplayOut.platinum_rows eklenince PLATIN bloğu aktive edilecek */}
 
         {!hasAnyRow && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2">
-            <p className="text-[20px]" style={{ color: 'var(--display-ink-muted)' }}>
-              Worksheet bekleniyor
-            </p>
-            <p className="text-[14px]" style={{ color: 'var(--display-ink-muted)' }}>
-              Afventer worksheet
-            </p>
+          <div className="flex flex-1 items-center justify-center">
+            <DisplayWaitingPanel title="Ürün satırı bekleniyor" subtitle="Afventer varelinjer" />
           </div>
         )}
 
