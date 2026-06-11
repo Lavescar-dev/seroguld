@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder,
+};
 
 const DISPLAY_WINDOW_LABEL: &str = "customer-display";
 const DOCUMENT_PREVIEW_WINDOW_LABEL: &str = "document-preview";
@@ -118,11 +120,95 @@ fn app_window_hash_url(route: &str) -> Url {
     let normalized = normalize_display_route(route);
     #[cfg(debug_assertions)]
     {
-        Url::parse(&format!("{}/#{normalized}", dev_display_base_url())).expect("dev hash url should be valid")
+        Url::parse(&format!("{}/#{normalized}", dev_display_base_url()))
+            .expect("dev hash url should be valid")
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
     {
-        Url::parse(&format!("tauri://localhost/index.html#{normalized}")).expect("app hash url should be valid")
+        Url::parse(&format!("http://tauri.localhost/index.html#{normalized}"))
+            .expect("windows app hash url should be valid")
+    }
+    #[cfg(all(not(debug_assertions), not(target_os = "windows")))]
+    {
+        Url::parse(&format!("tauri://localhost/index.html#{normalized}"))
+            .expect("app hash url should be valid")
+    }
+}
+
+fn navigate_window_to_route(window: &tauri::WebviewWindow, route: &str) -> Result<(), String> {
+    window
+        .navigate(app_window_hash_url(route))
+        .map_err(|error| error.to_string())
+}
+
+fn best_effort_navigate_window_to_route(window: &tauri::WebviewWindow, route: &str) {
+    if let Err(error) = navigate_window_to_route(window, route) {
+        eprintln!("[desktop] window route navigation failed: {error}");
+    }
+}
+
+fn ensure_window_route_if_needed(
+    window: &tauri::WebviewWindow,
+    route: &str,
+    should_navigate: bool,
+) {
+    if should_navigate {
+        best_effort_navigate_window_to_route(window, route);
+    }
+}
+
+fn show_customer_display_window(
+    window: &tauri::WebviewWindow,
+    route: &str,
+    secondary_monitor: &MonitorInfo,
+    should_navigate: bool,
+) -> Result<(), String> {
+    ensure_window_route_if_needed(window, route, should_navigate);
+    window
+        .set_position(PhysicalPosition::new(
+            secondary_monitor.x,
+            secondary_monitor.y,
+        ))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_size(PhysicalSize::new(
+            secondary_monitor.width,
+            secondary_monitor.height,
+        ))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_fullscreen(true)
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn _app_window_hash_url_for_tests(route: &str) -> String {
+    app_window_hash_url(route).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_display_routes() {
+        assert_eq!(normalize_display_route("display/idle"), "/display/idle");
+        assert_eq!(normalize_display_route("/display/token"), "/display/token");
+        assert_eq!(normalize_display_route(""), DISPLAY_IDLE_ROUTE);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn app_hash_url_uses_supported_release_protocol() {
+        let url = _app_window_hash_url_for_tests("/display/idle");
+        if cfg!(target_os = "windows") {
+            assert_eq!(url, "http://tauri.localhost/index.html#/display/idle");
+        } else {
+            assert_eq!(url, "tauri://localhost/index.html#/display/idle");
+        }
     }
 }
 
@@ -151,7 +237,7 @@ fn configure_document_preview_window(
     if let Some(next_title) = title {
         let _ = window.set_title(&next_title);
     }
-    let _ = window.navigate(app_window_hash_url(route));
+    best_effort_navigate_window_to_route(window, route);
     let _ = window.set_size(PhysicalSize::new(1180, 780));
     let _ = window.center();
     window.show().map_err(|error| error.to_string())?;
@@ -203,7 +289,8 @@ fn secondary_monitor_info(app: &AppHandle) -> Result<Option<MonitorInfo>, String
         height: monitor.size().height,
         x: monitor.position().x,
         y: monitor.position().y,
-        primary: monitor.position().x == current_position.x && monitor.position().y == current_position.y,
+        primary: monitor.position().x == current_position.x
+            && monitor.position().y == current_position.y,
     }))
 }
 
@@ -223,39 +310,34 @@ async fn get_monitor_setup(app: AppHandle) -> Result<DisplayWindowState, String>
 }
 
 #[tauri::command]
-async fn ensure_customer_display_window(app: AppHandle, route: Option<String>) -> Result<DisplayWindowState, String> {
+async fn ensure_customer_display_window(
+    app: AppHandle,
+    route: Option<String>,
+) -> Result<DisplayWindowState, String> {
     let route = normalize_display_route(route.as_deref().unwrap_or(DISPLAY_IDLE_ROUTE));
     let secondary_monitor = match secondary_monitor_info(&app)? {
         Some(monitor) => monitor,
         None => return state_payload(&app, &route),
     };
 
-    let window = if let Some(existing) = app.get_webview_window(DISPLAY_WINDOW_LABEL) {
-        existing
-    } else {
-        WebviewWindowBuilder::new(&app, DISPLAY_WINDOW_LABEL, display_window_url(&route))
-            .title("SERO GULD CRM — Müşteri Ekranı")
-            .decorations(false)
-            .resizable(false)
-            .skip_taskbar(true)
-            .visible(true)
-            .build()
-            .map_err(|error| error.to_string())?
-    };
+    let (window, should_navigate) =
+        if let Some(existing) = app.get_webview_window(DISPLAY_WINDOW_LABEL) {
+            (existing, true)
+        } else {
+            (
+                WebviewWindowBuilder::new(&app, DISPLAY_WINDOW_LABEL, display_window_url(&route))
+                    .title("SERO GULD CRM — Müşteri Ekranı")
+                    .decorations(false)
+                    .resizable(false)
+                    .skip_taskbar(true)
+                    .visible(true)
+                    .build()
+                    .map_err(|error| error.to_string())?,
+                false,
+            )
+        };
 
-    window
-        .set_position(PhysicalPosition::new(secondary_monitor.x, secondary_monitor.y))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_size(PhysicalSize::new(secondary_monitor.width, secondary_monitor.height))
-        .map_err(|error| error.to_string())?;
-    window.set_fullscreen(true).map_err(|error| error.to_string())?;
-    window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())?;
-
-    if app.get_webview_window(DISPLAY_WINDOW_LABEL).is_some() {
-        let _ = window.navigate(app_window_hash_url(&route));
-    }
+    show_customer_display_window(&window, &route, &secondary_monitor, should_navigate)?;
 
     state_payload(&app, &route)
 }
@@ -263,7 +345,7 @@ async fn ensure_customer_display_window(app: AppHandle, route: Option<String>) -
 #[tauri::command]
 async fn close_or_idle_customer_display(app: AppHandle) -> Result<DisplayWindowState, String> {
     if let Some(window) = app.get_webview_window(DISPLAY_WINDOW_LABEL) {
-        let _ = window.navigate(app_window_hash_url(DISPLAY_IDLE_ROUTE));
+        best_effort_navigate_window_to_route(&window, DISPLAY_IDLE_ROUTE);
         let _ = window.set_fullscreen(true);
         let _ = window.show();
     }
@@ -304,14 +386,22 @@ async fn ensure_document_preview_window(
     let window = if let Some(existing) = app.get_webview_window(DOCUMENT_PREVIEW_WINDOW_LABEL) {
         existing
     } else {
-        WebviewWindowBuilder::new(&app, DOCUMENT_PREVIEW_WINDOW_LABEL, app_window_url(&normalized))
-            .title(title.clone().unwrap_or_else(|| "SERO GULD CRM — Office Belgesi".to_string()))
-            .decorations(true)
-            .resizable(true)
-            .visible(true)
-            .inner_size(1180.0, 780.0)
-            .build()
-            .map_err(|error| error.to_string())?
+        WebviewWindowBuilder::new(
+            &app,
+            DOCUMENT_PREVIEW_WINDOW_LABEL,
+            app_window_url(&normalized),
+        )
+        .title(
+            title
+                .clone()
+                .unwrap_or_else(|| "SERO GULD CRM — Office Belgesi".to_string()),
+        )
+        .decorations(true)
+        .resizable(true)
+        .visible(true)
+        .inner_size(1180.0, 780.0)
+        .build()
+        .map_err(|error| error.to_string())?
     };
 
     configure_document_preview_window(&window, &normalized, title)?;
@@ -342,14 +432,22 @@ async fn reopen_document_preview_window(
     let window = if let Some(existing) = app.get_webview_window(DOCUMENT_PREVIEW_WINDOW_LABEL) {
         existing
     } else {
-        WebviewWindowBuilder::new(&app, DOCUMENT_PREVIEW_WINDOW_LABEL, app_window_url(&normalized))
-            .title(title.clone().unwrap_or_else(|| "SERO GULD CRM — Office Belgesi".to_string()))
-            .decorations(true)
-            .resizable(true)
-            .visible(true)
-            .inner_size(1180.0, 780.0)
-            .build()
-            .map_err(|error| error.to_string())?
+        WebviewWindowBuilder::new(
+            &app,
+            DOCUMENT_PREVIEW_WINDOW_LABEL,
+            app_window_url(&normalized),
+        )
+        .title(
+            title
+                .clone()
+                .unwrap_or_else(|| "SERO GULD CRM — Office Belgesi".to_string()),
+        )
+        .decorations(true)
+        .resizable(true)
+        .visible(true)
+        .inner_size(1180.0, 780.0)
+        .build()
+        .map_err(|error| error.to_string())?
     };
 
     configure_document_preview_window(&window, &normalized, title)?;
@@ -428,7 +526,10 @@ async fn export_document_bytes(
                 .save_file()
         })
         .map(|selected| (selected, "save-dialog".to_string()))
-        .unwrap_or((linux_downloads_fallback_path(&suggested_name)?, "downloads-fallback".to_string()));
+        .unwrap_or((
+            linux_downloads_fallback_path(&suggested_name)?,
+            "downloads-fallback".to_string(),
+        ));
 
     #[cfg(not(target_os = "linux"))]
     let (path, mode) = (
@@ -439,7 +540,9 @@ async fn export_document_bytes(
         "save-dialog".to_string(),
     );
 
-    let bytes = BASE64.decode(data_base64).map_err(|error| error.to_string())?;
+    let bytes = BASE64
+        .decode(data_base64)
+        .map_err(|error| error.to_string())?;
     fs::write(&path, bytes).map_err(|error| error.to_string())?;
 
     #[cfg(target_os = "linux")]
@@ -460,7 +563,7 @@ fn main() {
                 let route = route.trim();
                 if !route.is_empty() {
                     if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.navigate(app_window_hash_url(route));
+                        best_effort_navigate_window_to_route(&window, route);
                     }
                 }
             }

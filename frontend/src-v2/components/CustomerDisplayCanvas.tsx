@@ -256,6 +256,7 @@ function T5Row(props: T5RowProps) {
 export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: CustomerDisplayIdleViewProps) {
   const scene = (
     <div
+      data-testid="customer-display-idle"
       className="flex h-[1080px] w-[1920px]"
       style={{ backgroundColor: 'var(--display-surface-page)', fontFamily: FONT_STACK_SANS }}
     >
@@ -380,6 +381,7 @@ export function CustomerDisplayLiveView({
 
   const scene = (
     <div
+      data-testid="customer-display-live"
       className="flex h-[1080px] w-[1920px]"
       style={{ backgroundColor: 'var(--display-surface-page)', fontFamily: FONT_STACK_SANS }}
     >

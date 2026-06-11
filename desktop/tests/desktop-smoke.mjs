@@ -44,6 +44,20 @@ async function readSmokeState(driver) {
   });
 }
 
+function displayIdleUrl() {
+  return baseUrl.includes('#')
+    ? `${baseUrl.split('#', 1)[0]}#/display/idle`
+    : `${baseUrl.replace(/\/$/, '')}/#/display/idle`;
+}
+
+async function verifyDisplayIdleRoute(driver) {
+  await driver.get(displayIdleUrl());
+  await driver.wait(
+    until.elementLocated(By.css('[data-testid="customer-display-idle"]')),
+    timeoutMs,
+  );
+}
+
 const capabilities = {
   browserName: 'wry',
   pageLoadStrategy: 'none',
@@ -73,6 +87,7 @@ try {
       until.elementLocated(By.css('[data-testid="desktop-smoke-shell-ok"]')),
       timeoutMs,
     );
+    await verifyDisplayIdleRoute(driver);
   } catch (error) {
     const state = await readSmokeState(driver);
     throw new Error(`Desktop smoke tamamlanmadı: ${JSON.stringify(state)}`, { cause: error });

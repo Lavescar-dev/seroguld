@@ -46,7 +46,7 @@ export function DesktopSmokePage() {
   const [steps, setSteps] = useState<SmokeStep[]>([
     { key: 'runtime', label: 'Runtime bilgisi', state: 'pending' },
     { key: 'monitor', label: 'Monitor setup', state: 'pending' },
-    { key: 'preview-open', label: 'Preview aç', state: 'pending' },
+    { key: 'preview-open', label: 'Display route preview aç', state: 'pending' },
     { key: 'preview-close', label: 'Preview kapat', state: 'pending' },
     { key: 'display-open', label: 'Customer display aç', state: 'pending' },
     { key: 'display-idle', label: 'Customer display idle', state: 'pending' },
@@ -96,8 +96,8 @@ export function DesktopSmokePage() {
       });
 
       setStep('preview-open', { state: 'running' });
-      const previewRoute = '/desktop-smoke?window=document-preview';
-      const preview = await ensureDocumentPreviewWindow(previewRoute, 'Desktop Smoke Preview');
+      const previewRoute = DISPLAY_IDLE_ROUTE;
+      const preview = await ensureDocumentPreviewWindow(previewRoute, 'Desktop Smoke Display Preview');
       if (!preview) {
         throw new Error('Preview window açılmadı');
       }

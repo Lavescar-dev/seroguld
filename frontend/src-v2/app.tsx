@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import {
   Navigate,
   Outlet,
@@ -36,6 +36,66 @@ function RouteLoadingFallback() {
 
 function renderLazyPage(element: ReactNode) {
   return <Suspense fallback={<RouteLoadingFallback />}>{element}</Suspense>;
+}
+
+function DisplayRouteLoadingFallback() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-[var(--display-surface-page)] text-[var(--display-ink-strong)]">
+      <div className="border border-[var(--display-border-subtle)] bg-[var(--display-surface-logo)] px-8 py-6 text-center shadow-sm">
+        <p className="text-xs font-black uppercase tracking-[0.28em] text-[var(--display-ink-muted)]">
+          Müşteri ekranı
+        </p>
+        <p className="mt-3 text-lg font-black uppercase tracking-[0.18em]">Yükleniyor</p>
+      </div>
+    </div>
+  );
+}
+
+function DisplayRouteErrorFallback({ message }: { message: string }) {
+  return (
+    <div
+      data-testid="customer-display-error"
+      className="flex h-screen w-screen items-center justify-center bg-[var(--display-surface-page)] px-8 text-[var(--display-ink-strong)]"
+    >
+      <div className="max-w-3xl border border-rose-300 bg-rose-50 px-8 py-7 text-center text-rose-900 shadow-sm">
+        <p className="text-xs font-black uppercase tracking-[0.28em] text-rose-700">Müşteri ekranı yüklenemedi</p>
+        <p className="mt-3 text-sm leading-6 text-rose-800">
+          İkinci ekran içeriği açılamadı. Ana ekranda müşteri ekranını kapatıp tekrar açın.
+        </p>
+        <p className="mt-4 break-words text-xs font-semibold text-rose-700">{message}</p>
+      </div>
+    </div>
+  );
+}
+
+class DisplayRouteErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: string | null }
+> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error('[display-route]', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return <DisplayRouteErrorFallback message={this.state.error} />;
+    }
+    return this.props.children;
+  }
+}
+
+function renderDisplayPage(element: ReactNode) {
+  return (
+    <DisplayRouteErrorBoundary>
+      <Suspense fallback={<DisplayRouteLoadingFallback />}>{element}</Suspense>
+    </DisplayRouteErrorBoundary>
+  );
 }
 
 const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage');
@@ -198,8 +258,8 @@ function installZeroishInputErgonomics() {
 
 const router = createHashRouter([
   { path: '/login', element: renderLazyPage(<LoginPage />) },
-  { path: '/display/idle', element: renderLazyPage(<DisplayIdlePage />) },
-  { path: '/display/:token', element: renderLazyPage(<DisplayPage />) },
+  { path: '/display/idle', element: renderDisplayPage(<DisplayIdlePage />) },
+  { path: '/display/:token', element: renderDisplayPage(<DisplayPage />) },
   { path: '/gdpr/privacy', element: renderLazyPage(<GdprPublicPrivacyPage />) },
   { path: '/gdpr/cookies', element: renderLazyPage(<GdprPublicCookiesPage />) },
   { path: '/gdpr/request', element: renderLazyPage(<GdprPublicRequestPage />) },

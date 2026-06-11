@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default desktop capability set for Sero Guld CRM.",
-  "windows": ["main", "document-preview"],
+  "windows": ["main", "document-preview", "customer-display"],
   "permissions": ["core:default"]
 }
