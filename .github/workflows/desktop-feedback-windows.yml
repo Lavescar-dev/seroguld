@@ -60,6 +60,40 @@ jobs:
           CI: "true"
         run: npm run tauri build
 
+      - name: Windows display route smoke
+        working-directory: desktop
+        shell: pwsh
+        env:
+          SEROGULD_DESKTOP_START_ROUTE: /display/idle
+          TAURI_DRIVER_URL: http://127.0.0.1:4444
+          DESKTOP_SMOKE_APPLICATION: ${{ github.workspace }}\desktop\src-tauri\target\release\seroguld_crm_desktop.exe
+        run: |
+          cargo install tauri-driver --locked
+
+          $driver = Start-Process -FilePath "tauri-driver" -ArgumentList "--port", "4444", "--native-port", "4445" -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(60)
+            do {
+              try {
+                Invoke-WebRequest -UseBasicParsing -Uri "$env:TAURI_DRIVER_URL/status" | Out-Null
+                $ready = $true
+              } catch {
+                $ready = $false
+                Start-Sleep -Seconds 1
+              }
+            } while (-not $ready -and (Get-Date) -lt $deadline)
+
+            if (-not $ready) {
+              throw "tauri-driver did not become ready"
+            }
+
+            node tests/windows-display-smoke.mjs
+          } finally {
+            if ($driver -and -not $driver.HasExited) {
+              Stop-Process -Id $driver.Id -Force
+            }
+          }
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
