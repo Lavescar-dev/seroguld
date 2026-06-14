@@ -70,7 +70,32 @@ jobs:
         run: |
           cargo install tauri-driver --locked
 
-          $driver = Start-Process -FilePath "tauri-driver" -ArgumentList "--port", "4444", "--native-port", "4445" -PassThru
+          $webViewCandidates = @(
+            "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe",
+            "${env:ProgramFiles}\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe"
+          )
+          $webViewExe = Get-ChildItem -Path $webViewCandidates -ErrorAction SilentlyContinue |
+            Sort-Object { [version]$_.VersionInfo.ProductVersion } -Descending |
+            Select-Object -First 1
+          if (-not $webViewExe) {
+            throw "Microsoft Edge WebView2 runtime executable was not found"
+          }
+
+          $webViewVersion = $webViewExe.VersionInfo.ProductVersion
+          $driverZip = Join-Path $env:RUNNER_TEMP "msedgedriver-$webViewVersion.zip"
+          $driverDir = Join-Path $env:RUNNER_TEMP "msedgedriver-$webViewVersion"
+          $driverUrl = "https://msedgedriver.microsoft.com/$webViewVersion/edgedriver_win64.zip"
+          New-Item -ItemType Directory -Force -Path $driverDir | Out-Null
+          Invoke-WebRequest -UseBasicParsing -Uri $driverUrl -OutFile $driverZip
+          Expand-Archive -Force -Path $driverZip -DestinationPath $driverDir
+          $nativeDriver = Join-Path $driverDir "msedgedriver.exe"
+          if (-not (Test-Path $nativeDriver)) {
+            throw "Matching msedgedriver was not extracted: $nativeDriver"
+          }
+          Write-Host "WebView2 runtime: $webViewVersion"
+          & $nativeDriver --version
+
+          $driver = Start-Process -FilePath "tauri-driver" -ArgumentList "--port", "4444", "--native-port", "4445", "--native-driver", $nativeDriver -PassThru
           try {
             $deadline = (Get-Date).AddSeconds(60)
             do {
