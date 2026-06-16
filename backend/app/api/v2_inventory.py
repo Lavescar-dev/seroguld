@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
@@ -42,6 +43,7 @@ from app.api.v2_support import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/depolama/workspace", response_model=InventoryWorkspaceOut)
@@ -99,7 +101,10 @@ async def get_depolama_workspace_v2(
         and offset == 0
     )
     if no_filters:
-        await ensure_inventory_artifact(db, workspace, create_snapshot=False, force_sync=False)
+        try:
+            await ensure_inventory_artifact(db, workspace, create_snapshot=False, force_sync=False)
+        except FileNotFoundError:
+            logger.warning("depolama template eksik, depolama artifact senkronu atlandı")
     return workspace
 
 

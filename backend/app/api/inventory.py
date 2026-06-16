@@ -178,6 +178,23 @@ def _summary(rows: Iterable[InventoryGridRowOut]) -> InventoryWorkspaceSummaryOu
     )
 
 
+def _normalize_text_filter(value: object) -> str | None:
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return None
+
+
+def _normalize_bool_filter(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _normalize_decimal_filter(value: object) -> Decimal | None:
+    if value is None or isinstance(value, Decimal):
+        return value
+    return None
+
+
 @router.get("/market-prices", response_model=InventoryMarketPricesOut)
 async def get_inventory_market_prices(_: object = Depends(require_admin)) -> InventoryMarketPricesOut:
     return _get_market_prices()
@@ -221,6 +238,21 @@ async def get_inventory_workspace(
     _: object = Depends(require_admin),
 ) -> InventoryWorkspaceOut:
     from sqlalchemy import and_
+
+    q = _normalize_text_filter(q)
+    category = _normalize_text_filter(category)
+    subcategory = _normalize_text_filter(subcategory)
+    location = _normalize_text_filter(location)
+    date_from = _normalize_text_filter(date_from)
+    date_to = _normalize_text_filter(date_to)
+    needs_cleaning = _normalize_bool_filter(needs_cleaning)
+    gdpr_locked = _normalize_bool_filter(gdpr_locked)
+    weight_min = _normalize_decimal_filter(weight_min)
+    weight_max = _normalize_decimal_filter(weight_max)
+    price_min = _normalize_decimal_filter(price_min)
+    price_max = _normalize_decimal_filter(price_max)
+    limit = limit if isinstance(limit, int) else 500
+    offset = offset if isinstance(offset, int) else 0
 
     prices = _get_market_prices()
     stmt = (

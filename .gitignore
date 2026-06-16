@@ -5,6 +5,7 @@
 .env.local
 .env.*.local
 *.env.local
+.seroguld-sync.env
 
 # =========================
 # Python
@@ -72,7 +73,9 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 data/*.bak
+data/*.bak.*
 data/*.backup
+data/*.backup.*
 data/backups/
 data/documents/
 data/uploads/
