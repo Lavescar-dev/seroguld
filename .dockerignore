@@ -1,0 +1,12 @@
+*
+!backend/
+!backend/**
+!referans/
+!referans/**
+!ops/
+!ops/deploy/
+!ops/deploy/backend-demo.Dockerfile
+backend/.venv/
+backend/.pytest_cache/
+backend/**/__pycache__/
+backend/**/*.pyc

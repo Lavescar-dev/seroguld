@@ -21,8 +21,16 @@ if declare -p SEROGULD_SYNC_RSYNC_EXCLUDES >/dev/null 2>&1; then
   SYNC_RSYNC_EXCLUDES=("${SEROGULD_SYNC_RSYNC_EXCLUDES[@]}")
 else
   SYNC_RSYNC_EXCLUDES=(
+    ".git/"
+    "__pycache__/"
+    "*.pyc"
+    ".env"
+    ".env.local"
+    ".env.*.local"
     ".venv/"
     "backend/.venv/"
+    "frontend/.env.local"
+    "frontend/.env.*.local"
     "frontend/node_modules/"
     "frontend/.vite/"
     "desktop/node_modules/"
@@ -30,24 +38,37 @@ else
     "desktop/src-tauri/target/"
     "target/"
     "tools/rclone/rclone"
+    "referans/"
     "data/backups/"
     "data/restore-drill/"
     "data/offsite-mirror/"
     "data/logs/"
     "data/uploads/"
     "data/documents/"
+    "data/*.db"
+    "data/*.db.*"
+    "data/*.sqlite"
+    "data/*.sqlite3"
     ".run/"
     "artifacts/"
   )
 fi
 
-remote_tar_flags() {
-  local -a flags=(--exclude=.git)
+rsync_exclude_args() {
+  local -a flags=()
   local pattern
   for pattern in "${SYNC_RSYNC_EXCLUDES[@]}"; do
-    flags+=(--exclude="${pattern}")
+    if [[ "${pattern}" == "__pycache__/" || "${pattern}" == "*.pyc" ]]; then
+      flags+=(--exclude="${pattern}")
+    else
+      flags+=(--exclude="/${pattern}")
+    fi
   done
   printf '%s ' "${flags[@]}"
+}
+
+rsync_ssh() {
+  printf 'ssh -p %q -o BatchMode=yes -o ConnectTimeout=8' "${SYNC_REMOTE_PORT}"
 }
 
 run_remote() {
@@ -140,23 +161,20 @@ print_parity() {
 }
 
 send_workspace_without_git_to_remote() {
-  local -a tar_opts=(
-    tar
-    -c
-    -z
-    -p
-    -f -
-    -C
-    "${ROOT_DIR}"
-  )
+  local -a excludes=()
   local pattern
   for pattern in "${SYNC_RSYNC_EXCLUDES[@]}"; do
-    tar_opts+=(--exclude="${pattern}")
+    if [[ "${pattern}" == "__pycache__/" || "${pattern}" == "*.pyc" ]]; then
+      excludes+=(--exclude="${pattern}")
+    else
+      excludes+=(--exclude="/${pattern}")
+    fi
   done
-  tar_opts+=(--exclude=.git .)
-
-  run_remote "cd '${SYNC_REMOTE_DIR}' && find . -mindepth 1 -name '.git' -prune -o -exec rm -rf {} + >/dev/null 2>&1 || true"
-  "${tar_opts[@]}" | run_remote "cd '${SYNC_REMOTE_DIR}' && tar -xzf -"
+  rsync -az --delete --itemize-changes \
+    -e "$(rsync_ssh)" \
+    "${excludes[@]}" \
+    "${ROOT_DIR}/" \
+    "${SYNC_REMOTE_URL}:${SYNC_REMOTE_DIR}/"
 }
 
 send_git_to_remote() {
@@ -190,9 +208,20 @@ clean_local_workspace() {
 }
 
 pull_workspace_from_remote() {
-  local flags
-  flags="$(remote_tar_flags)"
-  "${SSH_CMD[@]}" "${SYNC_REMOTE_URL}" "cd '${SYNC_REMOTE_DIR}' && tar -czf - ${flags} ." | tar -xzf - -C "${ROOT_DIR}"
+  local -a excludes=()
+  local pattern
+  for pattern in "${SYNC_RSYNC_EXCLUDES[@]}"; do
+    if [[ "${pattern}" == "__pycache__/" || "${pattern}" == "*.pyc" ]]; then
+      excludes+=(--exclude="${pattern}")
+    else
+      excludes+=(--exclude="/${pattern}")
+    fi
+  done
+  rsync -az --delete --itemize-changes \
+    -e "$(rsync_ssh)" \
+    "${excludes[@]}" \
+    "${SYNC_REMOTE_URL}:${SYNC_REMOTE_DIR}/" \
+    "${ROOT_DIR}/"
 }
 
 pull_git_from_remote() {
@@ -201,7 +230,6 @@ pull_git_from_remote() {
 }
 
 copy_to_local() {
-  clean_local_workspace
   pull_workspace_from_remote
   pull_git_from_remote
   echo "[sync] Uzaktaki repo lokal workspace'e geri yüklendi."
