@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from decimal import Decimal
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -216,6 +218,54 @@ def test_realtime_display_snapshot_uses_preview_lines_when_sent():
             assert len(snapshot.lines) == 2
             assert snapshot.lines_total_dkk == Decimal("5903.26")
             assert snapshot.final_offer_dkk == Decimal("5903.26")
+
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_public_display_snapshot_never_serializes_raw_identity_values():
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            clerk = User(email="privacy-admin@test.local", password_hash="x", name="Admin", role=RoleEnum.ADMIN)
+            session.add(clerk)
+            await session.flush()
+
+            pos_session = PosSession(
+                session_code="DSPPRIV1",
+                display_token="display-token-privacy",
+                clerk_user_id=clerk.id,
+                trade_side=PosTradeSideEnum.BUY_FROM_CUSTOMER,
+                margin_percent_internal=Decimal("8.00"),
+                rate_source=PosRateSourceEnum.LIVE,
+                live_rate_dkk=Decimal("615.50"),
+                status=PosSessionStatusEnum.DRAFT,
+                visible_snapshot={},
+            )
+            session.add(pos_session)
+            await session.commit()
+
+            raw_cpr = "0101901234"
+            raw_identity = "PASSPORT-SECRET-42"
+            preview = PosRealtimePreview(
+                customer_name="Privacy Customer",
+                customer_cpr=raw_cpr,
+                customer_identity_doc_number=raw_identity,
+            )
+            snapshot = await build_realtime_display_snapshot(session, pos_session, preview)
+            encoded = json.dumps(jsonable_encoder(snapshot))
+
+            assert snapshot.customer_cpr is None
+            assert snapshot.customer_identity_doc_number is None
+            assert snapshot.customer_cpr_masked
+            assert snapshot.customer_identity_doc_number_masked
+            assert raw_cpr not in encoded
+            assert raw_identity not in encoded
 
         await engine.dispose()
 

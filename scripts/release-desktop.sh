@@ -23,7 +23,7 @@ fi
 echo "[release] backend testleri çalışıyor..."
 bash "${ROOT_DIR}/scripts/test.sh" --backend-only
 
-echo "[release] frontend typecheck çalışıyor..."
+echo "[release] frontend typecheck + Vitest çalışıyor..."
 bash "${ROOT_DIR}/scripts/test.sh" --frontend-only
 
 echo "[release] frontend build alınıyor..."

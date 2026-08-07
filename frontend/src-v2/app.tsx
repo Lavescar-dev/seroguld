@@ -9,6 +9,12 @@ import {
 
 import { AppShell } from '@/components/AppShell';
 import { getAccessToken } from '@/lib/auth';
+import { writeUiDiagnostic } from '@/lib/desktop';
+import {
+  UiVariantBoundary,
+  UiVariantSwitchDialog,
+  UiVariantToastBridge,
+} from '@/ui-variants';
 
 const desktopSmokeEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_DESKTOP_SMOKE === '1';
 const ZEROISH_INPUT_RE = /^[-+]?0+(?:[.,]0+)?$/;
@@ -122,6 +128,7 @@ const OpmcDetailPage = lazyPage(() => import('@/pages/OpmcDetailPage'), 'OpmcDet
 const WooCommercePage = lazyPage(() => import('@/pages/WooCommercePage'), 'WooCommercePage');
 const UnicontaPage = lazyPage(() => import('@/pages/UnicontaPage'), 'UnicontaPage');
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage');
+const ReportsPage = lazyPage(() => import('@/pages/ReportsPage'), 'ReportsPage');
 const DesktopSmokePage = desktopSmokeEnabled
   ? lazyPage(() => import('@/pages/DesktopSmokePage'), 'DesktopSmokePage')
   : null;
@@ -287,6 +294,7 @@ const router = createHashRouter([
           { path: '/woocommerce', element: renderLazyPage(<WooCommercePage />) },
           { path: '/uniconta', element: renderLazyPage(<UnicontaPage />) },
           { path: '/settings', element: renderLazyPage(<SettingsPage />) },
+          { path: '/reports', element: renderLazyPage(<ReportsPage />) },
           { path: '/pos', element: <Navigate to="/" replace /> },
           { path: '/afg', element: <Navigate to="/log" replace /> },
           { path: '/inventory', element: <Navigate to="/depolama" replace /> },
@@ -303,5 +311,24 @@ const router = createHashRouter([
 export function App() {
   useEffect(() => installZeroishInputErgonomics(), []);
 
-  return <RouterProvider router={router} />;
+  return (
+    <UiVariantBoundary
+      diagnosticAdapter={{
+        capture: async (diagnostic) => {
+          const result = await writeUiDiagnostic({
+            occurredAt: diagnostic.timestamp,
+            route: diagnostic.route,
+            uiVariant: 'modern',
+            frontendBuild: __SERO_FRONTEND_BUILT_AT__,
+            errorCode: 'MODERN_RENDER_FAILURE',
+          });
+          return result ? { supportPath: result.path } : undefined;
+        },
+      }}
+    >
+      <UiVariantSwitchDialog />
+      <UiVariantToastBridge />
+      <RouterProvider router={router} />
+    </UiVariantBoundary>
+  );
 }

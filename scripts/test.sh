@@ -87,6 +87,9 @@ if [[ "${RUN_FRONTEND}" -eq 1 ]]; then
   echo "[test] frontend typecheck çalışıyor..."
   cd "${FRONTEND_DIR}"
   npm run typecheck
+
+  echo "[test] frontend vitest çalışıyor..."
+  npm test
 fi
 
 echo "[test] tüm kontroller başarılı."

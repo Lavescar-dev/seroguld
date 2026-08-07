@@ -1,5 +1,6 @@
 import { MakeDisplayIdlePage } from '@/make/display/DisplayIdlePage';
 import { useDisplayIdleMakeState } from '@/make/display/useDisplayIdleMakeState';
+import { useUiVariant } from '@/ui-variants';
 
 type DisplayIdlePageProps = {
   embedded?: boolean;
@@ -7,5 +8,10 @@ type DisplayIdlePageProps = {
 
 export function DisplayIdlePage({ embedded = false }: DisplayIdlePageProps) {
   const state = useDisplayIdleMakeState({ embedded });
-  return <MakeDisplayIdlePage {...state} />;
+  const { variant } = useUiVariant();
+  return (
+    <div data-testid="customer-display-idle-page" data-display-ui-variant={variant}>
+      <MakeDisplayIdlePage {...state} />
+    </div>
+  );
 }

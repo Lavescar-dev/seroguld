@@ -62,10 +62,7 @@ export function applyIncomingDisplaySnapshot(
       customer_address: nextSnapshot.customer_address || current.customer_address,
       customer_postal_code: nextSnapshot.customer_postal_code || current.customer_postal_code,
       customer_city: nextSnapshot.customer_city || current.customer_city,
-      customer_cpr: nextSnapshot.customer_cpr || current.customer_cpr,
       customer_cpr_masked: nextSnapshot.customer_cpr_masked || current.customer_cpr_masked,
-      customer_identity_doc_number:
-        nextSnapshot.customer_identity_doc_number || current.customer_identity_doc_number,
       customer_identity_doc_number_masked:
         nextSnapshot.customer_identity_doc_number_masked || current.customer_identity_doc_number_masked,
       preview_sequence: nextSnapshot.preview_sequence ?? current.preview_sequence ?? null,
@@ -84,9 +81,7 @@ export function applyIncomingDisplaySnapshot(
       | 'customer_address'
       | 'customer_postal_code'
       | 'customer_city'
-      | 'customer_cpr'
       | 'customer_cpr_masked'
-      | 'customer_identity_doc_number'
       | 'customer_identity_doc_number_masked'
     > = [
       'customer_name',
@@ -95,9 +90,7 @@ export function applyIncomingDisplaySnapshot(
       'customer_address',
       'customer_postal_code',
       'customer_city',
-      'customer_cpr',
       'customer_cpr_masked',
-      'customer_identity_doc_number',
       'customer_identity_doc_number_masked',
     ];
 

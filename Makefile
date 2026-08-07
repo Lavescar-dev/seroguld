@@ -50,7 +50,7 @@ help:
 	@echo "  make frontend-typecheck-> Frontend TypeScript kontrolü"
 	@echo "  make frontend-truth    -> Eski Next referanslarının sızmadığını doğrular"
 	@echo "  make frontend-smoke    -> Temp runtime üstünde auth/AFG/depolama/log/GDPR smoke"
-	@echo "  make test              -> backend-test + frontend-typecheck"
+	@echo "  make test              -> backend-test + frontend-typecheck + frontend-vitest"
 	@echo "  make check             -> test + frontend build"
 	@echo "  make clean             -> cache/artifact temizliği"
 

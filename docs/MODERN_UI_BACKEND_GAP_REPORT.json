@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-08-06T16:05:22+03:00",
+  "status": "partial",
+  "closed_gaps": [
+    {
+      "id": "display-privacy",
+      "status": "closed",
+      "evidence_file": "backend/app/services/pos_display_service.py",
+      "note": "Raw CPR and identity document numbers are no longer serialized in public display outputs."
+    },
+    {
+      "id": "artifact-metadata",
+      "status": "partial",
+      "evidence_file": "backend/app/schemas/document_artifact.py",
+      "note": "Checksum and revision-friendly DTO fields exist, but backend revision lineage is still incomplete."
+    },
+    {
+      "id": "desktop-diagnostics",
+      "status": "closed",
+      "evidence_file": "desktop/src-tauri/src/main.rs",
+      "note": "Modern render failures can be persisted to a local JSONL log."
+    }
+  ],
+  "open_gaps": [
+    {
+      "id": "office-field-level-reconcile",
+      "severity": "high",
+      "status": "open",
+      "note": "Per-field authoritative revision and conflict-apply semantics are not implemented."
+    },
+    {
+      "id": "backend-reference-workbooks",
+      "severity": "high",
+      "status": "open",
+      "note": "12 backend test failures remain tied to missing reference workbook assets and stale tests."
+    },
+    {
+      "id": "display-token-hardening",
+      "severity": "medium",
+      "status": "open",
+      "note": "Public display privacy is improved, but token delivery remains the access model."
+    },
+    {
+      "id": "diagnostic-export",
+      "severity": "medium",
+      "status": "open",
+      "note": "Desktop diagnostics are stored locally only; no support bundle export exists yet."
+    }
+  ]
+}

@@ -294,6 +294,10 @@ export type AlisPageProps = {
   cancelPending: boolean;
   onStartBlankWorkspace: () => void;
   startPending: boolean;
+  hasPendingWorkspaceAutosave?: () => boolean;
+  hasDirtyWorkspaceChanges?: () => boolean;
+  hasPendingWorkspaceSync?: () => boolean;
+  flushPendingWorkspaceSync?: () => Promise<void>;
   priceOpen: boolean;
   setPriceOpen: Dispatch<SetStateAction<boolean>>;
   desktopDisplayState?: DesktopDisplayWindowState | null;

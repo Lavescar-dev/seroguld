@@ -668,6 +668,11 @@ export interface DocumentArtifactRecord {
   mime_type: string;
   template_name?: string | null;
   size_bytes: number;
+  checksum_sha256?: string | null;
+  workbook_revision?: string | null;
+  base_revision?: string | null;
+  crm_revision?: string | null;
+  conflict_state?: string | null;
   updated_at: string;
 }
 
@@ -694,6 +699,7 @@ export interface DocumentArtifactCellEdit {
 }
 
 export interface DocumentArtifactCellChange {
+  field_id?: string | null;
   sheet: string;
   cell_ref: string;
   label: string;

@@ -39,6 +39,18 @@ export type DocumentExportResult = {
   mode: 'save-dialog' | 'downloads-fallback' | string;
 };
 
+export type UiDiagnosticPayload = {
+  occurredAt: string;
+  route: string;
+  uiVariant: 'classic' | 'modern';
+  frontendBuild: string;
+  errorCode: string;
+};
+
+export type UiDiagnosticResult = {
+  path: string;
+};
+
 export const DISPLAY_IDLE_ROUTE = '/display/idle';
 
 let invokeLoader: Promise<TauriInvoke | null> | null = null;
@@ -90,9 +102,11 @@ export async function ensureCustomerDisplayWindow(route: string): Promise<Deskto
   }
 }
 
-export async function setCustomerDisplayIdle(): Promise<DesktopDisplayWindowState | null> {
+export async function setCustomerDisplayIdle(uiVariant?: 'classic' | 'modern'): Promise<DesktopDisplayWindowState | null> {
   try {
-    return await invokeDesktop<DesktopDisplayWindowState>('close_or_idle_customer_display');
+    return await invokeDesktop<DesktopDisplayWindowState>('close_or_idle_customer_display', {
+      uiVariant: uiVariant || 'classic',
+    });
   } catch {
     return null;
   }
@@ -112,6 +126,14 @@ export async function ensureDocumentPreviewWindow(route: string, title?: string)
 export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo | null> {
   try {
     return await invokeDesktop<DesktopRuntimeInfo>('get_desktop_runtime_info');
+  } catch {
+    return null;
+  }
+}
+
+export async function writeUiDiagnostic(payload: UiDiagnosticPayload): Promise<UiDiagnosticResult | null> {
+  try {
+    return await invokeDesktop<UiDiagnosticResult>('write_ui_diagnostic', { payload });
   } catch {
     return null;
   }

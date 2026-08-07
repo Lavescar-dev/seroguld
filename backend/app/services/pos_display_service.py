@@ -19,6 +19,22 @@ def _core():
     return core
 
 
+def _customer_safe_snapshot(snapshot: PosSessionDisplayOut) -> PosSessionDisplayOut:
+    """Return the public display contract without raw identity values.
+
+    Display snapshots are available through token-authenticated public REST and
+    websocket routes.  Keep the legacy optional fields for wire compatibility,
+    but never serialize decrypted CPR or identity-document numbers.
+    """
+
+    return snapshot.model_copy(
+        update={
+            "customer_cpr": None,
+            "customer_identity_doc_number": None,
+        }
+    )
+
+
 def _to_display_out(
     pos_session: PosSession,
     *,
@@ -82,9 +98,9 @@ def _to_display_out(
         customer_address=effective_customer_address,
         customer_postal_code=effective_customer_postal_code,
         customer_city=effective_customer_city,
-        customer_cpr=effective_customer_cpr,
+        customer_cpr=None,
         customer_cpr_masked=core.mask_cpr(effective_customer_cpr),
-        customer_identity_doc_number=customer_identity_doc_number,
+        customer_identity_doc_number=None,
         customer_identity_doc_number_masked=core.mask_last4(customer_identity_doc_number),
         preview_sequence=None,
         product_type=core._product_value(pos_session.product_type),
@@ -200,7 +216,7 @@ async def display_snapshot(session: AsyncSession, pos_session: PosSession) -> Po
     )
     snapshot = await core._overlay_display_customer_identity(session, pos_session=pos_session, snapshot=snapshot)
     snapshot = await _attach_display_workspace_rows(session, pos_session=pos_session, snapshot=snapshot)
-    return core._overlay_cached_preview_customer(pos_session, snapshot)
+    return _customer_safe_snapshot(core._overlay_cached_preview_customer(pos_session, snapshot))
 
 
 async def build_realtime_display_snapshot(
@@ -365,17 +381,13 @@ async def build_realtime_display_snapshot(
             if payload.customer_city is not None
             else (str(note_payload.get("workspace_customer_city") or "").strip() or (draft_customer.city if draft_customer else None))
         ),
-        customer_cpr=(
-            payload.customer_cpr
-            if payload.customer_cpr is not None
-            else (customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None))
-        ),
+        customer_cpr=None,
         customer_cpr_masked=core.mask_cpr(
             payload.customer_cpr
             if payload.customer_cpr is not None
             else (customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None))
         ),
-        customer_identity_doc_number=resolved_identity_number,
+        customer_identity_doc_number=None,
         customer_identity_doc_number_masked=core.mask_last4(resolved_identity_number),
         preview_sequence=payload.preview_sequence,
         product_type=core._product_value(product_type),
@@ -395,12 +407,12 @@ async def build_realtime_display_snapshot(
         updated_at=core.utc_now(),
     )
     if preview_has_workspace_rows:
-        return snapshot.model_copy(
+        snapshot = snapshot.model_copy(
             update={
                 "gold_rows": preview_gold_rows,
                 "silver_rows": preview_silver_rows,
             }
         )
-    if payload.preview_lines:
-        return snapshot
-    return await _attach_display_workspace_rows(session, pos_session=pos_session, snapshot=snapshot)
+    elif not payload.preview_lines:
+        snapshot = await _attach_display_workspace_rows(session, pos_session=pos_session, snapshot=snapshot)
+    return _customer_safe_snapshot(snapshot)

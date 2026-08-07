@@ -3397,6 +3397,7 @@ dependencies = [
  "base64 0.22.1",
  "rfd",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
 ]

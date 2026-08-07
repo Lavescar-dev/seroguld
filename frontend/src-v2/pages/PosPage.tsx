@@ -10,13 +10,34 @@ import {
 } from '@/lib/desktop';
 import { AlisPage as MakeAlisPage } from '@/make/alis/AlisPage';
 import { useAlisMakeState } from '@/make/alis/useAlisMakeState';
+import { createModernAlisViewModel } from '@/modern/adapters';
+import { ModernAlisModule } from '@/modern/modules';
+import { uiVariantTransitionRegistry, useUiVariant } from '@/ui-variants';
 
 export function PosPage() {
   const alisState = useAlisMakeState();
+  const { variant } = useUiVariant();
+  const modernViewModel = createModernAlisViewModel(alisState);
+
+  useEffect(() => uiVariantTransitionRegistry.register({
+    id: 'alis-workspace',
+    evaluate: () => {
+      const blockingReasons = modernViewModel.blocker?.reasons || [];
+      if (blockingReasons.length > 0) {
+        return { status: 'blocked', reason: blockingReasons.join(' ') };
+      }
+      return alisState.hasPendingWorkspaceSync?.()
+        ? { status: 'settling', reason: 'Alış workspace autosave işlemi tamamlanıyor.' }
+        : { status: 'ready' };
+    },
+    flush: async () => {
+      await alisState.flushPendingWorkspaceSync?.();
+    },
+  }), [alisState.flushPendingWorkspaceSync, alisState.hasPendingWorkspaceSync, modernViewModel.blocker]);
   const [desktopDisplayState, setDesktopDisplayState] = useState<DesktopDisplayWindowState | null>(null);
   const expectedDisplayRoute = useMemo(
-    () => (alisState.workspace?.session.display_token ? `/display/${alisState.workspace.session.display_token}` : null),
-    [alisState.workspace?.session.display_token],
+    () => (alisState.workspace?.session.display_token ? `/display/${alisState.workspace.session.display_token}?ui=${variant}` : null),
+    [alisState.workspace?.session.display_token, variant],
   );
 
   const refreshDesktopDisplayState = useCallback(async () => {
@@ -42,11 +63,11 @@ export function PosPage() {
     async function syncCustomerDisplay() {
       try {
         if (alisState.workspace?.session.display_token) {
-          const state = await ensureCustomerDisplayWindow(`/display/${alisState.workspace.session.display_token}`);
+          const state = await ensureCustomerDisplayWindow(`/display/${alisState.workspace.session.display_token}?ui=${variant}`);
           setDesktopDisplayState(state);
           return;
         }
-        const state = await setCustomerDisplayIdle();
+        const state = await setCustomerDisplayIdle(variant);
         setDesktopDisplayState(state);
       } catch {
         // Customer display is best-effort outside the core purchase workflow.
@@ -54,7 +75,7 @@ export function PosPage() {
     }
 
     void syncCustomerDisplay();
-  }, [alisState.workspace?.session.display_token]);
+  }, [alisState.workspace?.session.display_token, variant]);
 
   useEffect(() => {
     void refreshDesktopDisplayState();
@@ -67,13 +88,17 @@ export function PosPage() {
 
   return (
     <>
-      <MakeAlisPage
-        {...alisState}
-        desktopDisplayState={desktopDisplayState}
-        expectedDisplayRoute={expectedDisplayRoute}
-        routeMatches={isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute)}
-        onOpenCustomerDisplay={openCustomerDisplay}
-      />
+      {variant === 'modern' ? (
+        <ModernAlisModule viewModel={modernViewModel} />
+      ) : (
+        <MakeAlisPage
+          {...alisState}
+          desktopDisplayState={desktopDisplayState}
+          expectedDisplayRoute={expectedDisplayRoute}
+          routeMatches={isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute)}
+          onOpenCustomerDisplay={openCustomerDisplay}
+        />
+      )}
       <PdfViewerModal
         open={Boolean(alisState.pdfState.url)}
         pdfUrl={alisState.pdfState.url}

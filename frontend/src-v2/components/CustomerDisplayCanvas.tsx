@@ -373,9 +373,8 @@ export function CustomerDisplayLiveView({
     return lines.join('\n') || '—';
   }, [snapshot.customer_address, snapshot.customer_city, snapshot.customer_postal_code]);
 
-  const cprDisplay = snapshot.customer_cpr_masked || snapshot.customer_cpr || '—';
-  const idDocDisplay =
-    snapshot.customer_identity_doc_number_masked || snapshot.customer_identity_doc_number || '—';
+  const cprDisplay = snapshot.customer_cpr_masked || '—';
+  const idDocDisplay = snapshot.customer_identity_doc_number_masked || '—';
 
   const documentNumber = snapshot.document_number || snapshot.session_code || '—';
 

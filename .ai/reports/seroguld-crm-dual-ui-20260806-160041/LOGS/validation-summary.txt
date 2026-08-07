@@ -1,0 +1,8 @@
+frontend typecheck: PASS
+frontend vitest: PASS (10 files, 37 tests)
+frontend build: PASS
+cargo check: PASS
+cargo tests: PASS (3)
+backend focused display privacy: PASS (4)
+backend full: PARTIAL (85 passed, 12 baseline failures)
+windows/dual-monitor/live-onlyoffice: NOT_RUN

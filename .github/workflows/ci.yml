@@ -28,7 +28,7 @@ jobs:
       - name: Backend pytest
         run: bash scripts/test.sh --backend-only
 
-      - name: Frontend typecheck
+      - name: Frontend typecheck and Vitest
         run: bash scripts/test.sh --frontend-only
 
       - name: Frontend truth guard

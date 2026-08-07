@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.schemas.base import AppBaseModel
 
@@ -21,7 +21,18 @@ class DocumentArtifactRecordOut(AppBaseModel):
     mime_type: str
     template_name: str | None = None
     size_bytes: int = 0
+    checksum_sha256: str | None = None
+    workbook_revision: str | None = None
+    base_revision: str | None = None
+    crm_revision: str | None = None
+    conflict_state: str | None = None
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def populate_workbook_revision(self):
+        if not self.workbook_revision and self.checksum_sha256:
+            self.workbook_revision = self.checksum_sha256
+        return self
 
 
 class DocumentArtifactSheetPreviewOut(AppBaseModel):
@@ -51,11 +62,18 @@ class DocumentArtifactCellEditsIn(AppBaseModel):
 
 
 class DocumentArtifactCellChangeOut(AppBaseModel):
+    field_id: str | None = None
     sheet: str
     cell_ref: str
     label: str
     old_value: str
     new_value: str
+
+    @model_validator(mode="after")
+    def populate_field_id(self):
+        if not self.field_id:
+            self.field_id = f"{self.sheet}:{self.cell_ref}"
+        return self
 
 
 class DocumentArtifactReconcilePreviewOut(AppBaseModel):

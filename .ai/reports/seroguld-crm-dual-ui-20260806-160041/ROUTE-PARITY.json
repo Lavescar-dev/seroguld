@@ -1,0 +1,30 @@
+{
+  "router": "hash",
+  "route_preserved_on_switch": true,
+  "routes": [
+    {"path":"/login","classic":"preserved","modern":"native"},
+    {"path":"/","classic":"preserved","modern":"native"},
+    {"path":"/dashboard","classic":"preserved","modern":"native"},
+    {"path":"/depolama","classic":"preserved","modern":"native"},
+    {"path":"/log","classic":"preserved","modern":"native"},
+    {"path":"/musteriler","classic":"preserved","modern":"native"},
+    {"path":"/gdpr","classic":"preserved","modern":"shell-real-classic-body"},
+    {"path":"/musteri-ekran","classic":"preserved","modern":"native"},
+    {"path":"/opmc","classic":"preserved","modern":"native"},
+    {"path":"/opmc/:id","classic":"preserved","modern":"native"},
+    {"path":"/woocommerce","classic":"preserved","modern":"shell-real-classic-body"},
+    {"path":"/uniconta","classic":"preserved","modern":"shell-real-classic-body"},
+    {"path":"/settings","classic":"preserved","modern":"native"},
+    {"path":"/reports","classic":"existing-page-routed","modern":"native"},
+    {"path":"/display/idle","classic":"preserved","modern":"token-skin"},
+    {"path":"/display/:token","classic":"preserved","modern":"token-skin"},
+    {"path":"/gdpr/privacy","classic":"preserved","modern":"pending"},
+    {"path":"/gdpr/cookies","classic":"preserved","modern":"pending"},
+    {"path":"/gdpr/request","classic":"preserved","modern":"pending"},
+    {"path":"/gdpr/request/:token","classic":"preserved","modern":"pending"},
+    {"path":"/office-document/:kind/:key","classic":"preserved","modern":"shared-host"},
+    {"path":"/excel-preview/:kind/:key","classic":"preserved","modern":"shared-preview"}
+  ],
+  "code_parity_total": 22,
+  "browser_validated": 0
+}

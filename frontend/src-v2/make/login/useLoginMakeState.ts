@@ -25,9 +25,13 @@ export function useLoginMakeState() {
     },
   });
 
+  const submitLogin = () => {
+    loginMutation.mutate({ email: DEMO_LOGIN_EMAIL, password });
+  };
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    loginMutation.mutate({ email: DEMO_LOGIN_EMAIL, password });
+    submitLogin();
   };
 
   return {
@@ -35,6 +39,7 @@ export function useLoginMakeState() {
     password,
     onPasswordChange: setPassword,
     onSubmit: handleSubmit,
+    onSubmitAction: submitLogin,
     errorMessage: loginMutation.error?.message ?? null,
     isPending: loginMutation.isPending,
   };

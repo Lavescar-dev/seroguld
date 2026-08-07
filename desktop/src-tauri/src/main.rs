@@ -1,9 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
@@ -55,6 +56,56 @@ struct DocumentExportResult {
     mode: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UiDiagnosticPayload {
+    occurred_at: String,
+    route: String,
+    ui_variant: String,
+    frontend_build: String,
+    error_code: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct UiDiagnosticResult {
+    path: String,
+}
+
+fn validate_ui_diagnostic(payload: UiDiagnosticPayload) -> Result<UiDiagnosticPayload, String> {
+    fn safe_atom(value: &str, max_len: usize) -> bool {
+        !value.is_empty()
+            && value.len() <= max_len
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_.:+".contains(character))
+    }
+
+    if !safe_atom(&payload.occurred_at, 48) {
+        return Err("Tanılama zamanı geçersiz".to_string());
+    }
+    if !matches!(payload.ui_variant.as_str(), "classic" | "modern") {
+        return Err("Arayüz varyantı geçersiz".to_string());
+    }
+    if !safe_atom(&payload.frontend_build, 96) || !safe_atom(&payload.error_code, 64) {
+        return Err("Tanılama kimliği geçersiz".to_string());
+    }
+
+    let route = payload.route.split('?').next().unwrap_or("").trim();
+    if !route.starts_with('/')
+        || route.len() > 160
+        || !route
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "/-_.:".contains(character))
+    {
+        return Err("Tanılama route'u geçersiz".to_string());
+    }
+
+    Ok(UiDiagnosticPayload {
+        route: route.to_string(),
+        ..payload
+    })
+}
+
 fn normalize_display_route(route: &str) -> String {
     let trimmed = route.trim();
     if trimmed.is_empty() {
@@ -63,6 +114,13 @@ fn normalize_display_route(route: &str) -> String {
         trimmed.to_string()
     } else {
         format!("/{trimmed}")
+    }
+}
+
+fn display_idle_route_for_variant(ui_variant: Option<&str>) -> String {
+    match ui_variant {
+        Some("modern") => format!("{DISPLAY_IDLE_ROUTE}?ui=modern"),
+        _ => format!("{DISPLAY_IDLE_ROUTE}?ui=classic"),
     }
 }
 
@@ -198,6 +256,39 @@ mod tests {
         assert_eq!(normalize_display_route("display/idle"), "/display/idle");
         assert_eq!(normalize_display_route("/display/token"), "/display/token");
         assert_eq!(normalize_display_route(""), DISPLAY_IDLE_ROUTE);
+        assert_eq!(
+            display_idle_route_for_variant(Some("modern")),
+            "/display/idle?ui=modern"
+        );
+        assert_eq!(
+            display_idle_route_for_variant(Some("unexpected")),
+            "/display/idle?ui=classic"
+        );
+    }
+
+    #[test]
+    fn validates_and_strips_ui_diagnostic_routes() {
+        let payload = UiDiagnosticPayload {
+            occurred_at: "2026-08-06T10:30:00.000Z".to_string(),
+            route: "/depolama?customer=secret".to_string(),
+            ui_variant: "modern".to_string(),
+            frontend_build: "vite-dev".to_string(),
+            error_code: "MODERN_RENDER_FAILED".to_string(),
+        };
+        let validated = validate_ui_diagnostic(payload).expect("payload should be valid");
+        assert_eq!(validated.route, "/depolama");
+    }
+
+    #[test]
+    fn rejects_free_form_ui_diagnostic_values() {
+        let payload = UiDiagnosticPayload {
+            occurred_at: "2026-08-06T10:30:00.000Z".to_string(),
+            route: "/display/token".to_string(),
+            ui_variant: "modern".to_string(),
+            frontend_build: "vite dev with spaces".to_string(),
+            error_code: "customer@example.com".to_string(),
+        };
+        assert!(validate_ui_diagnostic(payload).is_err());
     }
 
     #[cfg(not(debug_assertions))]
@@ -343,13 +434,17 @@ async fn ensure_customer_display_window(
 }
 
 #[tauri::command]
-async fn close_or_idle_customer_display(app: AppHandle) -> Result<DisplayWindowState, String> {
+async fn close_or_idle_customer_display(
+    app: AppHandle,
+    ui_variant: Option<String>,
+) -> Result<DisplayWindowState, String> {
+    let route = display_idle_route_for_variant(ui_variant.as_deref());
     if let Some(window) = app.get_webview_window(DISPLAY_WINDOW_LABEL) {
-        best_effort_navigate_window_to_route(&window, DISPLAY_IDLE_ROUTE);
+        best_effort_navigate_window_to_route(&window, &route);
         let _ = window.set_fullscreen(true);
         let _ = window.show();
     }
-    state_payload(&app, DISPLAY_IDLE_ROUTE)
+    state_payload(&app, &route)
 }
 
 #[tauri::command]
@@ -373,6 +468,34 @@ async fn get_desktop_runtime_info() -> Result<DesktopRuntimeInfo, String> {
         } else {
             None
         },
+    })
+}
+
+#[tauri::command]
+async fn write_ui_diagnostic(
+    app: AppHandle,
+    payload: UiDiagnosticPayload,
+) -> Result<UiDiagnosticResult, String> {
+    let payload = validate_ui_diagnostic(payload)?;
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&log_dir).map_err(|error| error.to_string())?;
+    let log_path = log_dir.join("ui-diagnostics.jsonl");
+    let line = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
+    if line.len() > 1024 {
+        return Err("Tanılama kaydı çok büyük".to_string());
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|error| error.to_string())?;
+    writeln!(file, "{line}").map_err(|error| error.to_string())?;
+
+    Ok(UiDiagnosticResult {
+        path: log_path.display().to_string(),
     })
 }
 
@@ -574,6 +697,7 @@ fn main() {
             ensure_customer_display_window,
             close_or_idle_customer_display,
             get_desktop_runtime_info,
+            write_ui_diagnostic,
             ensure_document_preview_window,
             close_document_preview_window,
             reopen_document_preview_window,

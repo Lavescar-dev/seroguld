@@ -1,9 +1,32 @@
 # Sero Guld CRM — Dokümantasyon İndeksi
 
-> **Son güncellenme:** 2026-05-18
+> **Son güncellenme:** 2026-07-27
 > **Sürüm:** v0.2.0 · **Migration head:** `0019_log_module_audit`
 
 Bu klasör Sero Guld CRM projesinin tüm dokümantasyonunu içerir. Aşağıda **hangi dokümana ne zaman bakmanız gerektiği** özetlenmiştir.
+
+---
+
+## ⭐ Kanonik katmanlı dokümantasyon (2026-07-27 A–Z denetimi)
+
+**AI oturumları buradan başlar:** [`AI_START_HERE.md`](AI_START_HERE.md)
+
+| Belge | İçerik |
+|---|---|
+| [`AI_START_HERE.md`](AI_START_HERE.md) | İlk okunacak giriş: harita, stack, invariantlar, tehlikeler |
+| [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) | İşletme bağlamı, Excel→CRM geçişi, kapsam |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Repo topolojisi, bileşenler, veri akışları |
+| [`BUSINESS_FLOWS.md`](BUSINESS_FLOWS.md) | İş akışları (AS-IS / TO-BE) |
+| [`DATA_STORAGE_AND_EXCEL.md`](DATA_STORAGE_AND_EXCEL.md) | Veri modeli, iki depolama alanı, Excel |
+| [`WORDPRESS_INTEGRATION.md`](WORDPRESS_INTEGRATION.md) | WP/Woo entegrasyonu |
+| [`MODULE_STATUS.md`](MODULE_STATUS.md) | Modül durum matrisi |
+| [`PLATFORM_COMPATIBILITY.md`](PLATFORM_COMPATIBILITY.md) | Linux/Hyprland/Windows, çift monitör |
+| [`DEVELOPMENT_AND_OPERATIONS.md`](DEVELOPMENT_AND_OPERATIONS.md) | Kurulum, komutlar, env, operasyon |
+| [`CURRENT_STATE_AND_ROADMAP.md`](CURRENT_STATE_AND_ROADMAP.md) | Durum + P0-P3 backlog + iş paketleri |
+| [`DECISIONS_AND_OPEN_QUESTIONS.md`](DECISIONS_AND_OPEN_QUESTIONS.md) | Kararlar, çelişkiler, açık sorular |
+| [`REPORT_ARCHIVE_POLICY.md`](REPORT_ARCHIVE_POLICY.md) | 00-LATEST / 99-ARCHIVE rotasyonu |
+
+> ⚠️ Bilinen bayatlıklar: aşağıdaki eski belgelerde `referans/` klasörü anlatılır ancak bu klasör repo'da yoktur (referans Excel'ler Windows handoff paketindedir); satır sayıları güncel değildir. Çelişkilerin tam listesi: [`DECISIONS_AND_OPEN_QUESTIONS.md`](DECISIONS_AND_OPEN_QUESTIONS.md) §3.
 
 ---
 

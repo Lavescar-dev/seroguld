@@ -1672,6 +1672,88 @@ export function useAlisMakeState(): AlisPageProps {
     deleteDocumentMutation.mutate(item.sequence_no);
   }
 
+  function hasPendingWorkspaceSync() {
+    if (!workspace?.session.id || initializedSessionRef.current !== workspace.session.id) return false;
+    if (
+      updateSectionsMutation.isPending ||
+      updateCustomerMutation.isPending ||
+      updateDraftCustomerMutation.isPending ||
+      queuedSectionsPayloadRef.current ||
+      queuedCustomerPayloadRef.current
+    ) {
+      return true;
+    }
+    const sectionsPayload = workspaceRowsPayload(
+      goldRowsRef.current,
+      silverRowsRef.current,
+      bankInfo,
+      marketRates,
+      afgNote,
+      calculators,
+      paymentMethod,
+      numbering,
+      invoiceGoldMode,
+      invoiceGoldRows,
+      invoiceGoldFooterLines,
+      invoiceMiscMode,
+      invoiceMiscRows,
+    );
+    if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
+
+    const customerPayload = workspace.customer.customer_id
+      ? customerForm
+      : customerMode === 'new'
+        ? newCustomer
+        : null;
+    return Boolean(
+      customerPayload &&
+      customerPayload.name.trim().length >= 2 &&
+      JSON.stringify(customerPayload) !== customerAutosaveKeyRef.current,
+    );
+  }
+
+  function hasPendingWorkspaceAutosave() {
+    if (!workspace?.session.id || initializedSessionRef.current !== workspace.session.id) return false;
+    return Boolean(
+      updateSectionsMutation.isPending ||
+        updateCustomerMutation.isPending ||
+        updateDraftCustomerMutation.isPending ||
+        queuedSectionsPayloadRef.current ||
+        queuedCustomerPayloadRef.current,
+    );
+  }
+
+  function hasDirtyWorkspaceChanges() {
+    if (!workspace?.session.id || initializedSessionRef.current !== workspace.session.id) return false;
+    const sectionsPayload = workspaceRowsPayload(
+      goldRowsRef.current,
+      silverRowsRef.current,
+      bankInfo,
+      marketRates,
+      afgNote,
+      calculators,
+      paymentMethod,
+      numbering,
+      invoiceGoldMode,
+      invoiceGoldRows,
+      invoiceGoldFooterLines,
+      invoiceMiscMode,
+      invoiceMiscRows,
+    );
+    if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
+
+    const customerPayload = workspace.customer.customer_id
+      ? customerForm
+      : customerMode === 'new'
+        ? newCustomer
+        : null;
+    return Boolean(
+      customerPayload &&
+      customerPayload.name.trim().length >= 2 &&
+      JSON.stringify(customerPayload) !== customerAutosaveKeyRef.current,
+    );
+  }
+
   return {
     detailPurchase,
     detail: detailDocumentQuery.data || null,
@@ -1788,6 +1870,10 @@ export function useAlisMakeState(): AlisPageProps {
     cancelPending: cancelMutation.isPending,
     onStartBlankWorkspace: handleStartBlankWorkspace,
     startPending: openWorkspaceMutation.isPending,
+    hasPendingWorkspaceAutosave,
+    hasDirtyWorkspaceChanges,
+    hasPendingWorkspaceSync,
+    flushPendingWorkspaceSync,
     priceOpen,
     setPriceOpen,
     pdfState,

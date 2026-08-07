@@ -461,6 +461,11 @@ def _record_out(record: DocumentArtifact) -> DocumentArtifactRecordOut:
         mime_type=record.mime_type,
         template_name=record.template_name,
         size_bytes=record.size_bytes,
+        checksum_sha256=record.checksum_sha256,
+        workbook_revision=record.checksum_sha256,
+        base_revision=None,
+        crm_revision=None,
+        conflict_state=None,
         updated_at=record.updated_at,
     )
 

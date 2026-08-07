@@ -1,0 +1,4 @@
+Baseline branch: build/seroguld-feedback-20260610-140000
+Baseline HEAD: 2a12df12c28ea486112462b2c9cd1c8ade1222b4
+
+Pre-existing user changes included docs/README.md, untracked .ai audit packages, untracked documentation files, and scripts/report-archive-rotate.sh. The initial porcelain listing contained 583 entries. These files were preserved.

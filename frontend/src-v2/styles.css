@@ -34,6 +34,26 @@
   --display-footer-amount-ink: #0b3d24;
 }
 
+[data-ui-variant='modern'] {
+  --display-surface-page: #eef4fb;
+  --display-surface-card: #ffffff;
+  --display-surface-sidebar: #f8fbff;
+  --display-surface-logo: #ffffff;
+  --display-ink-strong: #0f172a;
+  --display-ink-muted: #64748b;
+  --display-ink-on-card: #0f172a;
+  --display-accent: #0f766e;
+  --display-accent-soft: #ccfbf1;
+  --display-border-subtle: #dbeafe;
+  --display-border-sidebar: #bfdbfe;
+  --display-border-strong: #7dd3fc;
+  --display-gradient-divider-from: #0284c7;
+  --display-gradient-divider-to: #ffffff;
+  --display-gradient-footer-from: #0f766e;
+  --display-gradient-footer-to: #99f6e4;
+  --display-footer-amount-ink: #134e4a;
+}
+
 html,
 body,
 #root {
