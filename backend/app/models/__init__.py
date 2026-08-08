@@ -5,6 +5,7 @@ from app.models.customer_activity import CustomerActivityEvent
 from app.models.customer_identity import CustomerIdentityDocument
 from app.models.document_artifact import DocumentArtifact
 from app.models.gdpr_job import GdprJob
+from app.models.gdpr_copy_task import GdprCopyTask
 from app.models.gdpr_processor import GdprProcessor
 from app.models.gdpr_request import GdprRequest
 from app.models.gdpr_request_event import GdprRequestEvent
@@ -34,6 +35,7 @@ __all__ = [
     "CustomerIdentityDocument",
     "DocumentArtifact",
     "GdprJob",
+    "GdprCopyTask",
     "GdprProcessor",
     "GdprRequest",
     "GdprRequestEvent",

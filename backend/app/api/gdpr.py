@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.gdpr import (
     GdprJobOut,
+    GdprCopyTaskUpdateIn,
     GdprOverviewOut,
     GdprProcessorOut,
     GdprPublicBridgeConfigOut,
@@ -45,6 +46,7 @@ from app.services.gdpr_service import (
     serialize_gdpr_request_detail,
     submit_public_gdpr_request,
     update_retention_policy,
+    update_gdpr_copy_task,
     verify_gdpr_request,
 )
 
@@ -93,6 +95,20 @@ async def get_request_detail(
     _: User = Depends(require_admin),
 ) -> GdprRequestDetailOut:
     request = await get_gdpr_request_or_404(db, request_id)
+    return await serialize_gdpr_request_detail(db, request)
+
+
+@admin_router.patch("/requests/{request_id}/copy-tasks/{task_id}", response_model=GdprRequestDetailOut)
+async def patch_copy_task(
+    request_id: UUID,
+    task_id: UUID,
+    payload: GdprCopyTaskUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> GdprRequestDetailOut:
+    request = await get_gdpr_request_or_404(db, request_id)
+    await update_gdpr_copy_task(db, request, task_id=task_id, actor=admin, status_value=payload.status, reason=payload.reason)
+    await db.commit()
     return await serialize_gdpr_request_detail(db, request)
 
 

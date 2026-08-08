@@ -18,6 +18,16 @@ from app.config import get_settings
 from app.models.customer_identity import CustomerIdentityDocument
 from app.models.enums import RoleEnum
 from app.models.gdpr_job import GdprJob
+from app.models.gdpr_copy_task import (
+    COPY_TASK_COMPLETION_STATES,
+    COPY_TASK_FAILED,
+    COPY_TASK_LEGALLY_RETAINED,
+    COPY_TASK_MANUAL_ACTION_REQUIRED,
+    COPY_TASK_PSEUDONYMIZED,
+    COPY_TASK_STATES,
+    COPY_TASK_TERMINAL_STATES,
+    GdprCopyTask,
+)
 from app.models.gdpr_processor import GdprProcessor
 from app.models.gdpr_request import GdprRequest
 from app.models.gdpr_request_event import GdprRequestEvent
@@ -29,6 +39,7 @@ from app.models.user import User
 from app.schemas.customer import CustomerOut
 from app.schemas.gdpr import (
     GdprJobOut,
+    GdprCopyTaskOut,
     GdprOverviewOut,
     GdprProcessorOut,
     GdprPublicBridgeConfigOut,
@@ -56,6 +67,20 @@ REQUEST_EXECUTABLE_STATUSES = {"approved", "queued"}
 AUTOMATIC_JOB_TYPES = {"retention_scan", "gdpr_runner"}
 EXPORT_ARCHIVE_RETENTION_DAYS = 30
 TRACKING_TOKEN_RETENTION_DAYS = 90
+DEFAULT_COPY_TASK_SPECS = (
+    ("crm_master", "CRM", "users and customer master", "pseudonymize"),
+    ("customer_identity", "CRM identity store", "identity documents and photo refs", "pseudonymize"),
+    ("financial_ledger", "Financial ledger", "transactions and accounting documents", "legal retention"),
+    ("pdf_exports", "PDF exports", "PDF copies and rendered documents", "manual review required"),
+    ("excel_exports", "Excel exports", "Excel/workbook copies", "manual review required"),
+    ("local_backups", "Local backups", "local backup copies", "backup rotation/legal retention"),
+    ("offsite_backups", "Offsite backups", "offsite backup copies", "backup rotation/legal retention"),
+    ("wordpress", "WordPress", "public site copy", "external action unsupported here"),
+    ("woocommerce", "WooCommerce", "store customer copy", "external action requires configured connector"),
+    ("onlyoffice", "ONLYOFFICE", "office runtime copy", "external action unsupported here"),
+    ("opmc", "OPMC", "anti-fraud processor copy", "external action unsupported here"),
+    ("uniconta", "Uniconta", "accounting processor copy", "external action unsupported here"),
+)
 DEFAULT_RETENTION_POLICIES = (
     {
         "policy_key": "financial_ledger",
@@ -225,6 +250,133 @@ async def _append_request_event(
     await session.flush()
 
 
+def _copy_task_out(task: GdprCopyTask) -> GdprCopyTaskOut:
+    return GdprCopyTaskOut(
+        id=task.id,
+        request_id=task.request_id,
+        task_key=task.task_key,
+        system_name=task.system_name,
+        copy_scope=task.copy_scope,
+        applicable=task.applicable,
+        status=task.status,
+        is_terminal=task.status in COPY_TASK_TERMINAL_STATES,
+        completion_eligible=task.status in COPY_TASK_COMPLETION_STATES,
+        reason=task.reason,
+        metadata_json=task.metadata_json or {},
+        resolved_at=task.resolved_at,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
+async def _copy_tasks_for_request(session: AsyncSession, request_id: UUID) -> list[GdprCopyTask]:
+    return list(
+        (
+            await session.scalars(
+                select(GdprCopyTask)
+                .where(GdprCopyTask.request_id == request_id, GdprCopyTask.applicable.is_(True))
+                .order_by(GdprCopyTask.created_at.asc(), GdprCopyTask.task_key.asc())
+            )
+        ).all()
+    )
+
+
+def _declared_copy_task_specs(request: GdprRequest) -> list[tuple[str, str, str, str]]:
+    specs: list[tuple[str, str, str, str]] = []
+    if request.request_type == "erasure_pseudonymize":
+        specs.extend(DEFAULT_COPY_TASK_SPECS)
+    elif request.request_type == "access_export":
+        specs.append(("gdpr_export_archive", "CRM", "generated GDPR export archive", "delete after delivery"))
+
+    metadata = request.request_meta or {}
+    declared = metadata.get("copy_tasks", []) if isinstance(metadata, dict) else []
+    if isinstance(declared, dict):
+        declared = [{"task_key": key, **(value if isinstance(value, dict) else {})} for key, value in declared.items()]
+    if not isinstance(declared, list):
+        declared = []
+    for item in declared:
+        if not isinstance(item, dict) or item.get("applicable") is False:
+            continue
+        task_key = str(item.get("task_key") or item.get("key") or "").strip()
+        if not task_key:
+            continue
+        specs.append(
+            (
+                task_key[:80],
+                str(item.get("system_name") or item.get("system") or "Unspecified copy")[:120],
+                str(item.get("copy_scope") or item.get("scope") or "declared personal-data copy")[:200],
+                str(item.get("reason") or "declared copy requires explicit handling")[:200],
+            )
+        )
+    unique: dict[str, tuple[str, str, str, str]] = {}
+    for spec in specs:
+        unique.setdefault(spec[0], spec)
+    return list(unique.values())
+
+
+async def ensure_gdpr_copy_tasks(session: AsyncSession, request: GdprRequest) -> list[GdprCopyTask]:
+    specs = _declared_copy_task_specs(request)
+    existing = {
+        task_key
+        for task_key in (
+            await session.scalars(select(GdprCopyTask.task_key).where(GdprCopyTask.request_id == request.id))
+        ).all()
+    }
+    for task_key, system_name, copy_scope, reason in specs:
+        if task_key in existing:
+            continue
+        session.add(
+            GdprCopyTask(
+                request_id=request.id,
+                task_key=task_key,
+                system_name=system_name,
+                copy_scope=copy_scope,
+                applicable=True,
+                status="pending",
+                reason=reason,
+                metadata_json={"contract": "gdpr-copy-task-v1"},
+            )
+        )
+    await session.flush()
+    return await _copy_tasks_for_request(session, request.id)
+
+
+def _set_copy_task_status(
+    task: GdprCopyTask,
+    status_value: str,
+    *,
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    if status_value not in COPY_TASK_STATES:
+        raise ValueError(f"Unsupported GDPR copy task state: {status_value}")
+    if task.status in (COPY_TASK_COMPLETION_STATES | {COPY_TASK_FAILED}) and task.status != status_value:
+        return False
+    task.status = status_value
+    if reason is not None:
+        task.reason = reason
+    if metadata:
+        task.metadata_json = {**(task.metadata_json or {}), **metadata}
+    task.resolved_at = utc_now() if status_value in COPY_TASK_TERMINAL_STATES else None
+    return True
+
+
+async def _reconcile_copy_task_completion(session: AsyncSession, request: GdprRequest) -> list[GdprCopyTask]:
+    tasks = await _copy_tasks_for_request(session, request.id)
+    unresolved = [task for task in tasks if task.status not in COPY_TASK_COMPLETION_STATES]
+    if unresolved:
+        request.completed_at = None
+        if any(task.status == COPY_TASK_FAILED for task in unresolved):
+            request.status = "failed"
+        elif request.status != "rejected":
+            request.status = "manual_action_required"
+        return unresolved
+    if request.status in {"executing", "queued", "approved", "manual_action_required"}:
+        request.status = "completed"
+        request.completed_at = utc_now()
+    return unresolved
+
+
 async def _latest_job_for_request(session: AsyncSession, request_id: UUID) -> GdprJob | None:
     return await session.scalar(
         select(GdprJob).where(GdprJob.request_id == request_id).order_by(GdprJob.created_at.desc())
@@ -317,6 +469,7 @@ async def serialize_gdpr_request_detail(session: AsyncSession, request: GdprRequ
         )
     ).all()
     latest_job = await _latest_job_for_request(session, request.id)
+    copy_tasks = await _copy_tasks_for_request(session, request.id)
     export_download_path = None
     if latest_job and latest_job.status in {"completed", "completed_with_warnings"}:
         file_path = str((latest_job.result_json or {}).get("file_path") or "").strip()
@@ -342,6 +495,7 @@ async def serialize_gdpr_request_detail(session: AsyncSession, request: GdprRequ
         ],
         latest_job=_job_out(latest_job, request_reference_number=request.reference_number),
         export_download_path=export_download_path,
+        copy_tasks=[_copy_task_out(task) for task in copy_tasks],
     )
 
 
@@ -600,6 +754,7 @@ async def _create_retention_review_request(
     session.add(request)
     customer.last_gdpr_request_at = utc_now()
     await session.flush()
+    await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
         session,
         request_id=request.id,
@@ -873,6 +1028,7 @@ async def submit_public_gdpr_request(session: AsyncSession, payload: GdprPublicR
     )
     session.add(request)
     await session.flush()
+    await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
         session,
         request_id=request.id,
@@ -921,6 +1077,7 @@ async def verify_gdpr_request(session: AsyncSession, request: GdprRequest, *, cu
     request.verified_customer_id = customer.id
     request.status = "verified"
     customer.last_gdpr_request_at = utc_now()
+    await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
         session,
         request_id=request.id,
@@ -939,6 +1096,7 @@ async def approve_gdpr_request(session: AsyncSession, request: GdprRequest, *, a
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Önce müşteri doğrulanmalı.")
     request.status = "approved"
     request.decision_reason = reason
+    await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
         session,
         request_id=request.id,
@@ -1172,6 +1330,7 @@ async def _execute_marketing_opt_out(session: AsyncSession, customer: User) -> d
 async def enqueue_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User) -> GdprRequest:
     if request.status not in {"approved", "queued"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="İstek önce approve edilmeli.")
+    await ensure_gdpr_copy_tasks(session, request)
 
     existing_job = await session.scalar(
         select(GdprJob).where(
@@ -1229,6 +1388,7 @@ async def _execute_request_job(
         await session.flush()
         return
 
+    copy_tasks = await ensure_gdpr_copy_tasks(session, request)
     request.status = "executing"
     request.executed_at = utc_now()
     job.status = "running"
@@ -1247,6 +1407,13 @@ async def _execute_request_job(
             if customer is None:
                 raise HTTPException(status_code=404, detail="Müşteri bulunamadı.")
             result_json.update(await _build_export_archive(session, customer, request))
+            for task in copy_tasks:
+                if task.task_key == "gdpr_export_archive":
+                    _set_copy_task_status(
+                        task,
+                        COPY_TASK_MANUAL_ACTION_REQUIRED,
+                        reason="Export archive must be delivered and then deleted; no automatic delivery/deletion is claimed.",
+                    )
         elif request.request_type == "erasure_pseudonymize":
             if not request.verified_customer_id:
                 raise HTTPException(status_code=422, detail="Pseudonymize için doğrulanmış müşteri gerekli.")
@@ -1256,6 +1423,33 @@ async def _execute_request_job(
             execution = await _execute_pseudonymize(session, customer)
             warnings.extend(execution.get("warnings") or [])
             woo_sync = execution.get("woo_sync")
+            for task in copy_tasks:
+                if task.task_key in {"crm_master", "customer_identity"}:
+                    _set_copy_task_status(task, COPY_TASK_PSEUDONYMIZED, reason="CRM authoritative record pseudonymized.")
+                elif task.task_key in {"financial_ledger", "local_backups", "offsite_backups"}:
+                    _set_copy_task_status(
+                        task,
+                        COPY_TASK_LEGALLY_RETAINED,
+                        reason="Retention policy requires keeping this copy; deletion follows the documented retention window.",
+                    )
+                elif task.task_key == "woocommerce":
+                    woo_status = str((woo_sync or {}).get("status") or "skipped")
+                    if woo_status == "synced":
+                        _set_copy_task_status(task, COPY_TASK_PSEUDONYMIZED, reason="WooCommerce customer copy pseudonymized.")
+                    elif woo_status == "remote_error":
+                        _set_copy_task_status(task, COPY_TASK_FAILED, reason="WooCommerce privacy sync failed.")
+                    else:
+                        _set_copy_task_status(
+                            task,
+                            COPY_TASK_MANUAL_ACTION_REQUIRED,
+                            reason="WooCommerce copy was not automatically changed; operator action is required.",
+                        )
+                elif task.status not in COPY_TASK_TERMINAL_STATES:
+                    _set_copy_task_status(
+                        task,
+                        COPY_TASK_MANUAL_ACTION_REQUIRED,
+                        reason="No safe automatic connector exists for this copy.",
+                    )
         elif request.request_type == "objection_restriction":
             if not request.verified_customer_id:
                 raise HTTPException(status_code=422, detail="Restriction için doğrulanmış müşteri gerekli.")
@@ -1277,10 +1471,12 @@ async def _execute_request_job(
         else:
             warnings.append("Manual follow-up required.")
 
-        request.status = "completed_with_warnings" if warnings else "completed"
-        request.completed_at = utc_now()
+        unresolved = await _reconcile_copy_task_completion(session, request)
+        if warnings and not unresolved:
+            request.status = "manual_action_required"
+            request.completed_at = None
         job.status = request.status
-        job.completed_at = utc_now()
+        job.completed_at = utc_now() if request.status == "completed" else None
         if warnings:
             result_json["warnings"] = warnings
         if woo_sync is not None:
@@ -1296,11 +1492,14 @@ async def _execute_request_job(
             payload_json={"warnings": warnings, "woo_sync": woo_sync},
         )
     except Exception as exc:
+        for task in copy_tasks:
+            if task.status not in COPY_TASK_TERMINAL_STATES:
+                _set_copy_task_status(task, COPY_TASK_FAILED, reason=str(exc))
         job.status = "failed"
         job.completed_at = utc_now()
         job.result_json = {**result_json, "error": str(exc)}
         request.status = "failed"
-        request.completed_at = utc_now()
+        request.completed_at = None
         await _append_request_event(
             session,
             request_id=request.id,
@@ -1369,6 +1568,42 @@ async def run_queued_gdpr_jobs(
     }
     await session.flush()
     return audit_job
+
+
+async def update_gdpr_copy_task(
+    session: AsyncSession,
+    request: GdprRequest,
+    *,
+    task_id: UUID,
+    actor: User,
+    status_value: str,
+    reason: str | None = None,
+) -> GdprCopyTask:
+    normalized = status_value.strip().lower()
+    if normalized not in COPY_TASK_STATES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Geçersiz GDPR copy task durumu.")
+    task = await session.scalar(
+        select(GdprCopyTask).where(GdprCopyTask.id == task_id, GdprCopyTask.request_id == request.id)
+    )
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GDPR copy task bulunamadı.")
+    if normalized in {COPY_TASK_FAILED, COPY_TASK_MANUAL_ACTION_REQUIRED, COPY_TASK_LEGALLY_RETAINED} and not reason:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Bu durum için gerekçe zorunlu.")
+    if task.status in (COPY_TASK_COMPLETION_STATES | {COPY_TASK_FAILED}) and task.status != normalized:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terminal copy task durumu değiştirilemez.")
+    _set_copy_task_status(task, normalized, reason=reason)
+    await _append_request_event(
+        session,
+        request_id=request.id,
+        event_type="copy_task_updated",
+        actor_type="admin",
+        actor_user_id=actor.id,
+        message=f"Copy task {task.task_key} -> {normalized}.",
+        payload_json={"task_id": str(task.id), "task_key": task.task_key, "status": normalized, "reason": reason},
+    )
+    await _reconcile_copy_task_completion(session, request)
+    await session.flush()
+    return task
 
 
 async def execute_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User) -> GdprRequest:

@@ -10,9 +10,15 @@ from app.models.customer_identity import CustomerIdentityDocument
 from app.models.enums import IdentityDocTypeEnum, RoleEnum
 from app.models.gdpr_request import GdprRequest
 from app.models.gdpr_request_event import GdprRequestEvent
+from app.models.gdpr_copy_task import GdprCopyTask
 from app.models.user import User
 from app.schemas.gdpr import GdprPublicRequestCreateIn
-from app.services.gdpr_service import execute_gdpr_request, get_public_gdpr_request_status, submit_public_gdpr_request
+from app.services.gdpr_service import (
+    execute_gdpr_request,
+    get_public_gdpr_request_status,
+    submit_public_gdpr_request,
+    update_gdpr_copy_task,
+)
 from app.utils.helpers import utc_now
 from app.utils.security import encrypt_field
 
@@ -116,7 +122,7 @@ def test_execute_gdpr_pseudonymize_redacts_customer_master_and_identity() -> Non
                 )
             ).all()
 
-            assert request.status in {"completed", "completed_with_warnings"}
+            assert request.status == "manual_action_required"
             assert customer.gdpr_status == "pseudonymized"
             assert customer.gdpr_pseudonymized_at is not None
             assert customer.email != "customer@test.local"
@@ -128,7 +134,56 @@ def test_execute_gdpr_pseudonymize_redacts_customer_master_and_identity() -> Non
             assert identity.identity_doc_number_encrypted is None
             assert identity.identity_photo_refs == []
             assert any(event.event_type == "executed" for event in events)
+            copy_tasks = (await session.scalars(select(GdprCopyTask).where(GdprCopyTask.request_id == request.id))).all()
+            assert any(task.task_key == "woocommerce" and task.status == "manual_action_required" for task in copy_tasks)
+            assert any(task.task_key == "local_backups" and task.status == "legally_retained" for task in copy_tasks)
 
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_gdpr_copy_task_gate_requires_explicit_terminal_resolution() -> None:
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            admin = User(email="admin@gdpr.test", password_hash="x", name="Admin", role=RoleEnum.ADMIN)
+            customer = User(email="copy@gdpr.test", password_hash="x", name="Copy Subject", role=RoleEnum.CUSTOMER)
+            session.add_all([admin, customer])
+            await session.flush()
+            request = GdprRequest(
+                reference_number="GDPR-COPY-0001",
+                request_type="erasure_pseudonymize",
+                status="approved",
+                channel="admin_created",
+                subject_name=customer.name,
+                subject_email=customer.email,
+                verified_customer_id=customer.id,
+                public_tracking_token="copy-tracking-token",
+                request_meta={},
+            )
+            session.add(request)
+            await session.flush()
+            await execute_gdpr_request(session, request, actor=admin)
+            tasks = list((await session.scalars(select(GdprCopyTask).where(GdprCopyTask.request_id == request.id))).all())
+            assert request.completed_at is None
+            assert request.status == "manual_action_required"
+            assert any(task.status == "manual_action_required" for task in tasks)
+            for task in tasks:
+                if task.status == "manual_action_required":
+                    await update_gdpr_copy_task(
+                        session,
+                        request,
+                        task_id=task.id,
+                        actor=admin,
+                        status_value="deleted",
+                        reason="Operator verified the copy was deleted.",
+                    )
+            assert request.status == "completed"
+            assert request.completed_at is not None
         await engine.dispose()
 
     asyncio.run(run())

@@ -64,6 +64,28 @@ class GdprJobOut(AppBaseModel):
     created_at: datetime
 
 
+class GdprCopyTaskOut(AppBaseModel):
+    id: UUID
+    request_id: UUID
+    task_key: str
+    system_name: str
+    copy_scope: str
+    applicable: bool
+    status: str
+    is_terminal: bool
+    completion_eligible: bool
+    reason: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    resolved_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GdprCopyTaskUpdateIn(AppBaseModel):
+    status: str = Field(max_length=40)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
 class GdprRequestDetailOut(GdprRequestListItemOut):
     message: str | None = None
     decision_reason: str | None = None
@@ -72,6 +94,7 @@ class GdprRequestDetailOut(GdprRequestListItemOut):
     events: list[GdprRequestEventOut] = Field(default_factory=list)
     latest_job: GdprJobOut | None = None
     export_download_path: str | None = None
+    copy_tasks: list[GdprCopyTaskOut] = Field(default_factory=list)
 
 
 class GdprRequestVerifyIn(AppBaseModel):
