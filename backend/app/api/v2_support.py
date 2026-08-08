@@ -12,6 +12,7 @@ from app.schemas.inventory import InventoryWorkspaceOut
 from app.services.document_artifact_service import (
     artifact_absolute_path,
     get_artifact_record,
+    resolve_artifact_conflict_state,
     parse_inventory_workbook_inputs_from_workbook,
     sync_inventory_workbook_artifact,
 )
@@ -56,8 +57,16 @@ async def apply_inventory_workbook_artifact_inputs(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if parsed.base_version:
         record = await get_artifact_record(db, "depolama.live")
-        if record is not None and str(int(record.updated_at.timestamp() * 1000)) != parsed.base_version:
-            raise HTTPException(status_code=409, detail="Depolama workbook güncel değil. Önce yenileyin.")
+        if record is not None:
+            conflict_state = resolve_artifact_conflict_state(
+                current_revision=getattr(record, "revision", 1),
+                incoming_revision=parsed.base_version,
+            )
+            if conflict_state != "clean":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Depolama artifact conflict_state={conflict_state}; önce yenileyin.",
+                )
     current_prices = current_workspace.market_prices
     if (
         parsed.market_prices.gold != current_prices.gold

@@ -449,6 +449,7 @@ def _relative_storage_path(path: Path) -> str:
 
 
 def _record_out(record: DocumentArtifact) -> DocumentArtifactRecordOut:
+    revision = int(getattr(record, "revision", 1) or 1)
     return DocumentArtifactRecordOut(
         id=record.id,
         artifact_key=record.artifact_key,
@@ -462,10 +463,11 @@ def _record_out(record: DocumentArtifact) -> DocumentArtifactRecordOut:
         template_name=record.template_name,
         size_bytes=record.size_bytes,
         checksum_sha256=record.checksum_sha256,
+        revision=revision,
         workbook_revision=record.checksum_sha256,
         base_revision=None,
-        crm_revision=None,
-        conflict_state=None,
+        crm_revision=str(revision),
+        conflict_state=ARTIFACT_CONFLICT_CLEAN,
         updated_at=record.updated_at,
     )
 
@@ -473,6 +475,36 @@ def _record_out(record: DocumentArtifact) -> DocumentArtifactRecordOut:
 def _artifact_version_token(value: datetime | None) -> str:
     stamp = value or utc_now()
     return str(int(stamp.timestamp() * 1000))
+
+
+ARTIFACT_CONFLICT_CLEAN = "clean"
+ARTIFACT_CONFLICT_STALE = "stale"
+ARTIFACT_CONFLICT_CONFLICT = "conflict"
+ARTIFACT_CONFLICT_INVALID = "invalid"
+
+
+def resolve_artifact_conflict_state(*, current_revision: int, incoming_revision: object | None) -> str:
+    """Return the deterministic state for an artifact revision comparison.
+
+    A workbook is only safe to apply when its embedded base revision is exactly
+    the current CRM revision. Field-level merging is intentionally unsupported.
+    """
+    try:
+        current = int(current_revision)
+        incoming = int(incoming_revision) if incoming_revision is not None else None
+    except (TypeError, ValueError):
+        return ARTIFACT_CONFLICT_INVALID
+    if current < 0 or incoming is None or incoming < 0:
+        return ARTIFACT_CONFLICT_INVALID
+    if incoming == current:
+        return ARTIFACT_CONFLICT_CLEAN
+    if incoming < current:
+        return ARTIFACT_CONFLICT_STALE
+    return ARTIFACT_CONFLICT_CONFLICT
+
+
+def _next_artifact_revision(record: DocumentArtifact | None) -> int:
+    return int(getattr(record, "revision", 0) or 0) + 1
 
 
 def _set_cell_unlocked(sheet, cell_ref: str) -> None:
@@ -578,6 +610,11 @@ def _sync_metadata_if_present(workbook, *, expected_kind: str, expected_key: str
     return _require_sync_metadata(workbook, expected_kind=expected_kind, expected_key=expected_key)
 
 
+def read_artifact_sync_metadata(content: bytes, *, expected_kind: str, expected_key: str) -> SyncSheetMetadata:
+    workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=False)
+    return _require_sync_metadata(workbook, expected_kind=expected_kind, expected_key=expected_key)
+
+
 async def _upsert_record(
     session: AsyncSession,
     *,
@@ -593,6 +630,7 @@ async def _upsert_record(
     template_name: str | None,
     content: bytes,
     updated_at: datetime | None = None,
+    revision: int | None = None,
 ) -> DocumentArtifact:
     checksum = _sha256(content)
     record = await session.scalar(select(DocumentArtifact).where(DocumentArtifact.artifact_key == artifact_key))
@@ -610,6 +648,7 @@ async def _upsert_record(
             template_name=template_name,
             size_bytes=len(content),
             checksum_sha256=checksum,
+            revision=max(int(revision or 1), 1),
         )
         if updated_at is not None:
             record.updated_at = updated_at
@@ -631,6 +670,10 @@ async def _upsert_record(
                 record.checksum_sha256 != checksum,
             )
         )
+        current_revision = int(getattr(record, "revision", 0) or 0)
+        requested_revision = int(revision) if revision is not None else current_revision + 1
+        next_revision = max(current_revision + 1, requested_revision, 1)
+        revision_changed = next_revision != current_revision
         record.module_name = module_name
         record.document_type = document_type
         record.business_key = business_key
@@ -642,7 +685,8 @@ async def _upsert_record(
         record.template_name = template_name
         record.size_bytes = len(content)
         record.checksum_sha256 = checksum
-        if changed and updated_at is not None:
+        record.revision = next_revision
+        if (changed or revision_changed) and updated_at is not None:
             record.updated_at = updated_at
     await session.flush()
     await session.refresh(record)
@@ -664,6 +708,7 @@ async def _store_artifact(
     template_name: str | None,
     content: bytes,
     updated_at: datetime | None = None,
+    revision: int | None = None,
 ) -> WorkbookArtifactBundle:
     absolute_path = _document_root() / relative_path
     absolute_path.parent.mkdir(parents=True, exist_ok=True)
@@ -682,6 +727,7 @@ async def _store_artifact(
         template_name=template_name,
         content=content,
         updated_at=updated_at,
+        revision=revision,
     )
     return WorkbookArtifactBundle(artifact=record, content=content)
 
@@ -1733,6 +1779,8 @@ async def sync_afg_workspace_artifact(session: AsyncSession, workspace: PosWorks
     session_code = workspace.session.session_code
     document_number = workspace.numbering_preview.afregnings_number_next or session_code
     artifact_key = f"alis.workspace.{workspace.session.id}"
+    existing_record = await get_artifact_record(session, artifact_key)
+    revision = _next_artifact_revision(existing_record)
     stamp = utc_now()
     content = _build_afg_workbook_bytes_from_workspace(
         workspace,
@@ -1740,7 +1788,7 @@ async def sync_afg_workspace_artifact(session: AsyncSession, workspace: PosWorks
             kind="alis-workspace",
             key=str(workspace.session.id),
             artifact_key=artifact_key,
-            base_version="",
+            base_version=str(revision),
         ),
     )
     return await _store_artifact(
@@ -1757,11 +1805,14 @@ async def sync_afg_workspace_artifact(session: AsyncSession, workspace: PosWorks
         template_name=AFG_TEMPLATE_NAME,
         content=content,
         updated_at=stamp,
+        revision=revision,
     )
 
 
 async def sync_afg_document_artifact(session: AsyncSession, detail: PosDocumentDetailOut) -> WorkbookArtifactBundle:
     artifact_key = f"alis.document.{detail.sequence_no}"
+    existing_record = await get_artifact_record(session, artifact_key)
+    revision = _next_artifact_revision(existing_record)
     stamp = utc_now()
     content = _build_afg_workbook_bytes_from_detail(
         detail,
@@ -1769,7 +1820,7 @@ async def sync_afg_document_artifact(session: AsyncSession, detail: PosDocumentD
             kind="alis-document",
             key=str(detail.sequence_no),
             artifact_key=artifact_key,
-            base_version="",
+            base_version=str(revision),
         ),
     )
     year = str(detail.issued_at.year)
@@ -1788,6 +1839,7 @@ async def sync_afg_document_artifact(session: AsyncSession, detail: PosDocumentD
         template_name=AFG_TEMPLATE_NAME,
         content=content,
         updated_at=stamp,
+        revision=revision,
     )
 
 
@@ -1799,13 +1851,14 @@ async def sync_inventory_workbook_artifact(
 ) -> WorkbookArtifactBundle:
     stamp = utc_now()
     existing_record = await get_artifact_record(session, "depolama.live")
+    revision = _next_artifact_revision(existing_record)
     content = _build_inventory_workbook_bytes(
         workspace,
         sync_context=ArtifactSyncContext(
             kind="depolama",
             key="live",
             artifact_key="depolama.live",
-            base_version="",
+            base_version=str(revision),
             mappings=_inventory_sync_mappings(workspace),
         ),
         display_updated_at=stamp if create_snapshot or existing_record is None else existing_record.updated_at,
@@ -1824,6 +1877,7 @@ async def sync_inventory_workbook_artifact(
         template_name=DEPOLAMA_TEMPLATE_NAME,
         content=content,
         updated_at=stamp,
+        revision=revision,
     )
     if create_snapshot:
         now = utc_now()
@@ -1854,6 +1908,8 @@ async def sync_log_workbook_artifact(
     create_snapshot: bool,
 ) -> WorkbookArtifactBundle:
     stamp = utc_now()
+    existing_record = await get_artifact_record(session, f"log.live.{year}")
+    revision = _next_artifact_revision(existing_record)
     content = _build_log_workbook_bytes(
         workspace,
         year=year,
@@ -1861,7 +1917,7 @@ async def sync_log_workbook_artifact(
             kind="log",
             key=str(year),
             artifact_key=f"log.live.{year}",
-            base_version="",
+            base_version=str(revision),
         ),
     )
     live_bundle = await _store_artifact(
@@ -1878,6 +1934,7 @@ async def sync_log_workbook_artifact(
         template_name=LOG_TEMPLATE_NAME,
         content=content,
         updated_at=stamp,
+        revision=revision,
     )
     if create_snapshot:
         now = utc_now()

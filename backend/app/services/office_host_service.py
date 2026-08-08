@@ -38,6 +38,7 @@ class OfficeSessionEntry:
     import_supported: bool
     updated_at: datetime
     expires_at: datetime
+    artifact_revision: int = 0
     lock_value: str | None = None
     lock_expires_at: datetime | None = None
     last_saved_at: datetime | None = None
@@ -49,8 +50,7 @@ class OfficeSessionEntry:
 
     @property
     def version(self) -> str:
-        stamp = self.last_saved_at or self.updated_at
-        return str(int(stamp.timestamp() * 1000))
+        return str(self.artifact_revision)
 
 
 @dataclass(slots=True)
@@ -427,6 +427,7 @@ class OfficeHostService:
             import_supported=can_write and preview.import_supported,
             updated_at=artifact.updated_at if artifact else utc_now(),
             expires_at=utc_now() + timedelta(seconds=settings.office_session_ttl_seconds),
+            artifact_revision=int(getattr(artifact, "revision", 0) or 0),
         )
         self._sessions[token] = entry
         return entry
@@ -441,7 +442,13 @@ class OfficeHostService:
         entry.expires_at = utc_now() + timedelta(seconds=get_settings().office_session_ttl_seconds)
         return entry
 
-    def update_after_save(self, access_token: str, *, updated_at: datetime | None = None) -> OfficeSessionEntry | None:
+    def update_after_save(
+        self,
+        access_token: str,
+        *,
+        updated_at: datetime | None = None,
+        revision: int | None = None,
+    ) -> OfficeSessionEntry | None:
         entry = self.get_session(access_token)
         if entry is None:
             return None
@@ -449,6 +456,8 @@ class OfficeHostService:
         entry.updated_at = now
         entry.last_saved_at = now
         entry.last_applied_artifact_updated_at = now
+        if revision is not None:
+            entry.artifact_revision = int(revision)
         entry.live_sync_state = "applied"
         entry.last_sync_error = None
         return entry

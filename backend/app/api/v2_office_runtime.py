@@ -196,7 +196,7 @@ async def put_office_wopi_file_contents_v2(
         if request_lock != entry.lock_value:
             return Response(status_code=409, headers={"X-WOPI-Lock": entry.lock_value})
 
-    current_version = str(int(record.updated_at.timestamp() * 1000))
+    current_version = str(getattr(record, "revision", 1))
     if current_version != entry.version:
         return Response(status_code=409)
 
@@ -205,7 +205,11 @@ async def put_office_wopi_file_contents_v2(
     await db.commit()
 
     record = await get_artifact_record(db, entry.artifact_key or "")
-    office_host_service.update_after_save(access_token, updated_at=record.updated_at if record else utc_now())
+    office_host_service.update_after_save(
+        access_token,
+        updated_at=record.updated_at if record else utc_now(),
+        revision=getattr(record, "revision", None) if record else None,
+    )
     return Response(status_code=200)
 
 
@@ -247,7 +251,11 @@ async def post_onlyoffice_callback_v2(
         await db.commit()
 
         record = await get_artifact_record(db, entry.artifact_key or "")
-        office_host_service.update_after_save(access_token, updated_at=record.updated_at if record else utc_now())
+        office_host_service.update_after_save(
+            access_token,
+            updated_at=record.updated_at if record else utc_now(),
+            revision=getattr(record, "revision", None) if record else None,
+        )
         return {"error": 0}
     except HTTPException as exc:
         await db.rollback()

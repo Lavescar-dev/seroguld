@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.api import v2
+from app.api import v2_office_runtime as runtime
 from app.schemas.document_artifact import DocumentArtifactPreviewOut
 from app.services.office_host_service import OfficeHostService, OnlyOfficeProvider
 from app.utils.helpers import utc_now
@@ -44,7 +45,7 @@ async def test_onlyoffice_callback_downloads_workbook_and_applies(monkeypatch):
         download_path="/api/v2/office/mock-download",
         import_supported=True,
     )
-    entry = v2.office_host_service.create_session(
+    entry = runtime.office_host_service.create_session(
         kind="alis-workspace",
         key="draft-1003",
         preview=preview,
@@ -102,20 +103,20 @@ async def test_onlyoffice_callback_downloads_workbook_and_applies(monkeypatch):
         assert payload["status"] == 2
         assert payload["url"] == "http://onlyoffice.test/download.xlsx"
 
-    monkeypatch.setattr(v2, "_office_artifact_record_or_404", fake_office_artifact_record_or_404)
-    monkeypatch.setattr(v2, "_apply_office_session_content", fake_apply_office_session_content)
-    monkeypatch.setattr(v2, "_verify_onlyoffice_callback_token", fake_verify_onlyoffice_callback_token)
-    monkeypatch.setattr(v2, "get_artifact_record", fake_get_artifact_record)
-    monkeypatch.setattr(v2.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(runtime, "_office_artifact_record_or_404", fake_office_artifact_record_or_404)
+    monkeypatch.setattr(runtime, "_apply_office_session_content", fake_apply_office_session_content)
+    monkeypatch.setattr(runtime, "_verify_onlyoffice_callback_token", fake_verify_onlyoffice_callback_token)
+    monkeypatch.setattr(runtime, "get_artifact_record", fake_get_artifact_record)
+    monkeypatch.setattr(runtime.httpx, "AsyncClient", FakeAsyncClient)
 
     try:
-        result = await v2.post_onlyoffice_callback_v2(
+        result = await runtime.post_onlyoffice_callback_v2(
             entry.access_token,
             FakeRequest(),
             FakeDb(),
         )
     finally:
-        v2.office_host_service._sessions.pop(entry.access_token, None)
+        runtime.office_host_service._sessions.pop(entry.access_token, None)
 
     assert result == {"error": 0}
     assert captured["client_timeout"] == 60.0

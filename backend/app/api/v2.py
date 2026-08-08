@@ -185,6 +185,8 @@ from app.services.document_artifact_service import (
     parse_afg_workspace_inputs_from_workbook,
     parse_inventory_workbook_inputs_from_workbook,
     parse_log_workbook_inputs_from_workbook,
+    read_artifact_sync_metadata,
+    resolve_artifact_conflict_state,
     sync_afg_document_artifact,
     sync_afg_workspace_artifact,
     sync_inventory_workbook_artifact,
@@ -461,8 +463,16 @@ async def _apply_afg_workspace_artifact_inputs(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if parsed.base_version:
         record = await get_artifact_record(db, f"alis.workspace.{pos_session.id}")
-        if record is not None and str(int(record.updated_at.timestamp() * 1000)) != parsed.base_version:
-            raise HTTPException(status_code=409, detail="AFG çalışma dosyası güncel değil. Önce yenileyin.")
+        if record is not None:
+            conflict_state = resolve_artifact_conflict_state(
+                current_revision=getattr(record, "revision", 1),
+                incoming_revision=parsed.base_version,
+            )
+            if conflict_state != "clean":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"AFG artifact conflict_state={conflict_state}; önce yenileyin.",
+                )
     current_workspace = await build_purchase_workspace(db, pos_session=pos_session)
     if _workspace_has_business_inputs(current_workspace) and _parsed_afg_inputs_look_blank(parsed):
         logger.warning(
@@ -509,8 +519,16 @@ async def _apply_log_workbook_artifact_inputs(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if parsed.base_version:
         record = await get_artifact_record(db, f"log.live.{year}")
-        if record is not None and str(int(record.updated_at.timestamp() * 1000)) != parsed.base_version:
-            raise HTTPException(status_code=409, detail="Log workbook güncel değil. Önce yenileyin.")
+        if record is not None:
+            conflict_state = resolve_artifact_conflict_state(
+                current_revision=getattr(record, "revision", 1),
+                incoming_revision=parsed.base_version,
+            )
+            if conflict_state != "clean":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Log artifact conflict_state={conflict_state}; önce yenileyin.",
+                )
     system_actor = SimpleNamespace(id=None)
     if parsed.route_updates:
         await apply_afg_route_requests(
@@ -541,6 +559,31 @@ async def _apply_office_session_content(
     entry,
     workbook_bytes: bytes,
 ) -> None:
+    if entry.artifact_key:
+        record = await get_artifact_record(db, entry.artifact_key)
+        if record is None:
+            raise HTTPException(status_code=409, detail="Office artifact conflict_state=invalid; artifact bulunamadı.")
+        expected_key = "live" if entry.kind == "depolama" else entry.key
+        try:
+            metadata = read_artifact_sync_metadata(
+                workbook_bytes,
+                expected_kind=entry.kind,
+                expected_key=expected_key,
+            )
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Office artifact conflict_state=invalid; revision metadata bulunamadı.",
+            ) from exc
+        conflict_state = resolve_artifact_conflict_state(
+            current_revision=getattr(record, "revision", 1),
+            incoming_revision=metadata.base_version,
+        )
+        if conflict_state != "clean":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Office artifact conflict_state={conflict_state}; önce yenileyin.",
+            )
     if entry.kind == "alis-workspace":
         pos_session = await get_pos_session_or_404(db, UUID(entry.key))
         await _apply_afg_workspace_artifact_inputs(db, pos_session=pos_session, workbook_bytes=workbook_bytes)

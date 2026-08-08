@@ -22,6 +22,7 @@ class DocumentArtifactRecordOut(AppBaseModel):
     template_name: str | None = None
     size_bytes: int = 0
     checksum_sha256: str | None = None
+    revision: int = 1
     workbook_revision: str | None = None
     base_revision: str | None = None
     crm_revision: str | None = None
