@@ -1,0 +1,84 @@
+/*
+ * Sero Guld CRM — Modern UI tasarım token'ları (TEK KAYNAK).
+ * Kaynak: reference/modern-ui-v15.html + dual-ui-switch-v16.html (audit 04-DESIGN-SYSTEM-EXTRACTION).
+ * Kural: modern/** içinde bu dosya ve tailwind.config.js eşlemesi dışında hardcoded renk/radius yasak.
+ * Hex değerler doğrudan kullanım için; *_rgb üçlüleri tailwind rgb(var()/alpha) eşlemesi için.
+ */
+
+:root {
+  /* Yüzeyler */
+  --sg-bg: #f4f7fb;
+  --sg-bg-rgb: 244 247 251;
+  --sg-bg-strong: #eaf0f6;
+  --sg-bg-strong-rgb: 234 240 246;
+  --sg-surface: #ffffff;
+  --sg-surface-rgb: 255 255 255;
+  --sg-surface-soft: #f8fbfe;
+  --sg-surface-soft-rgb: 248 251 254;
+  --sg-surface-accent: #eef6ff;
+  --sg-surface-accent-rgb: 238 246 255;
+
+  /* Kenarlıklar */
+  --sg-border: #d9e3ef;
+  --sg-border-rgb: 217 227 239;
+  --sg-border-soft: #e9f0f7;
+  --sg-border-soft-rgb: 233 240 247;
+
+  /* Metin */
+  --sg-text: #1f2937;
+  --sg-text-rgb: 31 41 55;
+  --sg-text-soft: #5f6f82;
+  --sg-text-soft-rgb: 95 111 130;
+
+  /* Birincil vurgu (V15 "gold" token'ı modern temada mavi) */
+  --sg-accent: #2563eb;
+  --sg-accent-rgb: 37 99 235;
+  --sg-accent-dark: #1d4ed8;
+  --sg-accent-dark-rgb: 29 78 216;
+  --sg-accent-soft: #dbeafe;
+  --sg-accent-soft-rgb: 219 234 254;
+
+  /* Teal — birincil aksiyon / başarı */
+  --sg-green: #0f766e;
+  --sg-green-rgb: 15 118 110;
+  --sg-green-strong: #115e59;
+  --sg-green-strong-rgb: 17 94 89;
+  --sg-green-soft: #def7f3;
+  --sg-green-soft-rgb: 222 247 243;
+
+  /* Bilgi */
+  --sg-blue: #3b82f6;
+  --sg-blue-rgb: 59 130 246;
+  --sg-blue-soft: #eaf3ff;
+  --sg-blue-soft-rgb: 234 243 255;
+
+  /* Uyarı */
+  --sg-amber: #d97706;
+  --sg-amber-rgb: 217 119 6;
+  --sg-amber-soft: #fff1de;
+  --sg-amber-soft-rgb: 255 241 222;
+
+  /* Hata / risk */
+  --sg-red: #dc2626;
+  --sg-red-rgb: 220 38 38;
+  --sg-red-soft: #feecec;
+  --sg-red-soft-rgb: 254 236 236;
+
+  /* Ek kategori */
+  --sg-purple: #7c3aed;
+  --sg-purple-rgb: 124 58 237;
+  --sg-purple-soft: #f3ebff;
+  --sg-purple-soft-rgb: 243 235 255;
+
+  /* Gölgeler (V15 3 kademe) */
+  --sg-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --sg-shadow-md: 0 2px 6px rgba(15, 23, 42, 0.06), 0 18px 46px rgba(15, 23, 42, 0.1);
+  --sg-shadow-lg: 0 20px 60px rgba(15, 23, 42, 0.14);
+
+  /* Ölçüler */
+  --sg-topbar: 72px;
+  --sg-radius-sm: 8px;
+  --sg-radius-md: 12px;
+  --sg-radius-lg: 16px;
+  --sg-radius-xl: 20px;
+}

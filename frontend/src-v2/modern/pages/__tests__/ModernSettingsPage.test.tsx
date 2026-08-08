@@ -38,7 +38,7 @@ const baseProps: ModernSettingsPageProps = {
 };
 
 describe('ModernSettingsPage', () => {
-  it('renders the variant slot and disables save when unavailable', () => {
+  it('renders the variant slot on the appearance tab and disables save when unavailable', () => {
     render(
       <ModernSettingsPage
         {...baseProps}
@@ -46,6 +46,8 @@ describe('ModernSettingsPage', () => {
         saveAvailability={{ state: 'unavailable', title: 'Kaydetme kapalı' }}
       />,
     );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Görünüm' }));
 
     expect(screen.getByText('Varyant slotu')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /kaydet/i })).toBeDisabled();

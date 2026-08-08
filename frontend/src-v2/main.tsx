@@ -6,6 +6,7 @@ import { App } from '@/app';
 import { ConfirmProvider } from '@/components/ConfirmDialog';
 import { ToastProvider } from '@/lib/toast';
 import { UiVariantProvider, uiVariantTransitionRegistry } from '@/ui-variants';
+import '@/styles/tokens.css';
 import '@/styles.css';
 
 const queryClient = new QueryClient({

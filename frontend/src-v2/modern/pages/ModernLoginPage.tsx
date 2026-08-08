@@ -1,4 +1,4 @@
-import { ArrowRight, LockKeyhole, ShieldCheck, Workflow } from 'lucide-react';
+import { ArrowRight, Inbox, LockKeyhole, ShieldCheck, Store, Workflow } from 'lucide-react';
 
 import {
   ModernBadge,
@@ -6,13 +6,31 @@ import {
   ModernCard,
   ModernCheckboxField,
   ModernField,
-  ModernPage,
   ModernSection,
-  ModernSectionHeader,
   ModernTextInput,
+  cn,
+  type ModernTone,
 } from '@/modern/design-system';
 
 import type { ModernLoginPageProps } from './types';
+
+const toneDotClasses: Record<ModernTone, string> = {
+  neutral: 'bg-sg-text-soft/50',
+  primary: 'bg-sg-accent',
+  success: 'bg-sg-green',
+  warning: 'bg-sg-amber',
+  danger: 'bg-sg-red',
+  info: 'bg-sg-blue',
+};
+
+function BrandMark({ size = 'md' }: { size?: 'md' | 'lg' }) {
+  const box = size === 'lg' ? 'h-12 w-12' : 'h-10 w-10';
+  return (
+    <span className={cn('flex shrink-0 items-center justify-center overflow-hidden rounded-sg-md bg-sg-surface ring-1 ring-sg-border', box)}>
+      <img src="/seroguld-logo.png" alt="Sero Guld" className="h-full w-full scale-[1.35] object-cover object-left" />
+    </span>
+  );
+}
 
 export function ModernLoginPage({
   runtime,
@@ -21,121 +39,147 @@ export function ModernLoginPage({
   helperNote,
 }: ModernLoginPageProps) {
   return (
-    <ModernPage className="bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(239,246,255,0.82))]">
-      <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <ModernSection className="overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_38%),linear-gradient(180deg,#ffffff,#f8fbff)]">
-          <ModernSectionHeader
-            eyebrow="Yeni Sero Guld"
-            title="Tek kullanıcı akışı, sakin giriş yüzeyi"
-            description="Mağaza, runtime ve görev görünürlüğünü giriş anında açık bırakan modern önizleme katmanı."
-          />
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            {runtime.map((item) => (
-              <ModernCard key={item.label} className="bg-white">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
-                <p className="mt-3 text-sm font-medium text-slate-900">{item.value}</p>
-                {item.detail ? <p className="mt-2 text-sm text-slate-500">{item.detail}</p> : null}
-              </ModernCard>
-            ))}
-          </div>
-          <div className="mt-5 grid gap-3 lg:grid-cols-2">
-            <ModernCard className="bg-white">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-50 text-sky-700">
-                  <Workflow className="h-4 w-4" />
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">İş kutusu görünürlüğü</p>
-                  <p className="mt-1 text-sm text-slate-500">Excel conflict, Uniconta farkı ve GDPR manuel işleri tek yerde izleyin.</p>
-                </div>
-              </div>
-            </ModernCard>
-            <ModernCard className="bg-white">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-teal-50 text-teal-700">
-                  <ShieldCheck className="h-4 w-4" />
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">Aynı veri, yeni görünüm</p>
-                  <p className="mt-1 text-sm text-slate-500">UI değişir; açık taslaklar, entegrasyon durumları ve domain state aynı kalır.</p>
-                </div>
-              </div>
-            </ModernCard>
-          </div>
-          {workInboxPreview.length > 0 ? (
-            <div className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">Giriş öncesi dikkat alanları</p>
-                  <p className="mt-1 text-sm text-slate-500">Son operasyondan taşınan işler.</p>
-                </div>
-                <ModernBadge tone="warning">{workInboxPreview.length} açık iş</ModernBadge>
-              </div>
-              <div className="mt-4 space-y-3">
-                {workInboxPreview.map((item) => (
-                  <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <ModernBadge tone={item.tone || 'warning'}>{item.meta}</ModernBadge>
-                    </div>
-                    <p className="mt-2 text-sm font-medium text-slate-900">{item.title}</p>
-                    <p className="mt-1 text-sm text-slate-500">{item.summary}</p>
+    <div data-ui-variant="modern" className="relative min-h-screen overflow-x-hidden bg-sg-bg font-sg text-sg-text">
+      <div aria-hidden="true" className="pointer-events-none absolute -top-40 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-sg-accent-soft/50 blur-3xl" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[1180px] items-center px-4 py-8 sm:px-6">
+        <div className="grid w-full gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+          {/* Sol: ürün çerçevesi */}
+          <ModernSection className="p-5 sm:p-7">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">Sero Guld ERP · Güvenli erişim</p>
+            <h1 className="mt-3 text-2xl font-bold leading-tight tracking-[-0.02em] text-sg-text sm:text-3xl">
+              Operasyon, müşteri, Excel aynası ve muhasebe tek giriş akışında.
+            </h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-sg-text-soft">
+              Oturum açıldığında shell, entegrasyonlar ve operasyon ekranları aynı masaüstü akışı içinde yüklenir.
+              V1 için ayrıntılı rol matrisi yerine basit ve güvenilir tek kullanıcı akışı hedeflenir.
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {runtime.map((item) => (
+                <ModernCard key={item.label} className="bg-sg-surface">
+                  <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
+                    <span className={cn('h-1.5 w-1.5 rounded-full', toneDotClasses[item.tone ?? 'neutral'])} />
+                    {item.label}
+                  </p>
+                  <p className="mt-2 truncate text-sm font-semibold text-sg-text" title={item.value}>{item.value}</p>
+                  {item.detail ? <p className="mt-1 text-xs text-sg-text-soft">{item.detail}</p> : null}
+                </ModernCard>
+              ))}
+            </div>
+
+            <div className="mt-6">
+              <p className="text-sm font-semibold text-sg-text">V1 başlangıç çerçevesi</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <ModernCard className="bg-sg-surface">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-sg-md bg-sg-accent-soft text-sg-accent-dark"><ShieldCheck className="h-4 w-4" /></span>
+                    <p className="text-sm font-semibold text-sg-text">Tek kullanıcı akışı</p>
                   </div>
-                ))}
+                  <p className="mt-2 text-sm leading-6 text-sg-text-soft">İlk sürümde ayrıntılı rol matrisi yok. Menü ve işlem akışları tek güvenilir operasyon kullanıcısı için sadeleştirildi.</p>
+                </ModernCard>
+                <ModernCard className="bg-sg-surface">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-sg-md bg-sg-green-soft text-sg-green-strong"><Store className="h-4 w-4" /></span>
+                    <p className="text-sm font-semibold text-sg-text">Mağaza ve ortam</p>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-sg-text-soft">Aktif ortam, runtime ve entegrasyon durumu girişten sonra topbar ve Ayarlar üzerinde görünür kalır.</p>
+                </ModernCard>
+                <ModernCard className="bg-sg-surface">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-sg-md bg-sg-amber-soft text-sg-amber"><Inbox className="h-4 w-4" /></span>
+                    <p className="text-sm font-semibold text-sg-text">İş kutusu</p>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-sg-text-soft">Excel conflict, Uniconta farkı, GDPR manuel işleri ve müşteri ekranı sorunları tek görev merkezinde toplanır.</p>
+                </ModernCard>
+                <ModernCard className="bg-sg-surface">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-sg-md bg-sg-blue-soft text-sg-accent-dark"><Workflow className="h-4 w-4" /></span>
+                    <p className="text-sm font-semibold text-sg-text">Aynı veri, iki arayüz</p>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-sg-text-soft">Klasik ve yeni arayüz aynı API ve domain state'i kullanır; geçiş Ayarlar'dan cihaz bazlı yapılır.</p>
+                </ModernCard>
               </div>
             </div>
-          ) : null}
-        </ModernSection>
 
-        <ModernSection className="bg-white">
-          <ModernSectionHeader
-            eyebrow="Oturum"
-            title="Sero Guld CRM erişimi"
-            description="Önizleme yüzeyine geçmek yalnız sunumu değiştirir; oturum ve API bağlamı aynı kalır."
-          />
-          <div className="mt-5 space-y-4">
-            <ModernField label="E-posta">
-              <ModernTextInput
-                autoComplete="username"
-                placeholder="info@seroguld.dk"
-                value={form.email}
-                onChange={(event) => form.onEmailChange?.(event.target.value)}
-              />
-            </ModernField>
-            <ModernField label="Şifre">
-              <ModernTextInput
-                type="password"
-                autoComplete="current-password"
-                placeholder="Şifrenizi girin"
-                value={form.password}
-                onChange={(event) => form.onPasswordChange?.(event.target.value)}
-              />
-            </ModernField>
-            <ModernCheckboxField
-              label="Bu cihazda oturumu koru"
-              description="Yerel tercih ve son arayüz seçimi bu cihazda saklanabilir."
-              checked={form.remember}
-              onChange={form.onRememberChange}
-            />
-            {form.errorMessage ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {form.errorMessage}
+            {workInboxPreview.length > 0 ? (
+              <div className="mt-5 rounded-sg-lg border border-sg-border bg-sg-surface p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-sg-text">Giriş öncesi dikkat alanları</p>
+                    <p className="mt-1 text-sm text-sg-text-soft">Son operasyondan taşınan işler.</p>
+                  </div>
+                  <ModernBadge tone="warning">{workInboxPreview.length} açık iş</ModernBadge>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {workInboxPreview.map((item) => (
+                    <div key={item.id} className="rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
+                      <ModernBadge tone={item.tone || 'warning'}>{item.meta}</ModernBadge>
+                      <p className="mt-2 text-sm font-medium text-sg-text">{item.title}</p>
+                      <p className="mt-1 text-sm text-sg-text-soft">{item.summary}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
-            <ModernButton
-              tone="primary"
-              icon={LockKeyhole}
-              trailingIcon={ArrowRight}
-              onClick={form.onSubmit}
-              disabled={form.isSubmitting}
-            >
-              {form.isSubmitting ? 'Oturum açılıyor' : 'Giriş yap'}
-            </ModernButton>
-            <p className="text-sm leading-6 text-slate-500">
-              {helperNote || 'Rol matrisi bu fazda genişletilmedi. Yüzey tek güvenilir operasyon kullanıcısı için hazırlanmıştır.'}
-            </p>
-          </div>
-        </ModernSection>
+          </ModernSection>
+
+          {/* Sağ: giriş kartı */}
+          <ModernSection className="h-fit p-5 sm:p-7 lg:sticky lg:top-8">
+            <div className="flex items-center gap-3">
+              <BrandMark size="lg" />
+              <div>
+                <p className="text-base font-bold tracking-[0.04em] text-sg-text">Sero Guld ERP</p>
+                <p className="mt-0.5 text-sm text-sg-text-soft">Güvenli oturum açın ve operasyona devam edin.</p>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <ModernField label="E-posta">
+                <ModernTextInput
+                  autoComplete="username"
+                  placeholder="info@seroguld.dk"
+                  value={form.email}
+                  onChange={(event) => form.onEmailChange?.(event.target.value)}
+                />
+              </ModernField>
+              <ModernField label="Şifre">
+                <ModernTextInput
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Şifrenizi girin"
+                  value={form.password}
+                  onChange={(event) => form.onPasswordChange?.(event.target.value)}
+                />
+              </ModernField>
+              <ModernCheckboxField
+                label="Bu cihazda oturumu koru"
+                description="Yerel tercih ve son arayüz seçimi bu cihazda saklanabilir."
+                checked={form.remember}
+                onChange={form.onRememberChange}
+              />
+              {form.errorMessage ? (
+                <div className="rounded-sg-md border border-sg-red/20 bg-sg-red-soft px-4 py-3 text-sm text-sg-red">
+                  {form.errorMessage}
+                </div>
+              ) : null}
+              <ModernButton
+                tone="success"
+                size="md"
+                icon={LockKeyhole}
+                trailingIcon={ArrowRight}
+                onClick={form.onSubmit}
+                disabled={form.isSubmitting}
+                className="min-h-11 w-full"
+              >
+                {form.isSubmitting ? 'Oturum açılıyor' : 'Güvenli giriş yap'}
+              </ModernButton>
+              <p className="text-sm leading-6 text-sg-text-soft">
+                {helperNote || 'Rol matrisi bu fazda genişletilmedi. Yüzey tek güvenilir operasyon kullanıcısı için hazırlanmıştır.'}
+              </p>
+            </div>
+          </ModernSection>
+        </div>
       </div>
-    </ModernPage>
+    </div>
   );
 }

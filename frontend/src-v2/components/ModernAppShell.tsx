@@ -16,25 +16,26 @@ import {
 } from 'lucide-react';
 
 import { getCurrentUser } from '@/lib/auth';
+import { formatRuntimeLabel } from '@/lib/runtimeInfo';
 import { OfficeDockPanel } from '@/make/office/OfficeDockPanel';
-import { ModernRootShell, type ModernShellNavGroup } from '@/modern/shell';
+import { ModernRootShell, type ModernShellNavGroup, type ModernShellRuntimeRow } from '@/modern/shell';
 import { ModernReturnAction, uiVariantTransitionRegistry } from '@/ui-variants';
 
 import type { ReturnTypeOfRootMakeState } from './modernShellTypes';
 
 const routeMeta: Record<string, { eyebrow: string; title: string; description: string }> = {
   '/': { eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı', description: 'Müşteri, metal satırları, teklif, AFG ve teslim zinciri aynı gerçek workspace üzerinde.' },
-  '/dashboard': { eyebrow: 'İş Kutusu', title: 'Operasyon merkezi', description: 'Bugünün kayıtları, bekleyen işler ve entegrasyon sağlığı.' },
-  '/depolama': { eyebrow: 'Lager', title: 'Depolama ve ürünler', description: 'Stok, ürün ilişkileri ve workbook işlemleri.' },
+  '/dashboard': { eyebrow: 'Operasyon Merkezi', title: 'Genel Bakış', description: 'Bugünün kayıtları, bekleyen işler ve entegrasyon sağlığı tek operasyon bağlamında.' },
+  '/depolama': { eyebrow: 'Lager', title: 'Depolama', description: 'Stok, ürün ilişkileri ve workbook işlemleri.' },
   '/log': { eyebrow: 'AFG Defteri', title: 'Log ve melt akışı', description: 'AFG satırlarını Depolama, Kararsız ve Eritme hedeflerine yönetin.' },
   '/musteriler': { eyebrow: 'Kundedatabase', title: 'Müşteriler', description: 'Müşteri kayıtları, belge geçmişi ve hassas veri kontrolleri.' },
-  '/gdpr': { eyebrow: 'Privacy', title: 'GDPR merkezi', description: 'Talepler, retention, processor ve audit görünümü.' },
-  '/opmc': { eyebrow: 'Risk', title: 'OPMC izleme', description: 'Risk kuyruğu ve inceleme detayları.' },
-  '/woocommerce': { eyebrow: 'Commerce', title: 'WooCommerce / WordPress', description: 'Ürün, sipariş ve webhook operasyonları.' },
-  '/uniconta': { eyebrow: 'ERP', title: 'Uniconta mutabakatı', description: 'Yerel kayıtlar, outbox ve uzak ERP farkları.' },
-  '/musteri-ekran': { eyebrow: 'İkinci Ekran', title: 'Müşteri ekranı kontrolü', description: 'Public DTO, pencere ve canlı teklif durumu.' },
+  '/gdpr': { eyebrow: 'Privacy', title: 'GDPR Merkezi', description: 'Talepler, retention, processor ve audit görünümü.' },
+  '/opmc': { eyebrow: 'Risk', title: 'OPMC / Risk', description: 'Risk kuyruğu ve inceleme detayları.' },
+  '/woocommerce': { eyebrow: 'Commerce', title: 'WooCommerce', description: 'Ürün, sipariş ve webhook operasyonları.' },
+  '/uniconta': { eyebrow: 'ERP', title: 'Uniconta', description: 'Yerel kayıtlar, outbox ve uzak ERP farkları.' },
+  '/musteri-ekran': { eyebrow: 'İkinci Ekran', title: 'Müşteri Ekranı', description: 'Public DTO, pencere ve canlı teklif durumu.' },
   '/settings': { eyebrow: 'Sistem', title: 'Ayarlar', description: 'Platform, entegrasyon, güvenlik ve görünüm tercihleri.' },
-  '/reports': { eyebrow: 'Health', title: 'Raporlar ve sistem sağlığı', description: 'Modül kapsamı, kontrat durumu ve doğrulama görünümü.' },
+  '/reports': { eyebrow: 'Health', title: 'Raporlar ve Sağlık', description: 'Modül kapsamı, kontrat durumu ve doğrulama görünümü.' },
 };
 
 function activePath(pathname: string, path: string) {
@@ -72,35 +73,58 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
       {
         label: 'Operasyon',
         items: [
-          item('/dashboard', 'Dashboard', 'İş kutusu', LayoutDashboard),
-          item('/', 'Alış', 'AFG workspace', Package, state.stats.alisList),
-          item('/depolama', 'Depolama', 'Lager / ürün', Database, state.stats.depoCount),
-          item('/log', 'Log', 'AFG → melt', FileText, state.stats.logCount),
+          item('/dashboard', 'Genel Bakış', 'İş kutusu', LayoutDashboard),
+          item('/', 'Alış / AFG', 'AFG workspace', Package, state.stats.alisList),
           item('/musteriler', 'Müşteriler', 'Kundedatabase', Users, state.stats.customerCount),
-          item('/gdpr', 'GDPR', 'Privacy merkezi', ShieldCheck),
+          item('/depolama', 'Depolama', 'Lager / ürün', Database, state.stats.depoCount),
+          item('/log', 'Log / AFG Defteri', 'AFG → melt', FileText, state.stats.logCount),
         ],
       },
       {
-        label: 'Entegrasyonlar',
+        label: 'Belge ve Entegrasyon',
         items: [
-          item('/opmc', 'OPMC', 'Risk izleme', ShieldAlert),
-          item('/woocommerce', 'WooCommerce', 'Web operasyonları', ShoppingCart),
           item('/uniconta', 'Uniconta', 'ERP mutabakatı', Building2),
+          item('/woocommerce', 'WooCommerce', 'Web operasyonları', ShoppingCart),
+          item('/opmc', 'OPMC / Risk', 'Risk izleme', ShieldAlert),
         ],
       },
       {
-        label: 'Sistem',
+        label: 'Uyum ve Sistem',
         items: [
-          item('/musteri-ekran', 'Müşteri ekranı', 'İkinci pencere', Monitor),
+          item('/gdpr', 'GDPR Merkezi', 'Privacy merkezi', ShieldCheck),
+          item('/musteri-ekran', 'Müşteri Ekranı', 'İkinci pencere', Monitor),
+          item('/reports', 'Raporlar ve Sağlık', 'Export ve sağlık', HeartPulse),
           item('/settings', 'Ayarlar', 'Platform ve görünüm', Settings),
-          item('/reports', 'Raporlar', 'Export ve sağlık', HeartPulse),
         ],
       },
     ];
   }, [location.pathname, navigate, state.stats]);
 
+  const runtimeRows = useMemo<ModernShellRuntimeRow[]>(() => {
+    const rows: ModernShellRuntimeRow[] = [];
+    const runtimeMode = state.runtime.desktop?.runtime_mode;
+    rows.push({
+      label: 'Runtime',
+      value: runtimeMode ? formatRuntimeLabel(runtimeMode) : 'Web',
+      tone: 'success',
+    });
+    if (state.runtime.backend) {
+      rows.push({
+        label: 'Backend',
+        value: state.runtime.backend.env,
+        tone: 'primary',
+      });
+    }
+    rows.push({
+      label: 'Frontend',
+      value: formatRuntimeLabel(state.runtime.frontend.frontend_mode),
+      tone: 'neutral',
+    });
+    return rows;
+  }, [state.runtime]);
+
   const office = state.officeDock.document ? (
-    <section className="mb-4 h-[min(72vh,760px)] min-h-[480px] overflow-hidden rounded-[28px] border border-sky-200 bg-white shadow-xl shadow-slate-200/60">
+    <section className="mb-5 h-[min(72vh,760px)] min-h-[480px] overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface shadow-sg-md">
       <OfficeDockPanel document={state.officeDock.document} onClose={state.onCloseOfficeDock} />
     </section>
   ) : null;
@@ -113,14 +137,14 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
       navGroups={navGroups}
       statusPills={[
         { label: 'Au', value: `${state.stats.goldPrice} DKK/g`, tone: 'warning' },
-        { label: 'API', value: state.runtime.backend ? 'Bağlı' : 'Kontrol ediliyor', tone: state.runtime.backend ? 'success' : 'info' },
+        { label: 'Backend', value: state.runtime.backend ? 'Bağlı' : 'Kontrol ediliyor', tone: state.runtime.backend ? 'success' : 'info' },
       ]}
+      runtimeRows={runtimeRows}
       user={{
         name: user?.name || user?.email || 'Sero Guld Operasyon',
-        email: user?.email,
-        location: 'København',
+        email: user?.name ? user?.email : undefined,
       }}
-      variantSlot={<ModernReturnAction className="min-h-11 rounded-2xl border border-sky-200 bg-sky-50 px-4 text-xs font-semibold text-sky-800 transition hover:bg-sky-100" />}
+      variantSlot={<ModernReturnAction className="min-h-9 rounded-sg-md border border-sg-accent/20 bg-sg-accent-soft px-3 text-xs font-semibold text-sg-accent-dark transition hover:bg-sg-accent-soft/70" />}
     >
       {office}
       <Outlet />

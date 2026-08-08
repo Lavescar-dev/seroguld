@@ -14,30 +14,30 @@ export type ModernTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger
 export type ModernActionTone = Exclude<ModernTone, 'neutral'> | 'ghost';
 
 const badgeToneClasses: Record<ModernTone, string> = {
-  neutral: 'border-slate-200 bg-white text-slate-600',
-  primary: 'border-sky-200 bg-sky-50 text-sky-700',
-  success: 'border-teal-200 bg-teal-50 text-teal-700',
-  warning: 'border-amber-200 bg-amber-50 text-amber-700',
-  danger: 'border-rose-200 bg-rose-50 text-rose-700',
-  info: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+  neutral: 'border-sg-border bg-sg-surface text-sg-text-soft',
+  primary: 'border-sg-accent/20 bg-sg-accent-soft text-sg-accent-dark',
+  success: 'border-sg-green/20 bg-sg-green-soft text-sg-green-strong',
+  warning: 'border-sg-amber/20 bg-sg-amber-soft text-sg-amber',
+  danger: 'border-sg-red/20 bg-sg-red-soft text-sg-red',
+  info: 'border-sg-blue/20 bg-sg-blue-soft text-sg-accent-dark',
 };
 
 const buttonToneClasses: Record<ModernActionTone, string> = {
-  primary: 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700',
-  success: 'border-teal-600 bg-teal-600 text-white hover:bg-teal-700',
-  warning: 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100',
-  danger: 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700',
-  info: 'border-cyan-300 bg-cyan-50 text-cyan-900 hover:bg-cyan-100',
-  ghost: 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+  primary: 'border-sg-accent bg-sg-accent text-white hover:bg-sg-accent-dark',
+  success: 'border-sg-green bg-sg-green text-white hover:bg-sg-green-strong',
+  warning: 'border-sg-amber/30 bg-sg-amber-soft text-sg-amber hover:bg-sg-amber-soft/70',
+  danger: 'border-sg-red bg-sg-red text-white hover:bg-sg-red/90',
+  info: 'border-sg-blue/30 bg-sg-blue-soft text-sg-accent-dark hover:bg-sg-blue-soft/70',
+  ghost: 'border-sg-border bg-sg-surface text-sg-text hover:bg-sg-surface-soft',
 };
 
 const noticeToneClasses: Record<ModernTone, string> = {
-  neutral: 'border-slate-200 bg-white text-slate-700',
-  primary: 'border-sky-200 bg-sky-50 text-sky-900',
-  success: 'border-teal-200 bg-teal-50 text-teal-900',
-  warning: 'border-amber-200 bg-amber-50 text-amber-900',
-  danger: 'border-rose-200 bg-rose-50 text-rose-900',
-  info: 'border-cyan-200 bg-cyan-50 text-cyan-900',
+  neutral: 'border-sg-border bg-sg-surface text-sg-text',
+  primary: 'border-sg-accent/20 bg-sg-accent-soft text-sg-text',
+  success: 'border-sg-green/20 bg-sg-green-soft text-sg-text',
+  warning: 'border-sg-amber/20 bg-sg-amber-soft text-sg-text',
+  danger: 'border-sg-red/20 bg-sg-red-soft text-sg-text',
+  info: 'border-sg-blue/20 bg-sg-blue-soft text-sg-text',
 };
 
 export function ModernPage({
@@ -47,7 +47,7 @@ export function ModernPage({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex min-h-full flex-col gap-5 overflow-x-hidden rounded-[28px] bg-white/90 p-4 shadow-[0_20px_60px_-36px_rgba(15,23,42,0.35)] ring-1 ring-slate-200 sm:p-6', className)}
+      className={cn('flex min-h-full flex-col gap-5 overflow-x-hidden', className)}
       {...props}
     >
       {children}
@@ -62,7 +62,7 @@ export function ModernSection({
 }: HTMLAttributes<HTMLElement>) {
   return (
     <section
-      className={cn('rounded-[24px] border border-slate-200 bg-white/90 p-4 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)] sm:p-5', className)}
+      className={cn('rounded-sg-lg border border-sg-border bg-sg-surface p-4 shadow-sg-sm sm:p-5', className)}
       {...props}
     >
       {children}
@@ -82,11 +82,11 @@ export function ModernSectionHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="flex flex-col gap-4 border-b border-sg-border-soft pb-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="max-w-3xl">
-        {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-700">{eyebrow}</p> : null}
-        <h2 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-950 sm:text-2xl">{title}</h2>
-        {description ? <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p> : null}
+        {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">{eyebrow}</p> : null}
+        <h2 className="mt-1 text-base font-semibold tracking-[-0.01em] text-sg-text sm:text-lg">{title}</h2>
+        {description ? <p className="mt-1.5 text-sm leading-6 text-sg-text-soft">{description}</p> : null}
       </div>
       {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
     </div>
@@ -100,7 +100,7 @@ export function ModernCard({
 }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('rounded-[20px] border border-slate-200 bg-slate-50/70 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]', className)}
+      className={cn('rounded-sg-md border border-sg-border bg-sg-surface-soft p-4', className)}
       {...props}
     >
       {children}
@@ -157,8 +157,8 @@ export function ModernButton(props: ButtonLikeProps) {
     ...rest
   } = props;
   const mergedClassName = cn(
-    'inline-flex items-center justify-center gap-2 rounded-2xl border font-medium transition motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-    size === 'sm' ? 'min-h-9 px-3.5 text-xs' : 'min-h-11 px-4 text-sm',
+    'inline-flex items-center justify-center gap-2 rounded-sg-md border font-medium transition motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sg-accent/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+    size === 'sm' ? 'min-h-9 px-3.5 text-xs' : 'min-h-10 px-4 text-sm',
     buttonToneClasses[tone],
     customClassName,
   );
@@ -211,18 +211,18 @@ export function ModernStat({
   icon?: LucideIcon;
 }) {
   return (
-    <ModernCard className="flex min-h-[128px] flex-col justify-between bg-white">
+    <ModernCard className="flex min-h-[112px] flex-col justify-between bg-sg-surface">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{label}</p>
         {Icon ? (
-          <span className={cn('rounded-2xl p-2', badgeToneClasses[tone])}>
+          <span className={cn('rounded-sg-md p-2', badgeToneClasses[tone])}>
             <Icon className="h-4 w-4" />
           </span>
         ) : null}
       </div>
       <div>
-        <p className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">{value}</p>
-        {meta ? <p className="mt-2 text-sm text-slate-500">{meta}</p> : null}
+        <p className="text-2xl font-semibold tracking-[-0.02em] text-sg-text">{value}</p>
+        {meta ? <p className="mt-1.5 text-sm text-sg-text-soft">{meta}</p> : null}
       </div>
     </ModernCard>
   );
@@ -242,9 +242,9 @@ export function ModernNotice({
   action?: ReactNode;
 }) {
   return (
-    <div className={cn('flex flex-col gap-3 rounded-[20px] border p-4 sm:flex-row sm:items-start sm:justify-between', noticeToneClasses[tone])}>
+    <div className={cn('flex flex-col gap-3 rounded-sg-lg border-l-4 p-4 sm:flex-row sm:items-start sm:justify-between', noticeToneClasses[tone])}>
       <div className="flex gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/80">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sg-md bg-sg-surface/80">
           {icon ?? (tone === 'danger' ? <AlertTriangle className="h-5 w-5" /> : tone === 'success' ? <CheckCircle2 className="h-5 w-5" /> : tone === 'warning' ? <AlertTriangle className="h-5 w-5" /> : tone === 'primary' ? <Info className="h-5 w-5" /> : tone === 'neutral' ? <Lock className="h-5 w-5" /> : <Info className="h-5 w-5" />)}
         </div>
         <div>
@@ -267,9 +267,9 @@ export function ModernKeyValueList({
   return (
     <dl className={cn('grid gap-3', columns === 1 ? 'grid-cols-1' : columns === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3')}>
       {items.map((item) => (
-        <div key={item.label} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{item.label}</dt>
-          <dd className={cn('mt-2 text-sm font-medium text-slate-700', item.accent && 'text-slate-950')}>{item.value}</dd>
+        <div key={item.label} className="rounded-sg-md border border-sg-border bg-sg-surface px-4 py-3">
+          <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{item.label}</dt>
+          <dd className={cn('mt-2 text-sm font-medium text-sg-text-soft', item.accent && 'text-sg-text')}>{item.value}</dd>
         </div>
       ))}
     </dl>
@@ -284,7 +284,7 @@ export function ModernToolbar({
   trailing?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[22px] border border-slate-200 bg-slate-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2">{leading}</div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">{trailing}</div>
     </div>
@@ -298,7 +298,7 @@ export function ModernTextInput({
   return (
     <input
       className={cn(
-        'min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-100 motion-reduce:transition-none',
+        'min-h-10 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3.5 text-sm text-sg-text outline-none transition placeholder:text-sg-text-soft/60 focus:border-sg-accent focus:ring-2 focus:ring-sg-accent-soft motion-reduce:transition-none',
         className,
       )}
       {...props}
@@ -313,7 +313,7 @@ export function ModernTextarea({
   return (
     <textarea
       className={cn(
-        'min-h-[120px] w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-100 motion-reduce:transition-none',
+        'min-h-[120px] w-full rounded-sg-md border border-sg-border bg-sg-surface px-3.5 py-3 text-sm text-sg-text outline-none transition placeholder:text-sg-text-soft/60 focus:border-sg-accent focus:ring-2 focus:ring-sg-accent-soft motion-reduce:transition-none',
         className,
       )}
       {...props}
@@ -335,17 +335,17 @@ export function ModernCheckboxField({
   disabled?: boolean;
 }) {
   return (
-    <label className={cn('flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3', disabled && 'opacity-60')}>
+    <label className={cn('flex items-start gap-3 rounded-sg-md border border-sg-border bg-sg-surface px-4 py-3', disabled && 'opacity-60')}>
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange?.(event.target.checked)}
-        className="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+        className="mt-1 h-4 w-4 rounded border-sg-border text-sg-accent focus:ring-sg-accent"
       />
       <span>
-        <span className="block text-sm font-medium text-slate-900">{label}</span>
-        {description ? <span className="mt-1 block text-sm text-slate-500">{description}</span> : null}
+        <span className="block text-sm font-medium text-sg-text">{label}</span>
+        {description ? <span className="mt-1 block text-sm text-sg-text-soft">{description}</span> : null}
       </span>
     </label>
   );
@@ -362,9 +362,9 @@ export function ModernField({
 }) {
   return (
     <label className="flex flex-col gap-2">
-      <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{label}</span>
       {children}
-      {hint ? <span className="text-xs text-slate-500">{hint}</span> : null}
+      {hint ? <span className="text-xs text-sg-text-soft">{hint}</span> : null}
     </label>
   );
 }

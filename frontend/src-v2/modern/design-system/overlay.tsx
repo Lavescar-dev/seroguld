@@ -96,7 +96,7 @@ function OverlayFrame({
 
   return (
     <OverlayPortal>
-      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-sg-text/35 p-4 backdrop-blur-sm">
         <div
           className="absolute inset-0"
           onClick={() => onClose?.()}
@@ -110,14 +110,14 @@ function OverlayFrame({
           aria-describedby={description ? descriptionId : undefined}
           tabIndex={-1}
           className={cn(
-            'relative z-[81] max-h-[calc(100vh-2rem)] w-full overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_30px_80px_-32px_rgba(15,23,42,0.45)]',
+            'relative z-[81] max-h-[calc(100vh-2rem)] w-full overflow-hidden rounded-sg-xl border border-sg-border bg-sg-surface shadow-sg-lg',
             panelClassName,
           )}
         >
-          <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div className="flex items-start justify-between gap-4 border-b border-sg-border-soft px-5 py-4">
             <div>
-              <h3 id={titleId} className="text-lg font-semibold tracking-[-0.02em] text-slate-950">{title}</h3>
-              {description ? <p id={descriptionId} className="mt-1 text-sm text-slate-500">{description}</p> : null}
+              <h3 id={titleId} className="text-base font-semibold tracking-[-0.01em] text-sg-text">{title}</h3>
+              {description ? <p id={descriptionId} className="mt-1 text-sm text-sg-text-soft">{description}</p> : null}
             </div>
             {onClose ? (
               <ModernButton aria-label="Kapat" tone="ghost" size="sm" onClick={onClose} icon={X}>
@@ -126,7 +126,7 @@ function OverlayFrame({
             ) : null}
           </div>
           <div className="max-h-[calc(100vh-11rem)] overflow-auto px-5 py-5">{children}</div>
-          {footer ? <div className="border-t border-slate-200 px-5 py-4">{footer}</div> : null}
+          {footer ? <div className="border-t border-sg-border-soft px-5 py-4">{footer}</div> : null}
         </div>
       </div>
     </OverlayPortal>
@@ -170,7 +170,7 @@ export function ModernDrawer({
   return (
     <OverlayPortal>
       <div className="fixed inset-0 z-[80]">
-        <div className="absolute inset-0 bg-slate-950/35 backdrop-blur-sm" aria-hidden="true" onClick={() => onClose?.()} />
+        <div className="absolute inset-0 bg-sg-text/35 backdrop-blur-sm" aria-hidden="true" onClick={() => onClose?.()} />
         <aside
           ref={panelRef}
           role="dialog"
@@ -178,12 +178,12 @@ export function ModernDrawer({
           aria-labelledby={titleId}
           aria-describedby={description ? descriptionId : undefined}
           tabIndex={-1}
-          className="absolute inset-y-0 right-0 z-[81] flex w-full max-w-[720px] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-[-24px_0_60px_-36px_rgba(15,23,42,0.45)]"
+          className="absolute inset-y-0 right-0 z-[81] flex w-full max-w-[720px] flex-col overflow-hidden border-l border-sg-border bg-sg-surface shadow-sg-lg"
         >
-          <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div className="flex items-start justify-between gap-4 border-b border-sg-border-soft px-5 py-4">
             <div>
-              <h3 id={titleId} className="text-lg font-semibold tracking-[-0.02em] text-slate-950">{title}</h3>
-              {description ? <p id={descriptionId} className="mt-1 text-sm text-slate-500">{description}</p> : null}
+              <h3 id={titleId} className="text-base font-semibold tracking-[-0.01em] text-sg-text">{title}</h3>
+              {description ? <p id={descriptionId} className="mt-1 text-sm text-sg-text-soft">{description}</p> : null}
             </div>
             {onClose ? (
               <ModernButton aria-label="Kapat" tone="ghost" size="sm" onClick={onClose} icon={X}>
@@ -192,7 +192,7 @@ export function ModernDrawer({
             ) : null}
           </div>
           <div className="flex-1 overflow-auto px-5 py-5">{children}</div>
-          {footer ? <div className="border-t border-slate-200 px-5 py-4">{footer}</div> : null}
+          {footer ? <div className="border-t border-sg-border-soft px-5 py-4">{footer}</div> : null}
         </aside>
       </div>
     </OverlayPortal>

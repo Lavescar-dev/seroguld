@@ -61,12 +61,12 @@ export function StatusGrid({ items }: { items: ModernStatusItem[] }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {items.map((item) => (
-        <ModernCard key={`${item.label}-${item.value}`} className="bg-white">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
+        <ModernCard key={`${item.label}-${item.value}`} className="bg-sg-surface">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{item.label}</p>
           <div className="mt-2 flex items-center gap-2">
             <ModernBadge tone={item.tone || toneForText(item.value)}>{item.value}</ModernBadge>
           </div>
-          {item.detail ? <p className="mt-3 text-sm text-slate-500">{item.detail}</p> : null}
+          {item.detail ? <p className="mt-3 text-sm text-sg-text-soft">{item.detail}</p> : null}
         </ModernCard>
       ))}
     </div>
@@ -87,24 +87,24 @@ export function TimelineList({
       <ModernSectionHeader title={title} description={description} />
       <div className="mt-4 space-y-3">
         {items.map((item) => (
-          <div key={item.id} className="flex gap-3 rounded-[20px] border border-slate-200 bg-slate-50/70 px-4 py-3">
-            <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white">
+          <div key={item.id} className="flex gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
+            <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sg-surface ring-1 ring-sg-border">
               {item.tone === 'danger' ? (
-                <AlertTriangle className="h-4 w-4 text-rose-600" />
+                <AlertTriangle className="h-4 w-4 text-sg-red" />
               ) : item.tone === 'success' ? (
-                <CheckCircle2 className="h-4 w-4 text-teal-600" />
+                <CheckCircle2 className="h-4 w-4 text-sg-green" />
               ) : item.tone === 'warning' ? (
-                <Clock3 className="h-4 w-4 text-amber-600" />
+                <Clock3 className="h-4 w-4 text-sg-amber" />
               ) : (
-                <Info className="h-4 w-4 text-sky-600" />
+                <Info className="h-4 w-4 text-sg-blue" />
               )}
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-medium text-slate-900">{item.title}</p>
-                {item.timestamp ? <span className="text-xs text-slate-400">{item.timestamp}</span> : null}
+                <p className="text-sm font-medium text-sg-text">{item.title}</p>
+                {item.timestamp ? <span className="text-xs text-sg-text-soft">{item.timestamp}</span> : null}
               </div>
-              {item.detail ? <p className="mt-1 text-sm leading-6 text-slate-500">{item.detail}</p> : null}
+              {item.detail ? <p className="mt-1 text-sm leading-6 text-sg-text-soft">{item.detail}</p> : null}
             </div>
           </div>
         ))}

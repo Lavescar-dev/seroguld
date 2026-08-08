@@ -29,16 +29,16 @@ export function ModernDataTable<TItem>({
   }
 
   return (
-    <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+    <div className="overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface">
       <div className="max-w-full overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">
-          <thead className="bg-slate-50">
+          <thead className="bg-sg-surface-soft">
             <tr>
               {columns.map((column) => (
                 <th
                   key={column.key}
                   className={cn(
-                    'whitespace-nowrap border-b border-slate-200 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500',
+                    'whitespace-nowrap border-b border-sg-border px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft',
                     column.align === 'right' && 'text-right',
                     column.align === 'center' && 'text-center',
                     column.className,
@@ -51,12 +51,12 @@ export function ModernDataTable<TItem>({
           </thead>
           <tbody>
             {items.map((item, index) => (
-              <tr key={getRowKey(item, index)} className="border-b border-slate-100 last:border-b-0">
+              <tr key={getRowKey(item, index)} className="border-b border-sg-border-soft last:border-b-0">
                 {columns.map((column) => (
                   <td
                     key={column.key}
                     className={cn(
-                      'px-4 py-3 align-top text-slate-700',
+                      'px-4 py-3 align-top text-sg-text',
                       column.align === 'right' && 'text-right',
                       column.align === 'center' && 'text-center',
                       column.className,
