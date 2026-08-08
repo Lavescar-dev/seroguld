@@ -25,11 +25,15 @@ import base64
 import json as _json
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 
 import httpx
 
 from app.config import get_settings
+from app.models.enums import PosTradeSideEnum
+from app.services.pos_value_helpers import calculate_offer, safe_trade_side
+from app.utils.helpers import quantize_2, to_decimal
 
 LOGGER = logging.getLogger(__name__)
 
@@ -731,15 +735,55 @@ async def ensure_debtor_for_customer(
     return account
 
 
+def _pos_line_net_offer_dkk(
+    line: Any,
+    *,
+    trade_side: PosTradeSideEnum,
+) -> Decimal | None:
+    """Satırın kanonik net teklif tutarı (margin uygulanmış, 2dp ROUND_HALF_UP).
+
+    DATA-001 invariantı: CRM net offer == TransactionLine total == AFG/PDF
+    total == Uniconta line total. Kaynak doğruluk sırası:
+      1) `line_offer_dkk` (CRM'in müşteriye gösterdiği, finalize'da TransactionLine
+         ve PosDocument tutarının toplandığı kanonik alan),
+      2) alan boşsa `calculate_offer` ile margin uygulanmış yeniden hesap.
+    `rate_dkk` TEK BAŞINA ASLA kullanılmaz — margin-öncesi kurdur ve CRM/PDF
+    tutarından øre seviyesinde sapar.
+    """
+    offer = getattr(line, "line_offer_dkk", None)
+    if offer is not None:
+        return quantize_2(to_decimal(offer))
+    weight = getattr(line, "weight_grams", None)
+    purity = getattr(line, "purity_percentage", None)
+    rate = getattr(line, "rate_dkk", None)
+    if weight is None or purity is None or rate is None:
+        return None
+    margin = getattr(line, "margin_percent_internal", None)
+    return calculate_offer(
+        weight_grams=to_decimal(weight),
+        purity_percentage=to_decimal(purity),
+        active_rate=to_decimal(rate),
+        trade_side=trade_side,
+        margin_percent=to_decimal(margin) if margin is not None else Decimal("0"),
+    )
+
+
 def build_uniconta_lines_from_pos_lines(
     pos_lines: list[Any],
+    *,
+    trade_side: PosTradeSideEnum | str | None = None,
 ) -> list[dict[str, Any]]:
     """CRM PosSessionLine list'inden Uniconta line payload'u inşa et.
 
-    Free-text pattern: Item=None, Text + Qty + Price (DKK/gram).
-    AFG/satın alma için Qty negatif değil pozitif (Uniconta'da işaret invoice
-    tipine göre işliyor; basitlik için positive geçiyoruz).
+    Free-text pattern: Item=None, Text + Qty + Price.
+
+    DATA-001 parity: Uniconta line total'ı (Qty * Price) CRM satır net teklifiyle
+    birebir aynı olmalı. Bu yüzden net offer hesaplanabildiğinde Qty=1 ve
+    Price=margin-uygulanmış satır net tutarı gönderilir — böylece Uniconta'nın
+    kendi Qty*Price yuvarlaması ne olursa olsun satır toplamı øre-paritelidir.
+    Gram/karat detayı Text'te korunur.
     """
+    resolved_side = safe_trade_side(trade_side) or PosTradeSideEnum.BUY_FROM_CUSTOMER
     out: list[dict[str, Any]] = []
     for line in pos_lines:
         metal = getattr(line, "metal_type", None)
@@ -751,22 +795,33 @@ def build_uniconta_lines_from_pos_lines(
         purity_pct = getattr(line, "purity_percentage", None)
         weight = getattr(line, "weight_grams", None) or 0
         rate = getattr(line, "rate_dkk", None) or 0
-        offer = getattr(line, "line_offer_dkk", None) or 0
+        karat_text = f"{karat}K" if karat else ""
+        purity_text = f"{purity_pct}‰" if purity_pct else ""
+        text_parts = [label, karat_text, purity_text, f"{weight}g"]
+        text = " · ".join(p for p in text_parts if p)
+
+        net_offer = _pos_line_net_offer_dkk(line, trade_side=resolved_side)
+        if net_offer is not None:
+            # Kanonik yol: Qty=1, Price=CRM satır net teklifi → øre parity garantili.
+            out.append(
+                {
+                    "Item": None,
+                    "Text": text,
+                    "Qty": 1.0,
+                    "Price": float(net_offer),
+                }
+            )
+            continue
+
+        # Legacy fallback (net offer hiç hesaplanamıyor): margin-uygulanmamış
+        # kur üzerinden gram başına fiyat. Normal akışta buraya düşülmez.
         if rate:
             try:
                 rate_value = float(rate)
             except (TypeError, ValueError):
                 rate_value = 0.0
         else:
-            try:
-                weight_f = float(weight) or 1.0
-                rate_value = float(offer) / weight_f if weight_f else 0.0
-            except (TypeError, ValueError):
-                rate_value = 0.0
-        karat_text = f"{karat}K" if karat else ""
-        purity_text = f"{purity_pct}‰" if purity_pct else ""
-        text_parts = [label, karat_text, purity_text, f"{weight}g"]
-        text = " · ".join(p for p in text_parts if p)
+            rate_value = 0.0
         try:
             qty = float(weight)
         except (TypeError, ValueError):
@@ -888,7 +943,11 @@ async def sync_pos_document_to_uniconta(
         if city:
             order_payload["City"] = str(city)[:100]
 
-        lines_payload = build_uniconta_lines_from_pos_lines(pos_lines or [])
+        line_trade_side = safe_trade_side(getattr(pos_session, "trade_side", None))
+        lines_payload = build_uniconta_lines_from_pos_lines(
+            pos_lines or [],
+            trade_side=line_trade_side or PosTradeSideEnum.BUY_FROM_CUSTOMER,
+        )
         if not lines_payload:
             lines_payload = [
                 {
