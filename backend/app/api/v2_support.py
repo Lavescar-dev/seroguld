@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import HTTPException, Response
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,10 +23,16 @@ from app.services.product_service import get_product_or_404, update_product
 
 def artifact_file_response(record, *, content: bytes | None = None) -> Response:
     payload = content if content is not None else artifact_absolute_path(record).read_bytes()
+    checksum = hashlib.sha256(payload).hexdigest()
     return Response(
         content=payload,
         media_type=record.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{record.file_name}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{record.file_name}"',
+            "ETag": f'"{checksum}"',
+            "X-Sero-Artifact-Sha256": checksum,
+            "X-Sero-Artifact-Revision": getattr(record, "checksum_sha256", None) or checksum,
+        },
     )
 
 

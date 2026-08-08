@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,9 +38,16 @@ from app.schemas.afg import (
     AfgRouteRequest,
     AfgRouteResponse,
 )
-from app.schemas.document_artifact import DocumentArtifactRecordOut
+from app.schemas.document_artifact import DocumentArtifactReconcilePreviewOut, DocumentArtifactRecordOut
 from app.schemas.pos import PosDocumentListItemOut
-from app.services.document_artifact_service import list_artifact_records, sync_log_workbook_artifact
+from app.services.document_artifact_log import build_log_reconcile_preview
+from app.services.document_artifact_service import (
+    get_artifact_record,
+    list_artifact_records,
+    parse_log_workbook_inputs_from_workbook,
+    resolve_artifact_conflict_state,
+    sync_log_workbook_artifact,
+)
 
 router = APIRouter()
 
@@ -288,6 +296,49 @@ async def get_log_workbook_v2(
     bundle = await sync_log_workbook_artifact(db, workspace, year=resolved_year, create_snapshot=False)
     await db.commit()
     return artifact_file_response(bundle.artifact, content=bundle.content)
+
+
+@router.post("/log/workbook/reconcile-preview", response_model=DocumentArtifactReconcilePreviewOut)
+async def post_log_workbook_reconcile_preview_v2(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    workbook: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> DocumentArtifactReconcilePreviewOut:
+    resolved_year = _default_artifact_year(year)
+    current_workspace = await build_log_workspace(db, q=None, limit=200)
+    content = await workbook.read()
+    try:
+        parsed = parse_log_workbook_inputs_from_workbook(
+            content,
+            year=resolved_year,
+            current_workspace=current_workspace,
+        )
+    except (ValidationError, ValueError) as exc:
+        return DocumentArtifactReconcilePreviewOut(
+            editable=False,
+            changes=[],
+            warnings=["Dry-run tamamlanmadı; hiçbir mutasyon yapılmadı."],
+            blocking_errors=[str(exc)],
+        )
+
+    preview = build_log_reconcile_preview(current_workspace, parsed)
+    if parsed.base_version:
+        record = await get_artifact_record(db, f"log.live.{resolved_year}")
+        if record is None:
+            preview.editable = False
+            preview.blocking_errors.append("Log workbook sync artifact bulunamadı; önce güncel export alın.")
+        else:
+            conflict_state = resolve_artifact_conflict_state(
+                current_revision=getattr(record, "revision", 1),
+                incoming_revision=parsed.base_version,
+            )
+            if conflict_state != "clean":
+                preview.editable = False
+                preview.blocking_errors.append(
+                    f"Log artifact conflict_state={conflict_state}; önce yenileyin; apply yapılmadı."
+                )
+    return preview
 
 
 @router.post("/log/workbook/import", response_model=AfgLogWorkspaceOut)

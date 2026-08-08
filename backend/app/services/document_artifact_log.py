@@ -8,6 +8,8 @@ from uuid import UUID
 from openpyxl.utils.datetime import from_excel as excel_datetime_from_serial
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from app.schemas.document_artifact import DocumentArtifactCellChangeOut, DocumentArtifactReconcilePreviewOut
+
 
 def _core():
     from app.services import document_artifact_service as core
@@ -113,6 +115,190 @@ def _log_sheet_lines(workspace, metal_bucket: str) -> list[dict[str, Any]]:
 
 def _log_route_line_rows(workspace) -> list[dict[str, Any]]:
     return [*_log_sheet_lines(workspace, "gold"), *_log_sheet_lines(workspace, "silver")]
+
+
+def _preview_value(value: object) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    text = str(value).strip()
+    return text or "—"
+
+
+_LOG_LOT_PREVIEW_FIELDS = {
+    "gold": (
+        ("sent_date", "Gönderim tarihi", "B37"),
+        ("purchased_from_date", "Satın alma tarihi", "C37"),
+        ("after_pure_gold_grams", "Son saf altın gramı", "F38"),
+        ("insurance_dkk", "Sigorta", "B41"),
+        ("shipping_dkk", "Nakliye", "B42"),
+        ("refining_dkk", "Rafineri", "B43"),
+        ("sale_date", "Satış tarihi", "E44"),
+        ("quote_eur", "EUR teklif", "E45"),
+        ("exchange_rate_dkk", "DKK kur", "E46"),
+        ("payout_total_dkk", "Ödeme toplamı", "B47"),
+    ),
+    "silver": (
+        ("sent_date", "Gönderim tarihi", "B88"),
+        ("purchased_from_date", "Satın alma tarihi", "C88"),
+        ("after_pure_gold_grams", "Son saf altın gramı", "F90"),
+        ("insurance_dkk", "Sigorta", "B93"),
+        ("shipping_dkk", "Nakliye", "B95"),
+        ("refining_dkk", "Rafineri", "B94"),
+        ("sale_date", "Satış tarihi", "E96"),
+        ("quote_eur", "EUR teklif", "E97"),
+        ("exchange_rate_dkk", "DKK kur", "E98"),
+        ("payout_total_dkk", "Ödeme toplamı", "B99"),
+    ),
+}
+
+
+def build_log_reconcile_preview(workspace, parsed) -> DocumentArtifactReconcilePreviewOut:
+    """Build a side-effect-free Log import plan.
+
+    The parser already filters unchanged sync rows. This helper turns the
+    remaining route/lot operations into the same controlled-change contract
+    used by Alış and Depolama, while making missing entities and repeat-import
+    behavior visible before the apply endpoint mutates the database.
+    """
+    core = _core()
+    changes: list[DocumentArtifactCellChangeOut] = []
+    blocking_errors: list[str] = []
+    warnings: list[str] = []
+
+    line_by_id: dict[str, tuple[str, Any, Any]] = {}
+    route_cell_by_id: dict[str, str] = {}
+    for metal_bucket, start_row in (("gold", core.LOG_GOLD_LEDGER_START), ("silver", core.LOG_SILVER_LEDGER_START)):
+        bucket = workspace.gold if metal_bucket == "gold" else workspace.silver
+        row_index = start_row
+        for document in bucket.documents:
+            for line in document.lines:
+                line_key = str(line.id)
+                line_by_id[line_key] = (metal_bucket, document, line)
+                route_cell_by_id[line_key] = f"G{row_index}"
+                row_index += 1
+
+    lot_by_id: dict[str, tuple[str, Any]] = {}
+    for metal_bucket in ("gold", "silver"):
+        bucket = workspace.gold if metal_bucket == "gold" else workspace.silver
+        for lot in bucket.melt_lots:
+            lot_by_id[str(lot.id)] = (metal_bucket, lot)
+
+    seen_route_lines: set[str] = set()
+    duplicate_route_lines: set[str] = set()
+    route_change_count = 0
+    for edit in parsed.route_updates:
+        payload = edit.payload
+        for line_id in payload.line_ids:
+            line_key = str(line_id)
+            if line_key in seen_route_lines:
+                duplicate_route_lines.add(line_key)
+            seen_route_lines.add(line_key)
+            current = line_by_id.get(line_key)
+            if current is None:
+                blocking_errors.append(f"Log satırı bulunamadı: {line_key}")
+                continue
+            metal_bucket, document, line = current
+            old_code = _log_route_code(
+                line.operation_destination,
+                line.operation_classification,
+                metal_type=line.metal_type,
+            )
+            new_code = _log_route_code(
+                payload.destination,
+                payload.classification,
+                metal_type=line.metal_type,
+            )
+            old_value = f"{old_code} ({_log_default_classification(line.metal_type, line.operation_classification)})"
+            new_value = f"{new_code} ({payload.classification})"
+            if old_value == new_value:
+                continue
+            route_change_count += 1
+            changes.append(
+                DocumentArtifactCellChangeOut(
+                    sheet=core.LOG_SHEET,
+                    cell_ref=route_cell_by_id.get(line_key, f"line:{line_key}"),
+                    label=f"{document.document_number} · satır {line.line_no} · rota",
+                    old_value=old_value,
+                    new_value=new_value,
+                )
+            )
+
+    lot_change_count = 0
+    for update in parsed.lot_updates:
+        lot_key = str(update.lot_id)
+        current = lot_by_id.get(lot_key)
+        if current is None:
+            blocking_errors.append(f"Log eritme lotu bulunamadı: {lot_key}")
+            continue
+        metal_bucket, lot = current
+        for field_name, label, cell_ref in _LOG_LOT_PREVIEW_FIELDS[metal_bucket]:
+            old_value = _preview_value(getattr(lot, field_name, None))
+            new_value = _preview_value(getattr(update.payload, field_name, None))
+            if old_value == new_value:
+                continue
+            lot_change_count += 1
+            changes.append(
+                DocumentArtifactCellChangeOut(
+                    sheet=core.LOG_SHEET,
+                    cell_ref=cell_ref,
+                    label=f"{metal_bucket} lot · {label}",
+                    old_value=old_value,
+                    new_value=new_value,
+                )
+            )
+
+    for create in parsed.lot_creates:
+        metal_bucket = create.metal_bucket if create.metal_bucket in _LOG_LOT_PREVIEW_FIELDS else "gold"
+        for field_name, label, cell_ref in _LOG_LOT_PREVIEW_FIELDS[metal_bucket]:
+            new_value = _preview_value(getattr(create.update_payload, field_name, None))
+            if new_value == "—":
+                continue
+            lot_change_count += 1
+            changes.append(
+                DocumentArtifactCellChangeOut(
+                    sheet=core.LOG_SHEET,
+                    cell_ref=cell_ref,
+                    label=f"Yeni {metal_bucket} lot · {label}",
+                    old_value="—",
+                    new_value=new_value,
+                )
+            )
+
+    if parsed.base_version:
+        warnings.append(
+            f"Sync base revision: {parsed.base_version}. Aynı veya eski workbook tekrarında stale/idempotency kontrolü uygulanır."
+        )
+    else:
+        warnings.append(
+            "Raw/tarihsel Log import preview yalnızca parse eder; bu aşamada veritabanı veya dış sistem yazısı yapılmaz."
+        )
+    if changes:
+        warnings.append(
+            f"Import planı: {route_change_count} rota ve {lot_change_count} lot alanı kontrollü olarak uygulanacak."
+        )
+    else:
+        warnings.append("Idempotent no-op: CRM state ile aynı; uygulanacak değişiklik yok.")
+    if parsed.lot_creates:
+        warnings.append(
+            f"{len(parsed.lot_creates)} yeni eritme lotu planlandı; apply sonrası aynı sync revision tekrarında duplicate oluşturulmaz."
+        )
+    if duplicate_route_lines:
+        warnings.append(
+            f"Aynı rota işlemi birden fazla kez bulundu ({len(duplicate_route_lines)} satır); preview bunu tek kontrollü değişiklik olarak gösteriyor."
+        )
+
+    return DocumentArtifactReconcilePreviewOut(
+        editable=not blocking_errors,
+        changes=changes,
+        warnings=warnings,
+        blocking_errors=blocking_errors,
+    )
 
 
 def _log_bucket_group_key(row: dict[str, Any]) -> str | None:
