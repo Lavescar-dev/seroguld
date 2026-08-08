@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -25,18 +26,41 @@ from app.services.woocommerce import WooCommerceService
 from app.utils.helpers import quantize_2, utc_now
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 SALE_ORDER_STATUSES = {"processing", "completed"}
 
 
-def _verify_wc_signature(raw_body: bytes, provided_signature: str | None, secret: str | None) -> bool:
-    if not secret:
+def _verify_wc_signature(
+    raw_body: bytes,
+    provided_signature: str | None,
+    secret: str | None,
+    *,
+    environment: str | None = None,
+) -> bool:
+    environment_name = (environment or "development").strip().lower()
+    normalized_secret = (secret or "").strip()
+    if not normalized_secret:
+        if environment_name in {"production", "prod"}:
+            logger.error(
+                "WooCommerce webhook rejected: webhook secret is not configured in production"
+            )
+            return False
+
+        logger.warning(
+            "WooCommerce webhook signature verification bypassed: webhook secret is empty in %s environment",
+            environment_name,
+        )
         return True
     if not provided_signature:
+        logger.warning("WooCommerce webhook rejected: signature header is missing")
         return False
-    digest = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
+    digest = hmac.new(normalized_secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
     expected_signature = base64.b64encode(digest).decode("utf-8")
-    return hmac.compare_digest(provided_signature.strip(), expected_signature)
+    is_valid = hmac.compare_digest(provided_signature.strip(), expected_signature)
+    if not is_valid:
+        logger.warning("WooCommerce webhook rejected: signature is invalid")
+    return is_valid
 
 
 def _parse_wc_datetime(value: str | None) -> datetime | None:
@@ -218,7 +242,12 @@ async def woocommerce_webhook(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook payload boş")
 
     signature_header = request.headers.get("x-wc-webhook-signature")
-    if not _verify_wc_signature(raw_body, signature_header, settings.woocommerce_webhook_secret):
+    if not _verify_wc_signature(
+        raw_body,
+        signature_header,
+        settings.woocommerce_webhook_secret,
+        environment=settings.env,
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Webhook imzası geçersiz")
 
     try:

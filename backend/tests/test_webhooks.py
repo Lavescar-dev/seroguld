@@ -1,24 +1,47 @@
 import base64
 import hashlib
 import hmac
+import logging
 from decimal import Decimal
 
 from app.api.webhooks import _extract_order_sale_items, _parse_wc_datetime, _verify_wc_signature
 
 
-def test_verify_wc_signature_matches():
+def test_verify_wc_signature_accepts_valid_hmac_in_production():
     body = b'{"id":123,"status":"processing"}'
     secret = "super-secret"
     signature = base64.b64encode(hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()).decode("utf-8")
 
-    assert _verify_wc_signature(body, signature, secret)
-    assert not _verify_wc_signature(body, "bad-signature", secret)
+    assert _verify_wc_signature(body, signature, secret, environment="production")
 
 
-def test_verify_wc_signature_is_optional_when_secret_missing():
+def test_verify_wc_signature_rejects_invalid_hmac(caplog):
+    caplog.set_level(logging.WARNING, logger="app.api.webhooks")
     body = b'{"id":123}'
-    assert _verify_wc_signature(body, None, "")
-    assert _verify_wc_signature(body, None, None)
+    secret = "super-secret"
+
+    assert not _verify_wc_signature(body, "bad-signature", secret, environment="production")
+    assert "signature is invalid" in caplog.text
+
+
+def test_verify_wc_signature_allows_blank_secret_outside_production_and_logs(caplog):
+    caplog.set_level(logging.WARNING, logger="app.api.webhooks")
+    body = b'{"id":123}'
+
+    assert _verify_wc_signature(body, None, "", environment="development")
+    assert "signature verification bypassed" in caplog.text
+    caplog.clear()
+
+    assert _verify_wc_signature(body, None, "  ", environment="test")
+    assert "test environment" in caplog.text
+
+
+def test_verify_wc_signature_rejects_blank_secret_in_production(caplog):
+    caplog.set_level(logging.ERROR, logger="app.api.webhooks")
+    body = b'{"id":123}'
+
+    assert not _verify_wc_signature(body, None, "", environment="production")
+    assert "not configured in production" in caplog.text
 
 
 def test_extract_order_sale_items_processing_order():
