@@ -635,6 +635,49 @@ def reset_uniconta_client() -> None:
 DEFAULT_UNICONTA_CURRENCY = "DKK"
 DEFAULT_UNICONTA_COUNTRY = 57  # Denmark
 
+
+def _pos_document_order_number(pos_document: Any) -> int | None:
+    """PosDocument.sequence_no → Uniconta OrderNumber (stabil business key, UNI-002)."""
+    try:
+        return int(getattr(pos_document, "sequence_no", None))
+    except (TypeError, ValueError):
+        return None
+
+
+async def find_existing_invoice_for_pos_document(
+    client: "UnicontaClient",
+    *,
+    account: str,
+    sequence_no: Any,
+) -> dict[str, Any] | None:
+    """Lookup-before-create (UNI-002): aynı business key ile daha önce yaratılmış
+    bir DebtorInvoice var mı?
+
+    Remote-create-success-then-local-crash senaryosunda yerel durum 'synced'
+    yazılamadan kaybolur; retry'ın duplicate fatura yaratmasını önlemek için
+    GenerateDebtorInvoice öncesi OrderNumber(=sequence_no) + Account ile sorgu
+    yapılır. Sorgu hatası duplicate korumasını bloklamaz — mevcut davranışa
+    (create denemesi) düşer ve warning log'lanır.
+    """
+    order_number = _pos_document_order_number(type("_P", (), {"sequence_no": sequence_no})())
+    if order_number is None:
+        return None
+    filters: list[dict[str, Any]] = [
+        {"PropertyName": "OrderNumber", "FilterValue": str(order_number)},
+    ]
+    if account:
+        filters.append({"PropertyName": "Account", "FilterValue": account})
+    try:
+        rows = await client.query("DebtorInvoiceClient", filters=filters, top=1)
+    except UnicontaError as exc:
+        LOGGER.warning(
+            "Uniconta lookup-before-create sorgusu başarısız (seq=%s): %s — create denenecek",
+            sequence_no,
+            exc,
+        )
+        return None
+    return rows[0] if rows else None
+
 # U14 — DebtorClient cache. TTL 1h; ensure_debtor_for_customer her
 # finalize'da Uniconta query yapmasın diye account lookup'ı cache'liyoruz.
 _DEBTOR_CACHE_TTL = timedelta(hours=1)
@@ -929,6 +972,58 @@ async def sync_pos_document_to_uniconta(
             city=city,
         )
 
+        # UNI-002 — stable business key + lookup-before-create.  The remote
+        # invoice can exist even when the process crashes before the local
+        # PosDocument commit; never create a second invoice for that key.
+        order_number = _pos_document_order_number(pos_document)
+        if order_number is None:
+            raise UnicontaError(
+                "PosDocument sequence_no geçersiz; Uniconta OrderNumber üretilemedi."
+            )
+        existing_remote = await find_existing_invoice_for_pos_document(
+            client,
+            account=account,
+            sequence_no=order_number,
+        )
+        if existing_remote:
+            raw_existing_invoice_no = next(
+                (
+                    existing_remote.get(key)
+                    for key in ("InvoiceNumber", "Voucher", "PrimaryKeyId")
+                    if existing_remote.get(key) not in (None, "")
+                ),
+                None,
+            )
+            if raw_existing_invoice_no is None:
+                raise UnicontaError(
+                    "Uniconta'da mevcut OrderNumber kaydı bulundu ancak InvoiceNumber yok."
+                )
+            existing_invoice_number = str(raw_existing_invoice_no)
+            existing_invoice_date = (
+                existing_remote.get("Date")
+                or existing_remote.get("InvoiceDate")
+                or _dt.now(timezone.utc).date().isoformat()
+            )
+            existing_pdf_path = getattr(pos_document, "uniconta_pdf_path", None)
+            pos_document.uniconta_sync_status = "synced"
+            pos_document.uniconta_invoice_number = existing_invoice_number
+            pos_document.uniconta_account = account
+            pos_document.uniconta_invoice_date = str(existing_invoice_date)[:20]
+            pos_document.uniconta_synced_at = _dt.now(timezone.utc)
+            pos_document.uniconta_sync_error = None
+            LOGGER.info(
+                "Uniconta sync linked existing invoice (idempotent): PosDocument seq=%s invoice=%s",
+                pos_document.sequence_no,
+                existing_invoice_number,
+            )
+            return {
+                "ok": True,
+                "message": "existing remote invoice linked (idempotent)",
+                "invoice_number": existing_invoice_number,
+                "pdf_path": existing_pdf_path,
+                "idempotent": True,
+            }
+
         invoice_date = _dt.now(timezone.utc).date().isoformat()
         order_payload: dict[str, Any] = {
             "Account": account,
@@ -966,6 +1061,7 @@ async def sync_pos_document_to_uniconta(
             simulate=False,
             send_email=bool(getattr(settings, "uniconta_send_email_on_finalize", False)),
             send_xml=bool(getattr(settings, "uniconta_send_xml_on_finalize", False)),
+            order_number=order_number,
         )
         raw_invoice_no = gen_result.get("InvoiceNumber")
         if raw_invoice_no is None:
