@@ -144,7 +144,8 @@ async def test_execute_pseudonymize_prefers_explicit_woocommerce_customer_id(mon
 
         await execute_gdpr_request(session, request, actor=admin)
 
-        assert request.status == "completed"
+        assert request.status == "manual_action_required"
+        assert request.completed_at is None
         assert captured["woocommerce_customer_id"] == "42"
 
 
