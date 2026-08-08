@@ -344,6 +344,14 @@ class PosPostalLookupOut(AppBaseModel):
     postal_district: str | None = None
     municipality_name: str | None = None
     region_name: str | None = None
+    status: str = "FOUND"
+    source: str | None = None
+    provenance: str | None = None
+    version: str | None = None
+    fetched_at: str | None = None
+    from_cache: bool = False
+    offline: bool = False
+    error_code: str | None = None
 
 
 class PosWorkspaceGoldRowInput(AppBaseModel):

@@ -193,6 +193,7 @@ from app.services.document_artifact_service import (
     sync_log_workbook_artifact,
 )
 from app.services.office_host_service import office_host_service
+from app.services.postcode_service import lookup_danish_postal_code
 from app.services.runtime_readiness import collect_runtime_readiness
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
 from app.services.uniconta_service import (
@@ -230,54 +231,15 @@ CAT_LABELS = {
 }
 
 
-def _normalize_postal_lookup_code(value: str) -> str:
-    return "".join(ch for ch in (value or "") if ch.isdigit())[:4]
-
-
-def _first_named_item(value) -> str | None:
-    if isinstance(value, list) and value:
-        first = value[0]
-        if isinstance(first, dict):
-            name = str(first.get("navn") or "").strip()
-            return name or None
-        name = str(first or "").strip()
-        return name or None
-    if isinstance(value, dict):
-        name = str(value.get("navn") or "").strip()
-        return name or None
-    text = str(value or "").strip()
-    return text or None
-
-
-async def _lookup_danish_postal_code(postal_code: str) -> PosPostalLookupOut:
-    normalized = _normalize_postal_lookup_code(postal_code)
-    if len(normalized) != 4:
-        raise HTTPException(status_code=422, detail="Postnr. 4 rakam olmalı.")
-
-    url = f"https://api.dataforsyningen.dk/postnumre/{normalized}"
+async def _lookup_danish_postal_code(
+    postal_code: str,
+    *,
+    force_refresh: bool = False,
+) -> PosPostalLookupOut:
     try:
-        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
-            response = await client.get(url, headers={"Accept": "application/json"})
-    except httpx.HTTPError:
-        return PosPostalLookupOut(postal_code=normalized, found=False, available=False)
-
-    if response.status_code == 404:
-        return PosPostalLookupOut(postal_code=normalized, found=False, available=True)
-
-    response.raise_for_status()
-    payload = response.json() if response.content else {}
-    postal_district = str(payload.get("navn") or "").strip() or None
-    municipality_name = _first_named_item(payload.get("kommuner"))
-    region_name = _first_named_item(payload.get("regioner"))
-
-    return PosPostalLookupOut(
-        postal_code=normalized,
-        found=bool(postal_district),
-        available=True,
-        postal_district=postal_district,
-        municipality_name=municipality_name,
-        region_name=region_name,
-    )
+        return await lookup_danish_postal_code(postal_code, force_refresh=force_refresh)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 BACKEND_STARTED_AT = utc_now()
 DESKTOP_SESSION_FILE = ROOT_ENV_FILE.parent / ".run" / "desktop-dev-session.json"
 
