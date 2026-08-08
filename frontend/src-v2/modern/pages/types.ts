@@ -173,6 +173,8 @@ export interface ModernWooPageProps {
   selectedProduct?: ProductOut | null;
   readiness: ModernStatusItem[];
   syncTimeline?: ModernTimelineItem[];
+  isLoading?: boolean;
+  onSelectProduct?: (productId: string) => void;
   onSync?: () => void;
 }
 
@@ -182,25 +184,31 @@ export interface ModernOpmcListPageProps {
   summary: AntiFraudSummary;
   items: AntiFraudOrdersResponse['items'];
   availability?: ModernAvailability;
+  isLoading?: boolean;
   onRefresh?: () => void;
 }
 
 export interface ModernOpmcDetailPageProps {
   requestedId: string;
   detail: AntiFraudOrder | null;
+  isLoading?: boolean;
   refreshAvailability?: ModernAvailability;
   onRefresh?: () => void;
   overrideAvailability?: ModernAvailability;
-  onOverride?: (level: 'low' | 'medium' | 'high') => void;
+  onOverride?: (level: 'low' | 'medium' | 'high', reason?: string) => void;
 }
 
 export interface ModernGdprCockpitPageProps {
-  overview: GdprOverview;
+  overview: GdprOverview | null;
   requests: GdprRequestListItem[];
   jobs: GdprJob[];
   processors: GdprProcessor[];
   retentionPolicies: GdprRetentionPolicy[];
   selectedRequest?: GdprRequestDetail | null;
+  isLoading?: boolean;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
+  onSelectRequest?: (requestId: string) => void;
 }
 
 export interface ModernGdprPublicPrivacyPageProps {
@@ -233,10 +241,23 @@ export interface ModernUnicontaPageProps {
   failedSyncs: UnicontaFailedSyncRow[];
   health: UnicontaHealth | null;
   selectedInvoice?: Fatura | null;
+  stats?: {
+    toplam: number;
+    toplamKredit: number;
+    mailGonderildi: number;
+    eFakturaGonderildi: number;
+  };
+  connectionInfo?: {
+    companyId?: string;
+    env?: string;
+    sendEmailOnFinalize?: boolean;
+    sendXmlOnFinalize?: boolean;
+  };
   connectAvailability?: ModernAvailability;
   retryAvailability?: ModernAvailability;
   onConnect?: () => void;
   onRefresh?: () => void;
+  onSelectInvoice?: (invoice: Fatura) => void;
   onRetryAll?: () => void;
   onRetryFailed?: (sequenceNo: number) => void;
 }

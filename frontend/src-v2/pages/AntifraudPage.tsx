@@ -16,6 +16,7 @@ export function AntifraudPage() {
       summary={state.summary || EMPTY_SUMMARY}
       items={state.filteredOrders}
       onRefresh={state.onRefresh}
+      isLoading={state.isLoading}
       availability={state.isError ? { state: 'unavailable', title: 'OPMC verisi alınamadı', description: state.errorMessage } : { state: 'available' }}
     />
   ) : <MakeOpmcPage {...state} />;
