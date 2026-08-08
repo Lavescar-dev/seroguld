@@ -45,7 +45,7 @@ export function ModernModuleShell({
 }) {
   return (
     <section className="min-h-full font-sg text-sg-text">
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5">
+      <div className="flex min-w-0 w-full flex-col gap-5">
         <div className="rounded-sg-lg border border-sg-border bg-sg-surface p-5 shadow-sg-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 space-y-2">

@@ -64,28 +64,25 @@ const runtimeToneDotClasses: Record<ModernTone, string> = toneDotClasses;
 
 function BrandBlock() {
   return (
-    <div className="flex items-center gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-sg-md bg-sg-surface ring-1 ring-sg-border">
-        <img
-          src="/seroguld-logo.png"
-          alt="Sero Guld"
-          className="h-full w-full scale-[1.35] object-cover object-left"
-        />
-      </span>
-      <span className="min-w-0">
-        <span className="flex items-center gap-2">
-          <span className="truncate text-sm font-bold tracking-[0.08em] text-sg-text">SERO GULD</span>
-          <span className="rounded-sg-sm bg-sg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold leading-none text-sg-accent-dark">V1</span>
+    <div className="min-w-0">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex h-8 w-[136px] shrink-0 items-center justify-center rounded-sg-md bg-sg-surface px-1 ring-1 ring-sg-border">
+          <img
+            src="/seroguld-logo.png"
+            alt="Sero Guld"
+            className="h-full w-full object-contain object-center"
+          />
         </span>
-        <span className="mt-0.5 block truncate text-xs text-sg-text-soft">Kuyumcu Operasyon ERP&apos;si</span>
-      </span>
+        <span className="shrink-0 rounded-sg-sm bg-sg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold leading-none text-sg-accent-dark">V1</span>
+      </div>
+      <span className="mt-1 block truncate text-xs text-sg-text-soft">Kuyumcu Operasyon ERP&apos;si</span>
     </div>
   );
 }
 
 function NavItems({ navGroups }: { navGroups: ModernShellNavGroup[] }) {
   return (
-    <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
+    <nav className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
       {navGroups.map((group) => (
         <div key={group.label}>
           <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-text-soft/80">{group.label}</p>
@@ -185,10 +182,10 @@ export function ModernRootShell({
   );
 
   return (
-    <div data-ui-variant="modern" className="min-h-screen overflow-x-hidden bg-sg-bg font-sg text-sg-text">
-      <div className="flex min-h-screen">
+    <div data-ui-variant="modern" className="h-dvh min-h-0 overflow-hidden bg-sg-bg font-sg text-sg-text">
+      <div className="flex h-full min-h-0">
         {/* Sol sabit gezinme (V15 sidebar: 256-272px) */}
-        <aside className="sticky top-0 hidden h-screen w-[264px] shrink-0 flex-col border-r border-sg-border bg-sg-surface lg:flex">
+        <aside className="hidden h-dvh min-h-0 w-[264px] shrink-0 flex-col border-r border-sg-border bg-sg-surface lg:flex">
           <div className="flex h-[72px] shrink-0 items-center border-b border-sg-border-soft px-5">
             <BrandBlock />
           </div>
@@ -196,7 +193,7 @@ export function ModernRootShell({
           <RuntimeBlock rows={runtimeRows} />
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
           {/* Üst bar (V15 topbar: 72px, gerçek durum çipleri) */}
           <header className="sticky top-0 z-30 flex h-[72px] shrink-0 items-center gap-3 border-b border-sg-border bg-sg-surface/95 px-4 backdrop-blur sm:px-5">
             <button
@@ -231,8 +228,8 @@ export function ModernRootShell({
           </header>
 
           {/* Sayfa başlığı + içerik */}
-          <div className="flex-1 px-4 py-5 sm:px-5 lg:px-6">
-            <div className="mx-auto w-full max-w-[1440px]">
+          <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-5 lg:px-6">
+            <div className="w-full min-w-0">
               <div className="mb-5 max-w-4xl">
                 {eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">{eyebrow}</p> : null}
                 <h1 className="mt-1 text-2xl font-bold tracking-[-0.02em] text-sg-text sm:text-[28px]">{title}</h1>
