@@ -1175,7 +1175,7 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
             total=_to_float(document.gross_amount_dkk),
             paymentMethod=extract_purchase_payment_method(document.notes or pos_session.notes),
         )
-        for document, _ in purchase_rows[:6]
+        for document, pos_session in purchase_rows[:6]
     ]
 
     monthly_map: dict[str, dict[str, float | int]] = defaultdict(lambda: {"adet": 0, "kr": 0.0})
