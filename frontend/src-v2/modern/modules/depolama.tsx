@@ -39,28 +39,28 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <ModernSection title="Stok Listesi" subtitle="Mobil görünüm taşmayı önlemek için kart düzenine geçer.">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <label className="text-xs font-semibold text-brand-600">
+            <label className="text-xs font-semibold text-sg-text-soft">
               Metin Filtre
-              <div className="mt-1 flex items-center gap-2 rounded-2xl border border-brand-200 bg-stone-50 px-3 py-2">
-                <Search className="h-4 w-4 text-brand-400" />
-                <input value={state.filters.q} onChange={(event) => state.setFilters((current) => ({ ...current, q: event.target.value }))} className="w-full bg-transparent text-sm text-brand-900 outline-none" />
+              <div className="mt-1 flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
+                <Search className="h-4 w-4 text-sg-text-soft" />
+                <input value={state.filters.q} onChange={(event) => state.setFilters((current) => ({ ...current, q: event.target.value }))} className="w-full bg-transparent text-sm text-sg-text outline-none" />
               </div>
             </label>
-            <label className="text-xs font-semibold text-brand-600">Lokasyon
-              <input value={state.filters.location} onChange={(event) => state.setFilters((current) => ({ ...current, location: event.target.value }))} className="mt-1 w-full rounded-2xl border border-brand-200 bg-stone-50 px-3 py-2 text-sm text-brand-900 outline-none" />
+            <label className="text-xs font-semibold text-sg-text-soft">Lokasyon
+              <input value={state.filters.location} onChange={(event) => state.setFilters((current) => ({ ...current, location: event.target.value }))} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
             </label>
-            <label className="text-xs font-semibold text-brand-600">Gram Min
-              <input value={state.filters.weightMin} onChange={(event) => state.setFilters((current) => ({ ...current, weightMin: event.target.value }))} className="mt-1 w-full rounded-2xl border border-brand-200 bg-stone-50 px-3 py-2 text-sm text-brand-900 outline-none" />
+            <label className="text-xs font-semibold text-sg-text-soft">Gram Min
+              <input value={state.filters.weightMin} onChange={(event) => state.setFilters((current) => ({ ...current, weightMin: event.target.value }))} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
             </label>
-            <label className="text-xs font-semibold text-brand-600">Gram Max
-              <input value={state.filters.weightMax} onChange={(event) => state.setFilters((current) => ({ ...current, weightMax: event.target.value }))} className="mt-1 w-full rounded-2xl border border-brand-200 bg-stone-50 px-3 py-2 text-sm text-brand-900 outline-none" />
+            <label className="text-xs font-semibold text-sg-text-soft">Gram Max
+              <input value={state.filters.weightMax} onChange={(event) => state.setFilters((current) => ({ ...current, weightMax: event.target.value }))} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
             </label>
           </div>
 
           <div className="mt-4 hidden overflow-x-auto md:block">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-brand-200 text-left text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">
+                <tr className="border-b border-sg-border text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
                   <th className="px-3 py-2">Ürün</th>
                   <th className="px-3 py-2">Kategori</th>
                   <th className="px-3 py-2">Gram</th>
@@ -71,12 +71,12 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
               </thead>
               <tbody>
                 {state.stokList.map((item) => (
-                  <tr key={item.id} className="border-b border-brand-100">
-                    <td className="px-3 py-3 font-black text-brand-950">{item.urun}</td>
-                    <td className="px-3 py-3 text-brand-700">{labelInventoryCategory(item.mainKat)}{item.gumusAlt ? ` / ${labelInventorySubcategory(item.gumusAlt)}` : item.platinAlt ? ` / ${labelInventorySubcategory(item.platinAlt)}` : ''}</td>
-                    <td className="px-3 py-3 text-brand-700">{formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')}</td>
-                    <td className="px-3 py-3 text-brand-700">{formatMoney(item.alisFiyati)}</td>
-                    <td className="px-3 py-3 text-brand-700">{labelShopSyncStatus(item.shopDurumu || null)}</td>
+                  <tr key={item.id} className="border-b border-sg-border-soft">
+                    <td className="px-3 py-3 font-medium text-sg-text">{item.urun}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{labelInventoryCategory(item.mainKat)}{item.gumusAlt ? ` / ${labelInventorySubcategory(item.gumusAlt)}` : item.platinAlt ? ` / ${labelInventorySubcategory(item.platinAlt)}` : ''}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{formatMoney(item.alisFiyati)}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{labelShopSyncStatus(item.shopDurumu || null)}</td>
                     <td className="px-3 py-3">
                       <div className="flex gap-2">
                         <button type="button" onClick={() => state.onOpenDetail(item.id)} className={shellButtonClass('ghost')}>Detay</button>
@@ -91,8 +91,8 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
 
           <div className="mt-4 grid gap-3 md:hidden">
             {state.stokList.map((item) => (
-              <button key={item.id} type="button" onClick={() => state.onOpenDetail(item.id)} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4 text-left">
-                <p className="text-sm font-black text-brand-950">{item.urun}</p>
+              <button key={item.id} type="button" onClick={() => state.onOpenDetail(item.id)} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4 text-left">
+                <p className="text-sm font-semibold text-sg-text">{item.urun}</p>
                 <dl className="mt-3 grid gap-2 text-sm">
                   <MobileRow label="Kategori" value={labelInventoryCategory(item.mainKat)} />
                   <MobileRow label="Gram" value={formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')} />
@@ -109,27 +109,27 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
             <EmptyState title="Ürün Seçilmedi" message="Stok listesinden bir ürün seçildiğinde detay paneli burada açılır." />
           ) : (
             <>
-              <div className="rounded-[20px] border border-brand-200 bg-stone-50 p-4">
+              <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-brand-500">Ürün Kartı</p>
-                    <p className="mt-1 text-lg font-black text-brand-950">{selected.display_name || selected.product_number}</p>
-                    <p className="mt-1 text-sm text-brand-600">{selected.product_number} · {selected.reference_number || 'Ref yok'}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Ürün Kartı</p>
+                    <p className="mt-1 text-lg font-semibold text-sg-text">{selected.display_name || selected.product_number}</p>
+                    <p className="mt-1 text-sm text-sg-text-soft">{selected.product_number} · {selected.reference_number || 'Ref yok'}</p>
                   </div>
-                  <span className="rounded-full border border-brand-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-brand-600">
+                  <span className="rounded-full border border-sg-border bg-sg-surface px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
                     {selected.status}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-[18px] border border-brand-200 bg-white p-3">
-                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">Finans</p>
-                    <p className="mt-1 text-sm text-brand-800">{formatMoney(selected.purchase_price_dkk)}</p>
-                    <p className="mt-1 text-xs text-brand-500">{formatNumber(selected.total_weight_grams || selected.weight_grams, ' g')}</p>
+                  <div className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Finans</p>
+                    <p className="mt-1 text-sm text-sg-text">{formatMoney(selected.purchase_price_dkk)}</p>
+                    <p className="mt-1 text-xs text-sg-text-soft">{formatNumber(selected.total_weight_grams || selected.weight_grams, ' g')}</p>
                   </div>
-                  <div className="rounded-[18px] border border-brand-200 bg-white p-3">
-                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">Kaynak</p>
-                    <p className="mt-1 text-sm text-brand-800">{state.productSourceAfg?.document_number || 'AFG bağlı değil'}</p>
-                    <p className="mt-1 text-xs text-brand-500">{state.productSourceAfg?.issued_at ? formatDate(state.productSourceAfg.issued_at) : '—'}</p>
+                  <div className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Kaynak</p>
+                    <p className="mt-1 text-sm text-sg-text">{state.productSourceAfg?.document_number || 'AFG bağlı değil'}</p>
+                    <p className="mt-1 text-xs text-sg-text-soft">{state.productSourceAfg?.issued_at ? formatDate(state.productSourceAfg.issued_at) : '—'}</p>
                   </div>
                 </div>
               </div>
@@ -159,8 +159,8 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
 function MobileRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <dt className="font-semibold text-brand-500">{label}</dt>
-      <dd className="text-right text-brand-900">{value}</dd>
+      <dt className="font-semibold text-sg-text-soft">{label}</dt>
+      <dd className="text-right text-sg-text">{value}</dd>
     </div>
   );
 }

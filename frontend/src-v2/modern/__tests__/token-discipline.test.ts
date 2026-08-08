@@ -15,10 +15,6 @@ const SRC_ROOT = join(process.cwd(), 'src-v2');
 const SCAN_DIRS = ['modern', 'components/ModernAppShell.tsx'];
 const ALLOWED_RADIUS_PX = new Set(['8', '12', '16', '20']);
 
-// Faz 2 kapsamı: modül ekranları (Alış/Depolama/Log/Customers/Office) bu turda
-// bilinçli olarak dışarıda bırakıldı; token/radius ratchet'i Faz 2'de genişletilecek.
-const PHASE2_PREFIX = join('modern', 'modules') + '/';
-
 function collectFiles(entry: string): string[] {
   const abs = join(SRC_ROOT, entry);
   const stat = statSync(abs);
@@ -35,7 +31,7 @@ function collectFiles(entry: string): string[] {
 }
 
 const allFiles = SCAN_DIRS.flatMap(collectFiles);
-const inScopeFiles = allFiles.filter((file) => !relative(SRC_ROOT, file).startsWith(PHASE2_PREFIX));
+const inScopeFiles = allFiles;
 
 describe('modern UI token disiplini', () => {
   it('hardcoded hex renk yok (Faz 0+1 kapsamı)', () => {

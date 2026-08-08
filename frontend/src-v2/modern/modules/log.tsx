@@ -57,18 +57,18 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
               ) : null
             }
           >
-            <div className="flex items-center gap-2 rounded-[18px] border border-brand-200 bg-stone-50 px-3 py-2">
-              <Search className="h-4 w-4 text-brand-400" />
-              <input value={state.query} onChange={(event) => state.onQueryChange(event.target.value)} className="w-full bg-transparent text-sm text-brand-900 outline-none" placeholder="Belge no / müşteri ara" />
+            <div className="flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
+              <Search className="h-4 w-4 text-sg-text-soft" />
+              <input value={state.query} onChange={(event) => state.onQueryChange(event.target.value)} className="w-full bg-transparent text-sm text-sg-text outline-none" placeholder="Belge no / müşteri ara" />
             </div>
 
             <div className="mt-4 grid gap-3">
               {bucket.documents.map((document) => (
-                <div key={document.sequence_no} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4">
+                <div key={document.sequence_no} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <p className="text-sm font-black text-brand-950">{document.document_number}</p>
-                      <p className="mt-1 text-xs text-brand-500">{formatDate(document.issued_at)} · {document.customer_name || '—'}</p>
+                      <p className="text-sm font-semibold text-sg-text">{document.document_number}</p>
+                      <p className="mt-1 text-xs text-sg-text-soft">{formatDate(document.issued_at)} · {document.customer_name || '—'}</p>
                     </div>
                     <button type="button" onClick={() => state.onToggleDocument(document.sequence_no)} className={shellButtonClass('secondary')}>
                       {state.expandedDocument === document.sequence_no ? 'Kapat' : 'Detay'}
@@ -81,11 +81,11 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                   </dl>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {document.lines.slice(0, 3).map((line) => (
-                      <div key={line.id} className="flex flex-wrap gap-2 rounded-full border border-brand-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-700">
+                      <div key={line.id} className="flex flex-wrap gap-2 rounded-full border border-sg-border bg-sg-surface px-3 py-1.5 text-[11px] font-semibold text-sg-text-soft">
                         <span>L{line.line_no}</span>
-                        <button type="button" onClick={() => state.onRoute(line, 'inventory')} className="text-emerald-700">Depo</button>
-                        <button type="button" onClick={() => state.onRoute(line, 'undecided')} className="text-amber-700">Kararsız</button>
-                        <button type="button" onClick={() => state.onRoute(line, 'melt')} className="text-rose-700">Melt</button>
+                        <button type="button" onClick={() => state.onRoute(line, 'inventory')} className="text-sg-green">Depo</button>
+                        <button type="button" onClick={() => state.onRoute(line, 'undecided')} className="text-sg-amber">Kararsız</button>
+                        <button type="button" onClick={() => state.onRoute(line, 'melt')} className="text-sg-red">Melt</button>
                       </div>
                     ))}
                   </div>
@@ -106,13 +106,13 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                 bucket.melt_lots.map((lot) => {
                   const isFinalized = lot.status === 'finalized';
                   return (
-                    <div key={lot.id} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4">
+                    <div key={lot.id} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <p className="text-sm font-black text-brand-950">Lot {lot.id.slice(0, 8)}</p>
-                          <p className="mt-1 text-xs text-brand-500">{lot.sent_date ? formatDate(lot.sent_date) : 'Gönderim tarihi yok'}</p>
+                          <p className="text-sm font-semibold text-sg-text">Lot {lot.id.slice(0, 8)}</p>
+                          <p className="mt-1 text-xs text-sg-text-soft">{lot.sent_date ? formatDate(lot.sent_date) : 'Gönderim tarihi yok'}</p>
                         </div>
-                        <span className="rounded-full border border-brand-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-brand-600">
+                        <span className="rounded-full border border-sg-border bg-sg-surface px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
                           {lot.status || 'draft'}
                         </span>
                       </div>
@@ -146,8 +146,8 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
 function MobileRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <dt className="font-semibold text-brand-500">{label}</dt>
-      <dd className="text-right text-brand-900">{value}</dd>
+      <dt className="font-semibold text-sg-text-soft">{label}</dt>
+      <dd className="text-right text-sg-text">{value}</dd>
     </div>
   );
 }

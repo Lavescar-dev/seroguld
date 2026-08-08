@@ -15,7 +15,7 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
       badges={
         <>
           {viewModel.revisions.map((item) => (
-            <span key={item.id} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] ${toneBadgeClass(item.tone)}`}>
+            <span key={item.id} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${toneBadgeClass(item.tone)}`}>
               <span className="opacity-70">{item.label}</span>
               <span>{item.value}</span>
             </span>
@@ -52,9 +52,9 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
       <ModernSection title="Senkron ve Revision" subtitle="CRM, workbook ve base revision görünürlüğü route seviyesinde tutulur.">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {viewModel.syncBadges.map((item) => (
-            <div key={item.id} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4">
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">{item.label}</p>
-              <p className="mt-2 text-sm font-black text-brand-950">{item.value}</p>
+            <div key={item.id} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{item.label}</p>
+              <p className="mt-2 text-sm font-semibold text-sg-text">{item.value}</p>
             </div>
           ))}
         </div>
@@ -64,18 +64,18 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
         <ModernSection title="Conflict Resolution" subtitle="Per-field çözüm butonları yalnız callback verildiğinde görünür.">
           <div className="grid gap-3">
             {viewModel.resolutionFields.map((field) => (
-              <div key={field.id} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4">
+              <div key={field.id} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
-                    <p className="text-sm font-black text-brand-950">{field.label}</p>
-                    <div className="mt-2 grid gap-2 text-sm text-brand-700 sm:grid-cols-2">
-                      <div className="rounded-2xl border border-brand-200 bg-white px-3 py-2">
-                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-brand-500">CRM</p>
-                        <p className="mt-1 break-words text-brand-900">{field.crmValue || '—'}</p>
+                    <p className="text-sm font-semibold text-sg-text">{field.label}</p>
+                    <div className="mt-2 grid gap-2 text-sm text-sg-text-soft sm:grid-cols-2">
+                      <div className="rounded-sg-lg border border-sg-border bg-sg-surface px-3 py-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">CRM</p>
+                        <p className="mt-1 break-words text-sg-text">{field.crmValue || '—'}</p>
                       </div>
-                      <div className="rounded-2xl border border-brand-200 bg-white px-3 py-2">
-                        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-brand-500">Workbook</p>
-                        <p className="mt-1 break-words text-brand-900">{field.workbookValue || '—'}</p>
+                      <div className="rounded-sg-lg border border-sg-border bg-sg-surface px-3 py-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Workbook</p>
+                        <p className="mt-1 break-words text-sg-text">{field.workbookValue || '—'}</p>
                       </div>
                     </div>
                   </div>
@@ -91,7 +91,7 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
       ) : null}
 
       {viewModel.isOpen ? (
-        <div className={`overflow-hidden rounded-[24px] border border-brand-200 bg-white shadow-sm ${viewModel.isExpanded ? 'min-h-[78vh]' : 'min-h-[52vh]'}`}>
+        <div className={`overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface shadow-sg-sm ${viewModel.isExpanded ? 'min-h-[78vh]' : 'min-h-[52vh]'}`}>
           <div className={`${viewModel.isExpanded ? 'h-[78vh]' : 'h-[52vh]'} min-h-[480px]`}>
             <MakeOfficeDocumentPage {...viewModel.state} layoutMode="workspace" onClose={viewModel.onClose} />
           </div>

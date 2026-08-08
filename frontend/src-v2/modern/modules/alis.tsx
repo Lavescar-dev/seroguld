@@ -88,18 +88,18 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
             }
           >
             <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-[20px] border border-brand-200 bg-stone-50 p-4">
-                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-brand-500">Müşteri</p>
-                <dl className="mt-3 grid gap-2 text-sm text-brand-700">
+              <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p>
+                <dl className="mt-3 grid gap-2 text-sm text-sg-text-soft">
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">Ad</dt><dd className="text-right">{activeWorkspace.customer.name || 'Seçilmedi'}</dd></div>
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">Telefon</dt><dd className="text-right">{activeWorkspace.customer.phone || '—'}</dd></div>
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">CPR</dt><dd className="text-right">{activeWorkspace.customer.cpr_number ? 'Kayıtlı · gizli' : '—'}</dd></div>
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">Ödeme</dt><dd className="text-right uppercase">{state.paymentMethod}</dd></div>
                 </dl>
               </div>
-              <div className="rounded-[20px] border border-brand-200 bg-stone-50 p-4">
-                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-brand-500">Numbering ve Banka</p>
-                <dl className="mt-3 grid gap-2 text-sm text-brand-700">
+              <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Numbering ve Banka</p>
+                <dl className="mt-3 grid gap-2 text-sm text-sg-text-soft">
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">AFG No</dt><dd className="text-right">{state.numbering.afregnings_number_next || '—'}</dd></div>
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">Invoice No</dt><dd className="text-right">{state.numbering.invoice_number_next || '—'}</dd></div>
                   <div className="flex items-start justify-between gap-3"><dt className="font-semibold">Reg</dt><dd className="text-right">{state.bankInfo.reg_number || '—'}</dd></div>
@@ -126,11 +126,11 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
 
           <ModernSection title="Kayıtlar ve Yardımcı Durumlar" subtitle="Liste, draft resume ve Uniconta durumları gerçek callback'lerle bağlıdır.">
             {state.draftWorkspace ? (
-              <div className="rounded-[20px] border border-amber-300 bg-amber-50 p-4">
+              <div className="rounded-sg-xl border border-sg-amber/20 bg-sg-amber-soft p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-amber-800">Açık Draft</p>
-                    <p className="mt-1 text-sm text-amber-900">{state.draftWorkspace.session.session_code}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-amber">Açık Draft</p>
+                    <p className="mt-1 text-sm text-sg-amber">{state.draftWorkspace.session.session_code}</p>
                   </div>
                   <button type="button" onClick={state.onResumeDraft} className={shellButtonClass('secondary')}>
                     Devam Et
@@ -139,20 +139,20 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
               </div>
             ) : null}
 
-            <div className="mt-4 flex items-center gap-2 rounded-[18px] border border-brand-200 bg-stone-50 px-3 py-2">
-              <Search className="h-4 w-4 text-brand-400" />
+            <div className="mt-4 flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
+              <Search className="h-4 w-4 text-sg-text-soft" />
               <input
                 value={state.purchaseSearchTerm}
                 onChange={(event) => state.setPurchaseSearchTerm(event.target.value)}
                 placeholder="Belge no / müşteri ara"
-                className="w-full bg-transparent text-sm text-brand-900 outline-none"
+                className="w-full bg-transparent text-sm text-sg-text outline-none"
               />
             </div>
 
             <div className="mt-4 hidden overflow-x-auto md:block">
               <table className="min-w-full text-sm">
                 <thead>
-                  <tr className="border-b border-brand-200 text-left text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">
+                  <tr className="border-b border-sg-border text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
                     <th className="px-3 py-2">Belge</th>
                     <th className="px-3 py-2">Müşteri</th>
                     <th className="px-3 py-2">Gram</th>
@@ -163,12 +163,12 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
                 </thead>
                 <tbody>
                   {state.documents.slice(0, 8).map((document) => (
-                    <tr key={document.sequence_no} className="border-b border-brand-100">
-                      <td className="px-3 py-3 font-black text-brand-900">{document.document_number}</td>
-                      <td className="px-3 py-3 text-brand-700">{document.customer_name || '—'}</td>
-                      <td className="px-3 py-3 text-brand-700">{formatNumber(document.total_weight_grams, ' g')}</td>
-                      <td className="px-3 py-3 text-brand-700">{formatMoney(document.gross_amount_dkk)}</td>
-                      <td className="px-3 py-3 text-brand-500">{formatRelativeTime(document.issued_at)}</td>
+                    <tr key={document.sequence_no} className="border-b border-sg-border-soft">
+                      <td className="px-3 py-3 font-medium text-sg-text">{document.document_number}</td>
+                      <td className="px-3 py-3 text-sg-text-soft">{document.customer_name || '—'}</td>
+                      <td className="px-3 py-3 text-sg-text-soft">{formatNumber(document.total_weight_grams, ' g')}</td>
+                      <td className="px-3 py-3 text-sg-text-soft">{formatMoney(document.gross_amount_dkk)}</td>
+                      <td className="px-3 py-3 text-sg-text-soft">{formatRelativeTime(document.issued_at)}</td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-2">
                           <button type="button" onClick={() => state.onViewDocument(document)} className={shellButtonClass('ghost')}>Detay</button>
@@ -183,13 +183,13 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
 
             <div className="mt-4 grid gap-3 md:hidden">
               {state.documents.slice(0, 8).map((document) => (
-                <div key={document.sequence_no} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4">
+                <div key={document.sequence_no} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">Belge</p>
-                      <p className="mt-1 text-sm font-black text-brand-950">{document.document_number}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Belge</p>
+                      <p className="mt-1 text-sm font-semibold text-sg-text">{document.document_number}</p>
                     </div>
-                    <span className="text-xs text-brand-500">{formatRelativeTime(document.issued_at)}</span>
+                    <span className="text-xs text-sg-text-soft">{formatRelativeTime(document.issued_at)}</span>
                   </div>
                   <dl className="mt-3 grid gap-2 text-sm">
                     <MobileRow label="Müşteri" value={document.customer_name || '—'} />
@@ -209,19 +209,19 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
 
       {!hasWorkspace && phase === 'ready' ? (
         <ModernSection title="Son Alışlar" subtitle="Responsive belge listesi. Mobilde satırlar etiketli kartlara döner.">
-          <div className="mb-4 flex items-center gap-2 rounded-[18px] border border-brand-200 bg-stone-50 px-3 py-2">
-            <Search className="h-4 w-4 text-brand-400" />
+          <div className="mb-4 flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
+            <Search className="h-4 w-4 text-sg-text-soft" />
             <input
               value={state.purchaseSearchTerm}
               onChange={(event) => state.setPurchaseSearchTerm(event.target.value)}
               placeholder="Belge no / müşteri ara"
-              className="w-full bg-transparent text-sm text-brand-900 outline-none"
+              className="w-full bg-transparent text-sm text-sg-text outline-none"
             />
           </div>
           <div className="grid gap-3 md:hidden">
             {state.documents.map((document) => (
-              <div key={document.sequence_no} className="rounded-[18px] border border-brand-200 bg-stone-50 p-4">
-                <p className="text-sm font-black text-brand-950">{document.document_number}</p>
+              <div key={document.sequence_no} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
+                <p className="text-sm font-semibold text-sg-text">{document.document_number}</p>
                 <dl className="mt-3 grid gap-2 text-sm">
                   <MobileRow label="Müşteri" value={document.customer_name || '—'} />
                   <MobileRow label="Gram" value={formatNumber(document.total_weight_grams, ' g')} />
@@ -234,7 +234,7 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
           <div className="hidden overflow-x-auto md:block">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-brand-200 text-left text-[11px] font-black uppercase tracking-[0.18em] text-brand-500">
+                <tr className="border-b border-sg-border text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
                   <th className="px-3 py-2">Belge</th>
                   <th className="px-3 py-2">Müşteri</th>
                   <th className="px-3 py-2">Gram</th>
@@ -244,12 +244,12 @@ export function ModernAlisModule({ viewModel }: { viewModel: ModernAlisViewModel
               </thead>
               <tbody>
                 {state.documents.map((document) => (
-                  <tr key={document.sequence_no} className="border-b border-brand-100">
-                    <td className="px-3 py-3 font-black text-brand-950">{document.document_number}</td>
-                    <td className="px-3 py-3 text-brand-700">{document.customer_name || '—'}</td>
-                    <td className="px-3 py-3 text-brand-700">{formatNumber(document.total_weight_grams, ' g')}</td>
-                    <td className="px-3 py-3 text-brand-700">{formatMoney(document.gross_amount_dkk)}</td>
-                    <td className="px-3 py-3 text-brand-500">{formatRelativeTime(document.issued_at)}</td>
+                  <tr key={document.sequence_no} className="border-b border-sg-border-soft">
+                    <td className="px-3 py-3 font-medium text-sg-text">{document.document_number}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{document.customer_name || '—'}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{formatNumber(document.total_weight_grams, ' g')}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{formatMoney(document.gross_amount_dkk)}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{formatRelativeTime(document.issued_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -273,26 +273,26 @@ function EditableRowsCard({
   onAvanceChange: (key: string, value: string) => void;
 }) {
   return (
-    <div className="rounded-[20px] border border-brand-200 bg-stone-50 p-4">
-      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-brand-500">{title}</p>
+    <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{title}</p>
       <div className="mt-3 grid gap-3">
         {rows.map((row) => (
-          <div key={row.key} className="rounded-[18px] border border-brand-200 bg-white p-3">
+          <div key={row.key} className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-black text-brand-950">{row.name}</p>
-                <p className="text-xs text-brand-500">{row.purity || '—'}%</p>
+                <p className="text-sm font-semibold text-sg-text">{row.name}</p>
+                <p className="text-xs text-sg-text-soft">{row.purity || '—'}%</p>
               </div>
-              <p className="text-sm font-semibold text-brand-700">{formatMoney(row.total)}</p>
+              <p className="text-sm font-semibold text-sg-text-soft">{formatMoney(row.total)}</p>
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="text-xs font-semibold text-brand-600">
+              <label className="text-xs font-semibold text-sg-text-soft">
                 Gram
-                <input value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className="mt-1 w-full rounded-2xl border border-brand-200 bg-stone-50 px-3 py-2 text-sm text-brand-900 outline-none" />
+                <input value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
               </label>
-              <label className="text-xs font-semibold text-brand-600">
+              <label className="text-xs font-semibold text-sg-text-soft">
                 Avance %
-                <input value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className="mt-1 w-full rounded-2xl border border-brand-200 bg-stone-50 px-3 py-2 text-sm text-brand-900 outline-none" />
+                <input value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
               </label>
             </div>
           </div>
@@ -305,8 +305,8 @@ function EditableRowsCard({
 function MobileRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <dt className="font-semibold text-brand-500">{label}</dt>
-      <dd className="text-right text-brand-900">{value}</dd>
+      <dt className="font-semibold text-sg-text-soft">{label}</dt>
+      <dd className="text-right text-sg-text">{value}</dd>
     </div>
   );
 }
