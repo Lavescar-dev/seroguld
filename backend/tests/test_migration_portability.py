@@ -31,4 +31,14 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
     with sqlite3.connect(database_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
 
-    assert version == ("0015_gdpr_runner_and_woo_customer_map",)
+    heads = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        cwd=BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    heads = [token for token in heads if token != "(head)"]
+    assert len(heads) == 1, f"tek migration head bekleniyor: {heads}"
+    assert version == (heads[0],)
