@@ -16,6 +16,8 @@ DATABASE_PATH="${SMOKE_DIR}/smoke.db"
 DATABASE_URL="sqlite+aiosqlite:///${DATABASE_PATH}"
 BACKEND_LOG="${SMOKE_DIR}/backend.log"
 FRONTEND_LOG="${SMOKE_DIR}/frontend.log"
+SMOKE_ADMIN_EMAIL="${FRONTEND_SMOKE_ADMIN_EMAIL:-info@seroguld.dk}"
+SMOKE_ADMIN_PASSWORD="${FRONTEND_SMOKE_ADMIN_PASSWORD:-Admin123!}"
 
 BACKEND_PID=""
 FRONTEND_PID=""
@@ -55,7 +57,11 @@ bash "${ROOT_DIR}/scripts/setup-dev.sh"
   env DATABASE_URL="${DATABASE_URL}" .venv/bin/python -m alembic upgrade head
 )
 
-env DATABASE_URL="${DATABASE_URL}" "${BACKEND_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/bootstrap-admin.py"
+env \
+  DATABASE_URL="${DATABASE_URL}" \
+  INITIAL_ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL}" \
+  INITIAL_ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD}" \
+  "${BACKEND_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/bootstrap-admin.py"
 
 pushd "${BACKEND_DIR}" >/dev/null
 nohup env \
