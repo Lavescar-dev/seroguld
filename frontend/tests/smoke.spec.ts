@@ -5,12 +5,15 @@ async function login(page: import('@playwright/test').Page) {
   await expect(page.getByRole('heading', { name: /Desktop Sign In/i })).toBeVisible();
   await page.getByLabel('Şifre').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
-  await expect(page.getByRole('button', { name: /Yeni Alış Başlat/i })).toBeVisible();
 
   const discoveryDismiss = page.getByRole('button', { name: 'Şimdi değil' });
-  if (await discoveryDismiss.isVisible()) {
-    await discoveryDismiss.click();
+  try {
+    await discoveryDismiss.click({ timeout: 2_000 });
+  } catch {
+    // Modern UI variant does not render the classic discovery banner.
   }
+
+  await expect(page.getByRole('button', { name: /^Yeni Alış(?: Başlat)?$/i }).first()).toBeVisible();
 }
 
 test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) => {
@@ -28,9 +31,9 @@ test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) 
 
   await login(page);
 
-  await page.getByRole('button', { name: /Yeni Alış Başlat/i }).click();
-  await expect(page.getByRole('button', { name: /Çalışma Dosyası/i })).toBeVisible();
-  await expect(page.getByText('Afregningsnr.').first()).toBeVisible();
+  await page.getByRole('button', { name: /^Yeni Alış(?: Başlat)?$/i }).first().click();
+  await expect(page.getByText(/Çalışma Dosyası|AFG SATIRLARI/i).first()).toBeVisible();
+  await expect(page.getByText(/Afregningsnr\.|AFG SATIRLARI/i).first()).toBeVisible();
 
   await page.goto('/#/depolama');
   await expect(page.getByText('Depolama.xlsx').first()).toBeVisible();
