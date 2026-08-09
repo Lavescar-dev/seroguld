@@ -96,7 +96,13 @@ export WEBKIT_WEBDRIVER_BIN
   npm ci
 )
 
-nohup tauri-driver --port "${TAURI_DRIVER_PORT}" --native-port "${TAURI_NATIVE_PORT}" >"${TAURI_DRIVER_LOG}" 2>&1 &
+env \
+  DESKTOP_BACKEND_PORT="${BACKEND_PORT}" \
+  DESKTOP_FRONTEND_PORT="${FRONTEND_PORT}" \
+  DESKTOP_DATABASE_URL="${DATABASE_URL}" \
+  DESKTOP_SESSION_FILE="${SESSION_FILE}" \
+  SEROGULD_DESKTOP_START_ROUTE="/desktop-smoke" \
+  nohup tauri-driver --port "${TAURI_DRIVER_PORT}" --native-port "${TAURI_NATIVE_PORT}" >"${TAURI_DRIVER_LOG}" 2>&1 &
 TAURI_DRIVER_PID=$!
 
 for _ in $(seq 1 60); do
