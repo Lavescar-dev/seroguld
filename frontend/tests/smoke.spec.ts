@@ -6,6 +6,12 @@ async function login(page: import('@playwright/test').Page) {
   await page.getByLabel('Şifre').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
 
+  // The login mutation navigates asynchronously.  Re-enter the hash route
+  // once the token-backed redirect has settled so a slow Vite/backend start
+  // cannot leave the smoke assertion on the public login route.
+  await expect(page).toHaveURL(/#\/$/, { timeout: 30_000 });
+  await page.goto('/#/', { waitUntil: 'domcontentloaded' });
+
   const discoveryDismiss = page.getByRole('button', { name: 'Şimdi değil' });
   try {
     await discoveryDismiss.click({ timeout: 2_000 });
@@ -13,7 +19,7 @@ async function login(page: import('@playwright/test').Page) {
     // Modern UI variant does not render the classic discovery banner.
   }
 
-  await expect(page.getByRole('button', { name: /^Yeni Alış(?: Başlat)?$/i }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Yeni Alış(?: Başlat)?$/i }).first()).toBeVisible({ timeout: 30_000 });
 }
 
 test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) => {
