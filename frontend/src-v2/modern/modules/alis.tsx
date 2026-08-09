@@ -303,12 +303,7 @@ function ModernAlisOfficeSurface({
     disableReopen: true,
   });
 
-  const handleClose = async () => {
-    const synced = await officeState.onBeforeClose?.();
-    if (synced !== false) await onClose();
-  };
-
-  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={handleClose} />;
+  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={onClose} />;
 }
 
 function AlisModeTabs({ pane, hasWorkspace, documentCount, onChange }: { pane: ModernAlisPane; hasWorkspace: boolean; documentCount: number; onChange: (pane: ModernAlisPane) => void }) {
