@@ -571,12 +571,18 @@ async def _apply_office_session_content(
                 incoming_base_revision = int(metadata.base_version) if metadata.base_version is not None else None
             except (TypeError, ValueError):
                 incoming_base_revision = None
-            # The embedded workbook version must match the revision most
-            # recently applied in this Office session.  Only comparing with
-            # the original launch revision lets a second save from the same
-            # stale OnlyOffice document overwrite the first save and resurrect
-            # deleted values.
-            if incoming_base_revision is None or incoming_base_revision != applied_revision:
+            # OnlyOffice keeps the embedded base_version from launch; it does
+            # not receive the regenerated workbook after every callback.  A
+            # later save from this same session may therefore carry the
+            # original revision.  Accept that monotonic in-session lineage as
+            # long as no external writer advanced the artifact meanwhile.
+            # Reject values outside the session range so an old document from
+            # another launch cannot resurrect deleted workspace data.
+            if (
+                incoming_base_revision is None
+                or incoming_base_revision < launch_revision
+                or incoming_base_revision > applied_revision
+            ):
                 raise HTTPException(
                     status_code=409,
                     detail="Office artifact conflict_state=stale_lineage; Office belgesini yeniden açın.",

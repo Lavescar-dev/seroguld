@@ -96,7 +96,7 @@ def _workbook_bytes(workbook: Workbook) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_alis_office_session_rejects_second_save_from_stale_workbook(monkeypatch):
+async def test_alis_office_session_accepts_sequential_save_and_rejects_external_write(monkeypatch):
     artifact = SimpleNamespace(revision=5)
     entry = SimpleNamespace(
         artifact_key="alis.workspace.test",
@@ -128,9 +128,20 @@ async def test_alis_office_session_rejects_second_save_from_stale_workbook(monke
     artifact.revision = 6
     entry.artifact_revision = 6
 
-    with pytest.raises(HTTPException) as stale_save:
-        await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"stale-save")
+    # OnlyOffice still sends base_version=5 from the open workbook.  With no
+    # external artifact revision between callbacks, the second user save is
+    # part of the same session lineage and must be applied.
+    await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"second-save")
+    artifact.revision = 7
+    entry.artifact_revision = 7
 
-    assert stale_save.value.status_code == 409
-    assert "stale_lineage" in str(stale_save.value.detail)
-    assert applied == [b"first-save"]
+    # A UI/other-session write advances the artifact beyond this Office entry;
+    # the same stale workbook must now be rejected instead of resurrecting it.
+    artifact.revision = 8
+
+    with pytest.raises(HTTPException) as external_save:
+        await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"external-stale-save")
+
+    assert external_save.value.status_code == 409
+    assert "external_write" in str(external_save.value.detail)
+    assert applied == [b"first-save", b"second-save"]
