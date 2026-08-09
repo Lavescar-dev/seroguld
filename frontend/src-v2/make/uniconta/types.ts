@@ -9,16 +9,22 @@ export interface UnicontaKimlik {
   companyId: string;
   username: string;
   password: string;
-  env: 'production' | 'sandbox';
+  env: 'production';
   sendEmailOnFinalize?: boolean;
   sendXmlOnFinalize?: boolean;
 }
 
-export interface UnicontaConfigResponse extends UnicontaKimlik {
+export interface UnicontaConnectionDraft extends UnicontaKimlik {}
+
+export interface UnicontaConfigResponse {
+  companyId: string;
+  username: string;
+  env: 'production';
   apiUrl: string;
-  apiKey: string;
   connectionStatus: BaglantiDurumu;
   configured: boolean;
+  passwordConfigured: boolean;
+  apiKeyConfigured: boolean;
   lastRefreshedAt?: string | null;
   message?: string | null;
   sendEmailOnFinalize: boolean;
@@ -83,6 +89,10 @@ export interface UnicontaInvoicesResponse {
   source: string;
   generatedAt: string;
   invoices: Fatura[];
+  skip?: number;
+  limit?: number;
+  hasMore?: boolean;
+  truncated?: boolean;
 }
 
 export interface FaturaKalem {
@@ -124,6 +134,7 @@ export interface Fatura {
 }
 
 export interface UseUnicontaMakeStateResult {
+  config: UnicontaConfigResponse | null;
   kimlik: UnicontaKimlik;
   setKimlik: Dispatch<SetStateAction<UnicontaKimlik>>;
   ayarlarAcik: boolean;
@@ -146,6 +157,9 @@ export interface UseUnicontaMakeStateResult {
   setFiltrePanelAcik: Dispatch<SetStateAction<boolean>>;
   faturalar: Fatura[];
   filtrelenmis: Fatura[];
+  invoicesLoading: boolean;
+  invoicesError: string | null;
+  invoicesTruncated: boolean;
   baglantiDurumu: BaglantiDurumu;
   yukleniyor: boolean;
   sonYenileme: Date | null;
@@ -156,7 +170,7 @@ export interface UseUnicontaMakeStateResult {
     eFakturaGonderildi: number;
   };
   activeFilters: number;
-  baglan: () => void;
+  baglan: (draft?: UnicontaConnectionDraft) => void;
   yenile: () => void;
   sort: (key: SortKey) => void;
   // Yeni (U7-U11)

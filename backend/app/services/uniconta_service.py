@@ -433,8 +433,8 @@ class UnicontaClient:
     async def get_debtors(self, top: int = 200) -> list[dict[str, Any]]:
         return await self.query("DebtorClient", top=top)
 
-    async def get_sale_invoices(self, top: int = 200) -> list[dict[str, Any]]:
-        return await self.query("DebtorInvoiceClient", top=top)
+    async def get_sale_invoices(self, top: int = 200, skip: int = 0) -> list[dict[str, Any]]:
+        return await self.query("DebtorInvoiceClient", top=top, skip=skip)
 
     async def generate_debtor_invoice(
         self,
@@ -936,30 +936,36 @@ async def sync_pos_document_to_uniconta(
             )
             return {"ok": False, "message": "customer_id missing"}
         customer_id = str(customer_id_raw)
-        name = (
-            getattr(customer, "name", None)
-            or pos_document.customer_name
-            or "Müşteri"
-        )
-        phone = getattr(customer, "phone", None) or pos_document.customer_phone
-        email = getattr(customer, "email", None) or pos_document.customer_email
-        address = pos_document.customer_address
-        postal = getattr(customer, "postal_code", None) if customer else None
+        # AFG workspace edits are kept as a presence-aware session snapshot.
+        # When present, an explicit empty value must not fall back to the
+        # linked master User while constructing the remote debtor.
+        notes_raw = getattr(pos_session, "notes", None)
+        try:
+            note_payload = _json.loads(notes_raw) if isinstance(notes_raw, str) else (notes_raw or {})
+        except Exception:  # noqa: BLE001
+            note_payload = {}
+        workspace_customer = note_payload.get("workspace_customer") if isinstance(note_payload, dict) else None
+        has_workspace_customer = isinstance(workspace_customer, dict)
 
-        # R3 — City field: önce User.city varsa al; yoksa PosSession.notes'tan
-        # `workspace_customer_city` JSON anahtarını oku (UI bunu doldurur).
-        city = (getattr(customer, "city", None) if customer else None) or None
-        if not city:
-            notes_raw = getattr(pos_session, "notes", None)
-            if notes_raw:
-                try:
-                    note_payload = _json.loads(notes_raw) if isinstance(notes_raw, str) else (notes_raw or {})
-                    if isinstance(note_payload, dict):
-                        city_val = note_payload.get("workspace_customer_city")
-                        if city_val:
-                            city = str(city_val).strip() or None
-                except Exception:  # noqa: BLE001
-                    city = None
+        if has_workspace_customer:
+            name = str(workspace_customer.get("name") or "").strip() or "Müşteri"
+            phone = str(workspace_customer.get("phone") or "").strip() or None
+            email = str(workspace_customer.get("email") or "").strip() or None
+            address = str(workspace_customer.get("address") or "").strip() or None
+            postal = str(workspace_customer.get("postal_code") or "").strip() or None
+            city = str(workspace_customer.get("city") or "").strip() or None
+        else:
+            name = getattr(customer, "name", None) or pos_document.customer_name or "Müşteri"
+            phone = getattr(customer, "phone", None) or pos_document.customer_phone
+            email = getattr(customer, "email", None) or pos_document.customer_email
+            address = pos_document.customer_address
+            postal = getattr(customer, "postal_code", None) if customer else None
+            # R3 — City field: User.city yoksa PosSession.notes'tan al.
+            city = (getattr(customer, "city", None) if customer else None) or None
+            if not city and isinstance(note_payload, dict):
+                city_val = note_payload.get("workspace_customer_city")
+                if city_val:
+                    city = str(city_val).strip() or None
 
         account = await ensure_debtor_for_customer(
             client,

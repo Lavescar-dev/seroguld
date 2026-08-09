@@ -18,7 +18,13 @@ import type {
 import type {
   BaglantiDurumu,
   Fatura,
+  FaturaTipi,
+  MailFiltre,
+  SortDir,
+  SortKey,
+  TarihFiltre,
   UnicontaConfigResponse,
+  UnicontaConnectionDraft,
   UnicontaFailedSyncRow,
   UnicontaHealth,
   UnicontaSyncSummary,
@@ -236,7 +242,13 @@ export interface ModernGdprPublicStatusPageProps {
 export interface ModernUnicontaPageProps {
   connectionStatus: BaglantiDurumu;
   config: UnicontaConfigResponse | null;
+  connectionDraft?: UnicontaConnectionDraft;
+  connectionSettingsOpen?: boolean;
+  loading?: boolean;
   invoices: Fatura[];
+  invoicesLoading?: boolean;
+  invoicesError?: string | null;
+  invoicesTruncated?: boolean;
   syncSummary: UnicontaSyncSummary | null;
   failedSyncs: UnicontaFailedSyncRow[];
   health: UnicontaHealth | null;
@@ -255,11 +267,27 @@ export interface ModernUnicontaPageProps {
   };
   connectAvailability?: ModernAvailability;
   retryAvailability?: ModernAvailability;
-  onConnect?: () => void;
+  onConnect?: (draft: UnicontaConnectionDraft) => void;
+  onOpenConnectionSettings?: () => void;
+  onCloseConnectionSettings?: () => void;
+  onSearchChange?: (value: string) => void;
+  searchValue?: string;
+  typeFilter?: FaturaTipi | 'Tümü';
+  onTypeFilterChange?: (value: FaturaTipi | 'Tümü') => void;
+  mailFilter?: MailFiltre;
+  onMailFilterChange?: (value: MailFiltre) => void;
+  eFaturaFilter?: MailFiltre;
+  onEFaturaFilterChange?: (value: MailFiltre) => void;
+  dateFilter?: TarihFiltre;
+  onDateFilterChange?: (value: TarihFiltre) => void;
+  sortKey?: SortKey;
+  sortDir?: SortDir;
+  onSort?: (key: SortKey) => void;
   onRefresh?: () => void;
   onSelectInvoice?: (invoice: Fatura) => void;
   onRetryAll?: () => void;
   onRetryFailed?: (sequenceNo: number) => void;
+  retryingSingleSeq?: number | null;
 }
 
 export interface ModernCustomerDisplayControlPageProps {

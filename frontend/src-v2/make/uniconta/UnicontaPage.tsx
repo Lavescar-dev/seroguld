@@ -77,7 +77,7 @@ function BaglantiPanel({
   kimlik: UnicontaKimlik;
   onChange: (kimlik: UnicontaKimlik) => void;
   onKapat: () => void;
-  onBaglan: () => void;
+  onBaglan: (kimlik: UnicontaKimlik) => void;
   baglantiDurumu: BaglantiDurumu;
 }) {
   const [lokal, setLokal] = useState<UnicontaKimlik>(kimlik);
@@ -127,29 +127,16 @@ const res = await fetch("https://www.uniconta.com/api/query", {
             <div>
               <p className="mb-0.5 text-xs font-black text-amber-800">Güvenlik Uyarısı</p>
               <p className="text-xs text-amber-700">
-                API kimlik bilgileri bu arayüzde şifresiz saklanmaz — yalnızca oturum belleğinde tutulur.
-                Prodüksiyon ortamında mutlaka bir backend proxy veya Supabase Edge Function kullanın.
-                Kimlik bilgileri tarayıcı konsoluna loglanmaz.
+                Kimlik bilgileri yalnızca backend üzerinden doğrulanır. Kayıtlı parola bu ekrana geri gönderilmez;
+                yeni parola alanını boş bırakırsanız mevcut parola korunur.
               </p>
             </div>
           </div>
 
           <div>
             <label className="mb-2 block text-xs font-black uppercase tracking-wider text-slate-600">Ortam</label>
-            <div className="grid grid-cols-2 gap-2">
-              {(['production', 'sandbox'] as const).map((env) => (
-                <button
-                  key={env}
-                  onClick={() => setLokal((current) => ({ ...current, env }))}
-                  className={`border-2 px-3 py-2.5 text-xs font-bold transition-all ${
-                    lokal.env === env
-                      ? 'border-blue-500 bg-blue-50 text-blue-800'
-                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-400'
-                  }`}
-                >
-                  {env === 'production' ? 'Production' : 'Sandbox / Test'}
-                </button>
-              ))}
+            <div className="border-2 border-blue-200 bg-blue-50 px-3 py-2.5 text-xs font-bold text-blue-800">
+              Production · https://api.uniconta.com
             </div>
           </div>
 
@@ -295,13 +282,13 @@ const res = await fetch("https://www.uniconta.com/api/query", {
           <button
             onClick={() => {
               onChange(lokal);
-              onBaglan();
+              onBaglan(lokal);
             }}
-            disabled={!lokal.companyId || !lokal.username || !lokal.password}
+            disabled={!lokal.companyId || !lokal.username || baglantiDurumu === 'yukleniyor'}
             className="flex flex-1 items-center justify-center gap-2 border border-blue-900 bg-blue-700 px-4 py-2 text-xs font-black text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Wifi className="h-4 w-4" />
-            Bağlan ve Faturaları Çek
+            {baglantiDurumu === 'yukleniyor' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
+            {baglantiDurumu === 'yukleniyor' ? 'Bağlanıyor…' : 'Bağlan ve Faturaları Çek'}
           </button>
         </div>
       </div>
@@ -799,7 +786,7 @@ function UnicontaPageView({
                           <button
                             type="button"
                             onClick={() => onRetryFailed(row.sequence_no)}
-                            disabled={retryingSingleSeq === row.sequence_no}
+                            disabled={retryingSingleSeq !== null}
                             className="inline-flex items-center gap-1 border border-amber-400 bg-white px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-800 hover:bg-amber-50 disabled:cursor-wait disabled:opacity-60"
                           >
                             {retryingSingleSeq === row.sequence_no ? (

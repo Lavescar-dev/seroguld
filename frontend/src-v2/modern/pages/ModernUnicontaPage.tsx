@@ -1,10 +1,12 @@
-import { useState } from 'react';
-import { Activity, Building2, CheckCircle2, FileCheck2, RefreshCw, RotateCcw, Send, TriangleAlert } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Activity, Building2, CheckCircle2, Download, FileCheck2, Loader2, RefreshCw, RotateCcw, Search, Send, Settings, TriangleAlert, X } from 'lucide-react';
+
+import { PdfViewerModal } from '@/components/PdfViewerModal';
+import { fetchAuthedPdfBlob } from '@/lib/api';
 
 import {
   ModernBadge,
   ModernButton,
-  ModernCard,
   ModernDataTable,
   ModernPage,
   ModernSection,
@@ -47,7 +49,13 @@ export function ModernUnicontaPage({
   connectionStatus,
   config,
   connectionInfo,
+  connectionDraft,
+  connectionSettingsOpen,
+  loading,
   invoices,
+  invoicesLoading,
+  invoicesError,
+  invoicesTruncated,
   syncSummary,
   failedSyncs,
   health,
@@ -56,15 +64,72 @@ export function ModernUnicontaPage({
   connectAvailability,
   retryAvailability,
   onConnect,
+  onOpenConnectionSettings,
+  onCloseConnectionSettings,
+  searchValue = '',
+  onSearchChange,
+  typeFilter = 'Tümü',
+  onTypeFilterChange,
+  mailFilter = 'tümü',
+  onMailFilterChange,
+  eFaturaFilter = 'tümü',
+  onEFaturaFilterChange,
+  dateFilter = 'tümü',
+  onDateFilterChange,
+  sortKey = 'fakturadato',
+  sortDir = 'desc',
+  onSort,
   onRefresh,
   onSelectInvoice,
   onRetryAll,
   onRetryFailed,
+  retryingSingleSeq,
 }: ModernUnicontaPageProps) {
   const [activeTab, setActiveTab] = useState<UnicontaTab>('reconciliation');
+  const [connectionDraftLocal, setConnectionDraftLocal] = useState(connectionDraft);
+  const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>({
+    url: null,
+    filename: '',
+    loading: false,
+    error: null,
+  });
+  useEffect(() => {
+    if (connectionDraft) setConnectionDraftLocal(connectionDraft);
+  }, [connectionDraft, connectionSettingsOpen]);
+
+  const updateConnectionDraft = (
+    key: 'companyId' | 'username' | 'password' | 'sendEmailOnFinalize' | 'sendXmlOnFinalize',
+    value: string | boolean,
+  ) => {
+    setConnectionDraftLocal((current) => current ? { ...current, [key]: value } : current);
+  };
+
   const deliveredCount = stats?.eFakturaGonderildi ?? invoices.filter((invoice) => Boolean(invoice.eFakturaSendt)).length;
   const invoiceCount = stats?.toplam ?? invoices.length;
   const selected = selectedInvoice || invoices[0] || null;
+
+  const handlePdfRequest = async (invoice: typeof selected) => {
+    if (!invoice) return;
+    setPdfState((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const params = new URLSearchParams({
+        invoiceNumber: String(invoice.fakturanummer),
+        account: invoice.konto,
+        date: invoice.fakturadato,
+      });
+      const { url } = await fetchAuthedPdfBlob(`/api/v2/uniconta/invoice-pdf?${params.toString()}`);
+      setPdfState({ url, filename: `uniconta-${invoice.fakturanummer}.pdf`, loading: false, error: null });
+    } catch (error) {
+      setPdfState({ url: null, filename: '', loading: false, error: error instanceof Error ? error.message : 'PDF yüklenemedi.' });
+    }
+  };
+
+  const closePdf = () => {
+    setPdfState((current) => {
+      if (current.url) URL.revokeObjectURL(current.url);
+      return { url: null, filename: '', loading: false, error: null };
+    });
+  };
   const auditItems = [
     {
       id: 'health',
@@ -91,8 +156,14 @@ export function ModernUnicontaPage({
           description="Yerel AFG ve uzak fatura görünürlüğünü, outbox idempotency ve teslim kanıtıyla aynı çalışma alanında tutar."
           action={
             <div className="flex flex-wrap gap-2">
-              <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh}>Yenile</ModernButton>
-              <ModernButton tone="primary" icon={Building2} onClick={onConnect} disabled={!onConnect || connectAvailability?.state === 'unavailable'}>
+              <ModernButton tone="ghost" icon={Settings} onClick={onOpenConnectionSettings} disabled={!onOpenConnectionSettings || loading}>Ayarlar</ModernButton>
+              <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || loading}>Yenile</ModernButton>
+              <ModernButton
+                tone="primary"
+                icon={Building2}
+                onClick={() => connectionDraftLocal && onConnect?.(connectionDraftLocal)}
+                disabled={!onConnect || !connectionDraftLocal || loading || connectAvailability?.state === 'unavailable'}
+              >
                 Bağlantıyı test et
               </ModernButton>
             </div>
@@ -146,6 +217,59 @@ export function ModernUnicontaPage({
           </button>
         ))}
       </div>
+
+      {activeTab === 'reconciliation' ? (
+        <ModernSection className="bg-sg-surface-soft">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+            <label className="relative xl:col-span-2">
+              <span className="sr-only">Fatura ara</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sg-text-soft" />
+              <input
+                value={searchValue}
+                onChange={(event) => onSearchChange?.(event.target.value)}
+                placeholder="Fatura, müşteri veya hesap ara"
+                className="w-full rounded-sg-md border border-sg-border bg-sg-surface px-9 py-2.5 text-sm text-sg-text outline-none focus:border-sg-accent"
+              />
+            </label>
+            <select value={typeFilter} onChange={(event) => onTypeFilterChange?.(event.target.value as typeof typeFilter)} className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 text-sm text-sg-text">
+              <option value="Tümü">Tüm tipler</option>
+              <option value="Salgsfaktura">Satış faturası</option>
+              <option value="Kreditnota">Kredi notu</option>
+              <option value="Forudbetaling">Ön ödeme</option>
+              <option value="Rentefaktura">Faiz faturası</option>
+            </select>
+            <select value={mailFilter} onChange={(event) => onMailFilterChange?.(event.target.value as typeof mailFilter)} className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 text-sm text-sg-text">
+              <option value="tümü">E-posta: tümü</option>
+              <option value="gonderildi">E-posta gönderildi</option>
+              <option value="gonderilmedi">E-posta bekliyor</option>
+            </select>
+            <select value={eFaturaFilter} onChange={(event) => onEFaturaFilterChange?.(event.target.value as typeof eFaturaFilter)} className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 text-sm text-sg-text">
+              <option value="tümü">E-fatura: tümü</option>
+              <option value="gonderildi">E-fatura gönderildi</option>
+              <option value="gonderilmedi">E-fatura bekliyor</option>
+            </select>
+            <select value={dateFilter} onChange={(event) => onDateFilterChange?.(event.target.value as typeof dateFilter)} className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 text-sm text-sg-text">
+              <option value="tümü">Tarih: tümü</option>
+              <option value="bu_ay">Bu ay</option>
+              <option value="son_3ay">Son 3 ay</option>
+              <option value="bu_yil">Bu yıl</option>
+            </select>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-sg-text-soft">
+            <span>{invoices.length} fatura yüklendi</span>
+            {invoicesLoading ? <span className="inline-flex items-center gap-1 font-semibold text-sg-accent"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Liste yükleniyor</span> : null}
+            {invoicesTruncated ? <span className="font-semibold text-sg-amber">İlk 15.000 fatura gösteriliyor.</span> : null}
+            <span>·</span>
+            <span>Sıralama:</span>
+            {(['fakturadato', 'fakturanummer', 'kunde', 'total'] as const).map((key) => (
+              <button key={key} type="button" onClick={() => onSort?.(key)} className={sortKey === key ? 'rounded-full bg-sg-accent px-3 py-1 font-semibold text-white' : 'rounded-full border border-sg-border px-3 py-1 font-semibold text-sg-text-soft hover:bg-sg-surface'}>
+                {key === 'fakturadato' ? 'Tarih' : key === 'fakturanummer' ? 'Fatura no' : key === 'kunde' ? 'Müşteri' : 'Toplam'}{sortKey === key ? ` ${sortDir === 'asc' ? '↑' : '↓'}` : ''}
+              </button>
+            ))}
+          </div>
+          {invoicesError ? <div className="mt-3 rounded-sg-md border border-sg-red/30 bg-sg-red-soft px-4 py-3 text-sm text-sg-red">{invoicesError}</div> : null}
+        </ModernSection>
+      ) : null}
 
       {activeTab === 'reconciliation' ? (
         <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
@@ -206,6 +330,20 @@ export function ModernUnicontaPage({
                 { label: 'Belge teslimi', value: selected.eFakturaSendt || selected.mailSendt || 'Bekliyor' },
               ] : [{ label: 'Durum', value: 'Fatura seçimi bekleniyor', accent: true }]}
             />
+            {selected ? (
+              <ModernSection className="bg-sg-surface-soft">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-sg-text">Belge işlemleri</p>
+                    <p className="mt-1 text-xs text-sg-text-soft">Uniconta’daki gerçek fatura PDF’ini açın.</p>
+                  </div>
+                  <ModernButton tone="ghost" icon={pdfState.loading ? Loader2 : Download} onClick={() => void handlePdfRequest(selected)} disabled={pdfState.loading}>
+                    {pdfState.loading ? 'Yükleniyor' : 'PDF aç'}
+                  </ModernButton>
+                </div>
+                {pdfState.error ? <p className="mt-3 text-xs text-red-600">{pdfState.error}</p> : null}
+              </ModernSection>
+            ) : null}
             <ModernSection>
               <ModernSectionHeader title="Contract health" description="Backend DTO'sunda olmayan başarılar otomatik PASS gösterilmez." />
               <div className="mt-4 grid gap-3">
@@ -242,7 +380,7 @@ export function ModernUnicontaPage({
                   { key: 'customer', header: 'Müşteri', cell: (item) => item.customer_name || '—' },
                   { key: 'amount', header: 'Tutar', cell: (item) => item.gross_amount_dkk || '—' },
                   { key: 'error', header: 'Hata', cell: (item) => item.uniconta_sync_error || '—' },
-                  { key: 'action', header: 'Aksiyon', align: 'right', cell: (item) => onRetryFailed ? <ModernButton tone="ghost" size="sm" onClick={() => onRetryFailed(item.sequence_no)}>Tekrar dene</ModernButton> : <ModernBadge tone="warning">Read-only</ModernBadge> },
+                  { key: 'action', header: 'Aksiyon', align: 'right', cell: (item) => onRetryFailed ? <ModernButton tone="ghost" size="sm" onClick={() => onRetryFailed(item.sequence_no)} disabled={retryingSingleSeq !== null}>{retryingSingleSeq === item.sequence_no ? 'Deneniyor…' : 'Tekrar dene'}</ModernButton> : <ModernBadge tone="warning">Read-only</ModernBadge> },
                 ]}
               />
             </div>
@@ -312,6 +450,66 @@ export function ModernUnicontaPage({
       ) : null}
 
       {activeTab !== 'connection' ? <div className="flex items-center gap-2 text-xs text-sg-text-soft"><Activity className="h-3.5 w-3.5" /> Mutabakat ve teslim aksiyonları gerçek API durumuna göre sınırlıdır.</div> : null}
+
+      {connectionSettingsOpen && connectionDraftLocal ? (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" role="dialog" aria-modal="true" aria-label="Uniconta bağlantı ayarları">
+          <button type="button" className="absolute inset-0 cursor-default" aria-label="Ayarları kapat" onClick={onCloseConnectionSettings} />
+          <aside className="relative flex h-full w-full max-w-xl flex-col border-l border-sg-border bg-sg-surface shadow-sg-lg">
+            <div className="flex items-center justify-between border-b border-sg-border px-6 py-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-sg-accent">Uniconta</p>
+                <h2 className="mt-1 text-xl font-semibold text-sg-text">Bağlantı ayarları</h2>
+              </div>
+              <button type="button" onClick={onCloseConnectionSettings} className="rounded-sg-md p-2 text-sg-text-soft hover:bg-sg-surface-soft" aria-label="Kapat"><X className="h-5 w-5" /></button>
+            </div>
+            <form
+              className="flex min-h-0 flex-1 flex-col"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onConnect) onConnect(connectionDraftLocal);
+              }}
+            >
+              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
+                <div className="rounded-sg-md border border-sg-border bg-sg-surface-soft p-4 text-sm text-sg-text-soft">
+                  Kimlik bilgileri backend’de doğrulanır. Kayıtlı parola tarayıcıya geri gönderilmez; boş bırakırsanız mevcut parola korunur.
+                </div>
+                <label className="block text-sm font-semibold text-sg-text">
+                  Company ID
+                  <input value={connectionDraftLocal.companyId} onChange={(event) => updateConnectionDraft('companyId', event.target.value)} className="mt-2 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-sg-accent" />
+                </label>
+                <label className="block text-sm font-semibold text-sg-text">
+                  Kullanıcı adı
+                  <input value={connectionDraftLocal.username} onChange={(event) => updateConnectionDraft('username', event.target.value)} className="mt-2 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 text-sm outline-none focus:border-sg-accent" />
+                </label>
+                <label className="block text-sm font-semibold text-sg-text">
+                  Yeni parola <span className="font-normal text-sg-text-soft">(değiştirmeyecekseniz boş bırakın)</span>
+                  <input type="password" value={connectionDraftLocal.password} onChange={(event) => updateConnectionDraft('password', event.target.value)} className="mt-2 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2.5 text-sm outline-none focus:border-sg-accent" autoComplete="new-password" />
+                </label>
+                <div className="rounded-sg-md border border-sg-border bg-sg-surface-soft p-4 text-sm text-sg-text-soft">
+                  Kayıtlı parola: {config?.passwordConfigured ? <span className="font-semibold text-sg-green">Mevcut</span> : <span className="font-semibold text-sg-amber">Eksik</span>}
+                </div>
+                <label className="flex items-start gap-3 text-sm text-sg-text">
+                  <input type="checkbox" checked={Boolean(connectionDraftLocal.sendEmailOnFinalize)} onChange={(event) => updateConnectionDraft('sendEmailOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
+                  <span><strong>E-posta finalize</strong><span className="mt-1 block text-xs text-sg-text-soft">Finalize sonrası Uniconta PDF’ini müşteriye gönder.</span></span>
+                </label>
+                <label className="flex items-start gap-3 text-sm text-sg-text">
+                  <input type="checkbox" checked={Boolean(connectionDraftLocal.sendXmlOnFinalize)} onChange={(event) => updateConnectionDraft('sendXmlOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
+                  <span><strong>OIOUBL/XML finalize</strong><span className="mt-1 block text-xs text-sg-text-soft">Finalize sonrası e-fatura XML akışını kullan.</span></span>
+                </label>
+                {config?.message ? <p className={connectionStatus === 'hata' ? 'text-sm text-red-600' : 'text-sm text-sg-text-soft'}>{config.message}</p> : null}
+              </div>
+              <div className="flex gap-3 border-t border-sg-border bg-sg-surface-soft px-6 py-4">
+                <ModernButton type="button" tone="ghost" onClick={onCloseConnectionSettings}>İptal</ModernButton>
+                <ModernButton type="submit" tone="primary" icon={loading ? Loader2 : Building2} disabled={Boolean(loading) || !connectionDraftLocal.companyId || !connectionDraftLocal.username}>
+                  {loading ? 'Bağlanıyor…' : 'Test et ve kaydet'}
+                </ModernButton>
+              </div>
+            </form>
+          </aside>
+        </div>
+      ) : null}
+
+      <PdfViewerModal open={Boolean(pdfState.url)} pdfUrl={pdfState.url} filename={pdfState.filename} title="Uniconta Fatura PDF" onClose={closePdf} />
     </ModernPage>
   );
 }

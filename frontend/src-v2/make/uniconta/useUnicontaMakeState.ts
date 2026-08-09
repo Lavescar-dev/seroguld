@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/api';
 import { listenArtifactSync, signalMatches } from '@/lib/artifactSync';
@@ -12,6 +12,7 @@ import type {
   TarihFiltre,
   UnicontaBulkRetry,
   UnicontaConfigResponse,
+  UnicontaConnectionDraft,
   UnicontaConnectResponse,
   UnicontaFailedSyncRow,
   UnicontaHealth,
@@ -25,8 +26,8 @@ import type {
 const UNICONTA_INVOICE_PAGE_SIZE = 500;
 const UNICONTA_INVOICE_MAX_PAGES = 30;
 
-function normalizeEnv(value: string | null | undefined): UnicontaKimlik['env'] {
-  return value === 'sandbox' ? 'sandbox' : 'production';
+function normalizeEnv(_value: string | null | undefined): UnicontaKimlik['env'] {
+  return 'production';
 }
 
 function normalizeBaglantiDurumu(value: string | null | undefined): BaglantiDurumu {
@@ -63,31 +64,47 @@ function extractApiMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-async function fetchRemoteInvoices(): Promise<UnicontaInvoicesResponse> {
+export async function fetchRemoteInvoices(signal?: AbortSignal): Promise<UnicontaInvoicesResponse> {
   const invoices: Fatura[] = [];
   let generatedAt = new Date().toISOString();
   let source = 'uniconta_remote';
+  const seen = new Set<string>();
+  let truncated = false;
 
   for (let page = 0; page < UNICONTA_INVOICE_MAX_PAGES; page += 1) {
     const skip = page * UNICONTA_INVOICE_PAGE_SIZE;
     const response = await apiRequest<UnicontaInvoicesResponse>(
       `/api/v2/uniconta/invoices?source=remote&limit=${UNICONTA_INVOICE_PAGE_SIZE}&skip=${skip}`,
+      { signal },
     );
     source = response.source;
     generatedAt = response.generatedAt;
+
+    let newInvoiceCount = 0;
+    for (const invoice of response.invoices) {
+      const key = invoice.id || `${invoice.fakturanummer}:${invoice.konto}:${invoice.fakturadato}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        newInvoiceCount += 1;
+      }
+    }
+    if (page > 0 && response.invoices.length > 0 && newInvoiceCount === 0) {
+      throw new Error('Uniconta aynı fatura sayfasını tekrar döndürdü; listeleme durduruldu.');
+    }
     invoices.push(...response.invoices);
-    if (response.invoices.length < UNICONTA_INVOICE_PAGE_SIZE) break;
+    if (response.hasMore === false || response.invoices.length < UNICONTA_INVOICE_PAGE_SIZE) break;
+    if (page === UNICONTA_INVOICE_MAX_PAGES - 1) truncated = true;
   }
 
-  const seen = new Set<string>();
+  const uniqueSeen = new Set<string>();
   const uniqueInvoices = invoices.filter((invoice) => {
     const key = invoice.id || `${invoice.fakturanummer}:${invoice.konto}:${invoice.fakturadato}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (uniqueSeen.has(key)) return false;
+    uniqueSeen.add(key);
     return true;
   });
 
-  return { source, generatedAt, invoices: uniqueInvoices };
+  return { source, generatedAt, invoices: uniqueInvoices, skip: 0, limit: UNICONTA_INVOICE_PAGE_SIZE, hasMore: false, truncated };
 }
 
 export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
@@ -115,6 +132,8 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   const [filtrePanelAcik, setFiltrePanelAcik] = useState(false);
   const [apiConfig, setApiConfig] = useState<UnicontaConfigResponse | null>(null);
   const [retryingSingleSeq, setRetryingSingleSeq] = useState<number | null>(null);
+  const retryingSingleSeqRef = useRef<number | null>(null);
+  const connectInFlightRef = useRef(false);
   const [lastBulkRetryResult, setLastBulkRetryResult] = useState<UnicontaBulkRetry | null>(null);
 
   const configQuery = useQuery({
@@ -124,7 +143,8 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
 
   const invoicesQuery = useQuery({
     queryKey: ['uniconta', 'invoices-v2'],
-    queryFn: fetchRemoteInvoices,
+    queryFn: ({ signal }) => fetchRemoteInvoices(signal),
+    enabled: configQuery.data?.configured === true,
   });
 
   const syncSummaryQuery = useQuery({
@@ -147,16 +167,13 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   });
 
   const connectMutation = useMutation({
-    mutationFn: (payload: UnicontaConfigResponse) =>
+    mutationFn: (payload: UnicontaConnectionDraft) =>
       apiRequest<UnicontaConnectResponse>('/api/v2/uniconta/connect', {
         method: 'POST',
         body: JSON.stringify({
           companyId: payload.companyId,
           username: payload.username,
-          password: payload.password,
-          env: payload.env,
-          apiUrl: payload.apiUrl,
-          apiKey: payload.apiKey,
+          password: payload.password.trim() || null,
           sendEmailOnFinalize: payload.sendEmailOnFinalize,
           sendXmlOnFinalize: payload.sendXmlOnFinalize,
         }),
@@ -191,6 +208,7 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
     },
     onSettled: () => {
       setRetryingSingleSeq(null);
+      retryingSingleSeqRef.current = null;
     },
   });
 
@@ -229,12 +247,18 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
     setKimlik({
       companyId: configQuery.data.companyId,
       username: configQuery.data.username,
-      password: configQuery.data.password,
+      password: '',
       env: normalizeEnv(configQuery.data.env),
       sendEmailOnFinalize: configQuery.data.sendEmailOnFinalize,
       sendXmlOnFinalize: configQuery.data.sendXmlOnFinalize,
     });
   }, [configQuery.data]);
+
+  useEffect(() => {
+    if (configQuery.data?.configured === false) {
+      queryClient.removeQueries({ queryKey: ['uniconta', 'invoices-v2'] });
+    }
+  }, [configQuery.data?.configured, queryClient]);
 
   // U3 — Cross-module sync listener (alış finalize → invalidate uniconta)
   useEffect(() => {
@@ -246,6 +270,7 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   }, [queryClient]);
 
   const faturalar = useMemo(() => invoicesQuery.data?.invoices ?? [], [invoicesQuery.data]);
+  const invoicesError = invoicesQuery.error ? extractApiMessage(invoicesQuery.error, 'Uniconta fatura listesi alınamadı.') : null;
 
   useEffect(() => {
     if (!secilenFatura) return;
@@ -258,27 +283,23 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   }, [faturalar, secilenFatura]);
 
   const baglantiDurumu = normalizeBaglantiDurumu(
-    connectMutation.data?.connectionStatus ?? configQuery.data?.connectionStatus,
+    connectMutation.isPending || configQuery.isFetching || invoicesQuery.isFetching
+      ? 'yukleniyor'
+      : connectMutation.data?.connectionStatus
+        ?? (invoicesQuery.isError || healthQuery.data?.last_call_ok === false
+          ? 'hata'
+          : invoicesQuery.isSuccess || healthQuery.data?.last_call_ok === true
+            ? 'bagli'
+            : configQuery.data?.connectionStatus),
   );
   const yukleniyor = invoicesQuery.isFetching || connectMutation.isPending || configQuery.isFetching;
   const sonYenileme = invoicesQuery.data?.generatedAt ? new Date(invoicesQuery.data.generatedAt) : null;
 
-  const baglan = () => {
+  const baglan = (draft: UnicontaConnectionDraft = kimlik) => {
+    if (connectInFlightRef.current || connectMutation.isPending) return;
+    connectInFlightRef.current = true;
     connectMutation.mutate(
-      {
-        companyId: kimlik.companyId,
-        username: kimlik.username,
-        password: kimlik.password,
-        env: kimlik.env,
-        apiUrl: apiConfig?.apiUrl || 'https://www.uniconta.com/api',
-        apiKey: apiConfig?.apiKey || '',
-        connectionStatus: 'bagli_degil',
-        configured: false,
-        lastRefreshedAt: null,
-        message: null,
-        sendEmailOnFinalize: Boolean(kimlik.sendEmailOnFinalize),
-        sendXmlOnFinalize: Boolean(kimlik.sendXmlOnFinalize),
-      },
+      draft,
       {
         onSuccess: (result) => {
           setApiConfig({
@@ -286,25 +307,27 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
             env: normalizeEnv(result.config.env),
             connectionStatus: normalizeBaglantiDurumu(result.config.connectionStatus),
           });
-          setKimlik({
-            companyId: result.config.companyId,
-            username: result.config.username,
-            password: result.config.password,
-            env: normalizeEnv(result.config.env),
-            sendEmailOnFinalize: result.config.sendEmailOnFinalize,
-            sendXmlOnFinalize: result.config.sendXmlOnFinalize,
-          });
-          setAyarlarAcik(false);
-          void configQuery.refetch();
-          void invoicesQuery.refetch();
-          void queryClient.invalidateQueries({ queryKey: ['uniconta'] });
           if (result.connectionStatus === 'bagli') {
+            setKimlik({
+              companyId: result.config.companyId,
+              username: result.config.username,
+              password: '',
+              env: normalizeEnv(result.config.env),
+              sendEmailOnFinalize: result.config.sendEmailOnFinalize,
+              sendXmlOnFinalize: result.config.sendXmlOnFinalize,
+            });
+            setAyarlarAcik(false);
+            void queryClient.invalidateQueries({ queryKey: ['uniconta-config-v2'] });
+            void queryClient.invalidateQueries({ queryKey: ['uniconta'] });
             toast.success('Uniconta bağlandı', result.message || undefined);
           } else if (result.connectionStatus === 'hata') {
             toast.error('Uniconta bağlantı hatası', result.message || undefined);
           } else {
             toast.warning('Uniconta yapılandırma eksik', result.message || undefined);
           }
+        },
+        onSettled: () => {
+          connectInFlightRef.current = false;
         },
       },
     );
@@ -400,6 +423,7 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   }, [syncSummaryQuery.data]);
 
   return {
+    config: apiConfig,
     kimlik,
     setKimlik,
     ayarlarAcik,
@@ -422,6 +446,9 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
     setFiltrePanelAcik,
     faturalar,
     filtrelenmis,
+    invoicesLoading: invoicesQuery.isFetching,
+    invoicesError,
+    invoicesTruncated: Boolean(invoicesQuery.data?.truncated),
     baglantiDurumu,
     yukleniyor,
     sonYenileme,
@@ -440,7 +467,11 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
     lastBulkRetryResult,
     health: healthQuery.data ?? null,
     healthLoading: healthQuery.isLoading,
-    onRetryFailed: (sequenceNo) => retrySingleMutation.mutate(sequenceNo),
+    onRetryFailed: (sequenceNo) => {
+      if (retryingSingleSeqRef.current !== null) return;
+      retryingSingleSeqRef.current = sequenceNo;
+      retrySingleMutation.mutate(sequenceNo);
+    },
     retryingSingleSeq,
   };
 }
