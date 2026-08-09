@@ -87,6 +87,9 @@ jobs:
           cd desktop
           npm ci
 
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
       - name: Desktop smoke doctor
         run: bash scripts/desktop-smoke-doctor.sh
 

@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.config import Settings
 from app.database import Base
 from app.models.enums import RoleEnum
 from app.models.gdpr_request import GdprRequest
@@ -114,6 +115,16 @@ async def test_execute_pseudonymize_prefers_explicit_woocommerce_customer_id(mon
         await session.flush()
 
         captured: dict[str, object] = {}
+
+        monkeypatch.setattr(
+            gdpr_service,
+            "get_settings",
+            lambda: Settings(
+                woocommerce_base_url="https://woocommerce.test",
+                woocommerce_consumer_key="ck_test",
+                woocommerce_consumer_secret="cs_test",
+            ),
+        )
 
         async def fake_pseudonymize_customer(self, *, woocommerce_customer_id, email, phone, placeholder_email):
             captured["woocommerce_customer_id"] = woocommerce_customer_id
