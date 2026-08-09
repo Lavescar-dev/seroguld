@@ -3,11 +3,13 @@ import type { AuthTokenResponse } from '@/types';
 
 export class ApiError extends Error {
   status: number;
+  requestId?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, requestId?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -140,15 +142,20 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let requestId = response.headers.get('X-Request-ID') || undefined;
+    const rawBody = await response.text().catch(() => '');
     try {
-      const payload = await response.json();
+      const payload = rawBody ? JSON.parse(rawBody) as { detail?: unknown; request_id?: unknown } : null;
       if (typeof payload?.detail === 'string') {
         message = payload.detail;
       }
+      if (typeof payload?.request_id === 'string') {
+        requestId = payload.request_id;
+      }
     } catch {
-      // noop
+      if (rawBody.trim()) message = rawBody.trim().slice(0, 240);
     }
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, requestId ? `${message} (Kod: ${requestId})` : message, requestId);
   }
 
   const contentType = response.headers.get('content-type') || '';

@@ -8,6 +8,7 @@ import {
 } from 'react-router-dom';
 
 import { AppShell } from '@/components/AppShell';
+import { AuthenticatedRouteErrorElement } from '@/components/AuthenticatedRouteErrorElement';
 import { getAccessToken } from '@/lib/auth';
 import { writeUiDiagnostic } from '@/lib/desktop';
 import {
@@ -276,6 +277,7 @@ const router = createHashRouter([
     : []),
   {
     element: <RequireAuth />,
+    errorElement: <AuthenticatedRouteErrorElement />,
     children: [
       { path: '/office-document/:kind/:key', element: renderLazyPage(<OfficeDocumentPage />) },
       { path: '/excel-preview/:kind/:key', element: renderLazyPage(<ExcelPreviewPage />) },

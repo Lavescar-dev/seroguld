@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -122,7 +123,34 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Keep unexpected backend errors visible to the browser as JSON.
+
+    WebKit turns a cross-origin 500 without CORS headers into the misleading
+    ``Load failed`` message.  Always attach a request id and log the full
+    traceback server-side; the client receives only a safe, actionable error.
+    """
+    request_id = uuid.uuid4().hex[:16]
+    logging.getLogger("app.http").exception(
+        "unhandled request error request_id=%s method=%s path=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Beklenmeyen backend hatası. Tekrar deneyin.",
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id},
+    )
 
 
 @app.get("/health")
