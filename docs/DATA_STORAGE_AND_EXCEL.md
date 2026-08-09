@@ -61,7 +61,7 @@
 - **Source-of-truth:** CRM veritabanı (işlem/belge/ürün kayıtları). Excel artefaktları `document_artifacts` ile versiyonlanmış/canlı işaretli bağlı dokümanlardır.
 - **Alış workspace güvenliği:** Her sections/customer değişikliği `workspace_revision` ile compare-and-swap uygulanır; stale callback 409 alır. Builder yalnızca okur ve legacy sıfır fiyatı `needs_price_repair` olarak bildirir; GET sırasında commit yapmaz.
 - **Belge müşteri snapshot'ı:** Finalize edilen `pos_documents` satırlarında adres/posta kodu/şehir snapshot'ı tutulur; sonradan müşteri kartı değişse bile finansal belge ekranı değişmez.
-- **Senkron:** Excel→CRM import + WOPI reconcile (çift yönlü doküman düzeyinde); ham operasyonel veri CRM'e yazılır.
+- **Senkron:** Excel→CRM import + WOPI reconcile (çift yönlü doküman düzeyinde); ham operasyonel veri CRM'e yazılır. OnlyOffice force-save callback'leri session kilidi ve `save_id` sırasıyla uygulanır; AFG artifact sync sheet'i ayrıca CRM `workspace_revision` taşır. Core kayıt ile workbook projection ayrışırsa launch eski dosyayı yazılabilir açmaz, güncel workspace'ten yeniden üretir.
 - **Duplicate önleme:** finalize satır kilidi + 409; ürün/belge numaraları `reference_sequences`; Woo `woocommerce_product_id` eşleşmesi.
 - **Reconciliation:** Log ↔ Depolama `source-afg` zinciri (TransactionLine→Transaction→PosDocument); melt lot payout varyansı. Excel↔CRM için reconcile-preview/apply endpoint'leri.
 - **UNKNOWN:** İşletmenin günlük operasyonda Excel'i hâlâ paralel yazıp yazmadığı (cutover durumu) — kullanıcıya sorulacak.

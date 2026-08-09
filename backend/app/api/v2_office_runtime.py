@@ -229,7 +229,6 @@ async def post_onlyoffice_callback_v2(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     entry, _ = await _office_artifact_record_or_404(db, access_token)
-    office_host_service.mark_callback_received(access_token)
     payload = await request.json()
     _verify_onlyoffice_callback_token(request, payload)
     save_id: int | None = None
@@ -244,39 +243,49 @@ async def post_onlyoffice_callback_v2(
     if not entry.can_write or status not in {2, 6}:
         return {"error": 0}
 
-    download_url = str(payload.get("url") or "").strip()
-    if not download_url:
-        office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback URL eksik")
-        return {"error": 1}
+    async with office_host_service.callback_lock(access_token):
+        entry = office_host_service.get_session(access_token)
+        if entry is None:
+            return {"error": 1}
+        office_host_service.mark_callback_received(access_token)
+        if save_id is not None and save_id <= entry.last_applied_save_id:
+            # An older callback arrived after a newer snapshot was already
+            # applied.  Acknowledge it without applying its stale bytes.
+            return {"error": 0}
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(download_url)
-            response.raise_for_status()
-            workbook_bytes = response.content
+        download_url = str(payload.get("url") or "").strip()
+        if not download_url:
+            office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback URL eksik")
+            return {"error": 1}
 
-        await _apply_office_session_content(db, entry=entry, workbook_bytes=workbook_bytes)
-        await db.commit()
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.get(download_url)
+                response.raise_for_status()
+                workbook_bytes = response.content
 
-        record = await get_artifact_record(db, entry.artifact_key or "")
-        office_host_service.update_after_save(
-            access_token,
-            updated_at=record.updated_at if record else utc_now(),
-            revision=getattr(record, "revision", None) if record else None,
-            save_id=save_id,
-        )
-        return {"error": 0}
-    except HTTPException as exc:
-        await db.rollback()
-        detail = str(exc.detail) if exc.detail is not None else "ONLYOFFICE callback reddedildi"
-        office_host_service.mark_sync_rejected(access_token, detail)
-        # A rejected domain apply must be visible to OnlyOffice; returning
-        # success here made a stale deletion look saved until the next reload.
-        return {"error": 1}
-    except Exception:
-        await db.rollback()
-        office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback apply başarısız oldu")
-        return {"error": 1}
+            await _apply_office_session_content(db, entry=entry, workbook_bytes=workbook_bytes)
+            await db.commit()
+
+            record = await get_artifact_record(db, entry.artifact_key or "")
+            office_host_service.update_after_save(
+                access_token,
+                updated_at=record.updated_at if record else utc_now(),
+                revision=getattr(record, "revision", None) if record else None,
+                save_id=save_id,
+            )
+            return {"error": 0}
+        except HTTPException as exc:
+            await db.rollback()
+            detail = str(exc.detail) if exc.detail is not None else "ONLYOFFICE callback reddedildi"
+            office_host_service.mark_sync_rejected(access_token, detail)
+            # A rejected domain apply must be visible to OnlyOffice; returning
+            # success here made a stale deletion look saved until the next reload.
+            return {"error": 1}
+        except Exception:
+            await db.rollback()
+            office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback apply başarısız oldu")
+            return {"error": 1}
 
 
 @router.post("/office/onlyoffice/forcesave/{access_token}", response_model=OfficeForceSaveOut)
@@ -296,8 +305,11 @@ async def post_onlyoffice_forcesave_v2(
         raise HTTPException(status_code=403, detail="Salt okunur session için forcesave kullanılamaz")
 
     try:
-        office_host_service.mark_forcesave_requested(access_token)
-        result = await office_host_service.force_save(entry)
+        requested_entry = office_host_service.mark_forcesave_requested(access_token)
+        if requested_entry is None:
+            raise RuntimeError("Office session bulunamadı")
+        requested_save_id = requested_entry.last_requested_save_id
+        result = await office_host_service.force_save(entry, save_id=requested_save_id)
     except RuntimeError as exc:
         office_host_service.mark_sync_error(access_token, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc

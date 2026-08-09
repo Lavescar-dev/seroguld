@@ -1472,11 +1472,19 @@ async def update_purchase_workspace_customer(
     *,
     pos_session: PosSession,
     payload: PosWorkspaceCustomerUpdate,
+    commit: bool = True,
+    emit: bool = True,
+    lock: bool = True,
+    claim_revision: bool = True,
 ) -> PosWorkspaceOut:
     return await pos_workspace_mutations.update_purchase_workspace_customer(
         session,
         pos_session=pos_session,
         payload=payload,
+        commit=commit,
+        emit=emit,
+        lock=lock,
+        claim_revision=claim_revision,
     )
 
 
@@ -1485,11 +1493,19 @@ async def update_purchase_workspace_draft_customer(
     *,
     pos_session: PosSession,
     payload: PosWorkspaceCustomerUpdate,
+    commit: bool = True,
+    emit: bool = True,
+    lock: bool = True,
+    claim_revision: bool = True,
 ) -> PosWorkspaceOut:
     return await pos_workspace_mutations.update_purchase_workspace_draft_customer(
         session,
         pos_session=pos_session,
         payload=payload,
+        commit=commit,
+        emit=emit,
+        lock=lock,
+        claim_revision=claim_revision,
     )
 
 
@@ -1511,11 +1527,19 @@ async def replace_purchase_workspace_sections(
     *,
     pos_session: PosSession,
     payload: PosWorkspaceSectionsUpdate,
+    commit: bool = True,
+    emit: bool = True,
+    lock: bool = True,
+    claim_revision: bool = True,
 ) -> PosWorkspaceOut:
     return await pos_workspace_mutations.replace_purchase_workspace_sections(
         session,
         pos_session=pos_session,
         payload=payload,
+        commit=commit,
+        emit=emit,
+        lock=lock,
+        claim_revision=claim_revision,
     )
 
 

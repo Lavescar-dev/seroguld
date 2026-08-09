@@ -180,6 +180,7 @@ from app.services.document_artifact_service import (
     build_inventory_preview,
     build_log_preview,
     get_artifact_record,
+    artifact_absolute_path,
     list_artifact_records,
     office_contract_version_for_kind,
     parse_afg_workspace_inputs_from_workbook,
@@ -472,10 +473,25 @@ async def _apply_afg_workspace_artifact_inputs(
             detail="ONLYOFFICE callback boş veya eski workbook döndürdü; mevcut taslak korunuyor.",
         )
     workspace = current_workspace
+    customer_mutation_started = False
     if pos_session.customer_id is not None:
-        workspace = await update_purchase_workspace_customer(db, pos_session=pos_session, payload=parsed.customer)
+        workspace = await update_purchase_workspace_customer(
+            db,
+            pos_session=pos_session,
+            payload=parsed.customer,
+            commit=False,
+            emit=False,
+        )
+        customer_mutation_started = True
     elif _customer_update_has_business_inputs(parsed.customer):
-        workspace = await update_purchase_workspace_draft_customer(db, pos_session=pos_session, payload=parsed.customer)
+        workspace = await update_purchase_workspace_draft_customer(
+            db,
+            pos_session=pos_session,
+            payload=parsed.customer,
+            commit=False,
+            emit=False,
+        )
+        customer_mutation_started = True
     workspace = await replace_purchase_workspace_sections(
         db,
         pos_session=pos_session,
@@ -484,6 +500,10 @@ async def _apply_afg_workspace_artifact_inputs(
                 "market_rates": parsed.sections.market_rates or current_workspace.market_rates,
             }
         ),
+        commit=True,
+        emit=True,
+        lock=not customer_mutation_started,
+        claim_revision=not customer_mutation_started,
     )
     await _ensure_alis_workspace_artifact(db, workspace, force_sync=True)
     return workspace
@@ -547,6 +567,7 @@ async def _apply_office_session_content(
     entry,
     workbook_bytes: bytes,
 ) -> None:
+    office_pos_session: PosSession | None = None
     if entry.artifact_key:
         record = await get_artifact_record(db, entry.artifact_key)
         if record is None:
@@ -565,6 +586,26 @@ async def _apply_office_session_content(
             ) from exc
         current_revision = int(getattr(record, "revision", 1) or 1)
         if entry.kind == "alis-workspace":
+            office_pos_session = await get_pos_session_or_404(db, UUID(entry.key))
+            current_workspace = await build_purchase_workspace(db, pos_session=office_pos_session)
+            workbook_workspace_revision = getattr(metadata, "workspace_revision", None)
+            if workbook_workspace_revision is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Office artifact conflict_state=stale_lineage; workspace revision metadata bulunamadı.",
+                )
+            try:
+                incoming_workspace_revision = int(workbook_workspace_revision)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Office artifact conflict_state=invalid; workspace revision metadata geçersiz.",
+                ) from exc
+            if incoming_workspace_revision != int(current_workspace.workspace_revision):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Office artifact conflict_state=external_write; workspace önce güncellendi.",
+                )
             launch_revision = int(getattr(entry, "launch_revision", entry.artifact_revision) or entry.artifact_revision or 1)
             applied_revision = int(getattr(entry, "artifact_revision", launch_revision) or launch_revision)
             try:
@@ -603,7 +644,7 @@ async def _apply_office_session_content(
                     detail=f"Office artifact conflict_state={conflict_state}; önce yenileyin.",
                 )
     if entry.kind == "alis-workspace":
-        pos_session = await get_pos_session_or_404(db, UUID(entry.key))
+        pos_session = office_pos_session or await get_pos_session_or_404(db, UUID(entry.key))
         await _apply_afg_workspace_artifact_inputs(
             db,
             pos_session=pos_session,
@@ -641,6 +682,36 @@ def _verify_onlyoffice_callback_token(request: Request, payload: dict) -> None:
         raise HTTPException(status_code=401, detail="ONLYOFFICE callback token geçersiz") from exc
 
 
+async def _ensure_current_alis_workspace_artifact(
+    db: AsyncSession,
+    *,
+    workspace: PosWorkspaceOut,
+    artifact,
+):
+    """Fail closed instead of launching an old writable workbook.
+
+    Normal workspace saves keep their core transaction independent from the
+    generated workbook.  If the projection failed, the next Office launch
+    must repair it from the current workspace before handing out a writable
+    session; otherwise a stale workbook could pass its own artifact revision
+    check and overwrite newer CRM data.
+    """
+    if artifact is not None:
+        try:
+            metadata = read_artifact_sync_metadata(
+                artifact_absolute_path(artifact).read_bytes(),
+                expected_kind="alis-workspace",
+                expected_key=str(workspace.session.id),
+            )
+        except (OSError, ValueError, KeyError, TypeError):
+            metadata = None
+        if metadata is not None and getattr(metadata, "workspace_revision", None) == str(workspace.workspace_revision):
+            return artifact
+    bundle = await sync_afg_workspace_artifact(db, workspace)
+    await db.commit()
+    return bundle.artifact
+
+
 async def _office_preview_for_kind(
     db: AsyncSession,
     *,
@@ -654,10 +725,7 @@ async def _office_preview_for_kind(
             pos_session = await get_pos_session_or_404(db, session_id)
             workspace = await build_purchase_workspace(db, pos_session=pos_session)
             artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
-            if artifact is None:
-                bundle = await sync_afg_workspace_artifact(db, workspace)
-                await db.commit()
-                artifact = bundle.artifact
+            artifact = await _ensure_current_alis_workspace_artifact(db, workspace=workspace, artifact=artifact)
             return build_afg_workspace_preview(workspace, artifact=artifact), True
         if kind == "alis-document":
             sequence_no = int(key)
@@ -709,11 +777,9 @@ async def _office_status_for_kind(
         if kind == "alis-workspace":
             session_id = UUID(key)
             artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
-            if artifact is None:
-                pos_session = await get_pos_session_or_404(db, session_id)
-                workspace = await build_purchase_workspace(db, pos_session=pos_session)
-                artifact = (await sync_afg_workspace_artifact(db, workspace)).artifact
-                await db.commit()
+            pos_session = await get_pos_session_or_404(db, session_id)
+            workspace = await build_purchase_workspace(db, pos_session=pos_session)
+            artifact = await _ensure_current_alis_workspace_artifact(db, workspace=workspace, artifact=artifact)
             can_write = True
             import_supported = True
         elif kind == "alis-document":

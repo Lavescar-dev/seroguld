@@ -125,6 +125,9 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   const launchAutoHealAttemptedRef = useRef(false);
   const externalRefreshTimeoutRef = useRef<number | null>(null);
   const forceSavePromiseRef = useRef<Promise<OfficeForceSaveResult> | null>(null);
+  const livePreviewEditGenerationRef = useRef(0);
+  const forceSaveGenerationRef = useRef<number | null>(null);
+  const pendingForceSaveRef = useRef<{ generation: number; saveId: number | null } | null>(null);
 
   const launchQuery = useQuery({
     queryKey: ['office-document-launch', kind, artifactKey, reloadNonce],
@@ -236,28 +239,40 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       });
     },
     onSuccess: (result) => {
+      const savedGeneration = forceSaveGenerationRef.current ?? livePreviewEditGenerationRef.current;
       if (!result.accepted) {
+        pendingForceSaveRef.current = null;
         setIsLivePreviewSyncing(false);
+        setIsLivePreviewDirty(true);
         setLastLivePreviewError(result.detail || 'Canlı önizleme senkronu reddedildi.');
         return;
       }
       setLastLivePreviewError(null);
       if (result.state === 'noop') {
+        pendingForceSaveRef.current = null;
         setIsLivePreviewSyncing(false);
+        setIsLivePreviewDirty(livePreviewEditGenerationRef.current !== savedGeneration);
         return;
       }
-      setIsLivePreviewDirty(false);
+      pendingForceSaveRef.current = {
+        generation: savedGeneration,
+        saveId: result.save_id ?? null,
+      };
+      setIsLivePreviewDirty(livePreviewEditGenerationRef.current !== savedGeneration);
       setIsLivePreviewSyncing(true);
       void statusQuery.refetch();
     },
     onError: (error) => {
+      pendingForceSaveRef.current = null;
       setIsLivePreviewSyncing(false);
+      setIsLivePreviewDirty(true);
       setLastLivePreviewError(error instanceof Error ? error.message : 'Canlı önizleme senkronu başarısız oldu.');
     },
   });
 
   function runForceSave() {
     if (forceSavePromiseRef.current) return forceSavePromiseRef.current;
+    forceSaveGenerationRef.current = livePreviewEditGenerationRef.current;
     const promise = forceSaveMutation.mutateAsync();
     forceSavePromiseRef.current = promise;
     const clear = () => {
@@ -269,33 +284,60 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
 
   async function flushBeforeClose(): Promise<boolean> {
     if (!officeEnabled || !canUseLivePreviewSync) return true;
-    if (!isLivePreviewDirty && !isLivePreviewSyncing) return true;
+    if (!isLivePreviewDirty && !isLivePreviewSyncing && !pendingForceSaveRef.current) return true;
     try {
-      const result = await runForceSave();
-      if (!result.accepted) return false;
-      if (result.state === 'noop') return true;
-      setIsLivePreviewSyncing(true);
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        const refreshed = await statusQuery.refetch();
-        const nextState = refreshed.data?.live_sync_state;
-        const appliedSaveId = refreshed.data?.last_applied_save_id || 0;
-        if (nextState === 'applied' && (!result.save_id || appliedSaveId >= result.save_id)) {
-          setIsLivePreviewDirty(false);
-          setIsLivePreviewSyncing(false);
-          return true;
+      // A forcesave command may have returned while its callback is still in
+      // flight.  Reuse that save id; starting another command here can make
+      // OnlyOffice deliver snapshots out of order and resurrect an older edit.
+      for (let cycle = 0; cycle < 4; cycle += 1) {
+        const generation = livePreviewEditGenerationRef.current;
+        const pending = pendingForceSaveRef.current;
+        const result = pending
+          ? { accepted: true, state: 'queued', save_id: pending.saveId }
+          : await runForceSave();
+        if (!result.accepted) return false;
+        if (result.state === 'noop') {
+          if (livePreviewEditGenerationRef.current === generation) {
+            setIsLivePreviewDirty(false);
+            return true;
+          }
+          setIsLivePreviewDirty(true);
+          continue;
         }
-        if (nextState === 'rejected' || nextState === 'error') {
-          setIsLivePreviewSyncing(false);
-          setLastLivePreviewError(refreshed.data?.live_sync_message || 'Office kaydı reddedildi.');
-          return false;
+        setIsLivePreviewSyncing(true);
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const refreshed = await statusQuery.refetch();
+          const nextState = refreshed.data?.live_sync_state;
+          const appliedSaveId = refreshed.data?.last_applied_save_id || 0;
+          if (nextState === 'applied' && (!result.save_id || appliedSaveId >= result.save_id)) {
+            const completed = pendingForceSaveRef.current;
+            if (!completed || completed.saveId === result.save_id) {
+              pendingForceSaveRef.current = null;
+            }
+            setIsLivePreviewSyncing(false);
+            if (livePreviewEditGenerationRef.current !== generation) {
+              setIsLivePreviewDirty(true);
+              break;
+            }
+            setIsLivePreviewDirty(false);
+            return true;
+          }
+          if (nextState === 'rejected' || nextState === 'error') {
+            setIsLivePreviewSyncing(false);
+            setIsLivePreviewDirty(true);
+            setLastLivePreviewError(refreshed.data?.live_sync_message || 'Office kaydı reddedildi.');
+            return false;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
       }
       setIsLivePreviewSyncing(false);
+      setIsLivePreviewDirty(true);
       setLastLivePreviewError('Office kaydı henüz backend tarafından kabul edilmedi.');
       return false;
     } catch (error) {
       setIsLivePreviewSyncing(false);
+      setIsLivePreviewDirty(true);
       setLastLivePreviewError(error instanceof Error ? error.message : 'Office kaydı başarısız oldu.');
       return false;
     }
@@ -383,6 +425,9 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       setIsLivePreviewDirty(false);
       setIsLivePreviewSyncing(false);
       setLastLivePreviewError(null);
+      livePreviewEditGenerationRef.current = 0;
+      forceSaveGenerationRef.current = null;
+      pendingForceSaveRef.current = null;
       launchMeasureStartedAtRef.current = null;
       sessionRefreshStartedAtRef.current = null;
       iframeMeasureStartedAtRef.current = null;
@@ -398,6 +443,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       setLastKnownGoodLaunch(null);
       setIsLivePreviewDirty(false);
       setIsLivePreviewSyncing(false);
+      pendingForceSaveRef.current = null;
       if (externalRefreshTimeoutRef.current) {
         window.clearTimeout(externalRefreshTimeoutRef.current);
         externalRefreshTimeoutRef.current = null;
@@ -494,21 +540,32 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       return;
     }
     if (status?.live_sync_state === 'applied') {
-      setIsLivePreviewSyncing(false);
-      setIsLivePreviewDirty(false);
+      const pending = pendingForceSaveRef.current;
+      const appliedSaveId = status.last_applied_save_id || 0;
+      if (pending?.saveId && appliedSaveId < pending.saveId) {
+        return;
+      }
+      if (pending) {
+        pendingForceSaveRef.current = null;
+        setIsLivePreviewSyncing(false);
+        setIsLivePreviewDirty(livePreviewEditGenerationRef.current !== pending.generation);
+      } else {
+        setIsLivePreviewSyncing(false);
+      }
       setLastLivePreviewError(null);
       return;
     }
     if (status?.live_sync_state === 'rejected' || status?.live_sync_state === 'error') {
+      pendingForceSaveRef.current = null;
       setIsLivePreviewSyncing(false);
-      setIsLivePreviewDirty(false);
+      setIsLivePreviewDirty(true);
       setLastLivePreviewError(status.live_sync_message || 'Canlı önizleme senkronu başarısız oldu.');
       return;
     }
     if (status?.live_sync_state === 'idle') {
       setIsLivePreviewSyncing(false);
     }
-  }, [canUseLivePreviewSync, status?.live_sync_message, status?.live_sync_state]);
+  }, [canUseLivePreviewSync, status?.last_applied_save_id, status?.live_sync_message, status?.live_sync_state]);
 
   useEffect(() => {
     if (!officeEnabled) return;
@@ -709,9 +766,18 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       setLastEditorError(message);
     },
     onEditorDirtyStateChange: (dirty) => {
-      if (!canUseLivePreviewSync || !dirty) return;
-      setIsLivePreviewDirty(true);
-      setLastLivePreviewError(null);
+      if (!canUseLivePreviewSync) return;
+      if (dirty) {
+        livePreviewEditGenerationRef.current += 1;
+        setIsLivePreviewDirty(true);
+        setLastLivePreviewError(null);
+        return;
+      }
+      // OnlyOffice can report clean while its callback is still pending.  Do
+      // not let that transient signal erase the local dirty state.
+      if (!forceSavePromiseRef.current && !pendingForceSaveRef.current && !isLivePreviewSyncing) {
+        setIsLivePreviewDirty(false);
+      }
     },
   };
 }

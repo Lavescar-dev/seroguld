@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets
 from dataclasses import dataclass
@@ -299,13 +300,19 @@ class OnlyOfficeProvider:
             reason=reason,
         )
 
-    async def force_save(self, *, entry: OfficeSessionEntry) -> OfficeProviderForceSaveResult:
+    async def force_save(
+        self,
+        *,
+        entry: OfficeSessionEntry,
+        save_id: int | None = None,
+    ) -> OfficeProviderForceSaveResult:
         settings = get_settings()
         await self._check_health()
+        requested_save_id = int(save_id if save_id is not None else entry.last_requested_save_id)
         payload = {
             "c": "forcesave",
             "key": self._document_key(entry),
-            "userdata": f"{entry.kind}:{entry.key}:{entry.last_requested_save_id}",
+            "userdata": f"{entry.kind}:{entry.key}:{requested_save_id}",
         }
         token = jwt.encode(payload, settings.onlyoffice_jwt_secret, algorithm="HS256")
         command_url = f"{settings.onlyoffice_runtime_url.rstrip('/')}/coauthoring/CommandService.ashx"
@@ -323,14 +330,14 @@ class OnlyOfficeProvider:
             return OfficeProviderForceSaveResult(
                 accepted=True,
                 state="queued",
-                save_id=entry.last_requested_save_id,
+                save_id=requested_save_id,
             )
         if error_code == 4:
             return OfficeProviderForceSaveResult(
                 accepted=True,
                 state="noop",
                 detail="Kaydedilecek yeni Excel değişikliği bulunamadı.",
-                save_id=entry.last_requested_save_id,
+                save_id=requested_save_id,
             )
         return OfficeProviderForceSaveResult(
             accepted=False,
@@ -367,6 +374,7 @@ class OnlyOfficeProvider:
 class OfficeHostService:
     def __init__(self) -> None:
         self._sessions: dict[str, OfficeSessionEntry] = {}
+        self._callback_locks: dict[str, asyncio.Lock] = {}
         self._providers = self._build_providers()
 
     def _build_providers(self) -> dict[str, OfficeProvider]:
@@ -397,6 +405,7 @@ class OfficeHostService:
         expired = [token for token, entry in self._sessions.items() if entry.expires_at <= now]
         for token in expired:
             self._sessions.pop(token, None)
+            self._callback_locks.pop(token, None)
 
     def create_session(
         self,
@@ -489,6 +498,17 @@ class OfficeHostService:
         entry.last_callback_received_at = utc_now()
         return entry
 
+    def callback_lock(self, access_token: str) -> asyncio.Lock:
+        """Serialize callbacks for one OnlyOffice document session.
+
+        OnlyOffice can deliver force-save callbacks out of order.  Keeping the
+        lock in the host service makes the apply/check/update sequence one
+        critical section without sharing a database transaction across HTTP
+        requests.
+        """
+        self._prune()
+        return self._callback_locks.setdefault(access_token, asyncio.Lock())
+
     def mark_sync_rejected(self, access_token: str, detail: str | None) -> OfficeSessionEntry | None:
         entry = self.get_session(access_token)
         if entry is None:
@@ -572,13 +592,18 @@ class OfficeHostService:
             reason=provider_status.reason,
         )
 
-    async def force_save(self, entry: OfficeSessionEntry) -> OfficeProviderForceSaveResult:
+    async def force_save(
+        self,
+        entry: OfficeSessionEntry,
+        *,
+        save_id: int | None = None,
+    ) -> OfficeProviderForceSaveResult:
         provider = self._providers.get(entry.provider)
         if provider is None:
             raise RuntimeError(f"Desteklenmeyen office provider: {entry.provider}")
         if not isinstance(provider, OnlyOfficeProvider):
             raise RuntimeError("Bu office provider canlı forcesave desteklemiyor")
-        return await provider.force_save(entry=entry)
+        return await provider.force_save(entry=entry, save_id=save_id)
 
     def provider_for_kind(self, kind: str) -> str:
         return self._provider_for_kind(kind).provider

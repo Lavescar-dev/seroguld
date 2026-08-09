@@ -106,9 +106,14 @@ async def update_purchase_workspace_customer(
     *,
     pos_session: PosSession,
     payload: PosWorkspaceCustomerUpdate,
+    commit: bool = True,
+    emit: bool = True,
+    lock: bool = True,
+    claim_revision: bool = True,
 ) -> PosWorkspaceOut:
     core = _core()
-    pos_session = await _lock_workspace_session(session, pos_session)
+    if lock:
+        pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
@@ -118,7 +123,11 @@ async def update_purchase_workspace_customer(
     if customer is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Önce müşteri seçin")
 
-    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+    note_payload = (
+        await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+        if claim_revision
+        else core._parse_workspace_note_payload(pos_session.notes)
+    )
     # Workspace edits remain session-local for identity/contact fields.  The
     # one master-data exception is a valid postal code: this fixes the
     # existing-customer edit path without making a temporary blank in the
@@ -134,10 +143,14 @@ async def update_purchase_workspace_customer(
     note_payload["workspace_customer_city"] = str(payload.city or "").strip() or None
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
-    await session.commit()
-    await session.refresh(customer)
-    await session.refresh(pos_session)
-    await core._emit_session_state(pos_session)
+    if commit:
+        await session.commit()
+        await session.refresh(customer)
+        await session.refresh(pos_session)
+        if emit:
+            await core._emit_session_state(pos_session)
+    else:
+        await session.flush()
     return await core.build_purchase_workspace(session, pos_session=pos_session)
 
 
@@ -146,13 +159,22 @@ async def update_purchase_workspace_draft_customer(
     *,
     pos_session: PosSession,
     payload: PosWorkspaceCustomerUpdate,
+    commit: bool = True,
+    emit: bool = True,
+    lock: bool = True,
+    claim_revision: bool = True,
 ) -> PosWorkspaceOut:
     core = _core()
-    pos_session = await _lock_workspace_session(session, pos_session)
+    if lock:
+        pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
-    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+    note_payload = (
+        await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+        if claim_revision
+        else core._parse_workspace_note_payload(pos_session.notes)
+    )
     note_payload["draft_customer"] = core._workspace_draft_customer_payload(payload)
     note_payload["draft_customer"]["postal_code"] = _validate_workspace_postal(
         note_payload["draft_customer"].get("postal_code")
@@ -161,9 +183,13 @@ async def update_purchase_workspace_draft_customer(
     note_payload["workspace_customer_city"] = str(payload.city or "").strip() or None
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
-    await session.commit()
-    await session.refresh(pos_session)
-    await core._emit_session_state(pos_session)
+    if commit:
+        await session.commit()
+        await session.refresh(pos_session)
+        if emit:
+            await core._emit_session_state(pos_session)
+    else:
+        await session.flush()
     return await core.build_purchase_workspace(session, pos_session=pos_session)
 
 
@@ -216,13 +242,22 @@ async def replace_purchase_workspace_sections(
     *,
     pos_session: PosSession,
     payload: PosWorkspaceSectionsUpdate,
+    commit: bool = True,
+    emit: bool = True,
+    lock: bool = True,
+    claim_revision: bool = True,
 ) -> PosWorkspaceOut:
     core = _core()
-    pos_session = await _lock_workspace_session(session, pos_session)
+    if lock:
+        pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
-    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+    note_payload = (
+        await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+        if claim_revision
+        else core._parse_workspace_note_payload(pos_session.notes)
+    )
     existing_market_rates = await core._workspace_market_rates_from_session(pos_session)
     if payload.market_rates is not None:
         market_rates = core._market_rate_payload_to_workspace(
@@ -396,9 +431,11 @@ async def replace_purchase_workspace_sections(
         pos_session.rate_source = PosRateSourceEnum.LIVE
     await session.flush()
     await core._sync_buy_session_summary_from_lines(session, pos_session=pos_session)
-    await session.commit()
-    await session.refresh(pos_session)
-    await core._emit_session_state(pos_session)
+    if commit:
+        await session.commit()
+        await session.refresh(pos_session)
+        if emit:
+            await core._emit_session_state(pos_session)
     return await core.build_purchase_workspace(session, pos_session=pos_session)
 
 

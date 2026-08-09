@@ -272,6 +272,7 @@ class SyncSheetMetadata:
     key: str
     artifact_key: str
     base_version: str | None
+    workspace_revision: str | None
     contract_version: str
     mappings: list[SyncSheetRowMapping]
 
@@ -282,6 +283,7 @@ class ArtifactSyncContext:
     key: str
     artifact_key: str
     base_version: str
+    workspace_revision: str | None = None
     contract_version: str = SYNC_CONTRACT_VERSION
     mappings: list[SyncSheetRowMapping] | None = None
 
@@ -539,6 +541,8 @@ def _write_sync_sheet(workbook, *, context: ArtifactSyncContext) -> None:
     _set_sheet_cell(sheet, "B4", context.artifact_key)
     _set_sheet_cell(sheet, "A5", "base_version")
     _set_sheet_cell(sheet, "B5", context.base_version)
+    _set_sheet_cell(sheet, "A7", "workspace_revision")
+    _set_sheet_cell(sheet, "B7", context.workspace_revision)
     _set_sheet_cell(sheet, "A6", "contract_version")
     _set_sheet_cell(sheet, "B6", context.contract_version)
     _set_sheet_cell(sheet, "A8", "mapping_type")
@@ -592,6 +596,7 @@ def _read_sync_sheet(workbook) -> SyncSheetMetadata:
         key=_clean_text(sheet["B3"].value) or "",
         artifact_key=_clean_text(sheet["B4"].value) or "",
         base_version=_clean_text(sheet["B5"].value),
+        workspace_revision=_clean_text(sheet["B7"].value),
         contract_version=_clean_text(sheet["B6"].value) or SYNC_CONTRACT_VERSION,
         mappings=mappings,
     )
@@ -1789,6 +1794,7 @@ async def sync_afg_workspace_artifact(session: AsyncSession, workspace: PosWorks
             key=str(workspace.session.id),
             artifact_key=artifact_key,
             base_version=str(revision),
+            workspace_revision=str(workspace.workspace_revision),
         ),
     )
     return await _store_artifact(

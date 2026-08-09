@@ -47,6 +47,7 @@ def test_sync_metadata_carries_revision_used_by_office_callbacks() -> None:
             key="workspace-1",
             artifact_key="alis.workspace.workspace-1",
             base_version="7",
+            workspace_revision="12",
         ),
     )
     parsed = _read_sync_sheet(workbook)
@@ -58,6 +59,7 @@ def test_sync_metadata_carries_revision_used_by_office_callbacks() -> None:
         expected_key="workspace-1",
     )
     assert parsed_from_bytes.base_version == "7"
+    assert parsed_from_bytes.workspace_revision == "12"
 
 
 def test_office_session_version_uses_artifact_revision() -> None:
@@ -105,7 +107,7 @@ async def test_alis_office_session_accepts_sequential_save_and_rejects_external_
         launch_revision=5,
         artifact_revision=5,
     )
-    metadata = SimpleNamespace(base_version="5")
+    metadata = SimpleNamespace(base_version="5", workspace_revision="1")
     applied: list[bytes] = []
 
     async def fake_get_artifact_record(db, artifact_key: str):
@@ -119,10 +121,14 @@ async def test_alis_office_session_accepts_sequential_save_and_rejects_external_
     async def fake_get_pos_session_or_404(db, session_id):
         return SimpleNamespace(id=session_id)
 
+    async def fake_build_purchase_workspace(db, *, pos_session):
+        return SimpleNamespace(workspace_revision=1)
+
     monkeypatch.setattr(v2, "get_artifact_record", fake_get_artifact_record)
     monkeypatch.setattr(v2, "read_artifact_sync_metadata", lambda *args, **kwargs: metadata)
     monkeypatch.setattr(v2, "_apply_afg_workspace_artifact_inputs", fake_apply_afg_workspace_artifact_inputs)
     monkeypatch.setattr(v2, "get_pos_session_or_404", fake_get_pos_session_or_404)
+    monkeypatch.setattr(v2, "build_purchase_workspace", fake_build_purchase_workspace)
 
     await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"first-save")
     artifact.revision = 6

@@ -125,3 +125,50 @@ async def test_onlyoffice_callback_downloads_workbook_and_applies(monkeypatch):
     assert captured["artifact_key"] == (entry.artifact_key or "")
     assert captured["committed"] is True
     assert "rolled_back" not in captured
+
+
+@pytest.mark.asyncio
+async def test_onlyoffice_callback_ignores_older_save_id(monkeypatch):
+    preview = DocumentArtifactPreviewOut(
+        title="1003.xlsm",
+        download_path="/api/v2/office/mock-download",
+        import_supported=True,
+    )
+    entry = runtime.office_host_service.create_session(
+        kind="alis-workspace",
+        key="draft-1003",
+        preview=preview,
+        can_write=True,
+    )
+    entry.last_applied_save_id = 2
+    applied = False
+
+    class FakeRequest:
+        async def json(self) -> dict[str, object]:
+            return {
+                "status": 2,
+                "url": "http://onlyoffice.test/older.xlsx",
+                "userdata": "alis-workspace:draft-1003:1",
+            }
+
+    class FakeDb:
+        pass
+
+    async def fake_office_artifact_record_or_404(db, access_token: str):
+        return entry, SimpleNamespace()
+
+    async def fake_apply_office_session_content(db, *, entry, workbook_bytes: bytes) -> None:
+        nonlocal applied
+        applied = True
+
+    monkeypatch.setattr(runtime, "_office_artifact_record_or_404", fake_office_artifact_record_or_404)
+    monkeypatch.setattr(runtime, "_apply_office_session_content", fake_apply_office_session_content)
+    monkeypatch.setattr(runtime, "_verify_onlyoffice_callback_token", lambda request, payload: None)
+
+    try:
+        result = await runtime.post_onlyoffice_callback_v2(entry.access_token, FakeRequest(), FakeDb())
+    finally:
+        runtime.office_host_service._sessions.pop(entry.access_token, None)
+
+    assert result == {"error": 0}
+    assert applied is False
