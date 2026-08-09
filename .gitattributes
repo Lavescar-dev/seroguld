@@ -1,0 +1,4 @@
+# Workbook references are opaque binary business artifacts.  Do not render
+# them as text or attempt line-based merges.
+*.xlsx binary
+*.xlsm binary

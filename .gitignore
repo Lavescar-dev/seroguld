@@ -57,6 +57,12 @@ coverage/
 **/test-results/
 
 # =========================
+# Local audit/report output (never source-controlled)
+# =========================
+.ai/reports/seroguld-crm-*/
+frontend/.seroguld-ui-check*
+
+# =========================
 # Runtime / process artifacts
 # =========================
 .run/
@@ -87,7 +93,10 @@ data/logs/
 # =========================
 # Customer reference material (private business data)
 # =========================
-referans/
+referans/*
+!referans/Afregningsbilag ( alis frontumuz).xlsm
+!referans/Depolama.xlsx
+!referans/Log sistemi- afg verileri buraya yazdiriyorum..xlsx
 
 # =========================
 # Tools / vendored binaries
