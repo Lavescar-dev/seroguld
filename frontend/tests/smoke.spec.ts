@@ -6,6 +6,11 @@ async function login(page: import('@playwright/test').Page) {
   await page.getByLabel('Şifre').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
   await expect(page.getByRole('button', { name: /Yeni Alış Başlat/i })).toBeVisible();
+
+  const discoveryDismiss = page.getByRole('button', { name: 'Şimdi değil' });
+  if (await discoveryDismiss.isVisible()) {
+    await discoveryDismiss.click();
+  }
 }
 
 test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) => {
