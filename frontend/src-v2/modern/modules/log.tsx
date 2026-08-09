@@ -2,8 +2,10 @@ import { CheckCircle2, FileSpreadsheet, History, Loader2, Search } from 'lucide-
 
 import type { ModernLogViewModel } from '@/modern/adapters/log';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }) {
   const { state } = viewModel;
@@ -15,7 +17,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
       title="Route ve Melt Yönetimi"
       subtitle="Altın ve gümüş bucket'ları, draft route review ve melt lot lifecycle akışlarını mevcut hook sonucu ile kullanan modern shell."
       blocker={viewModel.blocker}
-      unsupportedControls={viewModel.unsupportedControls}
+      unsupportedControls={state.activeView === 'excel' ? [] : viewModel.unsupportedControls}
       badges={
         <>
           <DataPill label="Bucket" value={state.activeTab.toUpperCase()} tone={state.activeTab === 'gold' ? 'warning' : 'neutral'} />
@@ -34,6 +36,10 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
         </>
       }
     >
+      {state.activeView === 'excel' ? (
+        <ModernLogOfficeSurface year={state.selectedYear} onClose={() => state.onActiveViewChange('system')} />
+      ) : (
+        <>
       <ModernStatGrid items={viewModel.stats} />
 
       {viewModel.phase === 'loading' ? <LoadingState label="Log workspace yükleniyor" /> : null}
@@ -139,8 +145,22 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
           </ModernSection>
         </div>
       ) : null}
+        </>
+      )}
     </ModernModuleShell>
   );
+}
+
+function ModernLogOfficeSurface({
+  year,
+  onClose,
+}: {
+  year: number;
+  onClose: () => void | Promise<void>;
+}) {
+  const officeState = useOfficeDocumentState({ kind: 'log', artifactKey: String(year), disableReopen: true });
+
+  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={onClose} />;
 }
 
 function MobileRow({ label, value }: { label: string; value: string }) {

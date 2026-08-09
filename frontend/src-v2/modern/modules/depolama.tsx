@@ -2,8 +2,10 @@ import { Camera, Eye, FileSpreadsheet, Search, Tag } from 'lucide-react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
 import { formatDate, formatMoney, formatNumber, labelInventoryCategory, labelInventorySubcategory, labelShopSyncStatus } from '@/lib/format';
+import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaViewModel }) {
   const { state } = viewModel;
@@ -31,6 +33,10 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
         </>
       }
     >
+      {state.activeView === 'excel' ? (
+        <ModernDepolamaOfficeSurface onClose={() => state.setActiveView('system')} />
+      ) : (
+        <>
       <ModernStatGrid items={viewModel.stats} />
 
       {viewModel.phase === 'loading' ? <LoadingState label="Depolama workspace yükleniyor" /> : null}
@@ -152,8 +158,16 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
           )}
         </ModernSection>
       </div>
+        </>
+      )}
     </ModernModuleShell>
   );
+}
+
+function ModernDepolamaOfficeSurface({ onClose }: { onClose: () => void | Promise<void> }) {
+  const officeState = useOfficeDocumentState({ kind: 'depolama', artifactKey: 'live', disableReopen: true });
+
+  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={onClose} />;
 }
 
 function MobileRow({ label, value }: { label: string; value: string }) {

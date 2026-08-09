@@ -39,6 +39,7 @@ class OfficeSessionEntry:
     updated_at: datetime
     expires_at: datetime
     artifact_revision: int = 0
+    launch_revision: int = 0
     lock_value: str | None = None
     lock_expires_at: datetime | None = None
     last_saved_at: datetime | None = None
@@ -47,6 +48,8 @@ class OfficeSessionEntry:
     last_forcesave_requested_at: datetime | None = None
     last_callback_received_at: datetime | None = None
     last_applied_artifact_updated_at: datetime | None = None
+    last_requested_save_id: int = 0
+    last_applied_save_id: int = 0
 
     @property
     def version(self) -> str:
@@ -93,6 +96,7 @@ class OfficeProviderForceSaveResult:
     accepted: bool
     state: str
     detail: str | None = None
+    save_id: int | None = None
 
 
 class CollaboraOfficeProvider:
@@ -301,7 +305,7 @@ class OnlyOfficeProvider:
         payload = {
             "c": "forcesave",
             "key": self._document_key(entry),
-            "userdata": f"{entry.kind}:{entry.key}",
+            "userdata": f"{entry.kind}:{entry.key}:{entry.last_requested_save_id}",
         }
         token = jwt.encode(payload, settings.onlyoffice_jwt_secret, algorithm="HS256")
         command_url = f"{settings.onlyoffice_runtime_url.rstrip('/')}/coauthoring/CommandService.ashx"
@@ -319,12 +323,14 @@ class OnlyOfficeProvider:
             return OfficeProviderForceSaveResult(
                 accepted=True,
                 state="queued",
+                save_id=entry.last_requested_save_id,
             )
         if error_code == 4:
             return OfficeProviderForceSaveResult(
                 accepted=True,
                 state="noop",
                 detail="Kaydedilecek yeni Excel değişikliği bulunamadı.",
+                save_id=entry.last_requested_save_id,
             )
         return OfficeProviderForceSaveResult(
             accepted=False,
@@ -428,6 +434,7 @@ class OfficeHostService:
             updated_at=artifact.updated_at if artifact else utc_now(),
             expires_at=utc_now() + timedelta(seconds=settings.office_session_ttl_seconds),
             artifact_revision=int(getattr(artifact, "revision", 0) or 0),
+            launch_revision=int(getattr(artifact, "revision", 0) or 0),
         )
         self._sessions[token] = entry
         return entry
@@ -448,6 +455,7 @@ class OfficeHostService:
         *,
         updated_at: datetime | None = None,
         revision: int | None = None,
+        save_id: int | None = None,
     ) -> OfficeSessionEntry | None:
         entry = self.get_session(access_token)
         if entry is None:
@@ -458,6 +466,8 @@ class OfficeHostService:
         entry.last_applied_artifact_updated_at = now
         if revision is not None:
             entry.artifact_revision = int(revision)
+        if save_id is not None:
+            entry.last_applied_save_id = max(entry.last_applied_save_id, int(save_id))
         entry.live_sync_state = "applied"
         entry.last_sync_error = None
         return entry
@@ -467,6 +477,7 @@ class OfficeHostService:
         if entry is None:
             return None
         entry.last_forcesave_requested_at = utc_now()
+        entry.last_requested_save_id += 1
         entry.live_sync_state = "syncing"
         entry.last_sync_error = None
         return entry

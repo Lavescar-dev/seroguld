@@ -138,5 +138,5 @@ export function OnlyOfficeEditor({ launch, onReady, onError, onDirtyStateChange,
     };
   }, [containerId, config, launch.onlyoffice_api_js_url]);
 
-  return <div id={containerId} className={className} style={{ width: '100%', height: '100%' }} />;
+  return <div id={containerId} className={`min-h-0 w-full ${className}`} style={{ height: '100%' }} />;
 }

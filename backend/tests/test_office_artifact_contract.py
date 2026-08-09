@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException
 from openpyxl import Workbook
 
+from app.api import v2
 from app.services.document_artifact_service import (
     ARTIFACT_CONFLICT_CLEAN,
     ARTIFACT_CONFLICT_CONFLICT,
@@ -89,3 +93,44 @@ def _workbook_bytes(workbook: Workbook) -> bytes:
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_alis_office_session_rejects_second_save_from_stale_workbook(monkeypatch):
+    artifact = SimpleNamespace(revision=5)
+    entry = SimpleNamespace(
+        artifact_key="alis.workspace.test",
+        kind="alis-workspace",
+        key=str(uuid4()),
+        launch_revision=5,
+        artifact_revision=5,
+    )
+    metadata = SimpleNamespace(base_version="5")
+    applied: list[bytes] = []
+
+    async def fake_get_artifact_record(db, artifact_key: str):
+        assert artifact_key == entry.artifact_key
+        return artifact
+
+    async def fake_apply_afg_workspace_artifact_inputs(db, *, pos_session, workbook_bytes, office_lineage):
+        assert office_lineage is True
+        applied.append(workbook_bytes)
+
+    async def fake_get_pos_session_or_404(db, session_id):
+        return SimpleNamespace(id=session_id)
+
+    monkeypatch.setattr(v2, "get_artifact_record", fake_get_artifact_record)
+    monkeypatch.setattr(v2, "read_artifact_sync_metadata", lambda *args, **kwargs: metadata)
+    monkeypatch.setattr(v2, "_apply_afg_workspace_artifact_inputs", fake_apply_afg_workspace_artifact_inputs)
+    monkeypatch.setattr(v2, "get_pos_session_or_404", fake_get_pos_session_or_404)
+
+    await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"first-save")
+    artifact.revision = 6
+    entry.artifact_revision = 6
+
+    with pytest.raises(HTTPException) as stale_save:
+        await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"stale-save")
+
+    assert stale_save.value.status_code == 409
+    assert "stale_lineage" in str(stale_save.value.detail)
+    assert applied == [b"first-save"]

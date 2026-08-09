@@ -32,6 +32,7 @@ export interface OfficeDocumentPageProps {
   useNativeImportDialog: boolean;
   isLoading: boolean;
   isError: boolean;
+  launchError?: { status?: number; message: string } | null;
   isImporting: boolean;
   isStatusRefreshing: boolean;
   isSessionRefreshing: boolean;
@@ -54,6 +55,7 @@ export interface OfficeDocumentPageProps {
   isLivePreviewSyncing?: boolean;
   lastLivePreviewError?: string | null;
   onRetryLivePreviewSync?: () => void;
+  onBeforeClose?: () => Promise<boolean>;
   onExport: () => void;
   onImportFromDialog: () => void;
   onImportFile: (file: File) => void;

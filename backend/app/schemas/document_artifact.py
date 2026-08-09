@@ -138,6 +138,10 @@ class OfficeDocumentStatusOut(AppBaseModel):
     live_sync_state: str = "idle"
     live_sync_message: str | None = None
     last_callback_at: datetime | None = None
+    launch_revision: int | None = None
+    applied_revision: int | None = None
+    last_requested_save_id: int = 0
+    last_applied_save_id: int = 0
 
 
 class OfficeRuntimeStatusOut(AppBaseModel):
@@ -157,3 +161,4 @@ class OfficeForceSaveOut(AppBaseModel):
     accepted: bool = False
     state: str = "unavailable"
     detail: str | None = None
+    save_id: int | None = None

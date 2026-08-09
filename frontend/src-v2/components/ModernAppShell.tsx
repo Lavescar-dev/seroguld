@@ -17,8 +17,8 @@ import {
 
 import { getCurrentUser } from '@/lib/auth';
 import { formatRuntimeLabel } from '@/lib/runtimeInfo';
-import { OfficeDockPanel } from '@/make/office/OfficeDockPanel';
 import { ModernRootShell, type ModernShellNavGroup, type ModernShellRuntimeRow } from '@/modern/shell';
+import { ModernOfficeDockPanel } from '@/modern/modules/office';
 import { ModernReturnAction, uiVariantTransitionRegistry } from '@/ui-variants';
 
 import type { ReturnTypeOfRootMakeState } from './modernShellTypes';
@@ -124,8 +124,8 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
   }, [state.runtime]);
 
   const office = state.officeDock.document ? (
-    <section className="mb-5 h-[min(72vh,760px)] min-h-[480px] overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface shadow-sg-md">
-      <OfficeDockPanel document={state.officeDock.document} onClose={state.onCloseOfficeDock} />
+    <section className="relative mb-5 min-h-0 overflow-visible">
+      <ModernOfficeDockPanel document={state.officeDock.document} onClose={state.onCloseOfficeDock} />
     </section>
   ) : null;
 

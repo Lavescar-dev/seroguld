@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 
-import { apiRequest, downloadAuthedDocument } from '@/lib/api';
+import { ApiError, apiRequest, downloadAuthedDocument } from '@/lib/api';
 import { emitArtifactSync, listenArtifactSync } from '@/lib/artifactSync';
 import {
   exportDocumentBytes,
@@ -27,12 +27,14 @@ type UseOfficeDocumentStateOptions = {
   kind?: string;
   artifactKey?: string;
   disableReopen?: boolean;
+  enabled?: boolean;
 };
 
 type OfficeForceSaveResult = {
   accepted: boolean;
   state: string;
   detail?: string | null;
+  save_id?: number | null;
 };
 
 const LIVE_PREVIEW_DEBOUNCE_MS = 1200;
@@ -74,8 +76,18 @@ function importEndpointFor(kind: string, artifactKey: string) {
 }
 
 function importPreviewEndpointFor(kind: string, artifactKey: string) {
+  if (kind === 'alis-workspace') {
+    return `/api/v2/alis/workspace/${artifactKey}/artifact/reconcile-preview`;
+  }
   if (kind === 'depolama') {
     return '/api/v2/depolama/workbook/reconcile-preview';
+  }
+  return null;
+}
+
+function reconcileApplyEndpointFor(kind: string, artifactKey: string) {
+  if (kind === 'alis-workspace') {
+    return `/api/v2/alis/workspace/${artifactKey}/artifact/reconcile-apply?allow_full_clear=true`;
   }
   return null;
 }
@@ -84,6 +96,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   const params = useParams<{ kind: string; key: string }>();
   const kind = options?.kind || params.kind || '';
   const artifactKey = options?.artifactKey || params.key || '';
+  const officeEnabled = (options?.enabled ?? true) && Boolean(kind && artifactKey);
   const queryClient = useQueryClient();
   const formRef = useRef<HTMLFormElement>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -111,21 +124,26 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   const [lastLivePreviewError, setLastLivePreviewError] = useState<string | null>(null);
   const launchAutoHealAttemptedRef = useRef(false);
   const externalRefreshTimeoutRef = useRef<number | null>(null);
+  const forceSavePromiseRef = useRef<Promise<OfficeForceSaveResult> | null>(null);
 
   const launchQuery = useQuery({
     queryKey: ['office-document-launch', kind, artifactKey, reloadNonce],
-    enabled: Boolean(kind && artifactKey),
+    enabled: officeEnabled,
     queryFn: () => apiRequest<OfficeDocumentLaunch>(`/api/v2/office-documents/${kind}/${artifactKey}/launch`),
     staleTime: 0,
     refetchOnMount: 'always',
-    refetchInterval: (query) => (query.state.status === 'error' ? 2_000 : false),
-    refetchOnWindowFocus: (query) => query.state.status === 'error',
-    refetchOnReconnect: (query) => query.state.status === 'error',
+    retry: (failureCount, error) => {
+      const status = error instanceof ApiError ? error.status : 0;
+      return failureCount < 2 && (status === 0 || status === 502 || status === 503 || status === 504);
+    },
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const launchAccessToken = launchQuery.data?.access_token || lastKnownGoodLaunch?.access_token || null;
   const statusQuery = useQuery({
     queryKey: ['office-document-status', kind, artifactKey, launchAccessToken],
-    enabled: Boolean(kind && artifactKey),
+    enabled: officeEnabled,
     queryFn: () =>
       apiRequest<OfficeDocumentStatus>(
         `/api/v2/office-documents/${kind}/${artifactKey}/status${launchAccessToken ? `?access_token=${encodeURIComponent(launchAccessToken)}` : ''}`,
@@ -135,14 +153,14 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   });
   const runtimeStatusQuery = useQuery({
     queryKey: ['office-runtime-status', kind],
-    enabled: Boolean(kind && artifactKey),
+    enabled: officeEnabled,
     queryFn: () => apiRequest<OfficeRuntimeStatus>(`/api/v2/office-runtime/status?kind=${encodeURIComponent(kind)}`),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
   });
   const appRuntimeQuery = useQuery({
     queryKey: ['runtime-status'],
-    enabled: Boolean(kind && artifactKey),
+    enabled: officeEnabled,
     queryFn: () => apiRequest<RuntimeStatus>('/api/v2/runtime/status'),
     staleTime: 5_000,
     refetchInterval: 15_000,
@@ -153,7 +171,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append('workbook', file);
-      return apiRequest(importEndpointFor(kind, artifactKey), {
+      return apiRequest(reconcileApplyEndpointFor(kind, artifactKey) || importEndpointFor(kind, artifactKey), {
         method: 'POST',
         body: formData,
       });
@@ -238,10 +256,60 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
     },
   });
 
-  const launch = launchQuery.data || lastKnownGoodLaunch || null;
+  function runForceSave() {
+    if (forceSavePromiseRef.current) return forceSavePromiseRef.current;
+    const promise = forceSaveMutation.mutateAsync();
+    forceSavePromiseRef.current = promise;
+    const clear = () => {
+      if (forceSavePromiseRef.current === promise) forceSavePromiseRef.current = null;
+    };
+    promise.then(clear, clear);
+    return promise;
+  }
+
+  async function flushBeforeClose(): Promise<boolean> {
+    if (!officeEnabled || !canUseLivePreviewSync) return true;
+    if (!isLivePreviewDirty && !isLivePreviewSyncing) return true;
+    try {
+      const result = await runForceSave();
+      if (!result.accepted) return false;
+      if (result.state === 'noop') return true;
+      setIsLivePreviewSyncing(true);
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const refreshed = await statusQuery.refetch();
+        const nextState = refreshed.data?.live_sync_state;
+        const appliedSaveId = refreshed.data?.last_applied_save_id || 0;
+        if (nextState === 'applied' && (!result.save_id || appliedSaveId >= result.save_id)) {
+          setIsLivePreviewDirty(false);
+          setIsLivePreviewSyncing(false);
+          return true;
+        }
+        if (nextState === 'rejected' || nextState === 'error') {
+          setIsLivePreviewSyncing(false);
+          setLastLivePreviewError(refreshed.data?.live_sync_message || 'Office kaydı reddedildi.');
+          return false;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+      setIsLivePreviewSyncing(false);
+      setLastLivePreviewError('Office kaydı henüz backend tarafından kabul edilmedi.');
+      return false;
+    } catch (error) {
+      setIsLivePreviewSyncing(false);
+      setLastLivePreviewError(error instanceof Error ? error.message : 'Office kaydı başarısız oldu.');
+      return false;
+    }
+  }
+
+  const launch = officeEnabled ? launchQuery.data || lastKnownGoodLaunch || null : null;
   const status = statusQuery.data || null;
   const runtimeStatus = runtimeStatusQuery.data || null;
   const appRuntimeStatus = appRuntimeQuery.data || null;
+  const launchError = launchQuery.error instanceof ApiError
+    ? { status: launchQuery.error.status, message: launchQuery.error.message }
+    : launchQuery.error instanceof Error
+      ? { message: launchQuery.error.message }
+      : null;
   const frontendRuntime = getFrontendRuntimeInfo();
   const iframeName = useMemo(
     () => `office-document-${kind || 'artifact'}-${artifactKey || 'preview'}`,
@@ -250,6 +318,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   const canReopenWindow = !options?.disableReopen && isTauriRuntime();
   const isSessionStale = Boolean(status?.artifact?.updated_at && launch?.artifact?.updated_at && status.artifact.updated_at !== launch.artifact.updated_at);
   const canUseLivePreviewSync =
+    officeEnabled &&
     kind === 'alis-workspace' &&
     launch?.provider === 'onlyoffice' &&
     launch?.launch_mode === 'onlyoffice-docs-api' &&
@@ -268,6 +337,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   }
 
   const refreshStatusNow = () => {
+    if (!officeEnabled) return;
     setHasExternalUpdate(false);
     setLastEditorError(null);
     setLastLivePreviewError(null);
@@ -279,6 +349,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   };
 
   const refreshSessionNow = () => {
+    if (!officeEnabled) return;
     if (externalRefreshTimeoutRef.current) {
       window.clearTimeout(externalRefreshTimeoutRef.current);
       externalRefreshTimeoutRef.current = null;
@@ -320,22 +391,37 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
         window.clearTimeout(externalRefreshTimeoutRef.current);
         externalRefreshTimeoutRef.current = null;
       }
-  }, [artifactKey, kind]);
+  }, [artifactKey, kind, officeEnabled]);
 
   useEffect(() => {
+    if (!officeEnabled) {
+      setLastKnownGoodLaunch(null);
+      setIsLivePreviewDirty(false);
+      setIsLivePreviewSyncing(false);
+      if (externalRefreshTimeoutRef.current) {
+        window.clearTimeout(externalRefreshTimeoutRef.current);
+        externalRefreshTimeoutRef.current = null;
+      }
+      return;
+    }
     if (!launchQuery.data) return;
     setLastKnownGoodLaunch(launchQuery.data);
-  }, [launchQuery.data]);
+  }, [launchQuery.data, officeEnabled]);
 
   useEffect(() => {
+    if (!officeEnabled) {
+      setDesktopRuntime(null);
+      return;
+    }
     if (!isTauriRuntime()) {
       setDesktopRuntime(null);
       return;
     }
     void getDesktopRuntimeInfo().then((info) => setDesktopRuntime(info));
-  }, [artifactKey, kind]);
+  }, [artifactKey, kind, officeEnabled]);
 
   useEffect(() => {
+    if (!officeEnabled) return;
     if (iframeTimeoutRef.current) {
       window.clearTimeout(iframeTimeoutRef.current);
       iframeTimeoutRef.current = null;
@@ -354,7 +440,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       setIsIframeLoading(false);
       iframeMeasureStartedAtRef.current = null;
     }, 10_000);
-  }, [iframeName, launch?.access_token, launch?.editor_url, launch?.launch_mode, launch?.office_available, reloadNonce]);
+  }, [iframeName, launch?.access_token, launch?.editor_url, launch?.launch_mode, launch?.office_available, officeEnabled, reloadNonce]);
 
   useEffect(() => {
     if (launchQuery.fetchStatus === 'fetching') {
@@ -383,6 +469,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   }, []);
 
   useEffect(() => {
+    if (!officeEnabled) return;
     const nextUpdatedAt = status?.artifact?.updated_at || launch?.artifact?.updated_at || null;
     const previousUpdatedAt = lastArtifactUpdatedAtRef.current;
     lastArtifactUpdatedAtRef.current = nextUpdatedAt;
@@ -397,7 +484,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
     });
     setIsLivePreviewSyncing(false);
     setLastLivePreviewError(null);
-  }, [artifactKey, kind, launch?.artifact?.updated_at, status?.artifact?.updated_at]);
+  }, [artifactKey, kind, launch?.artifact?.updated_at, officeEnabled, status?.artifact?.updated_at]);
 
   useEffect(() => {
     if (!canUseLivePreviewSync) return;
@@ -424,6 +511,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
   }, [canUseLivePreviewSync, status?.live_sync_message, status?.live_sync_state]);
 
   useEffect(() => {
+    if (!officeEnabled) return;
     return listenArtifactSync((signal) => {
       if (signal.kind !== kind || signal.key !== artifactKey) return;
       if (signal.source === 'office-document') return;
@@ -440,28 +528,29 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       setHasExternalUpdate(true);
       void statusQuery.refetch();
     });
-  }, [artifactKey, kind, isLivePreviewDirty, isLivePreviewSyncing, refreshSessionNow, statusQuery]);
+  }, [artifactKey, kind, isLivePreviewDirty, isLivePreviewSyncing, officeEnabled, refreshSessionNow, statusQuery]);
 
   useEffect(() => {
-    if (!canUseLivePreviewSync || !isLivePreviewDirty) return;
+    if (!officeEnabled || !canUseLivePreviewSync || !isLivePreviewDirty) return;
     if (forceSaveMutation.isPending || isLivePreviewSyncing) return;
 
     const timeoutId = window.setTimeout(() => {
-      void forceSaveMutation.mutateAsync();
+      void runForceSave();
     }, LIVE_PREVIEW_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
-  }, [canUseLivePreviewSync, forceSaveMutation.isPending, isLivePreviewDirty, isLivePreviewSyncing]);
+  }, [canUseLivePreviewSync, forceSaveMutation.isPending, isLivePreviewDirty, isLivePreviewSyncing, officeEnabled]);
 
   useEffect(() => {
-    if (!canUseLivePreviewSync || !isLivePreviewSyncing) return;
+    if (!officeEnabled || !canUseLivePreviewSync || !isLivePreviewSyncing) return;
     const intervalId = window.setInterval(() => {
       void statusQuery.refetch();
     }, 1000);
     return () => window.clearInterval(intervalId);
-  }, [canUseLivePreviewSync, isLivePreviewSyncing, statusQuery]);
+  }, [canUseLivePreviewSync, isLivePreviewSyncing, officeEnabled, statusQuery]);
 
   useEffect(() => {
+    if (!officeEnabled) return;
     if (!launchQuery.isError) {
       launchAutoHealAttemptedRef.current = false;
       return;
@@ -478,7 +567,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
     }, 350);
 
     return () => window.clearTimeout(timeoutId);
-  }, [launchQuery.isError, runtimeStatusQuery.data?.runtime_available, statusQuery.data?.artifact]);
+  }, [launchQuery.isError, officeEnabled, runtimeStatusQuery.data?.runtime_available, statusQuery.data?.artifact]);
 
   return {
     kind,
@@ -495,6 +584,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
     runtimeWarnings,
     isLoading: launchQuery.isLoading,
     isError: launchQuery.isError && !launch,
+    launchError,
     isImporting: importMutation.isPending,
     isStatusRefreshing: statusQuery.isFetching,
     isSessionRefreshing: launchQuery.isFetching,
@@ -522,6 +612,7 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       setIsLivePreviewDirty(true);
       void statusQuery.refetch();
     },
+    onBeforeClose: flushBeforeClose,
     onExport: async () => {
       if (!launch) return;
       const fileName = launch.artifact?.file_name || `${kind}-${artifactKey}.xlsx`;

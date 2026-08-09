@@ -1,9 +1,11 @@
 import { ChevronDown, ChevronUp, ExternalLink, Maximize2, Minimize2, X } from 'lucide-react';
 
-import { MakeOfficeDocumentPage } from '@/make/office/OfficeDocumentPage';
+import type { OfficeDockDescriptor } from '@/lib/officeDock';
+import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
 import type { ModernOfficeViewModel } from '@/modern/adapters/office';
 
 import { DataPill, ModernModuleShell, ModernSection, shellButtonClass, toneBadgeClass } from './shared';
+import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewModel }) {
   return (
@@ -93,10 +95,15 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
       {viewModel.isOpen ? (
         <div className={`overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface shadow-sg-sm ${viewModel.isExpanded ? 'min-h-[78vh]' : 'min-h-[52vh]'}`}>
           <div className={`${viewModel.isExpanded ? 'h-[78vh]' : 'h-[52vh]'} min-h-[480px]`}>
-            <MakeOfficeDocumentPage {...viewModel.state} layoutMode="workspace" onClose={viewModel.onClose} />
+            <ModernOfficeSurface state={viewModel.state} mode="workspace" onClose={viewModel.onClose} />
           </div>
         </div>
       ) : null}
     </ModernModuleShell>
   );
+}
+
+export function ModernOfficeDockPanel({ document, onClose }: { document: OfficeDockDescriptor; onClose: () => void }) {
+  const state = useOfficeDocumentState({ kind: document.kind, artifactKey: document.key });
+  return <ModernOfficeSurface state={state} mode="dock" onClose={onClose} titleOverride={document.title || undefined} />;
 }

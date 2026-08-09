@@ -232,6 +232,13 @@ async def post_onlyoffice_callback_v2(
     office_host_service.mark_callback_received(access_token)
     payload = await request.json()
     _verify_onlyoffice_callback_token(request, payload)
+    save_id: int | None = None
+    raw_userdata = str(payload.get("userdata") or "").strip()
+    if raw_userdata:
+        try:
+            save_id = int(raw_userdata.rsplit(":", 1)[-1])
+        except (TypeError, ValueError):
+            save_id = None
 
     status = int(payload.get("status") or 0)
     if not entry.can_write or status not in {2, 6}:
@@ -239,7 +246,8 @@ async def post_onlyoffice_callback_v2(
 
     download_url = str(payload.get("url") or "").strip()
     if not download_url:
-        return {"error": 0}
+        office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback URL eksik")
+        return {"error": 1}
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -255,13 +263,16 @@ async def post_onlyoffice_callback_v2(
             access_token,
             updated_at=record.updated_at if record else utc_now(),
             revision=getattr(record, "revision", None) if record else None,
+            save_id=save_id,
         )
         return {"error": 0}
     except HTTPException as exc:
         await db.rollback()
         detail = str(exc.detail) if exc.detail is not None else "ONLYOFFICE callback reddedildi"
         office_host_service.mark_sync_rejected(access_token, detail)
-        return {"error": 0}
+        # A rejected domain apply must be visible to OnlyOffice; returning
+        # success here made a stale deletion look saved until the next reload.
+        return {"error": 1}
     except Exception:
         await db.rollback()
         office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback apply başarısız oldu")
@@ -303,6 +314,7 @@ async def post_onlyoffice_forcesave_v2(
         accepted=result.accepted,
         state=result.state,
         detail=result.detail,
+        save_id=result.save_id,
     )
 
 
