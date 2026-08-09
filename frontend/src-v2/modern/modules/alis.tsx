@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from 'react';
 import {
+  Calculator,
+  ChevronDown,
   CalendarDays,
   Download,
+  Ellipsis,
   FileSpreadsheet,
   Loader2,
+  PanelRight,
   Pencil,
   Plus,
   Printer,
   RefreshCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   UserPlus,
   Users,
@@ -25,9 +30,11 @@ import { parseMrzLines } from '@/make/alis/customerEditors';
 import type { PosDocumentDetail, PosPostalLookup, PosSavedPurchaseListItem } from '@/types';
 import type { EditableCustomer } from '@/make/alis/types';
 import type { ModernAlisViewModel } from '@/modern/adapters/alis';
+import type { UnsupportedControlDescriptor } from '@/modern/adapters/types';
 
-import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { DataPill, EmptyState, LoadingState, ModernModuleShell, shellButtonClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
+import { useAlisLayoutMode, type AlisLayoutMode } from './alis/useAlisLayoutMode';
 
 const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?: 'text' | 'email' }> = [
   { key: 'name', label: 'Ad Soyad' },
@@ -52,6 +59,22 @@ type ModernAlisListFilters = {
   direction: 'asc' | 'desc';
 };
 
+type ModernAlisPane = 'workspace' | 'history';
+type ModernAlisTool = 'customer' | 'rates' | 'calculator' | 'filters' | 'roadmap' | null;
+type ModernAlisState = ModernAlisViewModel['state'];
+type ModernAlisRow = {
+  key: string;
+  name: string;
+  type: string;
+  purity: string;
+  karat: string;
+  lodighed: string;
+  unitPrice: string;
+  gram: string;
+  avance: string;
+  total: string;
+};
+
 export function ModernAlisModule({
   viewModel,
   displayBridge,
@@ -64,6 +87,11 @@ export function ModernAlisModule({
   const hasWorkspace = Boolean(workspace);
   const activeWorkspace = workspace!;
   const hasSelectedCustomer = Boolean(workspace?.customer.customer_id);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const layoutMode = useAlisLayoutMode(layoutRef);
+  const [pane, setPane] = useState<ModernAlisPane>('workspace');
+  const [tool, setTool] = useState<ModernAlisTool>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<'gold' | 'silver'>>(() => new Set(['gold']));
   const [listFilters, setListFilters] = useState<ModernAlisListFilters>({
     query: state.purchaseSearchTerm,
     startDate: state.purchaseDate,
@@ -114,6 +142,23 @@ export function ModernAlisModule({
     disableReopen: true,
     enabled: state.activeWorkspaceView === 'excel' && Boolean(workspace),
   });
+  const unavailableControls = state.activeWorkspaceView === 'excel' ? [] : viewModel.unsupportedControls;
+
+  useEffect(() => {
+    if (workspace || state.draftWorkspace) setPane('workspace');
+  }, [state.draftWorkspace, workspace]);
+
+  useEffect(() => {
+    const hasGold = state.goldRows.some((row) => parseDecimalValue(row.gram) > 0);
+    const hasSilver = state.silverRows.some((row) => parseDecimalValue(row.gram) > 0);
+    if (!hasGold && !hasSilver) return;
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (hasGold) next.add('gold');
+      if (hasSilver) next.add('silver');
+      return next;
+    });
+  }, [state.goldRows, state.silverRows]);
 
   function startBlankWorkspace() {
     if (workspace || state.draftWorkspace) {
@@ -141,202 +186,232 @@ export function ModernAlisModule({
   return (
     <ModernModuleShell
       eyebrow="Alış / AFG"
-      title={hasWorkspace ? `Açık Workspace ${activeWorkspace.session.session_code}` : 'AFG Alış Akışı'}
-      subtitle="Gerçek DKK, gram ve AFG numbering semantiğini koruyan modern shell. Müşteri, belge ve finalize akışları mevcut hook callback'lerine bağlıdır."
+      title={hasWorkspace ? activeWorkspace.session.session_code : 'Alış çalışma alanı'}
+      subtitle="AFG alışını, müşteri bağlamını ve belge geçmişini tek operasyon yüzeyinde yönetin."
       blocker={viewModel.blocker}
-      unsupportedControls={state.activeWorkspaceView === 'excel' ? [] : viewModel.unsupportedControls}
+      unsupportedControls={[]}
       badges={
         <>
           <DataPill label="Yüzey" value={state.activeWorkspaceView === 'excel' ? 'Excel' : 'System'} tone={state.activeWorkspaceView === 'excel' ? 'warning' : 'neutral'} />
           <DataPill label="Draft" value={state.draftWorkspace ? state.draftWorkspace.session.session_code : 'Yok'} tone={state.draftWorkspace ? 'warning' : 'neutral'} />
           <DataPill label="Müşteri" value={hasWorkspace ? (hasSelectedCustomer ? 'Seçili' : 'Bekliyor') : '—'} tone={hasSelectedCustomer ? 'success' : 'warning'} />
-          <DataPill label="Müşteri ekranı" value={displayLabel} tone={displayTone} />
-          <DataPill label="Finalize" value={state.finalizePending ? 'Çalışıyor' : hasSelectedCustomer ? 'Hazır' : 'Müşteri gerekli'} tone={state.finalizePending ? 'warning' : hasSelectedCustomer ? 'success' : 'danger'} />
         </>
       }
       actions={
-        <>
-          <button
-            type="button"
-            onClick={startBlankWorkspace}
-            disabled={state.startPending || Boolean(workspace)}
-            title={workspace ? 'Önce açık Alış taslağını tamamlayın veya iptal edin' : undefined}
-            className={shellButtonClass('primary')}
-          >
-            <Plus className="h-4 w-4" />
-            {state.startPending ? 'Hazırlanıyor' : 'Yeni Alış'}
-          </button>
-          {workspace ? (
-            <>
-              <button type="button" onClick={state.onOpenWorkspaceExcelPreview} disabled={Boolean(state.hasPendingWorkspaceSync?.())} className={shellButtonClass('secondary')}>
-                <FileSpreadsheet className="h-4 w-4" />
-                Office
-              </button>
-              <button type="button" onClick={state.onPrintWorkspace} className={shellButtonClass('secondary')}>
-                <Printer className="h-4 w-4" />
-                Print
-              </button>
-              <button
-                type="button"
-                onClick={() => void state.onFinalizeWorkspace()}
-                disabled={state.finalizePending || !hasSelectedCustomer}
-                title={!hasSelectedCustomer ? 'Finalize için önce müşteri seçin veya oluşturun' : undefined}
-                className={shellButtonClass('primary')}
-              >
-                {state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                Finalize
-              </button>
-              {displayBridge?.onOpenCustomerDisplay ? (
-                <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('secondary')} title="Müşteri ekranını aç veya öne getir">
-                  Müşteri ekranı
-                </button>
-              ) : null}
-            </>
-          ) : null}
-        </>
+        <button
+          type="button"
+          onClick={startBlankWorkspace}
+          disabled={state.startPending || Boolean(workspace)}
+          title={workspace ? 'Önce açık Alış taslağını tamamlayın veya iptal edin' : undefined}
+          className={shellButtonClass('primary')}
+        >
+          <Plus className="h-4 w-4" />
+          {state.startPending ? 'Hazırlanıyor' : 'Yeni Alış'}
+        </button>
       }
     >
-      {state.activeWorkspaceView === 'excel' && workspace ? (
-        <ModernOfficeSurface state={officeState} mode="workspace" onClose={() => void state.setActiveWorkspaceView('system')} />
-      ) : (
-        <>
-      <ModernStatGrid items={hasWorkspace ? viewModel.workspaceSummary : viewModel.documentsSummary} />
+      <div ref={layoutRef} className="min-w-0">
+        {state.activeWorkspaceView === 'excel' && workspace ? (
+          <ModernOfficeSurface state={officeState} mode="workspace" onClose={() => void state.setActiveWorkspaceView('system')} />
+        ) : (
+          <>
+            {phase === 'loading' ? <LoadingState label="Alış kayıtları yükleniyor" /> : null}
+            {phase === 'error' ? (
+              <EmptyState
+                title="Alış listesi yüklenemedi"
+                message={state.listError || 'Belgeler alınamadı. Canonical veri değiştirilmedi.'}
+                action={<button type="button" onClick={state.onRetryDocuments} className={shellButtonClass('secondary')}><RefreshCcw className="h-4 w-4" />Tekrar dene</button>}
+              />
+            ) : null}
+            {phase === 'empty' ? (
+              <EmptyState
+                title="Henüz Alış Yok"
+                message="AFG listesi boş. Yeni alış başlatabilirsiniz."
+                action={<button type="button" onClick={startBlankWorkspace} disabled={state.startPending} className={shellButtonClass('primary')}><Plus className="h-4 w-4" />Yeni Alış Başlat</button>}
+              />
+            ) : null}
 
-      {phase === 'loading' ? <LoadingState label="Alış kayıtları yükleniyor" /> : null}
-      {phase === 'error' ? (
-        <EmptyState
-          title="Alış listesi yüklenemedi"
-          message={state.listError || 'Belgeler alınamadı. Canonical veri değiştirilmedi.'}
-          action={<button type="button" onClick={state.onRetryDocuments} className={shellButtonClass('secondary')}><RefreshCcw className="h-4 w-4" />Tekrar dene</button>}
-        />
-      ) : null}
-      {phase === 'empty' ? (
-        <EmptyState
-          title="Henüz Alış Yok"
-          message="AFG listesi boş. İsterseniz yeni alış başlatabilir veya açık draft varsa ona dönebilirsiniz."
-          action={
-            <button type="button" onClick={startBlankWorkspace} disabled={state.startPending} className={shellButtonClass('primary')}>
-              <Plus className="h-4 w-4" />
-              {state.startPending ? 'Hazırlanıyor' : 'Yeni Alış Başlat'}
-            </button>
-          }
-        />
-      ) : null}
-
-      {hasWorkspace ? (
-        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <ModernSection
-            title="Müşteri ve Satırlar"
-            subtitle="Müşteri seçimi, müşteri kartı ve metal satırları aynı gerçek workspace state'i ile güncellenir."
-            actions={
+            {phase !== 'loading' && phase !== 'error' && phase !== 'empty' ? (
               <>
-                <button
-                  type="button"
-                  onClick={() => state.setCustomerMode(state.customerMode ? null : 'existing')}
-                  className={shellButtonClass('secondary')}
-                >
-                  <Users className="h-4 w-4" />
-                  {state.customerMode ? 'Müşteri Seçimini Kapat' : hasSelectedCustomer ? 'Müşteri Değiştir' : 'Müşteri Seç'}
-                </button>
-                <button type="button" onClick={cancelWorkspace} disabled={state.cancelPending} className={shellButtonClass('danger')}>
-                  İptal
-                </button>
+                <AlisModeTabs pane={pane} hasWorkspace={hasWorkspace} documentCount={filteredDocuments.length} onChange={setPane} />
+                {pane === 'workspace' ? (
+                  hasWorkspace ? (
+                    <AlisWorkbench
+                      state={state}
+                      workspace={activeWorkspace}
+                      hasSelectedCustomer={hasSelectedCustomer}
+                      displayBridge={displayBridge}
+                      displayLabel={displayLabel}
+                      layoutMode={layoutMode}
+                      expandedGroups={expandedGroups}
+                      onToggleGroup={(group) => setExpandedGroups((current) => { const next = new Set(current); if (next.has(group)) next.delete(group); else next.add(group); return next; })}
+                      onOpenTool={(nextTool) => { if (nextTool === 'customer') state.setCustomerMode('existing'); setTool(nextTool); }}
+                      onCancel={cancelWorkspace}
+                    />
+                  ) : (
+                    <AlisStartPanel state={state} onStart={startBlankWorkspace} onResume={() => { state.onResumeDraft(); setPane('workspace'); }} onOpenHistory={() => setPane('history')} />
+                  )
+                ) : (
+                  <AlisHistory state={state} documents={filteredDocuments} filters={listFilters} onChange={updateListFilters} onReset={resetListFilters} />
+                )}
               </>
-            }
-          >
-            {!hasSelectedCustomer || state.customerMode ? <CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /> : null}
-
-            {hasSelectedCustomer ? (
-              <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Seçili müşteri</p>
-                    <p className="mt-1 text-base font-semibold text-sg-text">{activeWorkspace.customer.name || 'İsimsiz müşteri'}</p>
-                  </div>
-                  <DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" />
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact />
-                </div>
-                <PostalLookupHint customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} />
-              </div>
             ) : null}
 
-            <div className="mt-4 grid gap-4 xl:grid-cols-2">
-              <EditableRowsCard
-                title="Gold Rows"
-                rows={state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Gold', type: 'Gold', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, rate: row.rate_dkk, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }))}
-                onGramChange={(key, value) => state.onUpdateGoldRow(key, 'gram', value)}
-                onAvanceChange={(key, value) => state.onUpdateGoldRow(key, 'avance_percent', value)}
+            {tool ? (
+              <AlisToolSheet
+                tool={tool}
+                state={state}
+                hasSelectedCustomer={hasSelectedCustomer}
+                filters={listFilters}
+                onFilterChange={updateListFilters}
+                onFilterReset={resetListFilters}
+                unsupportedControls={unavailableControls}
+                onClose={() => { if (tool === 'customer') state.setCustomerMode(null); setTool(null); }}
               />
-              <EditableRowsCard
-                title="Silver Rows"
-                rows={state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Silver', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, rate: row.rate_dkk, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }))}
-                onGramChange={(key, value) => state.onUpdateSilverRow(key, 'gram', value)}
-                onAvanceChange={(key, value) => state.onUpdateSilverRow(key, 'avance_percent', value)}
-              />
-            </div>
-
-            <WorkspaceControls state={state} />
-          </ModernSection>
-
-          <ModernSection title="Kayıtlar ve Yardımcı Durumlar" subtitle="Taslak resume ve kayıt detayları gerçek callback'lerle bağlıdır.">
-            {state.draftWorkspace ? (
-              <div className="rounded-sg-xl border border-sg-amber/20 bg-sg-amber-soft p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-amber">Açık Draft</p>
-                    <p className="mt-1 text-sm text-sg-amber">{state.draftWorkspace.session.session_code}</p>
-                  </div>
-                  <button type="button" onClick={state.onResumeDraft} className={shellButtonClass('secondary')}>
-                    Devam Et
-                  </button>
-                </div>
-              </div>
             ) : null}
-            <PurchaseFilters state={state} filters={listFilters} onChange={updateListFilters} onReset={resetListFilters} />
-            <DocumentList state={state} documents={filteredDocuments.slice(0, 8)} />
-          </ModernSection>
-        </div>
-      ) : null}
 
-      {!hasWorkspace && (phase === 'ready' || phase === 'draft') ? (
-        <ModernSection title="Son Alışlar" subtitle="Belge geçmişi; detay, Office, dışa aktarma, yazdırma, düzenleme ve kayıt aksiyonlarını aynı satırda sunar.">
-          {state.draftWorkspace ? (
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-sg-lg border border-sg-amber/30 bg-sg-amber-soft p-4">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-amber">Açık taslak</p>
-                <p className="mt-1 text-sm font-semibold text-sg-text">{state.draftWorkspace.session.session_code}</p>
-                <p className="mt-1 text-xs text-sg-text-soft">Yeni boş alış başlatmadan önce bu taslağa dönün.</p>
-              </div>
-              <button type="button" onClick={state.onResumeDraft} className={shellButtonClass('primary')}>Taslağa devam et</button>
-            </div>
-          ) : null}
-          <PurchaseFilters state={state} filters={listFilters} onChange={updateListFilters} onReset={resetListFilters} />
-          <DocumentList state={state} documents={filteredDocuments} />
-        </ModernSection>
-      ) : null}
-
-      {state.detailPurchase ? (
-        <ModernDetailModal
-          source={state.detailPurchase}
-          detail={state.detail}
-          loading={state.detailLoading}
-          error={state.detailError}
-          onClose={state.onCloseDetail}
-          onEdit={state.onEditDetail}
-          onDelete={state.onDeleteDetail}
-          onPreview={state.onOpenDetailExcelPreview}
-          onExport={state.onExportDetail}
-          onPrint={state.onPrintDetail}
-          actionPending={state.detailActionPending}
-          onRetry={state.onRetryDetail}
-        />
-      ) : null}
-        </>
-      )}
+            {state.detailPurchase ? (
+              <ModernDetailModal
+                source={state.detailPurchase}
+                detail={state.detail}
+                loading={state.detailLoading}
+                error={state.detailError}
+                onClose={state.onCloseDetail}
+                onEdit={state.onEditDetail}
+                onDelete={state.onDeleteDetail}
+                onPreview={state.onOpenDetailExcelPreview}
+                onExport={state.onExportDetail}
+                onPrint={state.onPrintDetail}
+                actionPending={state.detailActionPending}
+                onRetry={state.onRetryDetail}
+              />
+            ) : null}
+          </>
+        )}
+      </div>
     </ModernModuleShell>
   );
+}
+
+function AlisModeTabs({ pane, hasWorkspace, documentCount, onChange }: { pane: ModernAlisPane; hasWorkspace: boolean; documentCount: number; onChange: (pane: ModernAlisPane) => void }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-1 border-b border-sg-border" role="tablist" aria-label="Alış çalışma görünümü">
+      <button type="button" role="tab" aria-selected={pane === 'workspace'} onClick={() => onChange('workspace')} className={`border-b-2 px-3 py-3 text-sm font-semibold transition ${pane === 'workspace' ? 'border-sg-accent text-sg-accent' : 'border-transparent text-sg-text-soft hover:text-sg-text'}`}>
+        {hasWorkspace ? 'Aktif alış' : 'Yeni alış'}
+      </button>
+      <button type="button" role="tab" aria-selected={pane === 'history'} onClick={() => onChange('history')} className={`border-b-2 px-3 py-3 text-sm font-semibold transition ${pane === 'history' ? 'border-sg-accent text-sg-accent' : 'border-transparent text-sg-text-soft hover:text-sg-text'}`}>
+        Geçmiş <span className="ml-1 text-xs font-normal">{documentCount}</span>
+      </button>
+    </div>
+  );
+}
+
+function AlisStartPanel({ state, onStart, onResume, onOpenHistory }: { state: ModernAlisState; onStart: () => void; onResume: () => void; onOpenHistory: () => void }) {
+  return (
+    <section className="border-y border-sg-border py-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">Operasyon başlangıcı</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-sg-text">Yeni AFG alışını başlatın</h2>
+          <p className="mt-2 max-w-xl text-sm text-sg-text-soft">Müşteri, metal satırları ve ödeme bilgileri gerçek workspace state’i ile kaydedilir.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onStart} disabled={state.startPending} className={shellButtonClass('primary')}><Plus className="h-4 w-4" />Yeni alış</button>
+          <button type="button" onClick={onOpenHistory} className={shellButtonClass('secondary')}>Geçmişi aç</button>
+        </div>
+      </div>
+      {state.draftWorkspace ? (
+        <div className="mt-6 flex flex-col gap-3 border-l-4 border-sg-amber bg-sg-amber-soft px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-sg-amber">Açık taslak</p><p className="mt-1 text-sm font-semibold text-sg-text">{state.draftWorkspace.session.session_code}</p></div>
+          <button type="button" onClick={onResume} className={shellButtonClass('secondary')}>Taslağa devam et</button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, displayLabel, layoutMode, expandedGroups, onToggleGroup, onOpenTool, onCancel }: { state: ModernAlisState; workspace: NonNullable<ModernAlisState['workspace']>; hasSelectedCustomer: boolean; displayBridge?: ModernAlisDisplayBridge; displayLabel: string; layoutMode: AlisLayoutMode; expandedGroups: Set<'gold' | 'silver'>; onToggleGroup: (group: 'gold' | 'silver') => void; onOpenTool: (tool: Exclude<ModernAlisTool, null>) => void; onCancel: () => void }) {
+  const goldRows: ModernAlisRow[] = state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Gold', type: 'Gold', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const silverRows: ModernAlisRow[] = state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Silver', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const totalGram = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
+  const totalOffer = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.total), 0);
+  const isWide = layoutMode === 'wide' || layoutMode === 'ultrawide';
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sg-border pb-3">
+        <div className="flex min-w-0 items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-sg-amber" /><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{workspace.customer.name || 'Müşteri bekleniyor'}</p><p className="text-xs text-sg-text-soft">{state.finalizePending ? 'Kaydediliyor...' : 'Taslak otomatik kaydediliyor'} · {displayLabel}</p></div></div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => onOpenTool('customer')} className={shellButtonClass('secondary')}><Users className="h-4 w-4" />{hasSelectedCustomer ? 'Müşteri' : 'Müşteri seç'}</button>
+          <button type="button" onClick={state.onOpenWorkspaceExcelPreview} disabled={Boolean(state.hasPendingWorkspaceSync?.())} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button>
+          <button type="button" onClick={state.onPrintWorkspace} className={shellButtonClass('ghost')}><Printer className="h-4 w-4" />Yazdır</button>
+          {displayBridge?.onOpenCustomerDisplay && !isWide ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Müşteri ekranı</button> : null}
+          <button type="button" onClick={() => onOpenTool('roadmap')} className={shellButtonClass('ghost')}><Ellipsis className="h-4 w-4" />Diğer</button>
+        </div>
+      </div>
+
+      <div className={isWide ? 'grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_336px] 2xl:grid-cols-[minmax(0,1fr)_400px]' : 'flex min-w-0 flex-col gap-4'}>
+        <main className="min-w-0 border border-sg-border bg-sg-surface">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sg-border px-4 py-3">
+            <div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">AFG satırları</p><p className="mt-1 text-sm text-sg-text-soft">Gram ve avance alanlarını düzenleyin; fiyatlar oranlardan hesaplanır.</p></div>
+            <button type="button" onClick={() => onOpenTool('calculator')} className={shellButtonClass('ghost')}><Calculator className="h-4 w-4" />Hesaplayıcı</button>
+          </div>
+          <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => state.onUpdateGoldRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdateGoldRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
+          <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => state.onUpdateSilverRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdateSilverRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border bg-sg-surface/95 px-4 py-3 backdrop-blur">
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm"><span><span className="text-sg-text-soft">Gram </span><strong className="text-sg-text">{formatNumber(totalGram, ' g')}</strong></span><span><span className="text-sg-text-soft">Teklif </span><strong className="text-sg-text">{formatMoney(String(totalOffer))}</strong></span></div>
+            <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Finalize için önce müşteri seçin veya oluşturun' : undefined} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
+          </div>
+        </main>
+
+        <aside className={isWide ? 'min-w-0 self-start lg:sticky lg:top-4' : 'border border-sg-border bg-sg-surface px-4 py-3'}>
+          {isWide ? <AlisInspector state={state} workspace={workspace} hasSelectedCustomer={hasSelectedCustomer} displayBridge={displayBridge} displayLabel={displayLabel} onOpenTool={onOpenTool} /> : <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-sg-text-soft">İşlem bağlamı</p><p className="mt-1 text-sm text-sg-text">{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p></div><button type="button" onClick={() => onOpenTool('customer')} className={shellButtonClass('secondary')}><PanelRight className="h-4 w-4" />Bağlamı aç</button></div>}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function AlisInspector({ state, workspace, hasSelectedCustomer, displayBridge, displayLabel, onOpenTool }: { state: ModernAlisState; workspace: NonNullable<ModernAlisState['workspace']>; hasSelectedCustomer: boolean; displayBridge?: ModernAlisDisplayBridge; displayLabel: string; onOpenTool: (tool: Exclude<ModernAlisTool, null>) => void }) {
+  return (
+    <div className="border border-sg-border bg-sg-surface">
+      <div className="border-b border-sg-border px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><div className="mt-2 flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-semibold text-sg-text">{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p><p className="mt-1 text-xs text-sg-text-soft">{hasSelectedCustomer ? state.customerForm.phone || 'Telefon yok' : 'Finalize öncesi gerekli'}</p></div><DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" /></div><button type="button" onClick={() => onOpenTool('customer')} className={`${shellButtonClass('secondary')} mt-3 w-full justify-center`}>{hasSelectedCustomer ? 'Müşteriyi düzenle' : 'Müşteri seç'}</button></div>
+      <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Piyasa oranları</p><p className="mt-1 text-sm text-sg-text">EUR/DKK ve metal oranları</p></div><button type="button" onClick={() => onOpenTool('rates')} className={shellButtonClass('ghost')}><SlidersHorizontal className="h-4 w-4" />Düzenle</button></div></div>
+      <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri ekranı</p><p className="mt-1 text-sm text-sg-text">{displayLabel}</p></div>{displayBridge?.onOpenCustomerDisplay ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Aç</button> : null}</div></div>
+      <div className="px-4 py-4"><button type="button" onClick={() => onOpenTool('roadmap')} className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-sg-text transition hover:text-sg-accent"><span>Hazır olmayan entegrasyonlar</span><ChevronDown className="h-4 w-4" /></button></div>
+    </div>
+  );
+}
+
+function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAvanceChange, layoutMode }: { title: string; tone: 'gold' | 'silver'; rows: ModernAlisRow[]; expanded: boolean; onToggle: () => void; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void; layoutMode: AlisLayoutMode }) {
+  const totalGram = rows.reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
+  const activeRows = rows.filter((row) => parseDecimalValue(row.gram) > 0).length;
+  const wide = layoutMode === 'wide' || layoutMode === 'ultrawide';
+  return (
+    <section className="border-b border-sg-border last:border-b-0">
+      <button type="button" onClick={onToggle} aria-expanded={expanded} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-sg-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sg-accent/50"><span className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${tone === 'gold' ? 'bg-sg-amber' : 'bg-slate-400'}`} /><span className="text-sm font-semibold text-sg-text">{title}</span><span className="text-xs text-sg-text-soft">{activeRows} aktif · {formatNumber(totalGram, ' g')}</span></span><ChevronDown className={`h-4 w-4 text-sg-text-soft transition ${expanded ? 'rotate-180' : ''}`} /></button>
+      {expanded ? <div className="px-4 pb-3"><div className={`border-y border-sg-border-soft py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Avance</span><span>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span>Toplam</span> : null}</div><div className="divide-y divide-sg-border-soft">{rows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} />)}</div></div> : null}
+    </section>
+  );
+}
+
+function AlisLedgerRow({ row, wide, onGramChange, onAvanceChange }: { row: ModernAlisRow; wide: boolean; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void }) {
+  const inputClass = 'w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2.5 py-2 text-sm text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
+  if (!wide) {
+    return <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_100px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p><p className="mt-2 text-xs text-sg-text-soft">Birim {formatMoney(row.unitPrice)}</p></div><div className="text-right"><p className="text-sm font-semibold text-sg-text">{formatMoney(row.total)}</p><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Gram<input inputMode="decimal" value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className={inputClass} /></label><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Avance<input inputMode="decimal" value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className={inputClass} /></label></div></div>;
+  }
+  return <div className="grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] items-center gap-3 py-2.5"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 truncate text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><input aria-label={`${row.name} gram`} inputMode="decimal" value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className={inputClass} /><input aria-label={`${row.name} avance`} inputMode="decimal" value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className={inputClass} /><span className="text-right text-sm text-sg-text-soft">{formatMoney(row.unitPrice)}</span><span className="text-right text-sm font-semibold text-sg-text">{formatMoney(row.total)}</span></div>;
+}
+
+function AlisHistory({ state, documents, filters, onChange, onReset }: { state: ModernAlisState; documents: PosSavedPurchaseListItem[]; filters: ModernAlisListFilters; onChange: (next: Partial<ModernAlisListFilters>) => void; onReset: () => void }) {
+  const total = documents.reduce((sum, document) => sum + parseDecimalValue(document.gross_amount_dkk), 0);
+  return <section className="border-y border-sg-border py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Belge geçmişi</p><h2 className="mt-1 text-xl font-bold text-sg-text">Alış kayıtları</h2></div><div className="flex gap-4 text-sm text-sg-text-soft"><span>{documents.length} belge</span><span>{formatMoney(String(total))}</span></div></div><div className="mt-4"><PurchaseFilters state={state} filters={filters} onChange={onChange} onReset={onReset} /></div><DocumentList state={state} documents={documents} /></section>;
+}
+
+function AlisToolSheet({ tool, state, hasSelectedCustomer, filters, onFilterChange, onFilterReset, unsupportedControls, onClose }: { tool: Exclude<ModernAlisTool, null>; state: ModernAlisState; hasSelectedCustomer: boolean; filters: ModernAlisListFilters; onFilterChange: (next: Partial<ModernAlisListFilters>) => void; onFilterReset: () => void; unsupportedControls: UnsupportedControlDescriptor[]; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus(); }, [tool]);
+  const title = tool === 'customer' ? 'Müşteri' : tool === 'rates' ? 'Piyasa oranları' : tool === 'calculator' ? 'Hesaplayıcılar' : tool === 'filters' ? 'Geçmiş filtreleri' : 'Hazır olmayan entegrasyonlar';
+  return <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} />{hasSelectedCustomer ? <PostalLookupHint customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} /> : null}</> : null}{tool === 'rates' || tool === 'calculator' ? <WorkspaceControls state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
 }
 
 function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewModel['state']; hasSelectedCustomer: boolean }) {
