@@ -5,7 +5,7 @@
 ## 1. Tamamlananlar (IMPLEMENTED)
 
 - **2026-08-09 güvenilirlik paketi:** Alış workspace yazıları SQLite-safe revision CAS ile korunuyor; autosave kuyruğu seri ve yeniden denenebilir; açıkça temizlenen AFG/müşteri/posta kodu alanları `null` olarak uygulanıyor; 4 haneli Danimarka posta kodu mevcut müşteri düzenleme yolunda da doğrulanıyor; sabit katalog satırları yalnızca aktif/"satır ekle" görünümünde tutuluyor.
-- **Office/OnlyOffice lineage:** Aynı açık belgeden gelen ikinci stale callback artık 409 `stale_lineage` ile reddediliyor ve arayüzde yeniden açma/çatışma bilgisi gösteriliyor; başarılı core workspace kaydı başarısız artifact projection yüzünden geri alınmıyor.
+- **Office/OnlyOffice lineage:** Aynı açık belgeden gelen ardışık callback'ler, araya dış artifact yazısı girmediyse aynı session lineage içinde kabul ediliyor; dış yazı ilerlemişse 409 `external_write` ile reddediliyor ve arayüzde çatışma bilgisi gösteriliyor. Başarılı core workspace kaydı başarısız artifact projection yüzünden geri alınmıyor.
 - **Desktop recovery:** Tauri bekleyen alış taslağı OS credential store anahtarıyla AES-GCM şifreli, atomik yazımlı ve boyut/TTL/path sınırlarıyla geri alınabilir.
 - AFG alış akışı uçtan uca (workspace → satırlar → müşteri → finalize → belge → Uniconta sync).
 - Müşteri yönetimi (şifreli kimlik alanları, arama, risk).
