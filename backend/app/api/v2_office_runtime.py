@@ -201,7 +201,7 @@ async def put_office_wopi_file_contents_v2(
         return Response(status_code=409)
 
     content = await request.body()
-    await _apply_office_session_content(db, entry=entry, workbook_bytes=content)
+    workspace = await _apply_office_session_content(db, entry=entry, workbook_bytes=content)
     await db.commit()
 
     record = await get_artifact_record(db, entry.artifact_key or "")
@@ -209,6 +209,7 @@ async def put_office_wopi_file_contents_v2(
         access_token,
         updated_at=record.updated_at if record else utc_now(),
         revision=getattr(record, "revision", None) if record else None,
+        workspace_revision=getattr(workspace, "workspace_revision", None),
     )
     return Response(status_code=200)
 
@@ -264,7 +265,7 @@ async def post_onlyoffice_callback_v2(
                 response.raise_for_status()
                 workbook_bytes = response.content
 
-            await _apply_office_session_content(db, entry=entry, workbook_bytes=workbook_bytes)
+            workspace = await _apply_office_session_content(db, entry=entry, workbook_bytes=workbook_bytes)
             await db.commit()
 
             record = await get_artifact_record(db, entry.artifact_key or "")
@@ -273,6 +274,7 @@ async def post_onlyoffice_callback_v2(
                 updated_at=record.updated_at if record else utc_now(),
                 revision=getattr(record, "revision", None) if record else None,
                 save_id=save_id,
+                workspace_revision=getattr(workspace, "workspace_revision", None),
             )
             return {"error": 0}
         except HTTPException as exc:

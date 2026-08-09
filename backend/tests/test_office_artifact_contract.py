@@ -106,6 +106,8 @@ async def test_alis_office_session_accepts_sequential_save_and_rejects_external_
         key=str(uuid4()),
         launch_revision=5,
         artifact_revision=5,
+        workspace_launch_revision=1,
+        workspace_applied_revision=1,
     )
     metadata = SimpleNamespace(base_version="5", workspace_revision="1")
     applied: list[bytes] = []
@@ -114,15 +116,25 @@ async def test_alis_office_session_accepts_sequential_save_and_rejects_external_
         assert artifact_key == entry.artifact_key
         return artifact
 
-    async def fake_apply_afg_workspace_artifact_inputs(db, *, pos_session, workbook_bytes, office_lineage):
+    async def fake_apply_afg_workspace_artifact_inputs(
+        db,
+        *,
+        pos_session,
+        workbook_bytes,
+        office_lineage,
+        office_workspace_revision,
+    ):
         assert office_lineage is True
+        assert office_workspace_revision in {1, 2}
         applied.append(workbook_bytes)
 
     async def fake_get_pos_session_or_404(db, session_id):
         return SimpleNamespace(id=session_id)
 
+    workspace_revisions = iter([1, 2, 3])
+
     async def fake_build_purchase_workspace(db, *, pos_session):
-        return SimpleNamespace(workspace_revision=1)
+        return SimpleNamespace(workspace_revision=next(workspace_revisions))
 
     monkeypatch.setattr(v2, "get_artifact_record", fake_get_artifact_record)
     monkeypatch.setattr(v2, "read_artifact_sync_metadata", lambda *args, **kwargs: metadata)
@@ -133,6 +145,7 @@ async def test_alis_office_session_accepts_sequential_save_and_rejects_external_
     await v2._apply_office_session_content(db=SimpleNamespace(), entry=entry, workbook_bytes=b"first-save")
     artifact.revision = 6
     entry.artifact_revision = 6
+    entry.workspace_applied_revision = 2
 
     # OnlyOffice still sends base_version=5 from the open workbook.  With no
     # external artifact revision between callbacks, the second user save is

@@ -445,6 +445,7 @@ async def _apply_afg_workspace_artifact_inputs(
     workbook_bytes: bytes,
     office_lineage: bool = False,
     allow_full_clear: bool = False,
+    office_workspace_revision: int | None = None,
 ) -> PosWorkspaceOut:
     try:
         parsed = parse_afg_workspace_inputs_from_workbook(workbook_bytes)
@@ -478,7 +479,9 @@ async def _apply_afg_workspace_artifact_inputs(
         workspace = await update_purchase_workspace_customer(
             db,
             pos_session=pos_session,
-            payload=parsed.customer,
+            payload=parsed.customer.model_copy(update={"base_revision": office_workspace_revision})
+            if office_workspace_revision is not None
+            else parsed.customer,
             commit=False,
             emit=False,
         )
@@ -487,7 +490,9 @@ async def _apply_afg_workspace_artifact_inputs(
         workspace = await update_purchase_workspace_draft_customer(
             db,
             pos_session=pos_session,
-            payload=parsed.customer,
+            payload=parsed.customer.model_copy(update={"base_revision": office_workspace_revision})
+            if office_workspace_revision is not None
+            else parsed.customer,
             commit=False,
             emit=False,
         )
@@ -498,6 +503,11 @@ async def _apply_afg_workspace_artifact_inputs(
         payload=parsed.sections.model_copy(
             update={
                 "market_rates": parsed.sections.market_rates or current_workspace.market_rates,
+                **(
+                    {"base_revision": office_workspace_revision}
+                    if office_workspace_revision is not None
+                    else {}
+                ),
             }
         ),
         commit=True,
@@ -566,7 +576,7 @@ async def _apply_office_session_content(
     *,
     entry,
     workbook_bytes: bytes,
-) -> None:
+) -> PosWorkspaceOut | None:
     office_pos_session: PosSession | None = None
     if entry.artifact_key:
         record = await get_artifact_record(db, entry.artifact_key)
@@ -601,7 +611,18 @@ async def _apply_office_session_content(
                     status_code=409,
                     detail="Office artifact conflict_state=invalid; workspace revision metadata geçersiz.",
                 ) from exc
-            if incoming_workspace_revision != int(current_workspace.workspace_revision):
+            launch_workspace_revision = getattr(entry, "workspace_launch_revision", None)
+            applied_workspace_revision = getattr(entry, "workspace_applied_revision", None)
+            if launch_workspace_revision is None:
+                launch_workspace_revision = incoming_workspace_revision
+            if applied_workspace_revision is None:
+                applied_workspace_revision = launch_workspace_revision
+            if incoming_workspace_revision not in {int(launch_workspace_revision), int(applied_workspace_revision)}:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Office artifact conflict_state=stale_lineage; workbook workspace revision ileride.",
+                )
+            if int(current_workspace.workspace_revision) != int(applied_workspace_revision):
                 raise HTTPException(
                     status_code=409,
                     detail="Office artifact conflict_state=external_write; workspace önce güncellendi.",
@@ -645,16 +666,16 @@ async def _apply_office_session_content(
                 )
     if entry.kind == "alis-workspace":
         pos_session = office_pos_session or await get_pos_session_or_404(db, UUID(entry.key))
-        await _apply_afg_workspace_artifact_inputs(
+        return await _apply_afg_workspace_artifact_inputs(
             db,
             pos_session=pos_session,
             workbook_bytes=workbook_bytes,
             office_lineage=True,
+            office_workspace_revision=int(applied_workspace_revision),
         )
-        return
     if entry.kind == "depolama":
         await apply_inventory_workbook_artifact_inputs(db, workbook_bytes=workbook_bytes, create_snapshot=False)
-        return
+        return None
     if entry.kind == "log":
         await _apply_log_workbook_artifact_inputs(
             db,
@@ -662,7 +683,7 @@ async def _apply_office_session_content(
             workbook_bytes=workbook_bytes,
             create_snapshot=False,
         )
-        return
+        return None
     raise HTTPException(status_code=409, detail="Bu office oturumu yazma desteklemiyor")
 
 

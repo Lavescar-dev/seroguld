@@ -153,6 +153,7 @@ def build_afg_workspace_preview(workspace: PosWorkspaceOut, artifact: DocumentAr
         import_supported=True,
         external_edit_supported=False,
         editable_cells=[_editable_cell_out(cell) for cell in AFG_EDITABLE_CELLS],
+        workspace_revision=workspace.workspace_revision,
         sheets=[
             _afg_preview_sheet_from_workspace(workspace),
             _afg_factura_gold_preview_sheet_from_workspace(workspace),

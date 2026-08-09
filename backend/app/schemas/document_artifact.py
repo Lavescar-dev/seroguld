@@ -95,6 +95,9 @@ class DocumentArtifactPreviewOut(AppBaseModel):
     external_edit_supported: bool = False
     editable_cells: list[DocumentArtifactEditableCellOut] = Field(default_factory=list)
     sheets: list[DocumentArtifactSheetPreviewOut] = Field(default_factory=list)
+    # AFG workspaces use this internal lineage value to allow sequential saves
+    # from one open OnlyOffice workbook while still rejecting external writes.
+    workspace_revision: int | None = None
 
 
 class OfficeDocumentLaunchOut(AppBaseModel):

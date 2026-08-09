@@ -290,8 +290,8 @@ export function useOfficeDocumentState(options?: UseOfficeDocumentStateOptions):
       // flight.  Reuse that save id; starting another command here can make
       // OnlyOffice deliver snapshots out of order and resurrect an older edit.
       for (let cycle = 0; cycle < 4; cycle += 1) {
-        const generation = livePreviewEditGenerationRef.current;
         const pending = pendingForceSaveRef.current;
+        const generation = pending?.generation ?? forceSaveGenerationRef.current ?? livePreviewEditGenerationRef.current;
         const result = pending
           ? { accepted: true, state: 'queued', save_id: pending.saveId }
           : await runForceSave();

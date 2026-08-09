@@ -41,6 +41,8 @@ class OfficeSessionEntry:
     expires_at: datetime
     artifact_revision: int = 0
     launch_revision: int = 0
+    workspace_launch_revision: int | None = None
+    workspace_applied_revision: int | None = None
     lock_value: str | None = None
     lock_expires_at: datetime | None = None
     last_saved_at: datetime | None = None
@@ -420,6 +422,8 @@ class OfficeHostService:
         provider = self._provider_for_kind(kind)
         token = secrets.token_urlsafe(24)
         artifact = preview.artifact
+        workspace_revision = getattr(preview, "workspace_revision", None)
+        workspace_revision = int(workspace_revision) if workspace_revision is not None else None
         file_name = artifact.file_name if artifact else f"{kind}-{key}{Path(preview.download_path).suffix or '.xlsx'}"
         mime_type = artifact.mime_type if artifact else "application/octet-stream"
         entry = OfficeSessionEntry(
@@ -444,6 +448,8 @@ class OfficeHostService:
             expires_at=utc_now() + timedelta(seconds=settings.office_session_ttl_seconds),
             artifact_revision=int(getattr(artifact, "revision", 0) or 0),
             launch_revision=int(getattr(artifact, "revision", 0) or 0),
+            workspace_launch_revision=workspace_revision,
+            workspace_applied_revision=workspace_revision,
         )
         self._sessions[token] = entry
         return entry
@@ -465,6 +471,7 @@ class OfficeHostService:
         updated_at: datetime | None = None,
         revision: int | None = None,
         save_id: int | None = None,
+        workspace_revision: int | None = None,
     ) -> OfficeSessionEntry | None:
         entry = self.get_session(access_token)
         if entry is None:
@@ -477,6 +484,8 @@ class OfficeHostService:
             entry.artifact_revision = int(revision)
         if save_id is not None:
             entry.last_applied_save_id = max(entry.last_applied_save_id, int(save_id))
+        if workspace_revision is not None:
+            entry.workspace_applied_revision = int(workspace_revision)
         entry.live_sync_state = "applied"
         entry.last_sync_error = None
         return entry
