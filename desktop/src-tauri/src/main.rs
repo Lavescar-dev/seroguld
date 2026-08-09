@@ -13,6 +13,8 @@ use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, Url, WebviewUrl, WebviewWindowBuilder,
 };
 
+mod pending_purchase_draft;
+
 const DISPLAY_WINDOW_LABEL: &str = "customer-display";
 const DOCUMENT_PREVIEW_WINDOW_LABEL: &str = "document-preview";
 const DISPLAY_IDLE_ROUTE: &str = "/display/idle";
@@ -702,7 +704,10 @@ fn main() {
             close_document_preview_window,
             reopen_document_preview_window,
             pick_document_import_file,
-            export_document_bytes
+            export_document_bytes,
+            pending_purchase_draft::persist_pending_purchase_draft,
+            pending_purchase_draft::list_pending_purchase_drafts,
+            pending_purchase_draft::delete_pending_purchase_draft
         ])
         .run(tauri::generate_context!())
         .expect("failed to start tauri application");
