@@ -22,6 +22,7 @@ class PosCustomerInline(AppBaseModel):
     email: str | None = None
     phone: str | None = Field(default=None, max_length=30)
     address: str | None = None
+    postal_code: str | None = Field(default=None, max_length=20)
     city: str | None = Field(default=None, max_length=120)
     cpr_number: str | None = Field(default=None, max_length=20)
     identity_doc_type: IdentityDocTypeEnum | None = None

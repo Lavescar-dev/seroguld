@@ -738,6 +738,8 @@ async def _resolve_customer(session: AsyncSession, payload: PosSessionCreate) ->
                 email=payload.customer_new.email,
                 phone=customer_phone,
                 address=payload.customer_new.address,
+                postal_code=payload.customer_new.postal_code,
+                city=payload.customer_new.city,
                 cpr_number=cpr_digits,
                 identity_doc_type=payload.customer_new.identity_doc_type,
                 identity_doc_number=identity_doc_number,
