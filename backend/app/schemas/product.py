@@ -79,6 +79,7 @@ class ProductUpdate(AppBaseModel):
     gold_rate_at_purchase: Decimal | None = Field(default=None, ge=0)
     commission: Decimal | None = Field(default=None, ge=0)
     notes: str | None = None
+    clear_notes: bool = False
     storage_location: str | None = Field(default=None, max_length=100)
     needs_cleaning: bool | None = None
     shop_price_dkk: Decimal | None = Field(default=None, ge=0)

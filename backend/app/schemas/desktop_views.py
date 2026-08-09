@@ -100,12 +100,12 @@ class SettingsScreenUpdateIn(SettingsScreenOut):
 class UnicontaConfigOut(AppBaseModel):
     companyId: str
     username: str
-    password: str
     env: str
     apiUrl: str
-    apiKey: str
     connectionStatus: str
     configured: bool
+    passwordConfigured: bool = False
+    apiKeyConfigured: bool = False
     lastRefreshedAt: str | None = None
     message: str | None = None
     sendEmailOnFinalize: bool = False
@@ -115,10 +115,10 @@ class UnicontaConfigOut(AppBaseModel):
 class UnicontaConnectIn(AppBaseModel):
     companyId: str
     username: str
-    password: str
-    env: str
-    apiUrl: str
-    apiKey: str
+    password: str | None = None
+    env: str = "production"
+    apiUrl: str | None = None
+    apiKey: str | None = None
     sendEmailOnFinalize: bool = False
     sendXmlOnFinalize: bool = False
 
@@ -217,3 +217,6 @@ class UnicontaInvoicesOut(AppBaseModel):
     source: str
     generatedAt: str
     invoices: list[UnicontaInvoiceOut]
+    skip: int = 0
+    limit: int = 200
+    hasMore: bool = False

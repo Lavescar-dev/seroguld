@@ -62,14 +62,22 @@ function buildEmptyMatrixRateDrafts(): MatrixRateDrafts {
 
 export function syncMarketRateState(
   current: PosWorkspaceMarketRates,
-  overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_rates_eur' | 'silver_rates_eur'>>,
+  overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_24k_dkk' | 'gold_rates_eur' | 'silver_rates_eur'>>,
 ): PosWorkspaceMarketRates {
   const eur_dkk_fx = normalizeTextInput(String(overrides?.eur_dkk_fx ?? current.eur_dkk_fx ?? '7.45'));
   const fx = parseDecimalValue(eur_dkk_fx) || 1;
+  const gold24DkkOverride = overrides?.gold_24k_dkk;
+  const gold24EurOverride = gold24DkkOverride === undefined
+    ? null
+    : parseDecimalValue(gold24DkkOverride) / fx;
   const goldRates = Object.fromEntries(
     GOLD_RATE_ORDER.map((key) => [
       key,
-      formatMatrixRate(overrides?.gold_rates_eur?.[key] ?? current.gold_rates_eur?.[key] ?? '0'),
+      formatMatrixRate(
+        gold24EurOverride === null
+          ? overrides?.gold_rates_eur?.[key] ?? current.gold_rates_eur?.[key] ?? '0'
+          : gold24EurOverride * (parseDecimalValue(key) / 24),
+      ),
     ]),
   ) as Record<string, string>;
   const silverRates = Object.fromEntries(

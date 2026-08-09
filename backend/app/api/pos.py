@@ -16,7 +16,6 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import require_admin
 from app.database import AsyncSessionLocal, get_db
 from app.models.enums import PosDocumentTypeEnum, PosSessionStatusEnum, ProductStatusEnum
-from app.models.customer_identity import CustomerIdentityDocument
 from app.models.pos_document import PosDocument
 from app.models.enums import PosTradeSideEnum, RoleEnum
 from app.models.product import Product
@@ -87,8 +86,9 @@ from app.services.pos_service import (
     update_purchase_workspace_customer,
     update_pos_session_line,
     update_quote,
+    _workspace_customer_from_session,
 )
-from app.utils.security import decrypt_field, mask_cpr, mask_last4
+from app.utils.security import mask_cpr, mask_last4
 from app.services.realtime import realtime_hub
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
 from app.utils.helpers import quantize_2
@@ -554,30 +554,11 @@ async def get_pos_document_detail(
         raise HTTPException(status_code=404, detail="Belge bulunamadı")
 
     document, pos_session, transaction = row
-    customer = pos_session.customer
-    if customer is None and pos_session.customer_id is not None:
-        customer = await db.get(User, pos_session.customer_id)
-    identity = None
-    cpr_plain = None
-    cpr_masked = None
-    identity_number_plain = None
-    identity_number_masked = None
-    if customer is not None:
-        identity = await db.scalar(
-            select(CustomerIdentityDocument).where(CustomerIdentityDocument.user_id == customer.id)
-        )
-        if customer.cpr_number_encrypted:
-            try:
-                cpr_plain = decrypt_field(customer.cpr_number_encrypted)
-            except Exception:
-                cpr_plain = None
-            cpr_masked = mask_cpr(cpr_plain) if cpr_plain else None
-        if identity is not None and identity.identity_doc_number_encrypted:
-            try:
-                identity_number_plain = decrypt_field(identity.identity_doc_number_encrypted)
-            except Exception:
-                identity_number_plain = None
-            identity_number_masked = mask_last4(identity_number_plain) if identity_number_plain else None
+    effective_customer = await _workspace_customer_from_session(db, pos_session)
+    cpr_plain = effective_customer.cpr_number
+    cpr_masked = mask_cpr(cpr_plain) if cpr_plain else None
+    identity_number_plain = effective_customer.identity_doc_number
+    identity_number_masked = mask_last4(identity_number_plain) if identity_number_plain else None
 
     line_rows = (
         await db.execute(
@@ -663,7 +644,12 @@ async def get_pos_document_detail(
     )
     invoice_gold = extract_purchase_invoice_gold_sheet(structured_note_source, market_rates=market_rates)
     invoice_misc = extract_purchase_invoice_misc_sheet(structured_note_source)
-    customer_postal_code = customer.postal_code if customer is not None else None
+    customer_postal_code = document.customer_postal_code
+    if customer_postal_code is None:
+        customer_postal_code = effective_customer.postal_code
+    customer_city = document.customer_city
+    if customer_city is None:
+        customer_city = effective_customer.city
     can_edit = (
         document.document_type == PosDocumentTypeEnum.PURCHASE_RECEIPT
         and pos_session.status != PosSessionStatusEnum.CANCELLED
@@ -686,6 +672,7 @@ async def get_pos_document_detail(
         customer_email=document.customer_email,
         customer_address=document.customer_address,
         customer_postal_code=customer_postal_code,
+        customer_city=customer_city,
         customer_cpr=cpr_plain,
         customer_cpr_masked=cpr_masked,
         customer_identity_doc_number=identity_number_plain,
@@ -901,11 +888,7 @@ async def clerk_socket(websocket: WebSocket, session_id: UUID):
                 pos_session = await get_pos_session_or_404(session, session_id)
                 display_payload = await build_realtime_display_snapshot(session, pos_session, preview_payload)
                 accepted_preview = realtime_hub.set_display_preview(pos_session.display_token, display_payload)
-                if (
-                    accepted_preview is None
-                    or accepted_preview.preview_sequence != (display_payload.preview_sequence or 0)
-                    or accepted_preview.session_code != display_payload.session_code
-                ):
+                if accepted_preview is None:
                     continue
                 await realtime_hub.broadcast_display(
                     pos_session.display_token,

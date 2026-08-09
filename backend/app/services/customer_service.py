@@ -56,7 +56,14 @@ def _normalize_phone(value: str | None) -> str | None:
 
 def _normalize_postal_code(value: str | None) -> str | None:
     raw = (value or "").strip()
-    return raw or None
+    if not raw:
+        return None
+    if not raw.isdigit() or len(raw) != 4:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Posta kodu boş veya tam 4 rakam olmalı.",
+        )
+    return raw
 
 
 def _normalize_cpr(value: str | None) -> str | None:
@@ -228,25 +235,26 @@ async def create_customer(session: AsyncSession, payload: CustomerCreate) -> Use
 
 
 async def update_customer(session: AsyncSession, user: User, payload: CustomerUpdate) -> User:
-    if payload.name is not None:
+    fields = payload.model_fields_set
+    if "name" in fields and payload.name is not None:
         user.name = payload.name
-    if payload.email is not None and payload.email != user.email:
+    if "email" in fields and payload.email is not None and payload.email != user.email:
         existing = await session.scalar(select(User).where(User.email == payload.email, User.id != user.id))
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı")
         user.email = payload.email
-    if payload.phone is not None:
+    if "phone" in fields:
         phone = _normalize_phone(payload.phone)
         _validate_customer_identity_inputs(phone=phone, cpr=None, identity_doc_number=None)
         user.phone = phone
-    if payload.postal_code is not None:
+    if "postal_code" in fields:
         user.postal_code = _normalize_postal_code(payload.postal_code)
-    if payload.address is not None:
-        user.address_encrypted = encrypt_field(payload.address)
-    if payload.cpr_number is not None:
+    if "address" in fields:
+        user.address_encrypted = encrypt_field(payload.address) if payload.address else None
+    if "cpr_number" in fields:
         cpr = _normalize_cpr(payload.cpr_number)
         _validate_customer_identity_inputs(phone=None, cpr=payload.cpr_number, identity_doc_number=None)
-        user.cpr_number_encrypted = encrypt_field(cpr)
+        user.cpr_number_encrypted = encrypt_field(cpr) if cpr else None
         user.cpr_hash = hash_cpr(cpr)
         user.cpr_last4 = cpr[-4:] if cpr else None
     if payload.is_active is not None:

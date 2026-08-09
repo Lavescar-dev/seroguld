@@ -136,12 +136,6 @@ export function ModernAlisModule({
           ? 'Route bekliyor'
           : 'Kapalı';
   const displayTone = displayLabel === 'Hazır' ? 'success' : displayLabel === 'Otomatik' ? 'neutral' : 'warning';
-  const officeState = useOfficeDocumentState({
-    kind: 'alis-workspace',
-    artifactKey: workspace?.session.id || '',
-    disableReopen: true,
-    enabled: state.activeWorkspaceView === 'excel' && Boolean(workspace),
-  });
   const unavailableControls = state.activeWorkspaceView === 'excel' ? [] : viewModel.unsupportedControls;
 
   useEffect(() => {
@@ -212,7 +206,10 @@ export function ModernAlisModule({
     >
       <div ref={layoutRef} className="min-w-0">
         {state.activeWorkspaceView === 'excel' && workspace ? (
-          <ModernOfficeSurface state={officeState} mode="workspace" onClose={() => void state.setActiveWorkspaceView('system')} />
+          <ModernAlisOfficeSurface
+            workspaceId={workspace.session.id}
+            onClose={() => state.setActiveWorkspaceView('system')}
+          />
         ) : (
           <>
             {phase === 'loading' ? <LoadingState label="Alış kayıtları yükleniyor" /> : null}
@@ -291,6 +288,27 @@ export function ModernAlisModule({
       </div>
     </ModernModuleShell>
   );
+}
+
+function ModernAlisOfficeSurface({
+  workspaceId,
+  onClose,
+}: {
+  workspaceId: string;
+  onClose: () => void | Promise<void>;
+}) {
+  const officeState = useOfficeDocumentState({
+    kind: 'alis-workspace',
+    artifactKey: workspaceId,
+    disableReopen: true,
+  });
+
+  const handleClose = async () => {
+    const synced = await officeState.onBeforeClose?.();
+    if (synced !== false) await onClose();
+  };
+
+  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={handleClose} />;
 }
 
 function AlisModeTabs({ pane, hasWorkspace, documentCount, onChange }: { pane: ModernAlisPane; hasWorkspace: boolean; documentCount: number; onChange: (pane: ModernAlisPane) => void }) {
@@ -375,7 +393,7 @@ function AlisInspector({ state, workspace, hasSelectedCustomer, displayBridge, d
   return (
     <div className="border border-sg-border bg-sg-surface">
       <div className="border-b border-sg-border px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><div className="mt-2 flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-semibold text-sg-text">{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p><p className="mt-1 text-xs text-sg-text-soft">{hasSelectedCustomer ? state.customerForm.phone || 'Telefon yok' : 'Finalize öncesi gerekli'}</p></div><DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" /></div><button type="button" onClick={() => onOpenTool('customer')} className={`${shellButtonClass('secondary')} mt-3 w-full justify-center`}>{hasSelectedCustomer ? 'Müşteriyi düzenle' : 'Müşteri seç'}</button></div>
-      <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Piyasa oranları</p><p className="mt-1 text-sm text-sg-text">EUR/DKK ve metal oranları</p></div><button type="button" onClick={() => onOpenTool('rates')} className={shellButtonClass('ghost')}><SlidersHorizontal className="h-4 w-4" />Düzenle</button></div></div>
+      <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Piyasa oranları</p><p className="mt-1 text-sm font-semibold text-sg-text">Au {formatDecimalFixed(state.marketRates.gold_24k_dkk)} DKK/g</p><p className="mt-0.5 text-xs text-sg-text-soft">FX {formatDecimalFixed(state.marketRates.eur_dkk_fx)} · satır fiyatlarına otomatik uygulanır</p></div><button type="button" onClick={() => onOpenTool('rates')} className={shellButtonClass('ghost')}><SlidersHorizontal className="h-4 w-4" />Düzenle</button></div></div>
       <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri ekranı</p><p className="mt-1 text-sm text-sg-text">{displayLabel}</p></div>{displayBridge?.onOpenCustomerDisplay ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Aç</button> : null}</div></div>
       <div className="px-4 py-4"><button type="button" onClick={() => onOpenTool('roadmap')} className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-sg-text transition hover:text-sg-accent"><span>Hazır olmayan entegrasyonlar</span><ChevronDown className="h-4 w-4" /></button></div>
     </div>
@@ -383,13 +401,16 @@ function AlisInspector({ state, workspace, hasSelectedCustomer, displayBridge, d
 }
 
 function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAvanceChange, layoutMode }: { title: string; tone: 'gold' | 'silver'; rows: ModernAlisRow[]; expanded: boolean; onToggle: () => void; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void; layoutMode: AlisLayoutMode }) {
+  const [revealedRows, setRevealedRows] = useState<Set<string>>(() => new Set());
   const totalGram = rows.reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
   const activeRows = rows.filter((row) => parseDecimalValue(row.gram) > 0).length;
+  const visibleRows = rows.filter((row) => parseDecimalValue(row.gram) > 0 || revealedRows.has(row.key));
+  const hiddenRows = rows.filter((row) => parseDecimalValue(row.gram) <= 0 && !revealedRows.has(row.key));
   const wide = layoutMode === 'wide' || layoutMode === 'ultrawide';
   return (
     <section className="border-b border-sg-border last:border-b-0">
       <button type="button" onClick={onToggle} aria-expanded={expanded} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-sg-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sg-accent/50"><span className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${tone === 'gold' ? 'bg-sg-amber' : 'bg-slate-400'}`} /><span className="text-sm font-semibold text-sg-text">{title}</span><span className="text-xs text-sg-text-soft">{activeRows} aktif · {formatNumber(totalGram, ' g')}</span></span><ChevronDown className={`h-4 w-4 text-sg-text-soft transition ${expanded ? 'rotate-180' : ''}`} /></button>
-      {expanded ? <div className="px-4 pb-3"><div className={`border-y border-sg-border-soft py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Avance</span><span>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span>Toplam</span> : null}</div><div className="divide-y divide-sg-border-soft">{rows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} />)}</div></div> : null}
+      {expanded ? <div className="px-4 pb-3"><div className="flex flex-wrap items-center justify-between gap-2 border-y border-sg-border-soft py-2"><div className={`min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Avance</span><span>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span>Toplam</span> : null}</div>{hiddenRows.length > 0 ? <label className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft"><span className="sr-only">Satır ekle</span><select aria-label={`${title} satırı ekle`} value="" onChange={(event) => { const key = event.target.value; if (!key) return; setRevealedRows((current) => new Set(current).add(key)); }} className="rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-xs font-semibold normal-case tracking-normal text-sg-text"><option value="">+ Satır ekle</option>{hiddenRows.map((row) => <option key={row.key} value={row.key}>{row.name}</option>)}</select></label> : null}</div><div className="divide-y divide-sg-border-soft">{visibleRows.length > 0 ? visibleRows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} />) : <p className="py-4 text-sm text-sg-text-soft">Aktif satır yok. Yukarıdan bir satır ekleyin.</p>}</div></div> : null}
     </section>
   );
 }
@@ -421,6 +442,8 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
     state.newCustomer.phone.trim().length >= 7 &&
     state.newCustomer.cpr_number.replace(/\D/g, '').length >= 10 &&
     state.newCustomer.identity_doc_number.trim().length >= 4;
+  const newPostal = state.newCustomer.postal_code.replace(/\D/g, '');
+  const hasValidPostal = newPostal.length === 0 || newPostal.length === 4;
 
   if (!mode) {
     return (
@@ -497,7 +520,7 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
       <PostalLookupHint customer={state.newCustomer} setCustomer={state.setNewCustomer} />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border-soft pt-4">
         <p className="text-xs text-sg-text-soft">Ad, telefon, CPR ve kimlik belgesi zorunludur.</p>
-        <button type="submit" disabled={!hasValidNewCustomer || state.customerSelecting} className={shellButtonClass('primary')}>
+        <button type="submit" disabled={!hasValidNewCustomer || !hasValidPostal || state.customerSelecting} className={shellButtonClass('primary')}>
           {state.customerSelecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
           {state.customerSelecting ? 'Müşteri oluşturuluyor...' : 'Müşteriyi oluştur ve seç'}
         </button>
@@ -526,7 +549,12 @@ function EditableCustomerFields({
           <input
             type={field.type || 'text'}
             value={customer[field.key]}
-            onChange={(event) => setCustomer((current) => ({ ...current, [field.key]: event.target.value }))}
+            onChange={(event) => setCustomer((current) => ({
+              ...current,
+              [field.key]: field.key === 'postal_code'
+                ? event.target.value.replace(/\D/g, '').slice(0, 4)
+                : event.target.value,
+            }))}
             onBlur={onBlur}
             className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
           />
@@ -564,7 +592,7 @@ function ModernIdentityScanner({
       cpr_number: result.cprHint || current.cpr_number,
       identity_doc_number: result.docNumber || current.identity_doc_number,
       address: result.adresse || current.address,
-      postal_code: result.postnr || current.postal_code,
+      postal_code: result.postnr ? result.postnr.replace(/\D/g, '').slice(0, 4) : current.postal_code,
     }));
     setStatus('done');
   }
@@ -593,6 +621,7 @@ function PostalLookupHint({
   onBlur?: () => void;
 }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'not_found' | 'unavailable'>('idle');
+  const autoCityRef = useRef('');
   const normalizedPostalCode = customer.postal_code.replace(/\D/g, '').slice(0, 4);
 
   useEffect(() => {
@@ -615,7 +644,14 @@ function PostalLookupHint({
             return;
           }
           setStatus('ready');
-          setCustomer((current) => current.city.trim() ? current : { ...current, city: result.postal_district || '' });
+          setCustomer((current) => {
+            const nextCity = (result.postal_district || '').trim();
+            const currentCity = current.city.trim();
+            const previousAutoCity = autoCityRef.current.trim();
+            if (!nextCity || (currentCity && currentCity !== previousAutoCity)) return current;
+            autoCityRef.current = nextCity;
+            return current.city === nextCity ? current : { ...current, city: nextCity };
+          });
           window.setTimeout(() => onBlur?.(), 0);
         })
         .catch(() => {
@@ -701,7 +737,10 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Piyasa oranları</p>
           <p className="mt-1 text-xs text-sg-text-soft">EUR truth → FX → DKK. Gold ve Silver alanları matrisle birlikte güncellenir.</p>
         </div>
-        <DataPill label="FX" value={formatDecimalFixed(state.marketRates.eur_dkk_fx)} tone="neutral" />
+        <div className="flex flex-wrap gap-2">
+          <DataPill label="Au 24K" value={`${formatDecimalFixed(state.marketRates.gold_24k_dkk)} DKK/g`} tone="warning" />
+          <DataPill label="FX" value={formatDecimalFixed(state.marketRates.eur_dkk_fx)} tone="neutral" />
+        </div>
       </div>
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <div className="rounded-sg-md border border-sg-border-soft bg-sg-surface-soft p-3">
@@ -735,7 +774,11 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         <WorkspaceInput label="EUR / DKK FX" value={state.marketRates.eur_dkk_fx} onChange={(value) => state.setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: normalizeTextInput(value) }))} />
-        <ReadOnlyMetric label="Gold 24K DKK" value={state.marketRates.gold_24k_dkk} />
+        <CommittedRateInput
+          label="Au 24K DKK/g · tüm karatlara uygula"
+          value={state.marketRates.gold_24k_dkk}
+          onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { gold_24k_dkk: value }))}
+        />
         <ReadOnlyMetric label="Silver DKK" value={state.marketRates.silver_dkk} />
       </div>
     </div>
@@ -753,6 +796,39 @@ function RateInput({ label, value, dkk, onChange }: { label: string; value: stri
 
 function ReadOnlyMetric({ label, value }: { label: string; value: string }) {
   return <div className="rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2"><span className="block text-[11px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">{label}</span><span className="mt-1 block text-sm font-semibold text-sg-text">{value} DKK/g</span></div>;
+}
+
+function CommittedRateInput({ label, value, onCommit }: { label: string; value: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    const normalized = normalizeTextInput(draft);
+    if (parseDecimalValue(normalized) <= 0) {
+      setDraft(value);
+      return;
+    }
+    onCommit(normalized);
+  };
+
+  return (
+    <label className="block text-xs font-semibold text-sg-text-soft">
+      {label}
+      <input
+        value={draft}
+        onChange={(event) => setDraft(normalizeTextInput(event.target.value))}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+        }}
+        inputMode="decimal"
+        className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
+      />
+    </label>
+  );
 }
 
 function ModernCalculatorPanel({

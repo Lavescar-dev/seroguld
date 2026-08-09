@@ -51,6 +51,18 @@ export type UiDiagnosticResult = {
   path: string;
 };
 
+export type PendingPurchaseDraft = {
+  ownerKey: string;
+  sessionId: string;
+  baseRevision: number;
+  generation: number;
+  baseline: unknown;
+  local: unknown;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+};
+
 export const DISPLAY_IDLE_ROUTE = '/display/idle';
 
 let invokeLoader: Promise<TauriInvoke | null> | null = null;
@@ -136,6 +148,36 @@ export async function writeUiDiagnostic(payload: UiDiagnosticPayload): Promise<U
     return await invokeDesktop<UiDiagnosticResult>('write_ui_diagnostic', { payload });
   } catch {
     return null;
+  }
+}
+
+export async function persistPendingPurchaseDraft(
+  input: Omit<PendingPurchaseDraft, 'createdAt' | 'updatedAt' | 'expiresAt'> & { createdAt?: string },
+): Promise<boolean> {
+  try {
+    await invokeDesktop('persist_pending_purchase_draft', { input });
+    return true;
+  } catch {
+    // No plaintext fallback: the caller keeps the draft in memory and shows
+    // the desktop recovery warning if the OS credential vault is unavailable.
+    return false;
+  }
+}
+
+export async function listPendingPurchaseDrafts(ownerKey: string): Promise<PendingPurchaseDraft[]> {
+  try {
+    return await invokeDesktop<PendingPurchaseDraft[]>('list_pending_purchase_drafts', { ownerKey });
+  } catch {
+    return [];
+  }
+}
+
+export async function deletePendingPurchaseDraft(ownerKey: string, sessionId: string): Promise<boolean> {
+  try {
+    await invokeDesktop('delete_pending_purchase_draft', { ownerKey, sessionId });
+    return true;
+  } catch {
+    return false;
   }
 }
 

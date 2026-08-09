@@ -451,6 +451,9 @@ export function CustomerEditorTable({
     'w-full border border-emerald-400 bg-emerald-50 px-2 py-1.5 text-sm text-brand-900 outline-none focus:border-emerald-700 focus:bg-white';
 
   function updateField(field: keyof EditableCustomer, value: string) {
+    if (field === 'postal_code') {
+      value = value.replace(/\D/g, '').slice(0, 4);
+    }
     if (field === 'city' && value.trim() !== postalLookupAutoCityRef.current.trim()) {
       postalLookupAutoCityRef.current = '';
     }

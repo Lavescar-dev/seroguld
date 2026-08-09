@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import MetalTypeEnum, PosRateSourceEnum, PosSessionStatusEnum, PosTradeSideEnum, ProductTypeEnum
@@ -21,13 +22,83 @@ from app.schemas.pos import (
     PosWorkspaceOut,
     PosWorkspaceSectionsUpdate,
 )
-from app.services.customer_service import update_customer
 
 
 def _core():
     from app.services import pos_service as core
 
     return core
+
+
+def _validate_workspace_postal(value: str | None) -> str | None:
+    postal = str(value or "").strip()
+    if not postal:
+        return None
+    if not re.fullmatch(r"\d{4}", postal):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Posta kodu boş veya tam 4 rakam olmalı.",
+        )
+    return postal
+
+
+async def _claim_workspace_revision(
+    session: AsyncSession,
+    core,
+    pos_session: PosSession,
+    base_revision: int | None,
+) -> dict:
+    original_notes = pos_session.notes
+    note_payload = core._parse_workspace_note_payload(original_notes)
+    current_revision = int(note_payload.get("workspace_revision") or 1)
+    if base_revision is not None and int(base_revision) != current_revision:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "workspace_revision_conflict",
+                "current_revision": current_revision,
+                "message": "Workspace başka bir yüzeyde değişti; önce güncel taslağı alın.",
+            },
+        )
+    note_payload["workspace_revision"] = current_revision + 1
+    claimed_notes = core._serialize_workspace_note_payload(note_payload)
+    original_notes_clause = PosSession.notes.is_(None) if original_notes is None else PosSession.notes == original_notes
+    result = await session.execute(
+        update(PosSession)
+        .where(
+            PosSession.id == pos_session.id,
+            PosSession.status == PosSessionStatusEnum.DRAFT,
+            original_notes_clause,
+        )
+        .values(notes=claimed_notes)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        await session.rollback()
+        fresh = await session.get(PosSession, pos_session.id, populate_existing=True)
+        fresh_payload = core._parse_workspace_note_payload(fresh.notes if fresh is not None else None)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "workspace_revision_conflict",
+                "current_revision": int(fresh_payload.get("workspace_revision") or 1),
+                "message": "Workspace başka bir yüzeyde değişti; önce güncel taslağı alın.",
+            },
+        )
+    pos_session.notes = claimed_notes
+    return note_payload
+
+
+async def _lock_workspace_session(session: AsyncSession, pos_session: PosSession) -> PosSession:
+    locked = await session.get(
+        PosSession,
+        pos_session.id,
+        populate_existing=True,
+        with_for_update=True,
+    )
+    if locked is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace bulunamadı")
+    return locked
 
 
 async def update_purchase_workspace_customer(
@@ -37,6 +108,7 @@ async def update_purchase_workspace_customer(
     payload: PosWorkspaceCustomerUpdate,
 ) -> PosWorkspaceOut:
     core = _core()
+    pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
@@ -46,25 +118,20 @@ async def update_purchase_workspace_customer(
     if customer is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Önce müşteri seçin")
 
-    await update_customer(
-        session,
-        customer,
-        CustomerUpdate(
-            name=payload.name,
-            email=payload.email,
-            phone=payload.phone,
-            address=payload.address,
-            postal_code=payload.postal_code,
-            cpr_number=payload.cpr_number,
-            identity_doc_type=payload.identity_doc_type,
-            identity_doc_number=payload.identity_doc_number,
-            identity_doc_country=payload.identity_doc_country,
-        ),
-    )
-    note_payload = core._parse_workspace_note_payload(pos_session.notes)
+    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+    # Workspace edits remain session-local for identity/contact fields.  The
+    # one master-data exception is a valid postal code: this fixes the
+    # existing-customer edit path without making a temporary blank in the
+    # workspace erase the canonical customer record.
+    postal_value = _validate_workspace_postal(payload.postal_code) if "postal_code" in payload.model_fields_set else None
+    if postal_value is not None:
+        await core.update_customer(session, customer, CustomerUpdate(postal_code=postal_value))
+        await session.refresh(pos_session)
+    snapshot = core._workspace_draft_customer_payload(payload)
+    snapshot["customer_id"] = str(customer.id)
+    snapshot["postal_code"] = _validate_workspace_postal(snapshot.get("postal_code"))
+    note_payload["workspace_customer"] = snapshot
     note_payload["workspace_customer_city"] = str(payload.city or "").strip() or None
-    if core._workspace_draft_customer_has_inputs(note_payload.get("draft_customer")):
-        note_payload["draft_customer"] = {}
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
     await session.commit()
@@ -81,11 +148,16 @@ async def update_purchase_workspace_draft_customer(
     payload: PosWorkspaceCustomerUpdate,
 ) -> PosWorkspaceOut:
     core = _core()
+    pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
-    note_payload = core._parse_workspace_note_payload(pos_session.notes)
+    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
     note_payload["draft_customer"] = core._workspace_draft_customer_payload(payload)
+    note_payload["draft_customer"]["postal_code"] = _validate_workspace_postal(
+        note_payload["draft_customer"].get("postal_code")
+    )
+    note_payload["workspace_customer"] = note_payload["draft_customer"]
     note_payload["workspace_customer_city"] = str(payload.city or "").strip() or None
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
@@ -102,6 +174,7 @@ async def select_purchase_workspace_customer(
     payload: PosWorkspaceCustomerSelectRequest,
 ) -> PosWorkspaceOut:
     core = _core()
+    pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
@@ -119,9 +192,12 @@ async def select_purchase_workspace_customer(
 
     pos_session.customer_id = customer.id
     pos_session.customer = customer
-    note_payload = core._parse_workspace_note_payload(pos_session.notes)
-    if core._workspace_draft_customer_has_inputs(note_payload.get("draft_customer")):
-        note_payload["draft_customer"] = {}
+    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+    # Selecting a customer intentionally reseeds the session snapshot from
+    # the selected master record.  It must not carry a previous customer's
+    # clear/text into the new selection.
+    note_payload["workspace_customer"] = None
+    note_payload["draft_customer"] = {}
     note_payload["workspace_customer_city"] = (
         str(payload.customer_new.city or "").strip() or None if payload.customer_new else None
     )
@@ -142,10 +218,11 @@ async def replace_purchase_workspace_sections(
     payload: PosWorkspaceSectionsUpdate,
 ) -> PosWorkspaceOut:
     core = _core()
+    pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
 
-    note_payload = core._parse_workspace_note_payload(pos_session.notes)
+    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
     existing_market_rates = await core._workspace_market_rates_from_session(pos_session)
     if payload.market_rates is not None:
         market_rates = core._market_rate_payload_to_workspace(
@@ -159,13 +236,21 @@ async def replace_purchase_workspace_sections(
         )
     else:
         market_rates = existing_market_rates
+    market_rates_changed = (
+        payload.market_rates is not None
+        and core._serialize_workspace_market_rates_payload(market_rates)
+        != core._serialize_workspace_market_rates_payload(existing_market_rates)
+    )
     note_payload["market_rates"] = core._serialize_workspace_market_rates_payload(market_rates)
     if payload.bank_info is not None:
         note_payload["bank_info"] = {
             "reg_number": payload.bank_info.reg_number or "",
             "account_number": payload.bank_info.account_number or "",
         }
-    if payload.afg_note is not None:
+    # Pydantic keeps explicit ``null`` in ``model_fields_set``.  The UI uses
+    # null to mean “clear this note”; checking only ``is not None`` silently
+    # kept the old value and made it respawn after the response rehydrate.
+    if "afg_note" in payload.model_fields_set:
         note_payload["freeform_note"] = str(payload.afg_note).strip() or None
     if payload.calculators is not None:
         note_payload["calculators"] = core._serialize_workspace_calculators_payload(payload.calculators)
@@ -302,8 +387,13 @@ async def replace_purchase_workspace_sections(
         next_line_no += 1
 
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
-    pos_session.live_rate_dkk = core.quantize_2(core.to_decimal(market_rates.gold_24k_dkk))
-    pos_session.rate_source = PosRateSourceEnum.LIVE
+    gold_24k_dkk = core.quantize_2(core.to_decimal(market_rates.gold_24k_dkk))
+    if market_rates_changed:
+        pos_session.manual_rate_dkk = gold_24k_dkk
+        pos_session.rate_source = PosRateSourceEnum.MANUAL
+    elif pos_session.rate_source != PosRateSourceEnum.MANUAL:
+        pos_session.live_rate_dkk = gold_24k_dkk
+        pos_session.rate_source = PosRateSourceEnum.LIVE
     await session.flush()
     await core._sync_buy_session_summary_from_lines(session, pos_session=pos_session)
     await session.commit()
@@ -329,6 +419,7 @@ async def finalize_purchase_workspace(
 
 async def cancel_session(session: AsyncSession, *, pos_session: PosSession):
     core = _core()
+    pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak oturum iptal edilebilir")
 

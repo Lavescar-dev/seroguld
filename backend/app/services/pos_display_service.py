@@ -47,19 +47,31 @@ def _to_display_out(
     core = _core()
     resolved_trade_side = core._resolved_trade_side(pos_session, trade_side_override=trade_side_override)
     customer = pos_session.customer
-    draft_customer = None if customer is not None else core._workspace_draft_customer_from_note(core._parse_workspace_note_payload(pos_session.notes))
-    customer_address = core.decrypt_field(customer.address_encrypted) if customer else None
-    customer_cpr = core.decrypt_field(customer.cpr_number_encrypted) if customer else None
-    customer_identity_doc_number = None if customer is not None else (draft_customer.identity_doc_number if draft_customer else None)
-    effective_customer_name = customer.name if customer else (draft_customer.name if draft_customer else None)
-    effective_customer_phone = customer.phone if customer else (draft_customer.phone if draft_customer else None)
-    effective_customer_email = customer.email if customer else (draft_customer.email if draft_customer else None)
-    effective_customer_address = customer_address if customer else (draft_customer.address if draft_customer else None)
-    effective_customer_postal_code = customer.postal_code if customer else (draft_customer.postal_code if draft_customer else None)
-    effective_customer_city = str(core._parse_workspace_note_payload(pos_session.notes).get("workspace_customer_city") or "").strip() or (
-        draft_customer.city if draft_customer else None
-    )
-    effective_customer_cpr = customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None)
+    note_payload = core._parse_workspace_note_payload(pos_session.notes)
+    snapshot = core._workspace_draft_customer_from_note(note_payload)
+    draft_customer = snapshot if snapshot is not None else (None if customer is not None else core._workspace_draft_customer_from_note(note_payload))
+    if snapshot is not None and isinstance(note_payload.get("workspace_customer"), dict):
+        effective_customer_name = snapshot.name
+        effective_customer_phone = snapshot.phone
+        effective_customer_email = snapshot.email
+        effective_customer_address = snapshot.address
+        effective_customer_postal_code = snapshot.postal_code
+        effective_customer_city = snapshot.city
+        effective_customer_cpr = snapshot.cpr_number
+        customer_identity_doc_number = snapshot.identity_doc_number
+    else:
+        customer_address = core.decrypt_field(customer.address_encrypted) if customer else None
+        customer_cpr = core.decrypt_field(customer.cpr_number_encrypted) if customer else None
+        customer_identity_doc_number = None if customer is not None else (draft_customer.identity_doc_number if draft_customer else None)
+        effective_customer_name = customer.name if customer else (draft_customer.name if draft_customer else None)
+        effective_customer_phone = customer.phone if customer else (draft_customer.phone if draft_customer else None)
+        effective_customer_email = customer.email if customer else (draft_customer.email if draft_customer else None)
+        effective_customer_address = customer_address if customer else (draft_customer.address if draft_customer else None)
+        effective_customer_postal_code = customer.postal_code if customer else (draft_customer.postal_code if draft_customer else None)
+        effective_customer_city = str(note_payload.get("workspace_customer_city") or "").strip() or (
+            draft_customer.city if draft_customer else None
+        )
+        effective_customer_cpr = customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None)
     display_lines = lines or []
     lines_total: Decimal | None = None
     total_weight: Decimal | None = None
@@ -103,6 +115,7 @@ def _to_display_out(
         customer_identity_doc_number=None,
         customer_identity_doc_number_masked=core.mask_last4(customer_identity_doc_number),
         preview_sequence=None,
+        workspace_revision=int(note_payload.get("workspace_revision") or 1),
         product_type=core._product_value(pos_session.product_type),
         metal_type=core._metal_value(pos_session.metal_type),
         weight_grams=pos_session.weight_grams,
@@ -329,19 +342,18 @@ async def build_realtime_display_snapshot(
 
     customer = pos_session.customer
     note_payload = core._parse_workspace_note_payload(pos_session.notes)
-    customer_address = core.decrypt_field(customer.address_encrypted) if customer else None
-    customer_cpr = core.decrypt_field(customer.cpr_number_encrypted) if customer else None
-    draft_customer = None
+    draft_customer = core._workspace_draft_customer_from_note(note_payload)
+    workspace_snapshot = draft_customer if isinstance(note_payload.get("workspace_customer"), dict) else None
+    customer_address = core.decrypt_field(customer.address_encrypted) if customer and workspace_snapshot is None else None
+    customer_cpr = core.decrypt_field(customer.cpr_number_encrypted) if customer and workspace_snapshot is None else None
     identity_number = None
-    if customer:
+    if customer and workspace_snapshot is None:
         identity = await session.scalar(
             select(CustomerIdentityDocument).where(CustomerIdentityDocument.user_id == customer.id)
         )
         identity_number = core.decrypt_field(identity.identity_doc_number_encrypted) if identity else None
-    else:
-        draft_customer = core._workspace_draft_customer_from_note(core._parse_workspace_note_payload(pos_session.notes))
-        if draft_customer is not None:
-            identity_number = draft_customer.identity_doc_number
+    elif draft_customer is not None:
+        identity_number = draft_customer.identity_doc_number
     resolved_identity_number = (
         payload.customer_identity_doc_number
         if payload.customer_identity_doc_number is not None
@@ -354,42 +366,43 @@ async def build_realtime_display_snapshot(
         customer_name=(
             payload.customer_name
             if payload.customer_name is not None
-            else (customer.name if customer else (draft_customer.name if draft_customer else None))
+            else (workspace_snapshot.name if workspace_snapshot else (customer.name if customer else (draft_customer.name if draft_customer else None)))
         ),
         customer_phone=(
             payload.customer_phone
             if payload.customer_phone is not None
-            else (customer.phone if customer else (draft_customer.phone if draft_customer else None))
+            else (workspace_snapshot.phone if workspace_snapshot else (customer.phone if customer else (draft_customer.phone if draft_customer else None)))
         ),
         customer_email=(
             payload.customer_email
             if payload.customer_email is not None
-            else (customer.email if customer else (draft_customer.email if draft_customer else None))
+            else (workspace_snapshot.email if workspace_snapshot else (customer.email if customer else (draft_customer.email if draft_customer else None)))
         ),
         customer_address=(
             payload.customer_address
             if payload.customer_address is not None
-            else (customer_address if customer else (draft_customer.address if draft_customer else None))
+            else (workspace_snapshot.address if workspace_snapshot else (customer_address if customer else (draft_customer.address if draft_customer else None)))
         ),
         customer_postal_code=(
             payload.customer_postal_code
             if payload.customer_postal_code is not None
-            else (customer.postal_code if customer else (draft_customer.postal_code if draft_customer else None))
+            else (workspace_snapshot.postal_code if workspace_snapshot else (customer.postal_code if customer else (draft_customer.postal_code if draft_customer else None)))
         ),
         customer_city=(
             payload.customer_city
             if payload.customer_city is not None
-            else (str(note_payload.get("workspace_customer_city") or "").strip() or (draft_customer.city if draft_customer else None))
+            else (workspace_snapshot.city if workspace_snapshot else (str(note_payload.get("workspace_customer_city") or "").strip() or (draft_customer.city if draft_customer else None)))
         ),
         customer_cpr=None,
         customer_cpr_masked=core.mask_cpr(
             payload.customer_cpr
             if payload.customer_cpr is not None
-            else (customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None))
+            else (workspace_snapshot.cpr_number if workspace_snapshot else (customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None)))
         ),
         customer_identity_doc_number=None,
         customer_identity_doc_number_masked=core.mask_last4(resolved_identity_number),
         preview_sequence=payload.preview_sequence,
+        workspace_revision=int(payload.workspace_revision or note_payload.get("workspace_revision") or 1),
         product_type=core._product_value(product_type),
         metal_type=core._metal_value(metal_type),
         weight_grams=(core.quantize_2(core.to_decimal(weight_grams)) if weight_grams is not None else None),

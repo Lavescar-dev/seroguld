@@ -46,6 +46,10 @@ class PosDocument(Base):
     customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     customer_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     customer_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Immutable customer snapshot used by saved documents and exports.  The
+    # live User row may legitimately change after a purchase is finalized.
+    customer_postal_code: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    customer_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

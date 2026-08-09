@@ -58,6 +58,12 @@ async def finalize_purchase_workspace(
     if pos_session.customer_id is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Finalize etmeden önce müşteri seçin")
 
+    # A linked master customer may have a session-local workspace snapshot.
+    # Finalizing must carry that snapshot into the document; otherwise the
+    # system surface shows the cleared/edit value, but the saved document and
+    # downstream sync silently resurrect the old User fields.
+    effective_customer = await core._workspace_customer_from_session(session, pos_session)
+
     pos_lines = (
         await session.scalars(
             select(PosSessionLine)
@@ -124,10 +130,6 @@ async def finalize_purchase_workspace(
         source_transaction = await session.scalar(
             select(core.Transaction).where(core.Transaction.pos_session_id == source_session.id)
         )
-        customer = pos_session.customer
-        if customer is None and pos_session.customer_id is not None:
-            customer = await session.get(core.User, pos_session.customer_id)
-
         await core._replace_purchase_workspace_lines(
             session,
             target_session_id=source_session.id,
@@ -147,10 +149,12 @@ async def finalize_purchase_workspace(
         source_document.net_amount_dkk = target_total
         source_document.vat_rate_percent = Decimal("0.00")
         source_document.vat_amount_dkk = Decimal("0.00")
-        source_document.customer_name = customer.name if customer is not None else None
-        source_document.customer_phone = customer.phone if customer is not None else None
-        source_document.customer_email = customer.email if customer is not None else None
-        source_document.customer_address = core.decrypt_field(customer.address_encrypted) if customer is not None else None
+        source_document.customer_name = effective_customer.name or None
+        source_document.customer_phone = effective_customer.phone
+        source_document.customer_email = effective_customer.email
+        source_document.customer_address = effective_customer.address
+        source_document.customer_postal_code = effective_customer.postal_code
+        source_document.customer_city = effective_customer.city
         source_document.notes = structured_notes
 
         if source_transaction is None:
@@ -221,6 +225,12 @@ async def finalize_purchase_workspace(
         amount_dkk=target_total,
         notes=structured_notes,
     )
+    pos_document.customer_name = effective_customer.name or None
+    pos_document.customer_phone = effective_customer.phone
+    pos_document.customer_email = effective_customer.email
+    pos_document.customer_address = effective_customer.address
+    pos_document.customer_postal_code = effective_customer.postal_code
+    pos_document.customer_city = effective_customer.city
     transaction, _ = await core._ensure_pos_transaction(
         session,
         pos_session=pos_session,

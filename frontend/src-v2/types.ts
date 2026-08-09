@@ -768,6 +768,10 @@ export interface OfficeDocumentStatus {
   live_sync_state?: 'idle' | 'pending' | 'syncing' | 'applied' | 'rejected' | 'error';
   live_sync_message?: string | null;
   last_callback_at?: string | null;
+  launch_revision?: number | null;
+  applied_revision?: number | null;
+  last_requested_save_id?: number;
+  last_applied_save_id?: number;
 }
 
 export interface OfficeRuntimeStatus {
@@ -836,6 +840,7 @@ export interface PosDisplaySnapshot {
   customer_identity_doc_number?: string | null;
   customer_identity_doc_number_masked?: string | null;
   preview_sequence?: number | null;
+  workspace_revision?: number;
   product_type?: string | null;
   metal_type?: string | null;
   weight_grams?: string | null;
@@ -999,6 +1004,10 @@ export interface PosWorkspaceCalculators {
 }
 
 export interface PosWorkspace {
+  workspace_revision?: number;
+  needs_price_repair?: boolean;
+  artifact_sync_state?: 'synced' | 'pending' | 'error';
+  artifact_workspace_revision?: number | null;
   session: PosSession;
   customer: PosWorkspaceCustomer;
   bank_info: PosWorkspaceBankInfo;

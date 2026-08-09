@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_CEILING
 from typing import Any
 from uuid import UUID
 
+from app.models.enums import PosRateSourceEnum
 from app.models.pos_session import PosSession
 from app.schemas.pos import (
     PosWorkspaceBankInfo,
@@ -104,6 +105,16 @@ def _workspace_note_decimal4(value: object, fallback: Decimal) -> Decimal:
         return _quantize_4(fallback)
 
 
+def _workspace_positive_decimal(value: object, fallback: Decimal) -> Decimal:
+    parsed = _workspace_note_decimal(value, fallback)
+    return parsed if parsed > 0 else quantize_2(fallback)
+
+
+def _workspace_positive_decimal4(value: object, fallback: Decimal) -> Decimal:
+    parsed = _workspace_note_decimal4(value, fallback)
+    return parsed if parsed > 0 else _quantize_4(fallback)
+
+
 def _gold_definition_by_row_key(row_key: str) -> dict[str, str | Decimal] | None:
     core = _core()
     return next((item for item in core.GOLD_WORKSPACE_ROWS if str(item["row_key"]) == row_key), None)
@@ -200,17 +211,17 @@ def _market_rate_payload_to_workspace(
     fallback_silver_dkk: Decimal,
 ) -> PosWorkspaceMarketRates:
     core = _core()
-    fx = _workspace_note_decimal(market_payload.get("eur_dkk_fx"), core.DEFAULT_EUR_DKK_FX)
+    fx = _workspace_positive_decimal(market_payload.get("eur_dkk_fx"), core.DEFAULT_EUR_DKK_FX)
     gold_fallback_map = _default_gold_rate_map(gold_24k_dkk=fallback_gold_24k_dkk, fx=fx)
     silver_fallback_map = _default_silver_rate_map(silver_999_dkk=fallback_silver_dkk, fx=fx)
     raw_gold_rates = market_payload.get("gold_rates_eur") if isinstance(market_payload.get("gold_rates_eur"), dict) else {}
     raw_silver_rates = market_payload.get("silver_rates_eur") if isinstance(market_payload.get("silver_rates_eur"), dict) else {}
     gold_rates_eur = {
-        key: _workspace_note_decimal4(raw_gold_rates.get(key), gold_fallback_map[key])
+        key: _workspace_positive_decimal4(raw_gold_rates.get(key), gold_fallback_map[key])
         for key in core.GOLD_RATE_KEYS
     }
     silver_rates_eur = {
-        key: _workspace_note_decimal4(raw_silver_rates.get(key), silver_fallback_map[key])
+        key: _workspace_positive_decimal4(raw_silver_rates.get(key), silver_fallback_map[key])
         for key in core.SILVER_RATE_KEYS
     }
     return _build_workspace_market_rates(
@@ -360,7 +371,12 @@ def _workspace_note_defaults() -> dict[str, Any]:
     core = _core()
     return {
         "kind": core.WORKSPACE_NOTE_KIND,
+        "workspace_revision": 1,
         "draft_customer": {},
+        # Presence-aware session snapshot.  Unlike the legacy draft_customer
+        # fallback, an all-empty snapshot is intentional and must not fall
+        # back to the linked master customer.
+        "workspace_customer": None,
         "workspace_customer_city": None,
         "bank_info": {"reg_number": "", "account_number": ""},
         "market_rates": {},
@@ -387,20 +403,31 @@ def _parse_workspace_note_payload(value: str | None) -> dict[str, Any]:
         return _workspace_note_defaults()
     if not isinstance(parsed, dict) or parsed.get("kind") != core.WORKSPACE_NOTE_KIND:
         return _workspace_note_defaults()
-    draft_customer = parsed.get("draft_customer")
-    if not isinstance(draft_customer, dict):
-        parsed["draft_customer"] = {}
-    else:
-        parsed["draft_customer"] = {
-            "name": str(draft_customer.get("name") or "").strip(),
-            "email": str(draft_customer.get("email") or "").strip() or None,
-            "phone": str(draft_customer.get("phone") or "").strip() or None,
-            "address": str(draft_customer.get("address") or "").strip() or None,
-            "postal_code": str(draft_customer.get("postal_code") or "").strip() or None,
-            "city": str(draft_customer.get("city") or "").strip() or None,
-            "cpr_number": str(draft_customer.get("cpr_number") or "").strip() or None,
-            "identity_doc_number": str(draft_customer.get("identity_doc_number") or "").strip() or None,
+    try:
+        parsed["workspace_revision"] = max(int(parsed.get("workspace_revision") or 1), 1)
+    except (TypeError, ValueError):
+        parsed["workspace_revision"] = 1
+    def normalize_customer(raw_customer: object, *, customer_id: object | None = None) -> dict[str, Any] | None:
+        if not isinstance(raw_customer, dict):
+            return None
+        return {
+            "customer_id": str(raw_customer.get("customer_id") or customer_id or "").strip() or None,
+            "name": str(raw_customer.get("name") or "").strip(),
+            "email": str(raw_customer.get("email") or "").strip() or None,
+            "phone": str(raw_customer.get("phone") or "").strip() or None,
+            "address": str(raw_customer.get("address") or "").strip() or None,
+            "postal_code": str(raw_customer.get("postal_code") or "").strip() or None,
+            "city": str(raw_customer.get("city") or "").strip() or None,
+            "cpr_number": str(raw_customer.get("cpr_number") or "").strip() or None,
+            "identity_doc_type": raw_customer.get("identity_doc_type"),
+            "identity_doc_number": str(raw_customer.get("identity_doc_number") or "").strip() or None,
+            "identity_doc_country": str(raw_customer.get("identity_doc_country") or "").strip() or None,
         }
+
+    draft_customer = parsed.get("draft_customer")
+    parsed["draft_customer"] = normalize_customer(draft_customer) or {}
+    workspace_customer = normalize_customer(parsed.get("workspace_customer"))
+    parsed["workspace_customer"] = workspace_customer
     parsed["workspace_customer_city"] = str(parsed.get("workspace_customer_city") or "").strip() or None
     bank_info = parsed.get("bank_info")
     if not isinstance(bank_info, dict):
@@ -466,8 +493,13 @@ def _parse_workspace_note_payload(value: str | None) -> dict[str, Any]:
 def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
     core = _core()
     sanitized = _workspace_note_defaults()
+    try:
+        sanitized["workspace_revision"] = max(int(payload.get("workspace_revision") or 1), 1)
+    except (TypeError, ValueError):
+        sanitized["workspace_revision"] = 1
     draft_customer = payload.get("draft_customer", {}) if isinstance(payload.get("draft_customer"), dict) else {}
     sanitized["draft_customer"] = {
+        "customer_id": str(draft_customer.get("customer_id") or "").strip() or None,
         "name": str(draft_customer.get("name") or "").strip(),
         "email": str(draft_customer.get("email") or "").strip() or None,
         "phone": str(draft_customer.get("phone") or "").strip() or None,
@@ -475,8 +507,25 @@ def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
         "postal_code": str(draft_customer.get("postal_code") or "").strip() or None,
         "city": str(draft_customer.get("city") or "").strip() or None,
         "cpr_number": str(draft_customer.get("cpr_number") or "").strip() or None,
+        "identity_doc_type": draft_customer.get("identity_doc_type"),
         "identity_doc_number": str(draft_customer.get("identity_doc_number") or "").strip() or None,
+        "identity_doc_country": str(draft_customer.get("identity_doc_country") or "").strip() or None,
     }
+    workspace_customer = payload.get("workspace_customer")
+    if isinstance(workspace_customer, dict):
+        sanitized["workspace_customer"] = {
+            "customer_id": str(workspace_customer.get("customer_id") or "").strip() or None,
+            "name": str(workspace_customer.get("name") or "").strip(),
+            "email": str(workspace_customer.get("email") or "").strip() or None,
+            "phone": str(workspace_customer.get("phone") or "").strip() or None,
+            "address": str(workspace_customer.get("address") or "").strip() or None,
+            "postal_code": str(workspace_customer.get("postal_code") or "").strip() or None,
+            "city": str(workspace_customer.get("city") or "").strip() or None,
+            "cpr_number": str(workspace_customer.get("cpr_number") or "").strip() or None,
+            "identity_doc_type": workspace_customer.get("identity_doc_type"),
+            "identity_doc_number": str(workspace_customer.get("identity_doc_number") or "").strip() or None,
+            "identity_doc_country": str(workspace_customer.get("identity_doc_country") or "").strip() or None,
+        }
     sanitized["workspace_customer_city"] = str(payload.get("workspace_customer_city") or "").strip() or None
     sanitized["bank_info"] = {
         "reg_number": str(payload.get("bank_info", {}).get("reg_number", "") or "").strip(),
@@ -568,6 +617,7 @@ def _workspace_draft_customer_payload(
     payload: PosWorkspaceCustomerUpdate | PosWorkspaceCustomerOut,
 ) -> dict[str, Any]:
     return {
+        "customer_id": str(payload.customer_id) if isinstance(payload, PosWorkspaceCustomerOut) and payload.customer_id else None,
         "name": str(payload.name or "").strip(),
         "email": str(payload.email or "").strip() or None,
         "phone": str(payload.phone or "").strip() or None,
@@ -575,16 +625,20 @@ def _workspace_draft_customer_payload(
         "postal_code": str(payload.postal_code or "").strip() or None,
         "city": str(payload.city or "").strip() or None,
         "cpr_number": str(payload.cpr_number or "").strip() or None,
+        "identity_doc_type": payload.identity_doc_type,
         "identity_doc_number": str(payload.identity_doc_number or "").strip() or None,
+        "identity_doc_country": payload.identity_doc_country,
     }
 
 
 def _workspace_draft_customer_from_note(note_payload: dict[str, Any]) -> PosWorkspaceCustomerOut | None:
-    raw_customer = note_payload.get("draft_customer") if isinstance(note_payload.get("draft_customer"), dict) else {}
-    if not _workspace_draft_customer_has_inputs(raw_customer):
+    raw_customer = note_payload.get("workspace_customer")
+    if not isinstance(raw_customer, dict):
+        raw_customer = note_payload.get("draft_customer") if isinstance(note_payload.get("draft_customer"), dict) else {}
+    if not isinstance(note_payload.get("workspace_customer"), dict) and not _workspace_draft_customer_has_inputs(raw_customer):
         return None
     return PosWorkspaceCustomerOut(
-        customer_id=None,
+        customer_id=raw_customer.get("customer_id"),
         name=str(raw_customer.get("name") or "").strip(),
         email=str(raw_customer.get("email") or "").strip() or None,
         phone=str(raw_customer.get("phone") or "").strip() or None,
@@ -592,9 +646,9 @@ def _workspace_draft_customer_from_note(note_payload: dict[str, Any]) -> PosWork
         postal_code=str(raw_customer.get("postal_code") or "").strip() or None,
         city=str(raw_customer.get("city") or "").strip() or None,
         cpr_number=str(raw_customer.get("cpr_number") or "").strip() or None,
-        identity_doc_type=None,
+        identity_doc_type=raw_customer.get("identity_doc_type"),
         identity_doc_number=str(raw_customer.get("identity_doc_number") or "").strip() or None,
-        identity_doc_country=None,
+        identity_doc_country=raw_customer.get("identity_doc_country"),
     )
 
 
@@ -713,8 +767,19 @@ def _workspace_edit_source(value: str | None) -> tuple[UUID | None, int | None]:
 
 async def _workspace_market_rates_from_session(pos_session: PosSession) -> PosWorkspaceMarketRates:
     note_payload = _parse_workspace_note_payload(pos_session.notes)
-    rates = await GoldPriceService().get_rates()
-    gold_fallback = quantize_2(rates.get("gold", 0))
+    # This helper is also called by workspace mutation handlers.  Never make
+    # network I/O while a mutation transaction is open: a slow/unavailable
+    # Stooq request would keep SQLite locked and the browser would report a
+    # generic ``Load failed`` transport error.  Live refresh endpoints still
+    # call ``get_rates`` explicitly and populate this cache.
+    rates = GoldPriceService.cached_rates_or_fallback()
+    live_gold_fallback = quantize_2(rates.get("gold", 0))
+    manual_gold_fallback = quantize_2(to_decimal(pos_session.manual_rate_dkk))
+    gold_fallback = (
+        manual_gold_fallback
+        if pos_session.rate_source == PosRateSourceEnum.MANUAL and manual_gold_fallback > 0
+        else live_gold_fallback
+    )
     silver_fallback = quantize_2(rates.get("silver", 0))
 
     return _market_rate_payload_to_workspace(

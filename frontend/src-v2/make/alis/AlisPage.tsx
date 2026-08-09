@@ -997,7 +997,9 @@ function ActiveWorkspaceView(props: {
                             newCustomer.name.trim().length < 2 ||
                             newCustomer.phone.trim().length < 7 ||
                             newCustomer.cpr_number.replace(/\D/g, '').length < 10 ||
-                            newCustomer.identity_doc_number.trim().length < 4
+                            newCustomer.identity_doc_number.trim().length < 4 ||
+                            (newCustomer.postal_code.replace(/\D/g, '').length > 0 &&
+                              newCustomer.postal_code.replace(/\D/g, '').length !== 4)
                           }
                           className="w-full border border-brand-900 bg-brand-800 px-4 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-900 disabled:opacity-50"
                         >

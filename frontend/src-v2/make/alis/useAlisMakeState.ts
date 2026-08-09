@@ -1,13 +1,27 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
-import { getAccessToken } from '@/lib/auth';
-import { apiRequest, buildWsUrl, downloadAuthedDocument, fetchAuthedPdfBlob, openAuthedDocument } from '@/lib/api';
+import { getAccessToken, getCurrentUser } from '@/lib/auth';
+import {
+  ApiError,
+  TransportError,
+  apiRequest,
+  buildWsUrl,
+  downloadAuthedDocument,
+  fetchAuthedPdfBlob,
+  openAuthedDocument,
+} from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { emitArtifactSync, listenArtifactSync, signalMatches } from '@/lib/artifactSync';
 import { openOfficeDock } from '@/lib/officeDock';
+import {
+  deletePendingPurchaseDraft,
+  isTauriRuntime,
+  listPendingPurchaseDrafts,
+  persistPendingPurchaseDraft,
+} from '@/lib/desktop';
 import type {
   CustomerOut,
   PaginatedResponse,
@@ -282,16 +296,22 @@ function hasEditableCustomerData(customer: EditableCustomer) {
 }
 
 function customerRequestPayload(customer: EditableCustomer) {
+  const normalizedPostal = customer.postal_code.replace(/\D/g, '').slice(0, 4);
   return {
     name: customer.name.trim() || null,
     email: customer.email.trim() || null,
     phone: customer.phone.trim() || null,
     address: customer.address.trim() || null,
-    postal_code: customer.postal_code.trim() || null,
+    postal_code: normalizedPostal || null,
     city: customer.city.trim() || null,
     cpr_number: customer.cpr_number.trim() || null,
     identity_doc_number: customer.identity_doc_number.trim() || null,
   };
+}
+
+function hasPartialPostalCode(customer: EditableCustomer) {
+  const normalizedPostal = customer.postal_code.replace(/\D/g, '');
+  return normalizedPostal.length > 0 && normalizedPostal.length < 4;
 }
 
 function toEditableGoldRows(rows: PosWorkspaceGoldRow[]): EditableGoldRow[] {
@@ -578,21 +598,78 @@ export function useAlisMakeState(): AlisPageProps {
   const autosaveKeyRef = useRef('');
   const customerAutosaveKeyRef = useRef('');
   const initializedSessionRef = useRef<string | null>(null);
+  const workspaceRevisionRef = useRef(1);
   const queuedSectionsPayloadRef = useRef<ReturnType<typeof workspaceRowsPayload> | null>(null);
   const queuedCustomerPayloadRef = useRef<EditableCustomer | null>(null);
   const sectionsSaveInFlightRef = useRef(false);
   const customerSaveInFlightRef = useRef(false);
+  const sectionsSavePromiseRef = useRef<Promise<void> | null>(null);
+  const customerSavePromiseRef = useRef<Promise<void> | null>(null);
+  const workspaceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const clerkPreviewSocketRef = useRef<WebSocket | null>(null);
   const clerkPreviewReconnectRef = useRef<number | null>(null);
   const pendingPreviewPayloadRef = useRef<Record<string, unknown> | null>(null);
   const previewSequenceRef = useRef(0);
+  const artifactRetryInFlightRef = useRef<Set<string>>(new Set());
+  const autosaveRetryTimerRef = useRef<number | null>(null);
+  const autosaveRetryAttemptRef = useRef(0);
+  const autosaveWarningShownRef = useRef(false);
+  const draftBaselineRef = useRef<PosWorkspace | null>(null);
+  const draftGenerationRef = useRef(0);
+  const draftPersistTimerRef = useRef<number | null>(null);
+  const draftRecoverySessionRef = useRef<string | null>(null);
+  const draftRecoveryLoadedRef = useRef(false);
+  // A GET can resolve with the same server revision after a user has edited
+  // locally but before the debounced PUT is queued.  Revision equality alone
+  // cannot distinguish that response from a clean read; track the local edit
+  // sequence so a late response never rehydrates over an unsaved keystroke.
+  const localEditGenerationRef = useRef(0);
+  const observedLocalFingerprintRef = useRef('');
+  const observedLocalSessionRef = useRef<string | null>(null);
 
-  function emitWorkspaceArtifactSync(sessionId: string, source: string) {
+  function markLocalWorkspaceEdit() {
+    if (workspace?.session.id && initializedSessionRef.current === workspace.session.id) {
+      // Mark the edit synchronously.  The fingerprint effect remains a
+      // second line of defence, but a pending GET must be invalidated before
+      // its promise can resolve in the same tick.
+      localEditGenerationRef.current += 1;
+    }
+  }
+
+  function emitWorkspaceArtifactSync(
+    sessionId: string,
+    source: string,
+    artifactState?: PosWorkspace['artifact_sync_state'],
+  ) {
     emitArtifactSync({
       kind: 'alis-workspace',
       key: sessionId,
       source,
     });
+    if (source !== 'alis-ui' || artifactState !== 'error' || artifactRetryInFlightRef.current.has(sessionId)) {
+      return;
+    }
+    artifactRetryInFlightRef.current.add(sessionId);
+    void apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${sessionId}/artifact/sync`, {
+      method: 'POST',
+    })
+      .then((synced) => {
+        emitArtifactSync({
+          kind: 'alis-workspace',
+          key: sessionId,
+          source: 'alis-artifact-retry',
+          artifact_updated_at: new Date().toISOString(),
+        });
+        if (synced.artifact_sync_state === 'error') {
+          // The next core save will schedule another retry; do not create a
+          // tight loop while the backend or Office projection is unavailable.
+        }
+      })
+      .catch(() => {
+        // Core workspace data is already saved.  Keep the local warning/state
+        // and allow the next edit or explicit Office open to retry.
+      })
+      .finally(() => artifactRetryInFlightRef.current.delete(sessionId));
   }
 
   const workspaceQuery = useQuery({
@@ -625,13 +702,49 @@ export function useAlisMakeState(): AlisPageProps {
     queryFn: () => apiRequest<PosDocumentDetail>(`/api/v2/alis/documents/${detailPurchase?.sequence_no}`),
   });
 
+  function isStaleWorkspaceResponse(data: PosWorkspace) {
+    return initializedSessionRef.current === data.session.id
+      && (data.workspace_revision || 1) < workspaceRevisionRef.current;
+  }
+
+  function localWorkspaceFingerprint() {
+    if (!workspace?.session.id) return '';
+    const customer = workspace.customer.customer_id
+      ? customerForm
+      : customerMode === 'new'
+        ? newCustomer
+        : null;
+    return JSON.stringify({
+      session_id: workspace.session.id,
+      sections: workspaceRowsPayload(
+        goldRows,
+        silverRows,
+        bankInfo,
+        marketRates,
+        afgNote,
+        calculators,
+        paymentMethod,
+        numbering,
+        invoiceGoldMode,
+        invoiceGoldRows,
+        invoiceGoldFooterLines,
+        invoiceMiscMode,
+        invoiceMiscRows,
+      ),
+      customer,
+    });
+  }
+
   function applyWorkspace(
     data: PosWorkspace,
     _options?: {
       paymentMethodOverride?: PaymentMethod;
     },
   ) {
+    if (isStaleWorkspaceResponse(data)) return false;
     initializedSessionRef.current = data.session.id;
+    workspaceRevisionRef.current = data.workspace_revision || 1;
+    draftBaselineRef.current = data;
     const editableCustomer = toEditableCustomer(data);
     const hasDraftCustomerShadow = !data.customer.customer_id && hasEditableCustomerData(editableCustomer);
     setCustomerForm(editableCustomer);
@@ -655,24 +768,27 @@ export function useAlisMakeState(): AlisPageProps {
     const resolvedPaymentMethod: PaymentMethod = 'bank';
     setPaymentMethod(resolvedPaymentMethod);
     setCustomerMode(hasDraftCustomerShadow ? 'new' : null);
-    autosaveKeyRef.current = JSON.stringify(
-      workspaceRowsPayload(
-        toEditableGoldRows(data.gold_rows),
-        toEditableSilverRows(data.silver_rows),
-        resolvedBankInfo,
-        normalizeMarketRatesInput(data.market_rates),
-        data.afg_note || '',
-        data.calculators,
-        resolvedPaymentMethod,
-        toEditableNumbering(data.numbering_preview),
-        data.invoice_gold_mode,
-        toEditableInvoiceGoldRows(data.invoice_gold.rows),
-        [...data.invoice_gold.footer_lines, '', '', ''].slice(0, 3),
-        data.invoice_misc_mode,
-        toEditableInvoiceMiscRows(data.invoice_misc.rows),
-      ),
+    const sectionsPayload = workspaceRowsPayload(
+      toEditableGoldRows(data.gold_rows),
+      toEditableSilverRows(data.silver_rows),
+      resolvedBankInfo,
+      normalizeMarketRatesInput(data.market_rates),
+      data.afg_note || '',
+      data.calculators,
+      resolvedPaymentMethod,
+      toEditableNumbering(data.numbering_preview),
+      data.invoice_gold_mode,
+      toEditableInvoiceGoldRows(data.invoice_gold.rows),
+      [...data.invoice_gold.footer_lines, '', '', ''].slice(0, 3),
+      data.invoice_misc_mode,
+      toEditableInvoiceMiscRows(data.invoice_misc.rows),
     );
+    // Legacy drafts with grams but zero persisted pricing are rendered from
+    // the resolved rate matrix, then persisted through the normal revisioned
+    // PUT queue.  GET/build stays read-only.
+    autosaveKeyRef.current = data.needs_price_repair ? '' : JSON.stringify(sectionsPayload);
     customerAutosaveKeyRef.current = JSON.stringify(editableCustomer);
+    return true;
   }
 
   function activateWorkspace(
@@ -681,14 +797,18 @@ export function useAlisMakeState(): AlisPageProps {
       paymentMethodOverride?: PaymentMethod;
     },
   ) {
+    if (draftRecoverySessionRef.current !== data.session.id) {
+      draftRecoverySessionRef.current = null;
+      draftRecoveryLoadedRef.current = false;
+    }
     queuedSectionsPayloadRef.current = null;
     queuedCustomerPayloadRef.current = null;
+    if (!applyWorkspace(data, {
+      paymentMethodOverride: options?.paymentMethodOverride ?? 'bank',
+    })) return;
     setWorkspace(data);
     setDraftWorkspace(null);
     setActiveWorkspaceViewState('system');
-    applyWorkspace(data, {
-      paymentMethodOverride: options?.paymentMethodOverride ?? 'bank',
-    });
     setCustomerSearchTerm('');
   }
 
@@ -700,7 +820,7 @@ export function useAlisMakeState(): AlisPageProps {
       }),
     onSuccess: async (data) => {
       activateWorkspace(data);
-      emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
         queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] }),
@@ -717,7 +837,7 @@ export function useAlisMakeState(): AlisPageProps {
       setActionSequenceNo(null);
       setDetailPurchase(null);
       activateWorkspace(data);
-      emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
         queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] }),
@@ -869,15 +989,18 @@ export function useAlisMakeState(): AlisPageProps {
     mutationFn: (payload: Record<string, unknown>) =>
       apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/customer/select`, {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, base_revision: workspaceRevisionRef.current }),
       }),
     onSuccess: (data) => {
+      if (!applyWorkspace(data)) return;
       setWorkspace(data);
-      applyWorkspace(data);
-      emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
       setCustomerSearchTerm('');
       setNewCustomer(EMPTY_CUSTOMER);
       setCustomerMode(null);
+    },
+    onError: (error) => {
+      toast.warning('Müşteri seçilemedi', error instanceof Error ? error.message : 'Workspace başka bir yüzeyde değişti.');
     },
   });
 
@@ -885,14 +1008,32 @@ export function useAlisMakeState(): AlisPageProps {
     mutationFn: (payload: EditableCustomer) =>
       apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/draft-customer`, {
         method: 'PUT',
-        body: JSON.stringify(customerRequestPayload(payload)),
+        body: JSON.stringify({ ...customerRequestPayload(payload), base_revision: workspaceRevisionRef.current }),
       }),
     onSuccess: (data, payload) => {
       if (initializedSessionRef.current !== data.session.id) return;
+      if (isStaleWorkspaceResponse(data)) return;
+      // A response may belong to an older edit.  Keep the newer local fields
+      // visible; only the acknowledged payload may advance the baseline.
+      const newerCustomerEdit = JSON.stringify(customerForm) !== JSON.stringify(payload);
+      if (newerCustomerEdit) {
+        workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
+        setWorkspace((current) => current ? { ...current, workspace_revision: data.workspace_revision } : data);
+        return;
+      }
+      if (!applyWorkspace(data)) return;
       setWorkspace(data);
-      applyWorkspace(data);
       customerAutosaveKeyRef.current = JSON.stringify(payload);
-      emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
+    },
+    onError: (error) => {
+      if (!autosaveWarningShownRef.current) {
+        autosaveWarningShownRef.current = true;
+        toast.warning(
+          'Müşteri değişikliği beklemeye alındı',
+          error instanceof Error ? error.message : 'Bağlantı yeniden kurulunca otomatik denenecek.',
+        );
+      }
     },
   });
 
@@ -900,10 +1041,32 @@ export function useAlisMakeState(): AlisPageProps {
     mutationFn: (payload: ReturnType<typeof workspaceRowsPayload>) =>
       apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/rows`, {
         method: 'PUT',
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, base_revision: workspaceRevisionRef.current }),
       }),
     onSuccess: (data, payload) => {
       if (initializedSessionRef.current !== data.session.id) return;
+      if (isStaleWorkspaceResponse(data)) return;
+      const currentSectionsPayload = workspaceRowsPayload(
+        goldRowsRef.current,
+        silverRowsRef.current,
+        bankInfo,
+        marketRates,
+        afgNote,
+        calculators,
+        paymentMethod,
+        numbering,
+        invoiceGoldMode,
+        invoiceGoldRows,
+        invoiceGoldFooterLines,
+        invoiceMiscMode,
+        invoiceMiscRows,
+      );
+      if (JSON.stringify(currentSectionsPayload) !== JSON.stringify(payload)) {
+        workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
+        setWorkspace((current) => current ? { ...current, workspace_revision: data.workspace_revision } : data);
+        return;
+      }
+      workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
       setWorkspace(data);
       setGoldRows(toEditableGoldRows(data.gold_rows));
       setSilverRows(toEditableSilverRows(data.silver_rows));
@@ -922,7 +1085,16 @@ export function useAlisMakeState(): AlisPageProps {
       setCalculators(data.calculators);
       setPaymentMethod('bank');
       autosaveKeyRef.current = JSON.stringify(payload);
-      emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
+    },
+    onError: (error) => {
+      if (!autosaveWarningShownRef.current) {
+        autosaveWarningShownRef.current = true;
+        toast.warning(
+          'Alış satırları beklemeye alındı',
+          error instanceof Error ? error.message : 'Bağlantı yeniden kurulunca otomatik denenecek.',
+        );
+      }
     },
   });
 
@@ -930,38 +1102,87 @@ export function useAlisMakeState(): AlisPageProps {
     mutationFn: (payload: EditableCustomer) =>
       apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/customer`, {
         method: 'PUT',
-        body: JSON.stringify(customerRequestPayload(payload)),
+        body: JSON.stringify({ ...customerRequestPayload(payload), base_revision: workspaceRevisionRef.current }),
       }),
     onSuccess: (data, payload) => {
       if (initializedSessionRef.current !== data.session.id) return;
+      if (isStaleWorkspaceResponse(data)) return;
+      const newerCustomerEdit = JSON.stringify(customerForm) !== JSON.stringify(payload);
+      if (newerCustomerEdit) {
+        workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
+        setWorkspace((current) => current ? { ...current, workspace_revision: data.workspace_revision } : data);
+        return;
+      }
+      if (!applyWorkspace(data)) return;
       setWorkspace(data);
-      applyWorkspace(data);
       customerAutosaveKeyRef.current = JSON.stringify(payload);
-      emitWorkspaceArtifactSync(data.session.id, 'alis-ui');
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
+    },
+    onError: (error) => {
+      if (!autosaveWarningShownRef.current) {
+        autosaveWarningShownRef.current = true;
+        toast.warning(
+          'Müşteri değişikliği beklemeye alındı',
+          error instanceof Error ? error.message : 'Bağlantı yeniden kurulunca otomatik denenecek.',
+        );
+      }
     },
   });
 
+  function isTransientAutosaveError(error: unknown) {
+    return error instanceof TransportError || (error instanceof ApiError && error.status >= 500);
+  }
+
+  function scheduleAutosaveRetry() {
+    if (autosaveRetryTimerRef.current !== null || !workspace?.session.id) return;
+    const attempt = autosaveRetryAttemptRef.current;
+    const delay = Math.min(10_000, 1_000 * 2 ** attempt);
+    autosaveRetryAttemptRef.current = Math.min(attempt + 1, 4);
+    autosaveRetryTimerRef.current = window.setTimeout(() => {
+      autosaveRetryTimerRef.current = null;
+      void Promise.all([flushQueuedSectionsSave(), flushQueuedCustomerSave()]).finally(() => {
+        if (queuedSectionsPayloadRef.current || queuedCustomerPayloadRef.current) {
+          scheduleAutosaveRetry();
+        }
+      });
+    }, delay);
+  }
+
+  function markAutosaveSuccess() {
+    autosaveRetryAttemptRef.current = 0;
+    autosaveWarningShownRef.current = false;
+  }
+
   async function flushQueuedSectionsSave() {
-    if (sectionsSaveInFlightRef.current) return;
-    const payload = queuedSectionsPayloadRef.current;
-    if (!initializedSessionRef.current || !payload) return;
-    if (JSON.stringify(payload) === autosaveKeyRef.current) {
-      queuedSectionsPayloadRef.current = null;
-      return;
-    }
+    if (sectionsSavePromiseRef.current) return sectionsSavePromiseRef.current;
+    if (!initializedSessionRef.current || !queuedSectionsPayloadRef.current) return;
 
     sectionsSaveInFlightRef.current = true;
-    queuedSectionsPayloadRef.current = null;
-    try {
-      await updateSectionsMutation.mutateAsync(payload);
-    } catch {
-      // Autosave failures stay visible via mutation state; keep the queue logic from throwing.
-    } finally {
-      sectionsSaveInFlightRef.current = false;
-      if (queuedSectionsPayloadRef.current) {
-        void flushQueuedSectionsSave();
+    const promise = enqueueWorkspaceWrite(async () => {
+      try {
+        while (queuedSectionsPayloadRef.current) {
+          const payload = queuedSectionsPayloadRef.current;
+          queuedSectionsPayloadRef.current = null;
+          if (JSON.stringify(payload) === autosaveKeyRef.current) continue;
+          try {
+            await updateSectionsMutation.mutateAsync(payload);
+            markAutosaveSuccess();
+          } catch (error) {
+            // Keep the newest unsaved payload.  Dropping it here was the
+            // reason a temporary backend outage lost edits and later GETs
+            // appeared to resurrect the old values.
+            if (!queuedSectionsPayloadRef.current) queuedSectionsPayloadRef.current = payload;
+            if (isTransientAutosaveError(error)) scheduleAutosaveRetry();
+            break;
+          }
+        }
+      } finally {
+        sectionsSaveInFlightRef.current = false;
+        sectionsSavePromiseRef.current = null;
       }
-    }
+    });
+    sectionsSavePromiseRef.current = promise;
+    return promise;
   }
 
   function queueSectionsSave(payload: ReturnType<typeof workspaceRowsPayload>) {
@@ -969,31 +1190,44 @@ export function useAlisMakeState(): AlisPageProps {
     void flushQueuedSectionsSave();
   }
 
+  function enqueueWorkspaceWrite(task: () => Promise<void>) {
+    const previous = workspaceWriteChainRef.current.catch(() => undefined);
+    const next = previous.then(task);
+    workspaceWriteChainRef.current = next.catch(() => undefined);
+    return next;
+  }
+
   async function flushQueuedCustomerSave() {
-    if (customerSaveInFlightRef.current) return;
-    const payload = queuedCustomerPayloadRef.current;
-    if (!initializedSessionRef.current || !payload) return;
-    if (JSON.stringify(payload) === customerAutosaveKeyRef.current) {
-      queuedCustomerPayloadRef.current = null;
-      return;
-    }
+    if (customerSavePromiseRef.current) return customerSavePromiseRef.current;
+    if (!initializedSessionRef.current || !queuedCustomerPayloadRef.current) return;
 
     customerSaveInFlightRef.current = true;
-    queuedCustomerPayloadRef.current = null;
-    try {
-      if (workspace?.customer.customer_id) {
-        await updateCustomerMutation.mutateAsync(payload);
-      } else {
-        await updateDraftCustomerMutation.mutateAsync(payload);
+    const promise = enqueueWorkspaceWrite(async () => {
+      try {
+        while (queuedCustomerPayloadRef.current) {
+          const payload = queuedCustomerPayloadRef.current;
+          queuedCustomerPayloadRef.current = null;
+          if (JSON.stringify(payload) === customerAutosaveKeyRef.current) continue;
+          try {
+            if (workspace?.customer.customer_id) {
+              await updateCustomerMutation.mutateAsync(payload);
+            } else {
+              await updateDraftCustomerMutation.mutateAsync(payload);
+            }
+            markAutosaveSuccess();
+          } catch (error) {
+            if (!queuedCustomerPayloadRef.current) queuedCustomerPayloadRef.current = payload;
+            if (isTransientAutosaveError(error)) scheduleAutosaveRetry();
+            break;
+          }
+        }
+      } finally {
+        customerSaveInFlightRef.current = false;
+        customerSavePromiseRef.current = null;
       }
-    } catch {
-      // Autosave failures stay visible via mutation state; keep the queue logic from throwing.
-    } finally {
-      customerSaveInFlightRef.current = false;
-      if (queuedCustomerPayloadRef.current) {
-        void flushQueuedCustomerSave();
-      }
-    }
+    });
+    customerSavePromiseRef.current = promise;
+    return promise;
   }
 
   function queueCustomerSave(payload: EditableCustomer) {
@@ -1030,13 +1264,17 @@ export function useAlisMakeState(): AlisPageProps {
       workspace.customer.customer_id || nextCustomerMode !== 'new'
         ? nextCustomerForm
         : nextNewCustomer;
+    const rawPostal = previewCustomer.postal_code.replace(/\D/g, '');
+    const committedPostal = workspace.customer.postal_code || '';
+    const previewPostal = rawPostal.length === 4 || rawPostal.length === 0 ? rawPostal : committedPostal;
 
     return {
+      workspace_revision: workspace.workspace_revision || 1,
       customer_name: previewCustomer.name || '',
       customer_phone: previewCustomer.phone || '',
       customer_email: previewCustomer.email || '',
       customer_address: previewCustomer.address || '',
-      customer_postal_code: previewCustomer.postal_code || '',
+      customer_postal_code: previewPostal,
       customer_city: previewCustomer.city || '',
       customer_cpr: previewCustomer.cpr_number || '',
       customer_identity_doc_number: previewCustomer.identity_doc_number || '',
@@ -1068,7 +1306,10 @@ export function useAlisMakeState(): AlisPageProps {
       queuedCustomerPayloadRef.current = null;
       if (closedSessionId) {
         emitWorkspaceArtifactSync(closedSessionId, 'alis-ui');
+        void clearPendingDraft(closedSessionId);
       }
+      draftRecoverySessionRef.current = null;
+      draftRecoveryLoadedRef.current = false;
       // M2 — Finalize sonrası log + depolama'ya cross-module sinyal yolla.
       // DEFAULT_CROSS_TRIGGERS['alis'] = ['log', 'depolama'] otomatik enjekte edilir.
       emitArtifactSync({
@@ -1110,7 +1351,10 @@ export function useAlisMakeState(): AlisPageProps {
       queuedCustomerPayloadRef.current = null;
       if (closedSessionId) {
         emitWorkspaceArtifactSync(closedSessionId, 'alis-ui');
+        void clearPendingDraft(closedSessionId);
       }
+      draftRecoverySessionRef.current = null;
+      draftRecoveryLoadedRef.current = false;
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] }),
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
@@ -1149,16 +1393,24 @@ export function useAlisMakeState(): AlisPageProps {
 
       // 1) Office/Excel workbook senkronizasyonu: yalnız alis-workspace kind + session key match
       if (signal.kind === 'alis-workspace') {
+        // Only the visible system surface may consume an Office invalidation.
+        // While Office owns the session, the hidden system form must not
+        // rehydrate itself or cancel a local edit.
+        if (activeWorkspaceView !== 'system') return;
         const activeSessionId = workspace?.session.id || null;
         const draftSessionId = draftWorkspace?.session.id || null;
         if (!activeSessionId && !draftSessionId) return;
         if (signal.key !== activeSessionId && signal.key !== draftSessionId) return;
 
         if (activeSessionId && signal.key === activeSessionId) {
+          if (hasPendingWorkspaceSync()) return;
+          const requestGeneration = localEditGenerationRef.current;
           void apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${activeSessionId}`).then((data) => {
             if (initializedSessionRef.current !== data.session.id) return;
+            if (localEditGenerationRef.current !== requestGeneration) return;
+            if (hasPendingWorkspaceSync()) return;
+            if (!applyWorkspace(data)) return;
             setWorkspace(data);
-            applyWorkspace(data);
           });
         }
 
@@ -1186,21 +1438,65 @@ export function useAlisMakeState(): AlisPageProps {
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
       ]);
     });
-  }, [draftWorkspace?.session.id, queryClient, workspace?.session.id, workspaceQuery]);
+  }, [activeWorkspaceView, draftWorkspace?.session.id, queryClient, workspace?.session.id, workspaceQuery]);
 
   useEffect(() => {
     if (!workspace?.session.id || initializedSessionRef.current !== workspace.session.id) return;
+    const requestGeneration = localEditGenerationRef.current;
 
     void apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace.session.id}`)
       .then((data) => {
         if (initializedSessionRef.current !== data.session.id) return;
+        if (localEditGenerationRef.current !== requestGeneration) return;
+        if (hasPendingWorkspaceSync()) return;
+        if (!applyWorkspace(data)) return;
         setWorkspace(data);
-        applyWorkspace(data);
       })
       .catch(() => {
         // Keep the current local state if the authoritative refresh fails during view switches.
       });
   }, [activeWorkspaceView, workspace?.session.id]);
+
+  useEffect(() => {
+    const sessionId = workspace?.session.id || null;
+    if (!sessionId) {
+      observedLocalSessionRef.current = null;
+      observedLocalFingerprintRef.current = '';
+      return;
+    }
+
+    const fingerprint = localWorkspaceFingerprint();
+    if (observedLocalSessionRef.current !== sessionId) {
+      observedLocalSessionRef.current = sessionId;
+      observedLocalFingerprintRef.current = fingerprint;
+      return;
+    }
+    if (observedLocalFingerprintRef.current !== fingerprint) {
+      observedLocalFingerprintRef.current = fingerprint;
+      localEditGenerationRef.current += 1;
+    }
+    // The fingerprint helper intentionally reads the current form state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    workspace?.session.id,
+    workspace?.customer.customer_id,
+    customerMode,
+    customerForm,
+    newCustomer,
+    goldRows,
+    silverRows,
+    bankInfo,
+    marketRates,
+    afgNote,
+    calculators,
+    paymentMethod,
+    numbering,
+    invoiceGoldMode,
+    invoiceGoldRows,
+    invoiceGoldFooterLines,
+    invoiceMiscMode,
+    invoiceMiscRows,
+  ]);
 
   useEffect(() => {
     goldRowsRef.current = goldRows;
@@ -1264,6 +1560,7 @@ export function useAlisMakeState(): AlisPageProps {
         ? newCustomer
         : null;
     if (!nextPayload) return;
+    if (hasPartialPostalCode(nextPayload)) return;
     if (nextPayload.name.trim().length > 0 && nextPayload.name.trim().length < 2) return;
     const serialized = JSON.stringify(nextPayload);
     if (serialized === customerAutosaveKeyRef.current) {
@@ -1283,6 +1580,72 @@ export function useAlisMakeState(): AlisPageProps {
     customerMode,
     customerForm,
     newCustomer,
+  ]);
+
+  useEffect(() => {
+    if (!workspace?.session.id || !isTauriRuntime()) return;
+    if (draftPersistTimerRef.current !== null) window.clearTimeout(draftPersistTimerRef.current);
+    draftPersistTimerRef.current = window.setTimeout(() => {
+      draftPersistTimerRef.current = null;
+      void persistPendingDraftSnapshot();
+    }, 150);
+    return () => {
+      if (draftPersistTimerRef.current !== null) window.clearTimeout(draftPersistTimerRef.current);
+      draftPersistTimerRef.current = null;
+    };
+    // The snapshot helper reads the latest refs/state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    workspace?.session.id,
+    workspace?.workspace_revision,
+    goldRows,
+    silverRows,
+    bankInfo,
+    marketRates,
+    afgNote,
+    calculators,
+    numbering,
+    invoiceGoldMode,
+    invoiceGoldRows,
+    invoiceGoldFooterLines,
+    invoiceMiscMode,
+    invoiceMiscRows,
+    customerForm,
+    newCustomer,
+    customerMode,
+  ]);
+
+  useEffect(() => {
+    if (!workspace?.session.id || !isTauriRuntime()) return;
+    if (draftRecoverySessionRef.current === workspace.session.id) return;
+    draftRecoverySessionRef.current = workspace.session.id;
+    void recoverPendingDraftForWorkspace(workspace);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace?.session.id]);
+
+  useEffect(() => {
+    if (!workspace?.session.id || !isTauriRuntime() || !draftRecoveryLoadedRef.current) return;
+    if (hasDirtyWorkspaceChanges() || hasPendingWorkspaceAutosave()) return;
+    void clearPendingDraft(workspace.session.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    workspace?.session.id,
+    workspace?.workspace_revision,
+    goldRows,
+    silverRows,
+    customerForm,
+    newCustomer,
+    customerMode,
+    bankInfo,
+    marketRates,
+    afgNote,
+    calculators,
+    numbering,
+    invoiceGoldMode,
+    invoiceGoldRows,
+    invoiceGoldFooterLines,
+    invoiceMiscMode,
+    invoiceMiscRows,
   ]);
 
   useEffect(() => {
@@ -1396,7 +1759,9 @@ export function useAlisMakeState(): AlisPageProps {
         if (hasWorkspace && workspace?.customer.customer_id) {
           event.preventDefault();
           if (!finalizeMutation.isPending) {
-            finalizeMutation.mutate();
+            void flushPendingWorkspaceSync().then(() => {
+              if (!hasPendingWorkspaceSync()) finalizeMutation.mutate();
+            });
           }
         }
         return;
@@ -1452,6 +1817,7 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function updateGoldRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+    markLocalWorkspaceEdit();
     const nextRows = goldRowsRef.current.map((row) =>
       row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
     );
@@ -1464,6 +1830,7 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function updateSilverRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+    markLocalWorkspaceEdit();
     const nextRows = silverRowsRef.current.map((row) =>
       row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
     );
@@ -1476,6 +1843,7 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function updateNumbering(field: keyof EditableWorkspaceNumbering, value: string) {
+    markLocalWorkspaceEdit();
     setNumbering((current) => ({
       ...current,
       [field]: value.trim(),
@@ -1483,6 +1851,7 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function updateInvoiceGoldRow(rowKey: string, field: 'code' | 'fineness' | 'gram', value: string) {
+    markLocalWorkspaceEdit();
     setInvoiceGoldMode('manual');
     setInvoiceGoldRows((current) =>
       current.map((row) =>
@@ -1497,6 +1866,7 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function updateInvoiceGoldFooterLine(index: number, value: string) {
+    markLocalWorkspaceEdit();
     setInvoiceGoldMode('manual');
     setInvoiceGoldFooterLines((current) => {
       const next = [...current];
@@ -1506,6 +1876,7 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function updateInvoiceMiscRow(rowKey: string, field: 'text' | 'quantity' | 'unit_price_dkk', value: string) {
+    markLocalWorkspaceEdit();
     setInvoiceMiscMode('manual');
     setInvoiceMiscRows((current) =>
       current.map((row) =>
@@ -1527,6 +1898,7 @@ export function useAlisMakeState(): AlisPageProps {
         ? newCustomer
         : null;
     if (!nextPayload) return;
+    if (hasPartialPostalCode(nextPayload)) return;
     if (nextPayload.name.trim().length > 0 && nextPayload.name.trim().length < 2) return;
     const serialized = JSON.stringify(nextPayload);
     if (serialized === customerAutosaveKeyRef.current) return;
@@ -1535,8 +1907,8 @@ export function useAlisMakeState(): AlisPageProps {
 
   function handleResumeDraft() {
     if (!draftWorkspace) return;
+    if (!applyWorkspace(draftWorkspace)) return;
     setWorkspace(draftWorkspace);
-    applyWorkspace(draftWorkspace);
   }
 
   function handleExportDocument(item: PosSavedPurchaseListItem) {
@@ -1606,6 +1978,7 @@ export function useAlisMakeState(): AlisPageProps {
         ? newCustomer
         : null;
     if (!nextCustomerPayload) return;
+    if (hasPartialPostalCode(nextCustomerPayload)) return;
     if (nextCustomerPayload.name.trim().length > 0 && nextCustomerPayload.name.trim().length < 2) return;
     if (JSON.stringify(nextCustomerPayload) === customerAutosaveKeyRef.current) return;
     queuedCustomerPayloadRef.current = nextCustomerPayload;
@@ -1616,8 +1989,13 @@ export function useAlisMakeState(): AlisPageProps {
     if (nextView === activeWorkspaceView) return;
     try {
       await flushPendingWorkspaceSync();
+      if (hasPendingWorkspaceSync()) {
+        toast.warning('Senkron tamamlanmadı', 'Güncel Alış değişiklikleri kaydedilmeden yüzey değiştirilemez.');
+        return;
+      }
     } catch {
-      // Keep the view switch non-blocking; failed autosaves remain visible via mutation state.
+      toast.warning('Senkron tamamlanmadı', 'Güncel Alış değişiklikleri kaydedilmeden yüzey değiştirilemez.');
+      return;
     }
     setActiveWorkspaceViewState(nextView);
   }
@@ -1705,11 +2083,9 @@ export function useAlisMakeState(): AlisPageProps {
       : customerMode === 'new'
         ? newCustomer
         : null;
-    return Boolean(
-      customerPayload &&
-      customerPayload.name.trim().length >= 2 &&
-      JSON.stringify(customerPayload) !== customerAutosaveKeyRef.current,
-    );
+    // Invalid/partial drafts are intentionally not autosaved, but they are
+    // still dirty and must block a surface switch/finalize until corrected.
+    return Boolean(customerPayload && JSON.stringify(customerPayload) !== customerAutosaveKeyRef.current);
   }
 
   function hasPendingWorkspaceAutosave() {
@@ -1747,12 +2123,154 @@ export function useAlisMakeState(): AlisPageProps {
       : customerMode === 'new'
         ? newCustomer
         : null;
-    return Boolean(
-      customerPayload &&
-      customerPayload.name.trim().length >= 2 &&
-      JSON.stringify(customerPayload) !== customerAutosaveKeyRef.current,
-    );
+    return Boolean(customerPayload && JSON.stringify(customerPayload) !== customerAutosaveKeyRef.current);
   }
+
+  function buildPendingDraftLocalSnapshot() {
+    const sections = workspaceRowsPayload(
+      goldRowsRef.current,
+      silverRowsRef.current,
+      bankInfo,
+      marketRates,
+      afgNote,
+      calculators,
+      paymentMethod,
+      numbering,
+      invoiceGoldMode,
+      invoiceGoldRows,
+      invoiceGoldFooterLines,
+      invoiceMiscMode,
+      invoiceMiscRows,
+    );
+    const customer = workspace?.customer.customer_id
+      ? customerForm
+      : customerMode === 'new'
+        ? newCustomer
+        : null;
+    return { sections, customer };
+  }
+
+  async function persistPendingDraftSnapshot() {
+    const currentWorkspace = workspace;
+    const ownerKey = getCurrentUser()?.id;
+    if (
+      !currentWorkspace?.session.id
+      || !ownerKey
+      || !isTauriRuntime()
+      || draftRecoverySessionRef.current !== currentWorkspace.session.id
+      || !hasDirtyWorkspaceChanges()
+    ) {
+      return;
+    }
+    const local = buildPendingDraftLocalSnapshot();
+    const generation = ++draftGenerationRef.current;
+    await persistPendingPurchaseDraft({
+      ownerKey,
+      sessionId: currentWorkspace.session.id,
+      baseRevision: Number(currentWorkspace.workspace_revision || workspaceRevisionRef.current || 1),
+      generation,
+      baseline: draftBaselineRef.current || currentWorkspace,
+      local,
+    });
+  }
+
+  async function clearPendingDraft(sessionId: string | null | undefined) {
+    const ownerKey = getCurrentUser()?.id;
+    if (!ownerKey || !sessionId || !isTauriRuntime()) return;
+    await deletePendingPurchaseDraft(ownerKey, sessionId);
+  }
+
+  function applyRecoveredDraftLocal(local: unknown) {
+    if (!local || typeof local !== 'object') return;
+    markLocalWorkspaceEdit();
+    const record = local as { sections?: Record<string, unknown>; customer?: EditableCustomer | null };
+    const sections = record.sections;
+    if (sections && typeof sections === 'object') {
+      const incomingGold = Array.isArray(sections.gold_rows) ? sections.gold_rows : [];
+      const incomingSilver = Array.isArray(sections.silver_rows) ? sections.silver_rows : [];
+      setGoldRows((current) => current.map((row) => {
+        const incoming = incomingGold.find((value) => value && typeof value === 'object' && String((value as { karat?: unknown }).karat) === String(row.karat)) as { gram?: unknown; avance_percent?: unknown } | undefined;
+        return incoming ? { ...row, gram: String(incoming.gram ?? '0'), avance_percent: String(incoming.avance_percent ?? '0') } : row;
+      }));
+      setSilverRows((current) => current.map((row) => {
+        const incoming = incomingSilver.find((value) => value && typeof value === 'object' && String((value as { type_code?: unknown }).type_code) === String(row.type_code)) as { gram?: unknown; avance_percent?: unknown } | undefined;
+        return incoming ? { ...row, gram: String(incoming.gram ?? '0'), avance_percent: String(incoming.avance_percent ?? '0') } : row;
+      }));
+      if (sections.market_rates && typeof sections.market_rates === 'object') {
+        setMarketRates(normalizeMarketRatesInput(sections.market_rates as PosWorkspaceMarketRates));
+      }
+      if (typeof sections.afg_note === 'string' || sections.afg_note === null) setAfgNote(String(sections.afg_note || ''));
+      if (sections.bank_info && typeof sections.bank_info === 'object') {
+        const bank = sections.bank_info as { reg_number?: unknown; account_number?: unknown };
+        setBankInfo({ reg_number: String(bank.reg_number || ''), account_number: String(bank.account_number || '') });
+      }
+    }
+    if (record.customer && typeof record.customer === 'object') {
+      setCustomerForm(record.customer);
+      if (!workspace?.customer.customer_id) {
+        setNewCustomer(record.customer);
+        setCustomerMode('new');
+      }
+    }
+  }
+
+  async function recoverPendingDraftForWorkspace(currentWorkspace: PosWorkspace) {
+    const ownerKey = getCurrentUser()?.id;
+    if (!ownerKey || !isTauriRuntime()) return;
+    const drafts = await listPendingPurchaseDrafts(ownerKey);
+    draftRecoveryLoadedRef.current = true;
+    const draft = drafts.find((item) => item.sessionId === currentWorkspace.session.id);
+    if (!draft) return;
+    const serverRevision = Number(currentWorkspace.workspace_revision || 1);
+    const sameRevision = draft.baseRevision === serverRevision;
+    const localRecord = draft.local as { sections?: { gold_rows?: unknown[]; silver_rows?: unknown[] } } | null;
+    const rowCount = (localRecord?.sections?.gold_rows?.length || 0) + (localRecord?.sections?.silver_rows?.length || 0);
+    const accepted = await confirm({
+      title: sameRevision ? 'Yerel Alış taslağı bulundu' : 'Çakışan yerel Alış taslağı bulundu',
+      message: `${rowCount} matris satırı içeren şifreli taslak var. Sunucu revizyonu ${serverRevision}, yerel temel revizyonu ${draft.baseRevision}. ${sameRevision ? 'Özeti uygulamak için devam edin.' : 'Karşılaştırma özetini inceleyip yerel taslağı uygulamak ister misiniz?'}`,
+      confirmText: 'Yerel taslağı uygula',
+      cancelText: 'Sunucudakiyle devam et',
+      variant: sameRevision ? 'warning' : 'danger',
+    });
+    if (!accepted) {
+      await clearPendingDraft(currentWorkspace.session.id);
+      return;
+    }
+    applyRecoveredDraftLocal(draft.local);
+  }
+
+  const setCustomerFormFromUi = (next: SetStateAction<EditableCustomer>) => {
+    markLocalWorkspaceEdit();
+    setCustomerForm(next);
+  };
+  const setNewCustomerFromUi = (next: SetStateAction<EditableCustomer>) => {
+    markLocalWorkspaceEdit();
+    setNewCustomer(next);
+  };
+  const setNumberingFromUi = (next: SetStateAction<EditableWorkspaceNumbering>) => {
+    markLocalWorkspaceEdit();
+    setNumbering(next);
+  };
+  const setBankInfoFromUi = (next: SetStateAction<PosWorkspaceBankInfo>) => {
+    markLocalWorkspaceEdit();
+    setBankInfo(next);
+  };
+  const setMarketRatesFromUi = (next: SetStateAction<PosWorkspaceMarketRates>) => {
+    markLocalWorkspaceEdit();
+    setMarketRates(next);
+  };
+  const setAfgNoteFromUi = (next: SetStateAction<string>) => {
+    markLocalWorkspaceEdit();
+    setAfgNote(next);
+  };
+  const setCalculatorsFromUi = (next: SetStateAction<PosWorkspaceCalculators>) => {
+    markLocalWorkspaceEdit();
+    setCalculators(next);
+  };
+  const setPaymentMethodFromUi = (next: SetStateAction<PaymentMethod>) => {
+    markLocalWorkspaceEdit();
+    setPaymentMethod(next);
+  };
 
   return {
     detailPurchase,
@@ -1835,11 +2353,11 @@ export function useAlisMakeState(): AlisPageProps {
     setCustomerSearchTerm,
     candidateCustomers,
     newCustomer,
-    setNewCustomer,
+    setNewCustomer: setNewCustomerFromUi,
     onSelectExistingCustomer: handleSelectExistingCustomer,
     onCreateNewCustomer: handleCreateNewCustomer,
     customerForm,
-    setCustomerForm,
+    setCustomerForm: setCustomerFormFromUi,
     onCustomerBlur: handleCustomerBlur,
     goldRows,
     silverRows,
@@ -1848,7 +2366,7 @@ export function useAlisMakeState(): AlisPageProps {
     activeWorkspaceView,
     setActiveWorkspaceView: handleWorkspaceViewChange,
     numbering,
-    setNumbering,
+    setNumbering: setNumberingFromUi,
     onUpdateNumbering: updateNumbering,
     invoiceGoldMode,
     invoiceGoldRows,
@@ -1861,15 +2379,15 @@ export function useAlisMakeState(): AlisPageProps {
     onUpdateInvoiceMiscRow: updateInvoiceMiscRow,
     onResetInvoiceMiscToAuto: handleResetInvoiceMiscToAuto,
     bankInfo,
-    setBankInfo,
+    setBankInfo: setBankInfoFromUi,
     marketRates,
-    setMarketRates,
+    setMarketRates: setMarketRatesFromUi,
     afgNote,
-    setAfgNote,
+    setAfgNote: setAfgNoteFromUi,
     calculators,
-    setCalculators,
+    setCalculators: setCalculatorsFromUi,
     paymentMethod,
-    setPaymentMethod,
+    setPaymentMethod: setPaymentMethodFromUi,
     onPrintWorkspace: () => {
       if (!workspace) return;
       void openAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html`);
@@ -1878,7 +2396,7 @@ export function useAlisMakeState(): AlisPageProps {
     onCancelWorkspace: () => cancelMutation.mutate(),
     onFinalizeWorkspace: async () => {
       await flushPendingWorkspaceSync();
-      finalizeMutation.mutate();
+      if (!hasPendingWorkspaceSync()) finalizeMutation.mutate();
     },
     customerPending: updateCustomerMutation.isPending || updateDraftCustomerMutation.isPending,
     customerSelecting: selectCustomerMutation.isPending,

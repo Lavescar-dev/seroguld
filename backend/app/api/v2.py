@@ -197,7 +197,9 @@ from app.services.postcode_service import lookup_danish_postal_code
 from app.services.runtime_readiness import collect_runtime_readiness
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
 from app.services.uniconta_service import (
+    UNICONTA_WEB_API_BASE,
     UnicontaError,
+    UnicontaClient,
     get_uniconta_client,
     map_uniconta_invoice_to_dto,
     reset_uniconta_client,
@@ -303,11 +305,33 @@ async def _ensure_alis_workspace_artifact(
     workspace: PosWorkspaceOut,
     *,
     force_sync: bool,
-) -> None:
-    if not force_sync and await get_artifact_record(db, f"alis.workspace.{workspace.session.id}"):
-        return
-    await sync_afg_workspace_artifact(db, workspace)
-    await db.commit()
+) -> str:
+    """Best-effort workbook projection; never fail the core workspace save."""
+    artifact_key = f"alis.workspace.{workspace.session.id}"
+    existing = await get_artifact_record(db, artifact_key)
+    if not force_sync and existing:
+        workspace.artifact_sync_state = "synced"
+        workspace.artifact_workspace_revision = workspace.workspace_revision
+        return "synced"
+    try:
+        await sync_afg_workspace_artifact(db, workspace)
+        await db.commit()
+    except Exception:
+        # The row/customer mutation has already committed before this helper
+        # is called.  Roll back only the failed artifact transaction and let
+        # the frontend retry the projection explicitly.
+        await db.rollback()
+        logger.exception(
+            "alis workspace artifact sync failed session=%s workspace_revision=%s",
+            workspace.session.id,
+            workspace.workspace_revision,
+        )
+        workspace.artifact_sync_state = "error"
+        workspace.artifact_workspace_revision = workspace.workspace_revision
+        return "error"
+    workspace.artifact_sync_state = "synced"
+    workspace.artifact_workspace_revision = workspace.workspace_revision
+    return "synced"
 
 
 async def _ensure_log_artifact(
@@ -418,12 +442,14 @@ async def _apply_afg_workspace_artifact_inputs(
     *,
     pos_session: PosSession,
     workbook_bytes: bytes,
+    office_lineage: bool = False,
+    allow_full_clear: bool = False,
 ) -> PosWorkspaceOut:
     try:
         parsed = parse_afg_workspace_inputs_from_workbook(workbook_bytes)
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if parsed.base_version:
+    if parsed.base_version and not office_lineage:
         record = await get_artifact_record(db, f"alis.workspace.{pos_session.id}")
         if record is not None:
             conflict_state = resolve_artifact_conflict_state(
@@ -436,7 +462,7 @@ async def _apply_afg_workspace_artifact_inputs(
                     detail=f"AFG artifact conflict_state={conflict_state}; önce yenileyin.",
                 )
     current_workspace = await build_purchase_workspace(db, pos_session=pos_session)
-    if _workspace_has_business_inputs(current_workspace) and _parsed_afg_inputs_look_blank(parsed):
+    if not office_lineage and not allow_full_clear and _workspace_has_business_inputs(current_workspace) and _parsed_afg_inputs_look_blank(parsed):
         logger.warning(
             "Rejected blank AFG callback for workspace %s because parsed workbook had no business inputs",
             pos_session.id,
@@ -537,18 +563,47 @@ async def _apply_office_session_content(
                 status_code=409,
                 detail="Office artifact conflict_state=invalid; revision metadata bulunamadı.",
             ) from exc
-        conflict_state = resolve_artifact_conflict_state(
-            current_revision=getattr(record, "revision", 1),
-            incoming_revision=metadata.base_version,
-        )
-        if conflict_state != "clean":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Office artifact conflict_state={conflict_state}; önce yenileyin.",
+        current_revision = int(getattr(record, "revision", 1) or 1)
+        if entry.kind == "alis-workspace":
+            launch_revision = int(getattr(entry, "launch_revision", entry.artifact_revision) or entry.artifact_revision or 1)
+            applied_revision = int(getattr(entry, "artifact_revision", launch_revision) or launch_revision)
+            try:
+                incoming_base_revision = int(metadata.base_version) if metadata.base_version is not None else None
+            except (TypeError, ValueError):
+                incoming_base_revision = None
+            # The embedded workbook version must match the revision most
+            # recently applied in this Office session.  Only comparing with
+            # the original launch revision lets a second save from the same
+            # stale OnlyOffice document overwrite the first save and resurrect
+            # deleted values.
+            if incoming_base_revision is None or incoming_base_revision != applied_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Office artifact conflict_state=stale_lineage; Office belgesini yeniden açın.",
+                )
+            if current_revision != applied_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Office artifact conflict_state=external_write; önce güncel workspace alın.",
+                )
+        else:
+            conflict_state = resolve_artifact_conflict_state(
+                current_revision=current_revision,
+                incoming_revision=metadata.base_version,
             )
+            if conflict_state != "clean":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Office artifact conflict_state={conflict_state}; önce yenileyin.",
+                )
     if entry.kind == "alis-workspace":
         pos_session = await get_pos_session_or_404(db, UUID(entry.key))
-        await _apply_afg_workspace_artifact_inputs(db, pos_session=pos_session, workbook_bytes=workbook_bytes)
+        await _apply_afg_workspace_artifact_inputs(
+            db,
+            pos_session=pos_session,
+            workbook_bytes=workbook_bytes,
+            office_lineage=True,
+        )
         return
     if entry.kind == "depolama":
         await apply_inventory_workbook_artifact_inputs(db, workbook_bytes=workbook_bytes, create_snapshot=False)
@@ -592,9 +647,12 @@ async def _office_preview_for_kind(
             session_id = UUID(key)
             pos_session = await get_pos_session_or_404(db, session_id)
             workspace = await build_purchase_workspace(db, pos_session=pos_session)
-            bundle = await sync_afg_workspace_artifact(db, workspace)
-            await db.commit()
-            return build_afg_workspace_preview(workspace, artifact=bundle.artifact), True
+            artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
+            if artifact is None:
+                bundle = await sync_afg_workspace_artifact(db, workspace)
+                await db.commit()
+                artifact = bundle.artifact
+            return build_afg_workspace_preview(workspace, artifact=artifact), True
         if kind == "alis-document":
             sequence_no = int(key)
             detail = await get_legacy_pos_document_detail(sequence_no=sequence_no, db=db, _=admin)
@@ -612,6 +670,10 @@ async def _office_preview_for_kind(
             bundle = await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)
             await db.commit()
             return build_log_preview(workspace, year=year, artifact=bundle.artifact), True
+    except FileNotFoundError as exc:
+        await db.rollback()
+        detail = "AFG_REFERENCE_TEMPLATE_MISSING" if "Afregningsbilag" in str(exc) else "OFFICE_REFERENCE_TEMPLATE_MISSING"
+        raise HTTPException(status_code=424, detail=detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Geçersiz office belge anahtarı") from exc
     raise HTTPException(status_code=404, detail="Office belge bulunamadı")
@@ -674,6 +736,10 @@ async def _office_status_for_kind(
             import_supported = True
         else:
             raise HTTPException(status_code=404, detail="Office belge bulunamadı")
+    except FileNotFoundError as exc:
+        await db.rollback()
+        detail = "AFG_REFERENCE_TEMPLATE_MISSING" if "Afregningsbilag" in str(exc) else "OFFICE_REFERENCE_TEMPLATE_MISSING"
+        raise HTTPException(status_code=424, detail=detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Geçersiz office belge anahtarı") from exc
 
@@ -682,6 +748,7 @@ async def _office_status_for_kind(
         kind=kind,
         key=key,
     )
+    office_entry = office_host_service.get_session(access_token)
     return OfficeDocumentStatusOut(
         kind=kind,
         key=key,
@@ -696,6 +763,10 @@ async def _office_status_for_kind(
         live_sync_state=live_sync_state,
         live_sync_message=live_sync_message,
         last_callback_at=last_callback_at,
+        launch_revision=(office_entry.launch_revision if office_entry else None),
+        applied_revision=(office_entry.artifact_revision if office_entry else None),
+        last_requested_save_id=(office_entry.last_requested_save_id if office_entry else 0),
+        last_applied_save_id=(office_entry.last_applied_save_id if office_entry else 0),
     )
 
 
@@ -755,6 +826,9 @@ async def _build_alis_saved_purchase_items(
             select(
                 PosDocument.sequence_no,
                 PosDocument.notes,
+                PosDocument.customer_address,
+                PosDocument.customer_postal_code,
+                PosDocument.customer_city,
                 PosSession.customer_id,
                 User.address_encrypted,
                 User.postal_code,
@@ -774,6 +848,9 @@ async def _build_alis_saved_purchase_items(
     for (
         sequence_no,
         notes,
+        document_address,
+        document_postal_code,
+        document_city,
         customer_id,
         address_encrypted,
         postal_code,
@@ -786,8 +863,8 @@ async def _build_alis_saved_purchase_items(
         cpr_masked = None
         cpr_plain = None
         identity_plain = None
-        address = None
-        if address_encrypted:
+        address = document_address
+        if address is None and address_encrypted:
             try:
                 address = decrypt_field(address_encrypted)
             except Exception:
@@ -810,7 +887,8 @@ async def _build_alis_saved_purchase_items(
             "customer_id": str(customer_id) if customer_id else None,
             "address": address,
             "payment_method": extract_purchase_payment_method(notes),
-            "postal_code": postal_code,
+            "postal_code": document_postal_code if document_postal_code is not None else postal_code,
+            "city": document_city,
             "cpr_masked": cpr_masked,
             "cpr": cpr_plain,
             "identity_doc_number": identity_plain,
@@ -867,6 +945,7 @@ async def _build_alis_saved_purchase_items(
             customer_email=item.customer_email,
             customer_address=extra_map.get(item.sequence_no, {}).get("address"),
             customer_postal_code=extra_map.get(item.sequence_no, {}).get("postal_code"),
+            customer_city=extra_map.get(item.sequence_no, {}).get("city"),
             customer_cpr=extra_map.get(item.sequence_no, {}).get("cpr"),
             customer_cpr_masked=extra_map.get(item.sequence_no, {}).get("cpr_masked"),
             customer_identity_doc_number=extra_map.get(item.sequence_no, {}).get("identity_doc_number"),
@@ -1037,21 +1116,31 @@ def _build_uniconta_config_out(
     last_refreshed_at: str | None = None,
 ) -> UnicontaConfigOut:
     settings = get_settings()
+    health = get_uniconta_client().get_health_snapshot()
     configured = bool(
-        settings.uniconta_api_url.strip()
-        and settings.uniconta_company_id.strip()
+        settings.uniconta_company_id.strip()
         and settings.uniconta_username.strip()
-        and (settings.uniconta_password.strip() or settings.uniconta_api_key.strip())
+        and settings.uniconta_password.strip()
     )
+    derived_status = connection_status
+    if derived_status is None:
+        if not configured:
+            derived_status = "bagli_degil"
+        elif health.get("last_call_ok") is True and health.get("has_token"):
+            derived_status = "bagli"
+        elif health.get("last_call_ok") is False:
+            derived_status = "hata"
+        else:
+            derived_status = "bagli_degil"
     return UnicontaConfigOut(
         companyId=settings.uniconta_company_id,
         username=settings.uniconta_username,
-        password=settings.uniconta_password,
-        env="sandbox" if "sandbox" in settings.uniconta_api_url.lower() else "production",
-        apiUrl=settings.uniconta_api_url,
-        apiKey=settings.uniconta_api_key,
-        connectionStatus=connection_status or ("bagli" if configured else "bagli_degil"),
+        env="production",
+        apiUrl=UNICONTA_WEB_API_BASE,
+        connectionStatus=derived_status,
         configured=configured,
+        passwordConfigured=bool(settings.uniconta_password.strip()),
+        apiKeyConfigured=bool(settings.uniconta_api_key.strip()),
         lastRefreshedAt=last_refreshed_at,
         message=message or ("Uniconta proxy hazir." if configured else "Uniconta baglantisi henuz yapilandirilmadi."),
         sendEmailOnFinalize=bool(getattr(settings, "uniconta_send_email_on_finalize", False)),
@@ -1115,6 +1204,7 @@ async def _load_uniconta_invoices(
     *,
     sequence_no: int | None = None,
     limit: int = 200,
+    skip: int = 0,
 ) -> list[UnicontaInvoiceOut]:
     stmt = (
         select(PosDocument, PosSession, Transaction)
@@ -1126,7 +1216,7 @@ async def _load_uniconta_invoices(
     if sequence_no is not None:
         stmt = stmt.where(PosDocument.sequence_no == sequence_no)
     else:
-        stmt = stmt.limit(limit)
+        stmt = stmt.offset(skip).limit(limit)
 
     rows = (await db.execute(stmt)).all()
     if not rows:
@@ -1395,25 +1485,14 @@ async def post_uniconta_connect_v2(
     payload: UnicontaConnectIn,
     _: User = Depends(require_admin),
 ) -> UnicontaConnectOut:
-    upsert_env_values(
-        ROOT_ENV_FILE,
-        {
-            "UNICONTA_API_URL": payload.apiUrl.strip(),
-            "UNICONTA_USERNAME": payload.username.strip(),
-            "UNICONTA_PASSWORD": payload.password.strip(),
-            "UNICONTA_COMPANY_ID": payload.companyId.strip(),
-            "UNICONTA_API_KEY": payload.apiKey.strip(),
-            "UNICONTA_SEND_EMAIL_ON_FINALIZE": "true" if payload.sendEmailOnFinalize else "false",
-            "UNICONTA_SEND_XML_ON_FINALIZE": "true" if payload.sendXmlOnFinalize else "false",
-        },
-    )
-    get_settings.cache_clear()
-    reset_uniconta_client()
+    current = get_settings()
+    company_id = payload.companyId.strip() or current.uniconta_company_id.strip()
+    username = payload.username.strip() or current.uniconta_username.strip()
+    password = (payload.password or "").strip() or current.uniconta_password.strip()
     configured = bool(
-        payload.apiUrl.strip()
-        and payload.companyId.strip()
-        and payload.username.strip()
-        and (payload.password.strip() or payload.apiKey.strip())
+        company_id
+        and username
+        and password
     )
     if not configured:
         message = "Uniconta baglanti bilgileri eksik."
@@ -1424,37 +1503,51 @@ async def post_uniconta_connect_v2(
             message=message,
             config=config,
         )
-    # Canlı bağlantı testi — Uniconta Web API'sine gerçek login
-    client = get_uniconta_client()
+    # Önce aday kimlik bilgileriyle test et; başarısız aday mevcut .env'i
+    # bozmamalı. Uniconta Web API'si için tek kanonik canlı endpoint kullanılır.
+    client = UnicontaClient(
+        base_url=UNICONTA_WEB_API_BASE,
+        company_id=company_id,
+        username=username,
+        password=password,
+    )
     result = await client.test_connection()
     last_refreshed_at = utc_now().isoformat() if result.get("ok") else None
-    if result.get("ok"):
-        company_name = (result.get("company") or {}).get("CompanyName")
-        message = f"Uniconta'ya baglandi: {company_name}" if company_name else result.get("message", "Uniconta baglantisi basarili.")
-        config = _build_uniconta_config_out(
-            message=message,
-            connection_status="bagli",
-            last_refreshed_at=last_refreshed_at,
-        )
-        return UnicontaConnectOut(
-            connectionStatus="bagli",
-            configured=True,
-            message=message,
-            config=config,
-        )
-    message = result.get("message", "Uniconta baglantisi basarisiz.")
-    config = _build_uniconta_config_out(message=message, connection_status="hata")
-    return UnicontaConnectOut(
-        connectionStatus="hata",
-        configured=True,
-        message=message,
-        config=config,
+    if not result.get("ok"):
+        message = result.get("message", "Uniconta baglantisi basarisiz.")
+        config = _build_uniconta_config_out(message=message, connection_status="hata")
+        return UnicontaConnectOut(connectionStatus="hata", configured=config.configured, message=message, config=config)
+
+    existing_api_key = current.uniconta_api_key.strip()
+    supplied_api_key = (payload.apiKey or "").strip()
+    upsert_env_values(
+        ROOT_ENV_FILE,
+        {
+            "UNICONTA_API_URL": UNICONTA_WEB_API_BASE,
+            "UNICONTA_USERNAME": username,
+            "UNICONTA_PASSWORD": password,
+            "UNICONTA_COMPANY_ID": company_id,
+            "UNICONTA_API_KEY": supplied_api_key or existing_api_key,
+            "UNICONTA_SEND_EMAIL_ON_FINALIZE": "true" if payload.sendEmailOnFinalize else "false",
+            "UNICONTA_SEND_XML_ON_FINALIZE": "true" if payload.sendXmlOnFinalize else "false",
+        },
     )
+    get_settings.cache_clear()
+    reset_uniconta_client()
+    company_name = (result.get("company") or {}).get("CompanyName")
+    message = f"Uniconta'ya baglandi: {company_name}" if company_name else result.get("message", "Uniconta baglantisi basarili.")
+    config = _build_uniconta_config_out(
+        message=message,
+        connection_status="bagli",
+        last_refreshed_at=last_refreshed_at,
+    )
+    return UnicontaConnectOut(connectionStatus="bagli", configured=True, message=message, config=config)
 
 
 @router.get("/uniconta/invoices", response_model=UnicontaInvoicesOut)
 async def get_uniconta_invoices_v2(
     limit: int = Query(default=200, ge=1, le=500),
+    skip: int = Query(default=0, ge=0),
     source: str = Query(default="local", pattern="^(local|remote)$"),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
@@ -1462,7 +1555,7 @@ async def get_uniconta_invoices_v2(
     if source == "remote":
         client = get_uniconta_client()
         try:
-            rows = await client.get_sale_invoices(top=limit)
+            rows = await client.get_sale_invoices(top=limit, skip=skip)
         except UnicontaError as exc:
             raise HTTPException(status_code=502, detail=f"Uniconta remote: {exc}") from exc
         invoices_remote = [UnicontaInvoiceOut(**map_uniconta_invoice_to_dto(r)) for r in rows]
@@ -1470,12 +1563,18 @@ async def get_uniconta_invoices_v2(
             source="uniconta_remote",
             generatedAt=datetime.utcnow().isoformat(),
             invoices=invoices_remote,
+            skip=skip,
+            limit=limit,
+            hasMore=len(invoices_remote) == limit,
         )
-    invoices = await _load_uniconta_invoices(db, limit=limit)
+    invoices = await _load_uniconta_invoices(db, limit=limit, skip=skip)
     return UnicontaInvoicesOut(
         source="crm_sale_invoices",
         generatedAt=datetime.utcnow().isoformat(),
         invoices=invoices,
+        skip=skip,
+        limit=limit,
+        hasMore=len(invoices) == limit,
     )
 
 

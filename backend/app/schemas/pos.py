@@ -91,6 +91,7 @@ class PosSessionLineOut(AppBaseModel):
 
 
 class PosRealtimePreview(AppBaseModel):
+    workspace_revision: int | None = Field(default=None, ge=1)
     trade_side: PosTradeSideEnum | None = None
     product_type: ProductTypeEnum | None = None
     metal_type: MetalTypeEnum | None = None
@@ -171,6 +172,7 @@ class PosSessionDisplayOut(AppBaseModel):
     customer_identity_doc_number: str | None = None
     customer_identity_doc_number_masked: str | None = None
     preview_sequence: int | None = None
+    workspace_revision: int = Field(default=1, ge=1)
     product_type: str | None
     metal_type: str | None
     weight_grams: Decimal | None
@@ -315,7 +317,10 @@ class PosWorkspaceCustomerOut(AppBaseModel):
 
 
 class PosWorkspaceCustomerUpdate(AppBaseModel):
-    name: str | None = Field(default=None, min_length=2, max_length=200)
+    base_revision: int | None = Field(default=None, ge=1)
+    # Draft workspace edits are allowed to be temporarily blank. Finalize and
+    # master-customer endpoints keep their own required-name validation.
+    name: str | None = Field(default=None, max_length=200)
     email: str | None = Field(default=None, max_length=200)
     phone: str | None = Field(default=None, max_length=30)
     address: str | None = None
@@ -328,6 +333,7 @@ class PosWorkspaceCustomerUpdate(AppBaseModel):
 
 
 class PosWorkspaceCustomerSelectRequest(AppBaseModel):
+    base_revision: int | None = Field(default=None, ge=1)
     customer_id: UUID | None = None
     customer_new: PosCustomerInline | None = None
 
@@ -498,6 +504,7 @@ class PosWorkspaceCalculatorsOut(AppBaseModel):
 
 
 class PosWorkspaceSectionsUpdate(AppBaseModel):
+    base_revision: int | None = Field(default=None, ge=1)
     gold_rows: list[PosWorkspaceGoldRowInput] = Field(default_factory=list)
     silver_rows: list[PosWorkspaceSilverRowInput] = Field(default_factory=list)
     bank_info: PosWorkspaceBankInfo | None = None
@@ -538,6 +545,13 @@ class PosWorkspaceFinalizeResponse(AppBaseModel):
 
 
 class PosWorkspaceOut(AppBaseModel):
+    workspace_revision: int = Field(default=1, ge=1)
+    needs_price_repair: bool = False
+    # Core workspace data is committed independently from the generated
+    # Office workbook.  A failed artifact write must be reportable without
+    # turning a successful row/customer save into an HTTP 500.
+    artifact_sync_state: str = Field(default="pending", pattern="^(synced|pending|error)$")
+    artifact_workspace_revision: int | None = Field(default=None, ge=1)
     session: PosSessionOutClerk
     customer: PosWorkspaceCustomerOut
     bank_info: PosWorkspaceBankInfo

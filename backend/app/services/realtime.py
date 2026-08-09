@@ -21,6 +21,7 @@ class RealtimeHub:
         self._display_connections: dict[str, set[WebSocket]] = defaultdict(set)
         self._clerk_connections: dict[str, set[WebSocket]] = defaultdict(set)
         self._display_preview: dict[str, DisplayPreviewEntry] = {}
+        self._display_preview_counters: dict[str, int] = defaultdict(int)
 
     async def connect_display(self, display_token: str, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -66,12 +67,12 @@ class RealtimeHub:
         return self._display_preview.get(display_token)
 
     def set_display_preview(self, display_token: str, snapshot: PosSessionDisplayOut) -> DisplayPreviewEntry | None:
-        sequence = snapshot.preview_sequence or 0
-        if sequence <= 0:
-            return self._display_preview.get(display_token)
+        sequence = max(self._display_preview_counters[display_token] + 1, snapshot.preview_sequence or 0)
+        self._display_preview_counters[display_token] = sequence
+        snapshot = snapshot.model_copy(update={"preview_sequence": sequence})
         current = self._display_preview.get(display_token)
-        if current and current.session_code == snapshot.session_code and sequence <= current.preview_sequence:
-            return current
+        if current and current.session_code != snapshot.session_code:
+            self._display_preview_counters[display_token] = sequence
         entry = DisplayPreviewEntry(
             session_code=snapshot.session_code,
             preview_sequence=sequence,
@@ -87,6 +88,7 @@ class RealtimeHub:
         if session_code is not None and current.session_code != session_code:
             return
         self._display_preview.pop(display_token, None)
+        self._display_preview_counters.pop(display_token, None)
 
 
 realtime_hub = RealtimeHub()

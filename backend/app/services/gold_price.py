@@ -55,6 +55,20 @@ class GoldPriceService:
         cls._cache_expires_at = cls._now() + timedelta(seconds=cache_seconds)
 
     @classmethod
+    def cached_rates_or_fallback(cls) -> dict[str, Decimal]:
+        """Return rates without performing network I/O.
+
+        Workspace writes run inside the SQLite transaction that claims the
+        workspace revision.  Calling ``get_rates`` from that transaction can
+        hold the write lock while Stooq is unavailable, which turns a normal
+        row edit into a browser ``Load failed`` error.  Read-only callers may
+        still use ``get_rates``; mutation paths use this deterministic helper.
+        """
+        if cls._cache_is_valid():
+            return dict(cls._cache_rates or {})
+        return dict(cls._FALLBACK_RATES)
+
+    @classmethod
     def _parse_stooq_close(cls, csv_text: str) -> Decimal | None:
         lines = [line.strip() for line in csv_text.splitlines() if line.strip()]
         if len(lines) < 2:

@@ -523,7 +523,7 @@ async def update_product(
         product.gold_rate_at_purchase = quantize_2(payload.gold_rate_at_purchase)
     if payload.commission is not None:
         product.commission = quantize_2(payload.commission)
-    if payload.notes is not None:
+    if payload.clear_notes or payload.notes is not None:
         product.notes = payload.notes
     if payload.storage_location is not None:
         product.storage_location = payload.storage_location

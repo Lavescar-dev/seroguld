@@ -75,7 +75,9 @@ from app.schemas.pos import (
     PosWorkspaceSectionsUpdate,
 )
 from app.services.document_artifact_service import (
+    artifact_absolute_path,
     build_afg_workspace_reconcile_preview,
+    get_artifact_record,
     parse_afg_workspace_inputs_from_workbook,
     sync_afg_document_artifact,
     sync_afg_workspace_artifact,
@@ -118,7 +120,6 @@ async def get_alis_workspace_open_draft_v2(
     if draft is None:
         return None
     workspace = await build_purchase_workspace(db, pos_session=draft)
-    await _ensure_alis_workspace_artifact(db, workspace, force_sync=False)
     return workspace
 
 
@@ -130,7 +131,6 @@ async def get_alis_workspace_v2(
 ) -> PosWorkspaceOut:
     pos_session = await get_pos_session_or_404(db, session_id)
     workspace = await build_purchase_workspace(db, pos_session=pos_session)
-    await _ensure_alis_workspace_artifact(db, workspace, force_sync=False)
     return workspace
 
 
@@ -340,10 +340,27 @@ async def get_alis_workspace_artifact_v2(
     _: User = Depends(require_admin),
 ) -> Response:
     pos_session = await get_pos_session_or_404(db, session_id)
+    artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
+    if artifact is None or not artifact_absolute_path(artifact).exists():
+        workspace = await build_purchase_workspace(db, pos_session=pos_session)
+        bundle = await sync_afg_workspace_artifact(db, workspace)
+        await db.commit()
+        artifact = bundle.artifact
+        return artifact_file_response(artifact, content=bundle.content)
+    return artifact_file_response(artifact)
+
+
+@router.post("/alis/workspace/{session_id}/artifact/sync", response_model=PosWorkspaceOut)
+async def post_alis_workspace_artifact_sync_v2(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> PosWorkspaceOut:
+    """Retry only the Office projection after the core workspace is saved."""
+    pos_session = await get_pos_session_or_404(db, session_id)
     workspace = await build_purchase_workspace(db, pos_session=pos_session)
-    bundle = await sync_afg_workspace_artifact(db, workspace)
-    await db.commit()
-    return artifact_file_response(bundle.artifact, content=bundle.content)
+    await _ensure_alis_workspace_artifact(db, workspace, force_sync=True)
+    return workspace
 
 
 @router.post("/alis/workspace/{session_id}/artifact/reconcile-preview", response_model=DocumentArtifactReconcilePreviewOut)
@@ -364,12 +381,18 @@ async def post_alis_workspace_artifact_reconcile_preview_v2(
 async def post_alis_workspace_artifact_reconcile_apply_v2(
     session_id: UUID,
     workbook: UploadFile = File(...),
+    allow_full_clear: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> PosWorkspaceOut:
     pos_session = await get_pos_session_or_404(db, session_id)
     content = await workbook.read()
-    workspace = await _apply_afg_workspace_artifact_inputs(db, pos_session=pos_session, workbook_bytes=content)
+    workspace = await _apply_afg_workspace_artifact_inputs(
+        db,
+        pos_session=pos_session,
+        workbook_bytes=content,
+        allow_full_clear=allow_full_clear,
+    )
     await db.commit()
     return workspace
 
@@ -545,4 +568,3 @@ async def post_alis_workspace_cancel_v2(
     )
     await db.commit()
     return result
-

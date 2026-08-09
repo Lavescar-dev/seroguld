@@ -58,6 +58,7 @@ from app.services.pos_service import (
     finalize_purchase_workspace,
     open_purchase_document_for_edit,
     replace_purchase_workspace_sections,
+    update_purchase_workspace_customer,
     update_purchase_workspace_draft_customer,
 )
 from app.utils.helpers import quantize_2, to_decimal
@@ -343,6 +344,76 @@ def test_afg_workspace_shadow_customer_round_trip_without_linked_customer():
             assert updated_workspace.customer.name == "Ada Lovelace"
             assert updated_workspace.customer.identity_doc_number == "ZXCV-9876"
             assert updated_workspace.customer.phone == "+45 33 44 55 66"
+
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_linked_customer_clear_stays_session_local_and_reaches_final_document():
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            clerk, customer = _create_users()
+            session.add_all([clerk, customer])
+            await session.flush()
+
+            pos_session = PosSession(
+                session_code="AFGRT170",
+                display_token="display-afg-roundtrip-linked-clear",
+                clerk_user_id=clerk.id,
+                customer_id=customer.id,
+                trade_side=PosTradeSideEnum.BUY_FROM_CUSTOMER,
+                live_rate_dkk=Decimal("937.99"),
+                rate_source=PosRateSourceEnum.LIVE,
+                margin_percent_internal=Decimal("0.00"),
+                status=PosSessionStatusEnum.DRAFT,
+                visible_snapshot={},
+            )
+            session.add(pos_session)
+            await session.commit()
+            await session.refresh(pos_session)
+
+            await update_purchase_workspace_customer(
+                session,
+                pos_session=pos_session,
+                payload=PosWorkspaceCustomerUpdate(
+                    name=None,
+                    email=None,
+                    phone=None,
+                    address=None,
+                    postal_code=None,
+                    city=None,
+                    cpr_number=None,
+                    identity_doc_number=None,
+                ),
+            )
+            assert customer.name == "Customer"
+            assert customer.phone == "24917296"
+
+            workspace = await replace_purchase_workspace_sections(
+                session,
+                pos_session=pos_session,
+                payload=_workspace_sections(),
+            )
+            assert workspace.customer.customer_id == customer.id
+            assert workspace.customer.name == ""
+            assert workspace.customer.phone is None
+
+            finalized = await finalize_purchase_workspace(
+                session,
+                pos_session=pos_session,
+                payload=PosWorkspaceFinalizeRequest(notes="linked clear"),
+            )
+            document = await session.get(PosDocument, finalized.document_sequence_no)
+            assert document is not None
+            assert document.customer_name is None
+            assert document.customer_phone is None
+            assert document.customer_address is None
 
         await engine.dispose()
 

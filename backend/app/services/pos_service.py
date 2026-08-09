@@ -593,26 +593,12 @@ def _overlay_cached_preview_customer(
         return snapshot
 
     preview = preview_entry.snapshot
-    return snapshot.model_copy(
-        update={
-            "customer_name": preview.customer_name or snapshot.customer_name,
-            "customer_phone": preview.customer_phone or snapshot.customer_phone,
-            "customer_email": preview.customer_email or snapshot.customer_email,
-            "customer_address": preview.customer_address or snapshot.customer_address,
-            "customer_postal_code": preview.customer_postal_code or snapshot.customer_postal_code,
-            "customer_city": preview.customer_city or snapshot.customer_city,
-            "customer_cpr": preview.customer_cpr or snapshot.customer_cpr,
-            "customer_cpr_masked": preview.customer_cpr_masked or snapshot.customer_cpr_masked,
-            "customer_identity_doc_number": (
-                preview.customer_identity_doc_number or snapshot.customer_identity_doc_number
-            ),
-            "customer_identity_doc_number_masked": (
-                preview.customer_identity_doc_number_masked or snapshot.customer_identity_doc_number_masked
-            ),
-            "preview_sequence": preview.preview_sequence,
-            "updated_at": preview.updated_at,
-        }
-    )
+    if int(preview.workspace_revision or 1) < int(snapshot.workspace_revision or 1):
+        realtime_hub.clear_display_preview(pos_session.display_token, session_code=preview.session_code)
+        return snapshot
+    # Preview frames are complete snapshots.  Preserve explicit empty values
+    # instead of truthy-merging the previous master customer into them.
+    return preview
 
 
 async def _overlay_display_customer_identity(
@@ -1096,6 +1082,13 @@ async def _workspace_customer_from_session(
     pos_session: PosSession,
 ) -> PosWorkspaceCustomerOut:
     note_payload = _parse_workspace_note_payload(pos_session.notes)
+    # A linked customer can still have a session-local edit.  The explicit
+    # workspace_customer key is presence-aware, so an intentionally empty
+    # snapshot must win over the master User row.
+    if isinstance(note_payload.get("workspace_customer"), dict):
+        snapshot = _workspace_draft_customer_from_note(note_payload)
+        if snapshot is not None:
+            return snapshot.model_copy(update={"customer_id": pos_session.customer_id})
     customer = pos_session.customer
     if customer is None and pos_session.customer_id is not None:
         customer = await session.get(User, pos_session.customer_id)
@@ -1158,6 +1151,14 @@ async def build_purchase_workspace(
         )
     ).all()
     market_rates = await _workspace_market_rates_from_session(pos_session)
+    note_payload = _parse_workspace_note_payload(pos_session.notes)
+    active_pos_lines = [line for line in pos_lines if quantize_2(to_decimal(line.weight_grams)) > 0]
+    derive_legacy_zero_prices = bool(active_pos_lines) and all(
+        to_decimal(line.rate_dkk) <= 0 and to_decimal(line.line_offer_dkk) <= 0
+        for line in active_pos_lines
+    )
+    has_zero_price_candidate = False
+
     bank_info = _workspace_bank_info_from_session(pos_session)
     customer = await _workspace_customer_from_session(session, pos_session)
     note_payload = _parse_workspace_note_payload(pos_session.notes)
@@ -1195,12 +1196,28 @@ async def build_purchase_workspace(
         avance = quantize_2(to_decimal(line.margin_percent_internal if line is not None else 0))
         rate = _workspace_market_rate_dkk(market_rates, row_key)
         purity = quantize_2(to_decimal(definition["purity_percentage"]))
+        repair_row_price = bool(
+            derive_legacy_zero_prices
+            and line is not None
+            and gram > 0
+            and to_decimal(line.rate_dkk) <= 0
+            and to_decimal(line.line_offer_dkk) <= 0
+            and rate > 0
+        )
+        if line is not None and gram > 0:
+            has_zero_price_candidate = has_zero_price_candidate or repair_row_price
         unit_price = (
+            _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+            if repair_row_price
+            else
             quantize_2(to_decimal(line.line_offer_dkk) / gram)
             if line is not None and line.line_offer_dkk is not None and gram > 0
             else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
         )
         line_total = (
+            _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
+            if repair_row_price
+            else
             quantize_2(to_decimal(line.line_offer_dkk))
             if line is not None and line.line_offer_dkk is not None
             else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
@@ -1235,12 +1252,28 @@ async def build_purchase_workspace(
         avance = quantize_2(to_decimal(line.margin_percent_internal if line is not None else 0))
         rate = _workspace_market_rate_dkk(market_rates, row_key)
         purity = quantize_2(to_decimal(definition["purity_percentage"]))
+        repair_row_price = bool(
+            derive_legacy_zero_prices
+            and line is not None
+            and gram > 0
+            and to_decimal(line.rate_dkk) <= 0
+            and to_decimal(line.line_offer_dkk) <= 0
+            and rate > 0
+        )
+        if line is not None and gram > 0:
+            has_zero_price_candidate = has_zero_price_candidate or repair_row_price
         unit_price = (
+            _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+            if repair_row_price
+            else
             quantize_2(to_decimal(line.line_offer_dkk) / gram)
             if line is not None and line.line_offer_dkk is not None and gram > 0
             else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
         )
         line_total = (
+            _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
+            if repair_row_price
+            else
             quantize_2(to_decimal(line.line_offer_dkk))
             if line is not None and line.line_offer_dkk is not None
             else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
@@ -1284,6 +1317,10 @@ async def build_purchase_workspace(
     )
 
     return PosWorkspaceOut(
+        workspace_revision=int(note_payload.get("workspace_revision") or 1),
+        # Only an entirely zero-priced legacy draft is auto-persisted by the
+        # client. Mixed/positive offers may be intentional and remain intact.
+        needs_price_repair=has_zero_price_candidate,
         session=_to_clerk_out(pos_session),
         customer=customer,
         bank_info=bank_info,

@@ -101,6 +101,7 @@ async def ensure_pos_document(
         customer_phone=(customer_record.phone if customer_record else None),
         customer_email=(customer_record.email if customer_record else None),
         customer_address=customer_address,
+        customer_postal_code=(customer_record.postal_code if customer_record else None),
         notes=notes,
     )
     session.add(pos_document)

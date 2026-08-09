@@ -1084,7 +1084,8 @@ async def apply_afg_route_requests(
                     linked_product,
                     ProductUpdate(
                         display_name=linked_product.display_name or _display_name(line),
-                        notes=route_note if route_note is not None else linked_product.notes,
+                        notes=route_note,
+                        clear_notes=route_note is None,
                         storage_location=payload.storage_location if payload.storage_location is not None else linked_product.storage_location,
                         needs_cleaning=(classification == "jewelry_cleaning"),
                         producer=payload.producer if payload.producer is not None else linked_product.producer,
