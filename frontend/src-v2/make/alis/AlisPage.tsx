@@ -221,6 +221,8 @@ export type AlisPageProps = {
   onPrintDetail: () => void;
   onOpenDetailExcelPreview: () => void;
   detailActionPending: boolean;
+  detailError?: string | null;
+  onRetryDetail?: () => void;
   workspace: PosWorkspace | null;
   draftWorkspace: PosWorkspace | null;
   onResumeDraft: () => void;
@@ -242,6 +244,8 @@ export type AlisPageProps = {
   onCancelUnicontaInvoice: (item: PosSavedPurchaseListItem) => void;
   cancelPendingSequenceNo: number | null;
   listLoading: boolean;
+  listError?: string | null;
+  onRetryDocuments?: () => void;
   actionPendingSequenceNo: number | null;
   customerMode: 'existing' | 'new' | null;
   setCustomerMode: Dispatch<SetStateAction<'existing' | 'new' | null>>;

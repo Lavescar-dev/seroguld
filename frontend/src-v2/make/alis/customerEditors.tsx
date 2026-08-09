@@ -10,7 +10,7 @@ import type { EditableCustomer, PaymentMethod } from './types';
 type ScanStatus = 'idle' | 'ready' | 'done' | 'error';
 type PostalLookupStatus = 'idle' | 'loading' | 'ready' | 'not_found' | 'unavailable';
 
-type MRZResult = {
+export type MRZResult = {
   fullName?: string;
   docNumber?: string;
   cprHint?: string;
@@ -27,7 +27,7 @@ function cleanMrzField(value: string): string {
   return value.replace(/</g, ' ').trim().replace(/\s+/g, ' ');
 }
 
-function parseMrzLines(raw: string): MRZResult {
+export function parseMrzLines(raw: string): MRZResult {
   const lines = raw
     .replace(/\r/g, '\n')
     .split('\n')

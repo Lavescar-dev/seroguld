@@ -89,7 +89,15 @@ export function PosPage() {
   return (
     <>
       {variant === 'modern' ? (
-        <ModernAlisModule viewModel={modernViewModel} />
+        <ModernAlisModule
+          viewModel={modernViewModel}
+          displayBridge={{
+            desktopDisplayState,
+            expectedDisplayRoute,
+            routeMatches: isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute),
+            onOpenCustomerDisplay: openCustomerDisplay,
+          }}
+        />
       ) : (
         <MakeAlisPage
           {...alisState}

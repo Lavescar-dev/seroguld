@@ -6,7 +6,7 @@ import type { TransitionBlockerDescriptor, UnsupportedControlDescriptor } from '
 
 export interface ModernAlisViewModel {
   state: AlisPageProps;
-  phase: 'ready' | 'loading' | 'empty';
+  phase: 'ready' | 'loading' | 'empty' | 'draft' | 'error';
   documentsSummary: Array<{ id: string; label: string; value: string; hint?: string }>;
   workspaceSummary: Array<{ id: string; label: string; value: string; hint?: string }>;
   documents: PosSavedPurchaseListItem[];
@@ -49,7 +49,15 @@ export function createModernAlisViewModel(
 
   return {
     state,
-    phase: !workspace && state.listLoading && documents.length === 0 ? 'loading' : !workspace && documents.length === 0 ? 'empty' : 'ready',
+    phase: !workspace && state.draftWorkspace
+        ? 'draft'
+        : state.listError
+          ? 'error'
+          : !workspace && state.listLoading && documents.length === 0
+            ? 'loading'
+            : !workspace && documents.length === 0
+              ? 'empty'
+              : 'ready',
     documents,
     documentsSummary: [
       { id: 'count', label: 'Belge', value: String(documents.length), hint: 'Son 120 kayıt' },

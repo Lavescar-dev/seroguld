@@ -1758,6 +1758,14 @@ export function useAlisMakeState(): AlisPageProps {
     detailPurchase,
     detail: detailDocumentQuery.data || null,
     detailLoading: detailDocumentQuery.isLoading,
+    detailError: detailDocumentQuery.error
+      ? detailDocumentQuery.error instanceof Error
+        ? detailDocumentQuery.error.message
+        : 'Belge detayı yüklenemedi.'
+      : null,
+    onRetryDetail: () => {
+      void detailDocumentQuery.refetch();
+    },
     onCloseDetail: () => setDetailPurchase(null),
     onEditDetail: () => {
       if (!detailPurchase || !detailDocumentQuery.data?.can_edit) return;
@@ -1812,6 +1820,14 @@ export function useAlisMakeState(): AlisPageProps {
       ? (cancelUnicontaMutation.variables?.sequence_no ?? null)
       : null,
     listLoading: savedPurchasesQuery.isLoading,
+    listError: savedPurchasesQuery.error
+      ? savedPurchasesQuery.error instanceof Error
+        ? savedPurchasesQuery.error.message
+        : 'Alış listesi yüklenemedi.'
+      : null,
+    onRetryDocuments: () => {
+      void savedPurchasesQuery.refetch();
+    },
     actionPendingSequenceNo: actionSequenceNo,
     customerMode,
     setCustomerMode,
