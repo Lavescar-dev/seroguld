@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
 import { apiRequest } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 import type {
   DesktopBootstrap,
   InventoryGridRow,
@@ -12,6 +13,7 @@ import type {
   WooRawResponse,
   WooSyncLogEntry,
   WooWorkspace,
+  WooWorkspaceSummary,
 } from '@/types';
 
 export type Metal = 'Altın' | 'Gümüş' | 'Platin' | 'Palladyum';
@@ -65,6 +67,8 @@ export interface WooListItem {
   agirlik: number;
   ayar: number;
   alimFiyati: number;
+  /** Persisted shop price only; unlike the legacy draft field this never falls back to purchase price. */
+  shopFiyati?: number;
   safMetal: number;
   satici: string;
   gdprKilitli: boolean;
@@ -126,9 +130,12 @@ export interface WooMakeState {
   aiDraft: string;
   setAiDraft: (value: string) => void;
   stokList: StokItem[];
+  workspaceSummary: WooWorkspaceSummary;
   bootstrap: DesktopBootstrap | undefined;
   loadingWorkspace: boolean;
+  workspaceError: string | null;
   loadingDetail: boolean;
+  detailError: string | null;
   isGeneratingAi: boolean;
   isSavingAi: boolean;
   isApprovingReview: boolean;
@@ -138,6 +145,7 @@ export interface WooMakeState {
   isUploadingPhotos: boolean;
   isDeletingPhoto: boolean;
   isCreatingProduct: boolean;
+  refreshWorkspace: () => Promise<void>;
   generateAi: () => void;
   saveAi: (approved: boolean) => void;
   approveManualReview: () => void;
@@ -187,6 +195,11 @@ export function defaultNewWooProductDraft(): NewWooProductDraft {
 function numeric(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractApiMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message || fallback;
+  return fallback;
 }
 
 function parsePurityToRatio(row: InventoryGridRow) {
@@ -276,6 +289,7 @@ function rowToWooListItem(row: InventoryGridRow): WooListItem {
     agirlik: numeric(row.toplam_gram || row.birim_gram),
     ayar: parseAyar(row),
     alimFiyati: numeric(row.alis_fiyati_dkk),
+    shopFiyati: row.shop_fiyati_dkk == null ? undefined : numeric(row.shop_fiyati_dkk),
     safMetal: numeric(row.has_metal_grams),
     satici: '',
     gdprKilitli: row.is_gdpr_locked,
@@ -399,6 +413,7 @@ function toCreatePayload(draft: NewWooProductDraft) {
 
 export function useWooMakeState(): WooMakeState {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WooFilter>('all');
@@ -514,7 +529,9 @@ export function useWooMakeState(): WooMakeState {
     onSuccess: async (product) => {
       setAiDraft(product.ai_description || '');
       await invalidateProduct(product.id);
+      toast.success('AI açıklaması üretildi');
     },
+    onError: (error) => toast.error('AI açıklaması üretilemedi', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const saveAiMutation = useMutation({
@@ -529,7 +546,9 @@ export function useWooMakeState(): WooMakeState {
     onSuccess: async (product) => {
       setAiDraft(product.ai_description || '');
       await invalidateProduct(product.id);
+      toast.success('AI açıklaması kaydedildi');
     },
+    onError: (error) => toast.error('AI açıklaması kaydedilemedi', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const manualReviewMutation = useMutation({
@@ -537,7 +556,9 @@ export function useWooMakeState(): WooMakeState {
       apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/manual-review/approve`, { method: 'POST' }),
     onSuccess: async (product) => {
       await invalidateProduct(product.id);
+      toast.success('Manuel review onaylandı');
     },
+    onError: (error) => toast.error('Manuel review onaylanamadı', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const publishMutation = useMutation({
@@ -553,14 +574,18 @@ export function useWooMakeState(): WooMakeState {
       setPublishPrice(String(payload.product.shop_price_dkk || payload.product.sale_price_dkk || payload.product.purchase_price_dkk || ''));
       await invalidateProduct(payload.product.id);
       setRawOpen(true);
+      toast.success('Ürün WooCommerce’e yayınlandı', payload.wc_product_id ? `Woo ID: ${payload.wc_product_id}` : undefined);
     },
+    onError: (error) => toast.error('Ürün yayınlanamadı', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const unpublishMutation = useMutation({
     mutationFn: (productId: string) => apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/unpublish`, { method: 'POST' }),
     onSuccess: async (product) => {
       await invalidateProduct(product.id);
+      toast.success('Ürün yayından kaldırıldı');
     },
+    onError: (error) => toast.error('Ürün yayından kaldırılamadı', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const syncSaleMutation = useMutation({
@@ -568,7 +593,9 @@ export function useWooMakeState(): WooMakeState {
       apiRequest<{ message?: string; product?: ProductOut }>(`/api/v2/woocommerce/products/${productId}/sync`, { method: 'POST' }),
     onSuccess: async (payload) => {
       await invalidateProduct(payload.product?.id || secilenId);
+      toast.success('Woo satış kontrolü tamamlandı', payload.message || undefined);
     },
+    onError: (error) => toast.error('Woo satış kontrolü başarısız', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const uploadPhotosMutation = useMutation({
@@ -582,7 +609,9 @@ export function useWooMakeState(): WooMakeState {
     },
     onSuccess: async (product) => {
       await invalidateProduct(product.id);
+      toast.success('Fotoğraflar yüklendi');
     },
+    onError: (error) => toast.error('Fotoğraf yüklenemedi', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const deletePhotoMutation = useMutation({
@@ -590,7 +619,9 @@ export function useWooMakeState(): WooMakeState {
       apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/photos/${photoId}`, { method: 'DELETE' }),
     onSuccess: async (product) => {
       await invalidateProduct(product.id);
+      toast.success('Fotoğraf silindi');
     },
+    onError: (error) => toast.error('Fotoğraf silinemedi', extractApiMessage(error, 'Sunucu hatası')),
   });
 
   const createProductMutation = useMutation({
@@ -641,8 +672,17 @@ export function useWooMakeState(): WooMakeState {
     onSuccess: async (product) => {
       setSecilenId(product.id);
       await invalidateProduct(product.id);
+      toast.success('Ürün oluşturuldu', product.product_number || product.display_name || undefined);
     },
+    onError: (error) => toast.error('Ürün oluşturulamadı', extractApiMessage(error, 'Sunucu hatası')),
   });
+
+  async function refreshWorkspace() {
+    await workspaceQuery.refetch();
+    if (secilenId) {
+      await Promise.all([detailQuery.refetch(), historyQuery.refetch(), syncLogQuery.refetch()]);
+    }
+  }
 
   return {
     search,
@@ -664,9 +704,18 @@ export function useWooMakeState(): WooMakeState {
     aiDraft,
     setAiDraft,
     stokList,
+    workspaceSummary: workspaceQuery.data?.summary ?? {
+      total_products: 0,
+      published_products: 0,
+      draft_products: 0,
+      unpublished_products: 0,
+      photo_pending_products: 0,
+    },
     bootstrap: bootstrapQuery.data,
     loadingWorkspace: workspaceQuery.isLoading,
+    workspaceError: workspaceQuery.error instanceof Error ? workspaceQuery.error.message : workspaceQuery.error ? 'Woo ürün çalışma alanı yüklenemedi.' : null,
     loadingDetail: detailQuery.isLoading,
+    detailError: detailQuery.error instanceof Error ? detailQuery.error.message : detailQuery.error ? 'Ürün detayı yüklenemedi.' : null,
     isGeneratingAi: generateAiMutation.isPending,
     isSavingAi: saveAiMutation.isPending,
     isApprovingReview: manualReviewMutation.isPending,
@@ -676,6 +725,7 @@ export function useWooMakeState(): WooMakeState {
     isUploadingPhotos: uploadPhotosMutation.isPending,
     isDeletingPhoto: deletePhotoMutation.isPending,
     isCreatingProduct: createProductMutation.isPending,
+    refreshWorkspace,
     generateAi: () => {
       if (detailQuery.data) {
         generateAiMutation.mutate(detailQuery.data.id);

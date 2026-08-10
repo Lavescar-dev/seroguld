@@ -86,7 +86,7 @@ const SHOP_STATUS_LABEL: Record<NonNullable<StokItem['shopDurumu']>, string> = {
   listelendi: 'Listelendi',
 };
 
-type SeoBundle = {
+export type SeoBundle = {
   title: string;
   slug: string;
   kisaAciklama: string;
@@ -133,7 +133,7 @@ function stripCodeFence(value: string) {
   return value.replace(/^```[a-z-]*\n?/i, '').replace(/\n?```$/i, '').trim();
 }
 
-function parseAiSeoBundle(text: string | null | undefined): SeoBundle {
+export function parseAiSeoBundle(text: string | null | undefined): SeoBundle {
   if (!text?.trim()) return emptySeoBundle();
 
   const parsed = emptySeoBundle();
@@ -161,11 +161,11 @@ function parseAiSeoBundle(text: string | null | undefined): SeoBundle {
   return parsed;
 }
 
-function missingSeoFields(bundle: SeoBundle) {
+export function missingSeoFields(bundle: SeoBundle) {
   return (Object.keys(SEO_FIELD_LABELS) as (keyof SeoBundle)[]).filter((key) => !bundle[key]?.trim()).map((key) => SEO_FIELD_LABELS[key]);
 }
 
-function isPublishReady(state: WooMakeState['detail']) {
+export function isPublishReady(state: WooMakeState['detail']) {
   if (!state) return false;
   return (
     !state.is_gdpr_locked &&
@@ -294,7 +294,7 @@ function StepTab({
   );
 }
 
-function YeniUrunPanel({
+export function YeniUrunPanel({
   stokList,
   urunler,
   pending,
@@ -430,7 +430,7 @@ function YeniUrunPanel({
               <p className="font-black text-white">Yeni Ürün Ekle</p>
             </div>
           </div>
-          <button type="button" onClick={onKapat} className="border border-brand-700 p-1.5 transition-colors hover:bg-brand-700">
+          <button type="button" aria-label="Yeni ürün penceresini kapat" onClick={onKapat} className="border border-brand-700 p-1.5 transition-colors hover:bg-brand-700">
             <X className="h-4 w-4 text-brand-300" />
           </button>
         </div>

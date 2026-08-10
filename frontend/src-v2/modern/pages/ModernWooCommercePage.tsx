@@ -1,206 +1,365 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle2, Globe2, Package2, RefreshCw, ShieldCheck, Webhook } from 'lucide-react';
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bot,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Eye,
+  FileText,
+  Globe,
+  History,
+  Image as ImageIcon,
+  Info,
+  Link2,
+  LoaderCircle,
+  Package,
+  Plus,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 
+import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import {
   ModernBadge,
   ModernButton,
   ModernCard,
-  ModernDataTable,
+  ModernEmptyState,
+  ModernErrorState,
+  ModernKeyValueList,
+  ModernLoadingState,
+  ModernNotice,
   ModernPage,
   ModernSection,
   ModernSectionHeader,
-  ModernStat,
-  ModernUnavailableState,
+  ModernTextInput,
+  ModernTextarea,
+  ModernToolbar,
 } from '@/modern/design-system';
+import {
+  isPublishReady,
+  missingSeoFields,
+  parseAiSeoBundle,
+  YeniUrunPanel,
+} from '@/make/woocommerce/WooCommercePage';
+import type { WooFilter, WooMakeState, WooListItem } from '@/make/woocommerce/useWooMakeState';
 
-import { AvailabilityBanner, DetailGrid, StatusGrid, TimelineList, formatMoney, formatNumber, labelMetalType, labelProductType, toneForText } from './shared';
-import type { ModernWooPageProps } from './types';
+type ModernWooCommercePageProps = { state: WooMakeState };
+type DetailTab = 'overview' | 'photos' | 'ai' | 'history';
 
-type WooTab = 'products' | 'orders' | 'webhooks' | 'bridge';
 const PRODUCT_PAGE_SIZE = 25;
+const filterLabels: Record<WooFilter, string> = {
+  all: 'Tümü',
+  published: 'Yayında',
+  draft: 'Taslak',
+  unpublished: 'Yayınlanmadı',
+};
 
-const tabLabels: Array<{ id: WooTab; label: string }> = [
-  { id: 'products', label: 'Ürünler' },
-  { id: 'orders', label: 'Siparişler' },
-  { id: 'webhooks', label: 'Webhook Sağlığı' },
-  { id: 'bridge', label: 'WordPress Bridge' },
-];
+function money(value: string | number | null | undefined) {
+  return value === null || value === undefined || value === '' ? '—' : formatMoney(value);
+}
 
-export function ModernWooCommercePage({
-  availability,
-  items,
-  selectedProduct,
-  readiness,
-  syncTimeline = [],
-  isLoading = false,
-  onSelectProduct,
-  onSync,
-}: ModernWooPageProps) {
-  const [activeTab, setActiveTab] = useState<WooTab>('products');
-  const [productPage, setProductPage] = useState(0);
-  const productPageCount = Math.max(1, Math.ceil(items.length / PRODUCT_PAGE_SIZE));
-  const visibleItems = items.slice(productPage * PRODUCT_PAGE_SIZE, (productPage + 1) * PRODUCT_PAGE_SIZE);
+function badgeTone(status: string): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'Yayında' || status === 'Satışta') return 'success';
+  if (status === 'Taslak' || status === 'Hazır') return 'warning';
+  if (status === 'Satıldı' || status === 'Yayından Kaldırıldı') return 'danger';
+  return 'neutral';
+}
+
+function ReadinessRow({ label, ready, detail }: { label: string; ready: boolean; detail?: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-sg-border-soft py-3 last:border-b-0">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-sg-text">{label}</p>
+        {detail ? <p className="mt-1 text-xs leading-5 text-sg-text-soft">{detail}</p> : null}
+      </div>
+      <ModernBadge tone={ready ? 'success' : 'warning'}>{ready ? 'Hazır' : 'Eksik'}</ModernBadge>
+    </div>
+  );
+}
+
+function ProductRow({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: WooListItem;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`${item.urunNo} ${item.urun}`}
+      onClick={onSelect}
+      className={`group grid w-full gap-3 border-b border-sg-border-soft px-4 py-3 text-left transition hover:bg-sg-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sg-accent sm:grid-cols-[minmax(180px,1.5fr)_minmax(110px,0.8fr)_minmax(120px,0.9fr)_minmax(100px,0.8fr)_auto] ${selected ? 'bg-sg-accent-soft/45 shadow-[inset_3px_0_0_var(--sg-accent)]' : ''}`}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <Package className="h-4 w-4 shrink-0 text-sg-accent" />
+          <p className="truncate text-sm font-semibold text-sg-text">{item.urun || item.urunNo}</p>
+          {item.depoStokId ? <Link2 className="h-3.5 w-3.5 shrink-0 text-sg-amber" aria-label="Depo bağlantılı" /> : null}
+        </div>
+        <p className="mt-1 truncate pl-6 text-xs text-sg-text-soft">#{item.urunNo} · {item.stokNo || 'Stok no yok'}</p>
+      </div>
+      <div className="pl-6 sm:pl-0">
+        <p className="text-xs font-medium text-sg-text">{item.metal} · {item.tip}</p>
+        <p className="mt-1 text-xs text-sg-text-soft">{item.ayar} ‰ · {formatNumber(item.agirlik, ' g')}</p>
+      </div>
+      <div className="pl-6 sm:pl-0">
+        <p className="text-xs text-sg-text-soft">Alış {money(item.alimFiyati)}</p>
+        <p className="mt-1 text-xs font-semibold text-sg-text">Shop {money(item.shopFiyati)}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-1 pl-6 sm:pl-0">
+        <ModernBadge tone={badgeTone(item.wooYayin)}>{item.wooYayin}</ModernBadge>
+        {!item.hasPhoto ? <ModernBadge tone="danger">Foto yok</ModernBadge> : null}
+        {!item.aiOnaylandi ? <ModernBadge tone="warning">AI bek.</ModernBadge> : null}
+      </div>
+      <ChevronRight className={`hidden h-4 w-4 self-center text-sg-text-soft transition-transform group-hover:translate-x-0.5 sm:block ${selected ? 'text-sg-accent' : ''}`} />
+    </button>
+  );
+}
+
+function ProductList({ state }: { state: WooMakeState }) {
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(state.urunler.length / PRODUCT_PAGE_SIZE));
+  const visibleItems = state.urunler.slice(page * PRODUCT_PAGE_SIZE, (page + 1) * PRODUCT_PAGE_SIZE);
 
   useEffect(() => {
-    setProductPage((current) => Math.min(current, productPageCount - 1));
-  }, [productPageCount]);
-  const publishedCount = items.filter((item) => item.publishState === 'Yayında').length;
-  const bridgeStatus = readiness.find((item) => item.label.toLocaleLowerCase().includes('bridge'));
-  const webhookStatus = readiness.find((item) => item.label.toLocaleLowerCase().includes('webhook'));
+    setPage(0);
+  }, [state.filter, state.search]);
 
-  if (isLoading && items.length === 0) {
-    return (
-      <ModernPage>
-        <ModernSection>
-          <ModernSectionHeader eyebrow="E-ticaret entegrasyonu" title="WooCommerce / WordPress" description="Gerçek çalışma alanı yanıtı bekleniyor." />
-          <div className="mt-5"><ModernUnavailableState title="Ürün çalışma alanı hazırlanıyor" description="Liste ve seçili ürün detayları backend hook'undan gelmeden sahte satır gösterilmez." detail="READ-ONLY RUNTIME" /></div>
-        </ModernSection>
-      </ModernPage>
-    );
-  }
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount - 1));
+  }, [pageCount]);
 
   return (
-    <ModernPage>
-      <ModernSection className="bg-sg-surface-soft">
-        <ModernSectionHeader
-          eyebrow="E-ticaret entegrasyonu"
-          title="WooCommerce / WordPress"
-          description="CRM envanteri, ürün yayın hazırlığı, webhook güvenliği ve WordPress köprüsünü aynı operasyon görünümünde birleştirir."
-          action={<ModernButton tone="ghost" icon={RefreshCw} onClick={onSync} disabled={!onSync} title="Dry-run endpoint'i mevcut değilse aksiyon kapalı kalır">Dry-run sync</ModernButton>}
-        />
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <ModernStat label="Yayındaki ürün" value={publishedCount} meta={`${items.length} gerçek ürün satırı`} icon={Package2} tone="success" />
-          <ModernStat label="Sipariş intake" value={<ModernBadge tone="info">DISCOVERY</ModernBadge>} meta="Order hook'u bu yüzeyde yok" icon={ShieldCheck} tone="info" />
-          <ModernStat label="Webhook delivery" value={<ModernBadge tone={webhookStatus?.tone || 'info'}>{webhookStatus?.value || 'DISCOVERY'}</ModernBadge>} meta={webhookStatus?.detail || 'Fail-closed health alanı bekleniyor'} icon={Webhook} tone={webhookStatus?.tone || 'info'} />
-          <ModernStat label="Bridge durumu" value={<ModernBadge tone={bridgeStatus?.tone || 'info'}>{bridgeStatus?.value || 'DISCOVERY'}</ModernBadge>} meta={bridgeStatus?.detail || 'Canonical plugin health alanı bekleniyor'} icon={Globe2} tone={bridgeStatus?.tone || 'info'} />
+    <ModernSection className="min-w-0 overflow-hidden p-0">
+      <div className="border-b border-sg-border-soft px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Product master</p>
+            <h2 className="mt-1 text-base font-semibold text-sg-text">Ürün listesi</h2>
+          </div>
+          <ModernBadge tone="neutral">{state.workspaceSummary.total_products} gerçek ürün</ModernBadge>
         </div>
-        <div className="mt-4"><AvailabilityBanner availability={availability} /></div>
-      </ModernSection>
-
-      <div className="flex flex-wrap gap-1 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-1">
-        {tabLabels.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={activeTab === tab.id ? 'rounded-sg-md bg-sg-surface px-4 py-2 text-xs font-semibold text-sg-accent shadow-sg-sm' : 'rounded-sg-md px-4 py-2 text-xs font-semibold text-sg-text-soft hover:bg-sg-surface'}
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <label className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sg-text-soft" />
+            <ModernTextInput
+              aria-label="Woo ürünlerinde ara"
+              value={state.search}
+              onChange={(event) => state.setSearch(event.target.value)}
+              placeholder="Ürün no, ad veya stok no ara"
+              className="pl-9"
+            />
+          </label>
+          <select
+            aria-label="Yayın filtresi"
+            value={state.filter}
+            onChange={(event) => state.setFilter(event.target.value as WooFilter)}
+            className="min-h-10 rounded-sg-md border border-sg-border bg-sg-surface px-3 text-sm text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent-soft"
           >
-            {tab.label}
-          </button>
-        ))}
+            {(Object.keys(filterLabels) as WooFilter[]).map((key) => <option key={key} value={key}>{filterLabels[key]}</option>)}
+          </select>
+        </div>
       </div>
 
-      {activeTab === 'products' ? (
-        <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-          <ModernSection className="min-w-0">
-            <ModernSectionHeader title="CRM ürün kaynağı" description="Publish readiness ve remote farkı gerçek inventory satırlarından okunur." action={<ModernBadge tone="info">Product master</ModernBadge>} />
-            <div className="mt-4">
-              <ModernDataTable
-                items={visibleItems}
-                getRowKey={(item) => item.id}
-                emptyTitle="Ürün bulunmuyor"
-                emptyDescription="Woo workspace gerçek ürün satırı döndürdüğünde liste burada görünür."
-                columns={[
-                  {
-                    key: 'product',
-                    header: 'Ürün',
-                    cell: (item) => <div><p className="font-semibold text-sg-text">{item.title}</p><p className="mt-1 text-xs text-sg-text-soft">{item.sku || item.id}</p></div>,
-                  },
-                  { key: 'spec', header: 'Metal / gram', cell: (item) => <div><p className="text-sg-text">{item.metal}</p><p className="mt-1 text-xs text-sg-text-soft">{item.weightLabel}</p></div> },
-                  { key: 'price', header: 'Fiyat', align: 'right', cell: (item) => item.priceLabel },
-                  { key: 'state', header: 'Yayın', cell: (item) => <ModernBadge tone={item.tone || toneForText(item.publishState)}>{item.publishState}</ModernBadge> },
-                  { key: 'open', header: 'Detay', align: 'right', cell: (item) => onSelectProduct ? <ModernButton tone="ghost" size="sm" onClick={() => onSelectProduct(item.id)}>Aç</ModernButton> : <ModernBadge tone="neutral">Read-only</ModernBadge> },
-                ]}
-              />
-            </div>
-            {items.length > PRODUCT_PAGE_SIZE ? (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border-soft pt-3 text-xs text-sg-text-soft">
-                <span>
-                  Ürünler {productPage * PRODUCT_PAGE_SIZE + 1}–{Math.min((productPage + 1) * PRODUCT_PAGE_SIZE, items.length)} / {items.length}
-                </span>
-                <div className="flex items-center gap-2">
-                  <ModernButton
-                    tone="ghost"
-                    size="sm"
-                    onClick={() => setProductPage((current) => Math.max(0, current - 1))}
-                    disabled={productPage === 0}
-                  >
-                    Önceki
-                  </ModernButton>
-                  <span aria-live="polite" className="min-w-20 text-center font-semibold text-sg-text">
-                    Sayfa {productPage + 1} / {productPageCount}
-                  </span>
-                  <ModernButton
-                    tone="ghost"
-                    size="sm"
-                    onClick={() => setProductPage((current) => Math.min(productPageCount - 1, current + 1))}
-                    disabled={productPage >= productPageCount - 1}
-                  >
-                    Sonraki
-                  </ModernButton>
-                </div>
-              </div>
-            ) : null}
-          </ModernSection>
+      <div className="hidden grid-cols-[minmax(180px,1.5fr)_minmax(110px,0.8fr)_minmax(120px,0.9fr)_minmax(100px,0.8fr)_auto] gap-3 border-b border-sg-border-soft bg-sg-surface-soft px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft sm:grid sm:px-5">
+        <span>Ürün</span><span>Metal / özellik</span><span>Fiyat</span><span>Yayın / eksik</span><span />
+      </div>
 
-          <div className="space-y-5">
-            <DetailGrid
-              title={selectedProduct ? `${selectedProduct.product_number} · Publish workspace` : 'Publish workspace'}
-              description="Ürün detayı gerçek ProductOut alanlarından gelir; live publish aksiyonu bu presentation'da otomatik çalıştırılmaz."
-              items={selectedProduct ? [
-                { label: 'Ürün adı', value: selectedProduct.display_name || selectedProduct.product_number, accent: true },
-                { label: 'Metal / tip', value: `${labelMetalType(selectedProduct.metal_type)} · ${labelProductType(selectedProduct.product_type)}` },
-                { label: 'Ağırlık', value: formatNumber(selectedProduct.weight_grams, ' g') },
-                { label: 'Alış fiyatı', value: formatMoney(selectedProduct.purchase_price_dkk) },
-                { label: 'Mağaza fiyatı', value: formatMoney(selectedProduct.shop_price_dkk) },
-                { label: 'Woo ID', value: selectedProduct.woocommerce_product_id || '—' },
-                { label: 'Stock state', value: selectedProduct.status },
-                { label: 'GDPR', value: selectedProduct.is_gdpr_locked ? 'Kilitli' : 'Açık' },
-              ] : [{ label: 'Durum', value: 'Ürün seçimi bekleniyor', accent: true }]}
-            />
-            <ModernSection>
-              <ModernSectionHeader title="Publish readiness" description="Başlık, medya, AI onayı ve bridge state tek listede." />
-              <div className="mt-4 grid gap-3">
-                {readiness.map((item) => (
-                  <ModernCard key={`${item.label}-${item.value}`} className="bg-sg-surface-soft">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0"><p className="text-sm font-semibold text-sg-text">{item.label}</p>{item.detail ? <p className="mt-1 text-xs text-sg-text-soft">{item.detail}</p> : null}</div>
-                      <ModernBadge tone={item.tone || toneForText(item.value)}>{item.value}</ModernBadge>
-                    </div>
-                  </ModernCard>
-                ))}
-              </div>
-            </ModernSection>
-            {syncTimeline.length > 0 ? <TimelineList items={syncTimeline} title="Deterministic sync geçmişi" description="History ve sync-log hook çıktıları; sahte başarı eklenmez." /> : <ModernUnavailableState title="Sync geçmişi bekleniyor" description="Bu ürün için gerçek history/sync-log satırı dönmedi." detail="NOT RUN" />}
+      {state.loadingWorkspace ? <ModernLoadingState title="Ürün listesi hazırlanıyor" description="Gerçek depo ürünleri yükleniyor." /> : null}
+      {!state.loadingWorkspace && state.urunler.length === 0 ? (
+        <ModernEmptyState title="Ürün bulunamadı" description={state.search ? 'Arama veya filtreye uyan ürün yok.' : 'Woo çalışma alanında ürün satırı dönmedi.'} />
+      ) : null}
+      {!state.loadingWorkspace && state.urunler.length > 0 ? (
+        <div>
+          {visibleItems.map((item) => <ProductRow key={item.id} item={item} selected={item.id === state.secilenId} onSelect={() => state.setSecilenId(item.id)} />)}
+        </div>
+      ) : null}
+
+      {state.urunler.length > PRODUCT_PAGE_SIZE ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sg-border-soft px-4 py-3 text-xs text-sg-text-soft sm:px-5">
+          <span>Ürünler {page * PRODUCT_PAGE_SIZE + 1}–{Math.min((page + 1) * PRODUCT_PAGE_SIZE, state.urunler.length)} / {state.urunler.length}</span>
+          <div className="flex items-center gap-2">
+            <ModernButton size="sm" tone="ghost" icon={ChevronLeft} disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Önceki</ModernButton>
+            <span aria-live="polite" className="min-w-20 text-center font-semibold text-sg-text">Sayfa {page + 1} / {pageCount}</span>
+            <ModernButton size="sm" tone="ghost" trailingIcon={ChevronRight} disabled={page >= pageCount - 1} onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}>Sonraki</ModernButton>
           </div>
         </div>
       ) : null}
+    </ModernSection>
+  );
+}
 
-      {activeTab === 'orders' ? (
-        <ModernUnavailableState title="Sipariş intake görünümü hazır değil" description="Woo workspace hook'u bu route'ta ürün satırları sağlıyor; order, risk ve delivery key alanları expose edilmeden sipariş tablosu uydurulmaz." detail="BACKEND CONTRACT DISCOVERY" />
-      ) : null}
-
-      {activeTab === 'webhooks' ? (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
-          <ModernSection>
-            <ModernSectionHeader title="Webhook sağlığı" description="Fail-closed secret ve duplicate no-op kanıtı mevcut readiness state'iyle sınırlıdır." />
-            <div className="mt-4"><StatusGrid items={readiness.length > 0 ? readiness : [{ label: 'Webhook health', value: 'DISCOVERY', tone: 'info', detail: 'Backend health alanı yok.' }]} /></div>
-          </ModernSection>
-          <ModernUnavailableState title="Delivery timeline expose değil" description="Canlı webhook payloadı veya remote write çalıştırılmadı; delivery timeline backend hook'u bekliyor." detail="READ-ONLY REVIEW" />
+function DetailHeader({ state }: { state: WooMakeState }) {
+  const item = state.secilen;
+  const detail = state.detail;
+  if (!item) return null;
+  return (
+    <div className="flex flex-col gap-4 border-b border-sg-border-soft pb-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Seçili ürün</p>
+          <ModernBadge tone={badgeTone(detail?.is_published_to_site ? 'Yayında' : item.wooYayin)}>{detail?.is_published_to_site ? 'Yayında' : item.wooYayin}</ModernBadge>
+          {detail?.woocommerce_product_id ? <ModernBadge tone="info">Woo ID {detail.woocommerce_product_id}</ModernBadge> : null}
         </div>
-      ) : null}
+        <h2 className="mt-1 truncate text-lg font-semibold tracking-[-0.01em] text-sg-text">{detail?.display_name || item.urun || item.urunNo}</h2>
+        <p className="mt-1 text-sm text-sg-text-soft">#{item.urunNo} · {item.metal} · {item.tip} · {formatNumber(detail?.weight_grams || item.agirlik, ' g')}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <ModernButton size="sm" tone="ghost" icon={RefreshCw} disabled={!detail || state.isSyncing} onClick={state.syncSale}>Satış kontrolü</ModernButton>
+        <ModernButton size="sm" tone="warning" icon={ShieldCheck} disabled={!detail?.manual_review_required || state.isApprovingReview} onClick={state.approveManualReview}>Review onayı</ModernButton>
+      </div>
+    </div>
+  );
+}
 
-      {activeTab === 'bridge' ? (
-        <div className="grid gap-5 xl:grid-cols-2">
-          <ModernSection>
-            <ModernSectionHeader title="WordPress bridge" description="GDPR linkleri, media, SEO ve canonical plugin discovery ayrımı." />
-            <div className="mt-4"><StatusGrid items={readiness.length > 0 ? readiness : [{ label: 'WordPress bridge', value: 'DISCOVERY', tone: 'info' }]} /></div>
-          </ModernSection>
-          <ModernUnavailableState title="Canonical plugin sonucu bekleniyor" description="Bridge config veya plugin discovery endpoint'i bu presentation prop'larına bağlanmadı; PARTIAL/DISCOVERY olarak tutulur." detail="NO LIVE WRITE" />
-        </div>
-      ) : null}
+function OverviewTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
+  const detail = state.detail;
+  const item = state.secilen;
+  if (!detail || !item) return <ModernLoadingState title="Ürün detayı hazırlanıyor" />;
+  const readiness = [
+    { label: 'Ürün adı', ready: Boolean(detail.display_name?.trim()) },
+    { label: 'Fotoğraf', ready: detail.photos.length > 0, detail: `${detail.photos.length} görsel` },
+    { label: 'AI açıklaması', ready: Boolean(detail.ai_description?.trim()) },
+    { label: 'AI onayı', ready: detail.ai_description_approved },
+    { label: 'SEO paketi', ready: seoMissing.length === 0, detail: seoMissing.length ? `Eksik: ${seoMissing.join(', ')}` : undefined },
+    { label: 'Manuel review', ready: !detail.manual_review_required, detail: detail.manual_review_reasons?.join(' · ') },
+    { label: 'GDPR', ready: !detail.is_gdpr_locked, detail: detail.is_gdpr_locked ? '14 günlük kilit aktif' : undefined },
+    { label: 'Shop fiyatı', ready: Number(state.publishPrice || 0) > 0, detail: money(state.publishPrice) },
+  ];
+  return (
+    <div className="space-y-5">
+      {detail.manual_review_required ? <ModernNotice tone="warning" title="Manuel review gerekiyor" description={detail.manual_review_reasons?.join(' · ') || 'Yayın öncesi ürün incelemesini tamamlayın.'} icon={<Info className="h-5 w-5" />} /> : null}
+      <ModernKeyValueList columns={2} items={[
+        { label: 'Metal / tip', value: `${item.metal} · ${item.tip}`, accent: true },
+        { label: 'Ağırlık', value: formatNumber(detail.weight_grams || item.agirlik, ' g'), accent: true },
+        { label: 'Ayar', value: detail.purity_percentage ? `${Math.round(Number(detail.purity_percentage) * 10)} ‰` : `${item.ayar} ‰` },
+        { label: 'Saf metal', value: formatNumber(detail.pure_gold_grams || item.safMetal, ' g') },
+        { label: 'Alış fiyatı', value: money(detail.purchase_price_dkk), accent: true },
+        { label: 'Shop fiyatı', value: money(detail.shop_price_dkk), accent: true },
+        { label: 'Satıcı', value: detail.seller_name || item.satici || '—' },
+        { label: 'Ref / stok no', value: detail.reference_number || item.stokNo || '—' },
+        { label: 'Stok durumu', value: detail.status },
+        { label: 'GDPR', value: detail.is_gdpr_locked ? 'Kilitli' : 'Açık' },
+      ]} />
+      <ModernCard>
+        <div className="flex items-center gap-2 border-b border-sg-border-soft pb-3"><CheckCircle2 className="h-4 w-4 text-sg-green" /><h3 className="text-sm font-semibold text-sg-text">Yayın hazırlığı</h3></div>
+        <div className="mt-1">{readiness.map((entry) => <ReadinessRow key={entry.label} {...entry} />)}</div>
+      </ModernCard>
+    </div>
+  );
+}
 
-      <div className="flex items-center gap-2 text-xs text-sg-text-soft"><CheckCircle2 className="h-3.5 w-3.5 text-sg-green" /> Ürün listesi, seçili detay ve readiness satırları gerçek domain state'inden gelir.</div>
+function PhotosTab({ state }: { state: WooMakeState }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const detail = state.detail;
+  if (!detail) return <ModernLoadingState title="Fotoğraflar hazırlanıyor" />;
+  function handleFiles(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
+    if (files.length) state.uploadPhotos(files);
+    event.target.value = '';
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-sg-text">Ürün fotoğrafları</h3><p className="mt-1 text-sm text-sg-text-soft">Woo medya akışı bu ürün fotoğraf kayıtlarından beslenir.</p></div><ModernButton tone="primary" icon={Upload} disabled={state.isUploadingPhotos} onClick={() => inputRef.current?.click()}>Fotoğraf yükle</ModernButton></div>
+      <input ref={inputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFiles} />
+      {detail.photos.length === 0 ? <ModernEmptyState title="Fotoğraf yok" description="Yayın için en az bir fotoğraf yükleyin." action={<ModernButton tone="primary" icon={Upload} onClick={() => inputRef.current?.click()}>İlk fotoğrafı yükle</ModernButton>} /> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{detail.photos.map((photo, index) => <div key={photo.id || photo.url} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><img src={photo.avif_url || photo.url} alt={detail.display_name || 'Ürün fotoğrafı'} className="h-full w-full object-cover" />{photo.is_primary || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2">Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/35 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => window.open(photo.original_url || photo.url, '_blank', 'noopener,noreferrer')}>Aç</ModernButton>{photo.id ? <ModernButton aria-label="Fotoğrafı sil" size="sm" tone="danger" icon={Trash2} disabled={state.isDeletingPhoto} onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.deletePhoto(photo.id!); }}>Sil</ModernButton> : null}</div></div><p className="truncate px-3 py-2 text-xs text-sg-text-soft">{photo.filename || 'Fotoğraf'}</p></div>)}</div>}
+    </div>
+  );
+}
+
+function AiTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
+  const detail = state.detail;
+  const aiDraft = state.aiDraft || '';
+  const seo = parseAiSeoBundle(aiDraft || detail?.ai_description);
+  if (!detail) return <ModernLoadingState title="AI çalışma alanı hazırlanıyor" />;
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap gap-2"><ModernButton tone="info" icon={Bot} disabled={state.isGeneratingAi} onClick={state.generateAi}>{state.isGeneratingAi ? 'Üretiliyor…' : 'AI açıklama üret'}</ModernButton><ModernButton tone="ghost" icon={Check} disabled={aiDraft.trim().length < 10 || state.isSavingAi} onClick={() => state.saveAi(false)}>Kaydet</ModernButton><ModernButton tone="success" icon={CheckCircle2} disabled={aiDraft.trim().length < 10 || state.isSavingAi} onClick={() => state.saveAi(true)}>Onayla</ModernButton></div>
+      <label className="block"><span className="mb-2 block text-sm font-semibold text-sg-text">Danca ürün açıklaması</span><ModernTextarea aria-label="AI açıklaması" value={aiDraft} onChange={(event) => state.setAiDraft(event.target.value)} placeholder="AI açıklaması…" rows={7} /></label>
+      <ModernCard><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-sg-text">SEO paket kontrolü</h3><p className="mt-1 text-xs text-sg-text-soft">Yayın için zorunlu alanlar açıklama metninden okunur.</p></div><ModernBadge tone={seoMissing.length ? 'warning' : 'success'}>{seoMissing.length ? `${seoMissing.length} eksik` : 'Tam'}</ModernBadge></div><div className="mt-4 space-y-3">{Object.entries({ 'SEO title': seo.title, 'URL slug': seo.slug, 'Kısa açıklama': seo.kisaAciklama, 'Meta description': seo.meta, 'Uzun açıklama': seo.uzunAciklama }).map(([label, value]) => <div key={label} className="border-b border-sg-border-soft pb-3 last:border-b-0"><p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">{label}</p><p className={`mt-1 text-sm ${value ? 'text-sg-text' : 'text-sg-red'}`}>{value || 'Eksik'}</p></div>)}</div></ModernCard>
+    </div>
+  );
+}
+
+function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
+  const detail = state.detail;
+  if (!detail) return <ModernLoadingState title="Yayın alanı hazırlanıyor" />;
+  const ready = isPublishReady(detail) && seoMissing.length === 0 && Number(state.publishPrice || 0) > 0;
+  return (
+    <div className="space-y-5">
+      <ModernSectionHeader title="WooCommerce yayını" description="Yayın kararı gerçek ProductOut ve SEO readiness alanlarına göre verilir." />
+      <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
+      <ModernNotice tone={ready ? 'success' : 'warning'} title={ready ? 'Yayın için hazır' : 'Yayın ön koşulları eksik'} description={ready ? 'Ürün yayınlanabilir. Harici WooCommerce yazması için onay verin.' : 'Fotoğraf, AI onayı, SEO, GDPR, manuel review ve fiyat alanlarını tamamlayın.'} icon={ready ? <CheckCircle2 className="h-5 w-5" /> : <Info className="h-5 w-5" />} />
+      <div className="flex flex-wrap gap-2">
+        <ModernButton tone="success" icon={Globe} disabled={!ready || state.isPublishing} onClick={state.publish}>
+          {state.isPublishing ? 'Yayınlanıyor…' : 'Siteye yayınla'}
+        </ModernButton>
+        {detail.is_published_to_site ? (
+          <ModernButton
+            tone="danger"
+            icon={X}
+            disabled={state.isUnpublishing}
+            onClick={() => {
+              if (window.confirm('Ürün WooCommerce’den kaldırılsın mı?')) state.unpublish();
+            }}
+          >
+            {state.isUnpublishing ? 'Kaldırılıyor…' : 'Yayından kaldır'}
+          </ModernButton>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function HistoryTab({ state }: { state: WooMakeState }) {
+  return (
+    <div className="space-y-5">
+      <div><div className="flex items-center gap-2"><History className="h-4 w-4 text-sg-accent" /><h3 className="text-sm font-semibold text-sg-text">Ürün geçmişi</h3></div><div className="mt-3 space-y-2">{state.history.length ? state.history.map((entry) => <ModernCard key={entry.id} className="p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold text-sg-text">{entry.action}</p><time className="text-xs text-sg-text-soft">{formatDate(entry.created_at)}</time></div>{entry.notes ? <p className="mt-1 text-xs text-sg-text-soft">{entry.notes}</p> : null}</ModernCard>) : <p className="text-sm text-sg-text-soft">Geçmiş kaydı yok.</p>}</div></div>
+      <div><div className="flex items-center gap-2"><Clock3 className="h-4 w-4 text-sg-accent" /><h3 className="text-sm font-semibold text-sg-text">Woo sync log</h3></div><div className="mt-3 space-y-2">{state.syncLog.length ? state.syncLog.map((entry) => <ModernCard key={entry.id} className="p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold text-sg-text">{entry.action}</p><ModernBadge tone={entry.status === 'success' || entry.status === 'synced' ? 'success' : entry.status === 'failed' ? 'danger' : 'warning'}>{entry.status}</ModernBadge></div><p className="mt-1 text-xs text-sg-text-soft">{entry.error_message || formatDate(entry.created_at)}</p></ModernCard>) : <p className="text-sm text-sg-text-soft">Sync kaydı yok.</p>}</div></div>
+      <div><ModernButton tone="ghost" size="sm" icon={Eye} onClick={() => state.setRawOpen((current) => !current)}>{state.rawOpen ? 'Woo raw gizle' : 'Woo raw aç'}</ModernButton>{state.rawOpen ? <pre className="mt-3 max-h-80 overflow-auto rounded-sg-md bg-sg-text p-4 text-xs text-white">{JSON.stringify(state.rawData?.summary || state.rawData?.raw || {}, null, 2)}</pre> : null}</div>
+    </div>
+  );
+}
+
+function ProductWorkspace({ state }: { state: WooMakeState }) {
+  const [tab, setTab] = useState<DetailTab>('overview');
+  const detail = state.detail;
+  const seoMissing = useMemo(() => missingSeoFields(parseAiSeoBundle(state.aiDraft || detail?.ai_description)), [state.aiDraft, detail?.ai_description]);
+  if (!state.secilen) return <ModernEmptyState title="Ürün seçin" description="Soldan bir ürün seçtiğinizde operasyon ayrıntıları burada açılır." />;
+  if (state.loadingDetail && !detail) return <ModernLoadingState title="Ürün detayı hazırlanıyor" description="ProductOut ve geçmiş kayıtları bekleniyor." />;
+  if (state.detailError && !detail) return <ModernErrorState title="Ürün detayı açılamadı" description={state.detailError} onRetry={state.refreshWorkspace} />;
+  const tabs: Array<{ id: DetailTab; label: string; icon: typeof Package }> = [{ id: 'overview', label: 'Genel', icon: Package }, { id: 'photos', label: 'Fotoğraf', icon: ImageIcon }, { id: 'ai', label: 'AI & SEO', icon: Bot }, { id: 'history', label: 'Geçmiş', icon: History }];
+  return (
+    <ModernSection className="min-w-0 p-4 sm:p-5">
+      <DetailHeader state={state} />
+      <div className="mt-4 flex flex-wrap gap-1 border-b border-sg-border-soft pb-1">{tabs.map((entry) => <button key={entry.id} type="button" onClick={() => setTab(entry.id)} className={`inline-flex items-center gap-2 rounded-t-sg-md px-3 py-2 text-xs font-semibold transition ${tab === entry.id ? 'border-b-2 border-sg-accent bg-sg-accent-soft text-sg-accent-dark' : 'text-sg-text-soft hover:bg-sg-surface-soft'}`}><entry.icon className="h-3.5 w-3.5" />{entry.label}</button>)}</div>
+      <div className="mt-5">{tab === 'overview' ? <OverviewTab state={state} seoMissing={seoMissing} /> : null}{tab === 'photos' ? <PhotosTab state={state} /> : null}{tab === 'ai' ? <AiTab state={state} seoMissing={seoMissing} /> : null}{tab === 'history' ? <HistoryTab state={state} /> : null}</div>
+    </ModernSection>
+  );
+}
+
+export function ModernWooCommercePage({ state }: ModernWooCommercePageProps) {
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const summary = state.workspaceSummary;
+  if (state.loadingWorkspace && state.urunler.length === 0) return <ModernPage><ModernLoadingState title="WooCommerce çalışma alanı hazırlanıyor" description="Gerçek ürün listesi ve durum özeti yükleniyor." /></ModernPage>;
+  if (state.workspaceError && state.urunler.length === 0) return <ModernPage><ModernErrorState title="WooCommerce çalışma alanı açılamadı" description={state.workspaceError} onRetry={state.refreshWorkspace} /></ModernPage>;
+  return (
+    <ModernPage>
+      <ModernToolbar
+        leading={<div className="flex min-w-0 items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-sg-md bg-sg-accent-soft text-sg-accent"><Package className="h-5 w-5" /></div><div className="min-w-0"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">WooCommerce / WordPress</p><h1 className="truncate text-lg font-semibold tracking-[-0.02em] text-sg-text">Ürün yayın çalışma alanı</h1></div></div>}
+        trailing={<div className="flex flex-wrap items-center gap-2"><ModernBadge tone="neutral">{summary.total_products} ürün</ModernBadge><ModernBadge tone="success">{summary.published_products} yayında</ModernBadge><ModernBadge tone="warning">{summary.photo_pending_products} foto eksik</ModernBadge><ModernButton size="sm" tone="ghost" icon={RefreshCw} disabled={state.loadingWorkspace} onClick={state.refreshWorkspace}>Yenile</ModernButton><ModernButton size="sm" tone="primary" icon={Plus} onClick={() => setWizardOpen(true)}>Yeni ürün</ModernButton></div>}
+      />
+      <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.9fr)]"><ProductList state={state} /><ProductWorkspace state={state} /></div>
+      {wizardOpen ? <YeniUrunPanel stokList={state.stokList} urunler={state.urunler} pending={state.isCreatingProduct} onKapat={() => setWizardOpen(false)} onKaydet={async (draft) => { await state.createProductFromDraft(draft); }} /> : null}
     </ModernPage>
   );
 }
