@@ -1,5 +1,5 @@
-import type { FormEventHandler } from 'react';
-import { ArrowRight, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { useState, type FormEventHandler } from 'react';
+import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck } from 'lucide-react';
 
 type MakeLoginPageProps = {
   email: string;
@@ -10,6 +10,14 @@ type MakeLoginPageProps = {
   isPending: boolean;
 };
 
+function BrandMark() {
+  return (
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-brand-200 bg-white shadow-sm">
+      <img src="/seroguld-logo.png" alt="Sero Guld" className="h-full w-full scale-[1.35] object-cover object-left" />
+    </div>
+  );
+}
+
 export function MakeLoginPage({
   email,
   password,
@@ -18,120 +26,124 @@ export function MakeLoginPage({
   errorMessage,
   isPending,
 }: MakeLoginPageProps) {
+  const [showPassword, setShowPassword] = useState(false);
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#3a2d21_0%,#120f0c_56%,#07080c_100%)] px-6 py-10 text-white">
-      <div className="grid w-full max-w-5xl overflow-hidden rounded-[36px] border border-amber-400/20 bg-[#120f0c]/95 shadow-[0_30px_90px_rgba(0,0,0,0.45)] lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="hidden border-r border-amber-400/10 bg-[linear-gradient(180deg,rgba(33,26,20,0.98)_0%,rgba(16,13,10,0.98)_100%)] px-10 py-12 lg:flex lg:flex-col">
-          <div className="flex items-start gap-4">
-            <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3">
-              <ShieldCheck className="h-7 w-7 text-amber-300" />
-            </div>
+    <main className="min-h-svh bg-brand-50 px-4 py-5 text-brand-950 sm:px-6 sm:py-8">
+      <div className="login-surface-enter mx-auto grid min-h-[min(720px,calc(100svh-2.5rem))] w-full max-w-5xl overflow-hidden border border-brand-200 border-t-4 border-t-amber-500 bg-white shadow-[0_18px_55px_rgba(82,64,46,0.12)] lg:grid-cols-[1.04fr_0.96fr]">
+        <section className="relative hidden overflow-hidden bg-[#fbf6ed] px-8 py-9 lg:flex lg:flex-col lg:px-11 lg:py-11">
+          <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-amber-100/70 blur-3xl" />
+          <div className="relative flex items-start gap-4">
+            <BrandMark />
             <div>
-              <p className="text-[11px] uppercase tracking-[0.32em] text-brand-400">Seroguld Desktop</p>
-              <h1
-                className="mt-2 text-3xl font-black uppercase tracking-[0.18em] text-[#c0b296]"
-                style={{ fontFamily: "'IBM Plex Mono', monospace" }}
-              >
-                ERP SYSTEM
-              </h1>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-600">Sero Guld ERP</p>
+              <h1 className="mt-2 text-3xl font-semibold leading-tight tracking-[-0.03em] text-brand-950">Güvenli çalışma alanı</h1>
             </div>
           </div>
 
-          <div className="mt-10 space-y-6">
-            <div className="border border-brand-800 bg-brand-950/70 px-5 py-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Sero Guld Access</p>
-              <p className="mt-3 max-w-md text-sm leading-7 text-brand-200">
-                Masaustu operasyonlari, piyasa oranlari, entegrasyonlar ve musterili alim akislari bu oturumdan
-                yonetilir.
-              </p>
-            </div>
-
-            <div className="grid gap-3 text-sm text-brand-300">
-              <div className="flex items-start gap-3 border border-brand-800 bg-brand-900/40 px-4 py-3">
-                <LockKeyhole className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-                <div>
-                  <p className="font-semibold text-brand-100">Güvenli oturum</p>
-                  <p className="mt-1 text-xs leading-6 text-brand-400">
-                    API anahtarlari, entegrasyon baglantilari ve ERP ayarlari yalniz bu oturumdan duzenlenir.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3 border border-brand-800 bg-brand-900/40 px-4 py-3">
-                <ArrowRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-                <div>
-                  <p className="font-semibold text-brand-100">Sero Guld hesabi</p>
-                  <p className="mt-1 text-xs leading-6 text-brand-400">
-                    Demo hesabi info@seroguld.dk olarak hazirlandi; devam etmek icin yalniz sifre gerekir.
-                  </p>
-                </div>
-              </div>
-            </div>
+          <div className="relative mt-8 max-w-md">
+            <p className="text-lg leading-8 text-brand-800">
+              Alış, stok, müşteri ve entegrasyon işlemlerine tek güvenilir oturumdan devam edin.
+            </p>
           </div>
 
-          <div className="mt-auto border-t border-brand-800 pt-5">
-            <p
-              className="text-[10px] uppercase tracking-[0.26em] text-brand-500"
-              style={{ fontFamily: "'IBM Plex Mono', monospace" }}
-            >
-              Alis · Depolama · Log · Woo · Uniconta
+          <div className="relative mt-auto space-y-4 border-t border-brand-200 pt-6">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-sm font-semibold text-brand-900">Korunaklı operasyon oturumu</p>
+                <p className="mt-1 text-sm leading-6 text-brand-600">ERP ayarları ve entegrasyon bağlantıları yalnız yetkili oturumdan yönetilir.</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <ArrowRight className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-sm font-semibold text-brand-900">Tek operasyon hesabı</p>
+                <p className="mt-1 text-sm leading-6 text-brand-600">Giriş sonrasında aynı çalışma alanından günlük operasyonunuza dönersiniz.</p>
+              </div>
+            </div>
+            <p className="pt-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-brand-500">
+              Alış · Depolama · Log · Woo · Uniconta
             </p>
           </div>
         </section>
 
-        <section className="px-7 py-8 sm:px-10 sm:py-10">
-          <div className="flex items-center gap-3 lg:hidden">
-            <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3">
-              <ShieldCheck className="h-6 w-6 text-amber-300" />
-            </div>
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.32em] text-brand-300">Sero Guld</p>
-              <h1 className="mt-1 text-2xl font-semibold">Desktop Sign In</h1>
+        <section className="flex flex-col justify-center bg-white px-6 py-8 sm:px-10 sm:py-11">
+          <div className="lg:hidden">
+            <div className="flex items-center gap-3">
+              <BrandMark />
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-600">Sero Guld ERP</p>
+                <h1 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-brand-950">Güvenli giriş</h1>
+              </div>
             </div>
           </div>
 
-          <div className="hidden lg:block">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-brand-400">Sero Guld Login</p>
-            <h2 className="mt-3 text-3xl font-semibold text-white">Desktop Sign In</h2>
-            <p className="mt-3 max-w-md text-sm leading-7 text-brand-300">
-              Sero Guld operasyon paneline erismek icin sifrenizi girin.
-            </p>
+          <div className="mt-7 lg:mt-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-600">Oturum aç</p>
+            <h2 className="mt-2 text-3xl font-semibold leading-tight tracking-[-0.03em] text-brand-950">Operasyon paneline giriş</h2>
+            <p className="mt-3 max-w-md text-sm leading-6 text-brand-600">Sero Guld çalışma alanına devam etmek için şifrenizi girin.</p>
           </div>
 
-          <form className="mt-8 space-y-4" onSubmit={onSubmit}>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-              <span className="block text-xs uppercase tracking-[0.24em] text-brand-400">Kullanici</span>
-              <span className="mt-1 block font-medium text-brand-100">{email}</span>
-            </div>
-
+          <form className="mt-8 space-y-5" onSubmit={onSubmit}>
             <label className="block">
-              <span className="mb-2 block text-sm font-medium text-brand-200">Şifre</span>
-              <input
-                value={password}
-                onChange={(event) => onPasswordChange(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-amber-400/40 focus:bg-white/10"
-                type="password"
-                autoComplete="current-password"
-              />
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-brand-600">Hesap</span>
+              <div className="relative">
+                <input
+                  type="email"
+                  name="username"
+                  value={email}
+                  readOnly
+                  autoComplete="username"
+                  aria-readonly="true"
+                  className="min-h-11 w-full border border-brand-200 bg-brand-50 px-4 pr-11 text-sm font-medium text-brand-800 outline-none"
+                />
+                <LockKeyhole aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-400" />
+              </div>
             </label>
 
+            <div>
+              <label htmlFor="classic-login-password" className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-brand-600">Şifre</label>
+              <div className="relative">
+                <input
+                  id="classic-login-password"
+                  name="password"
+                  value={password}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  className="min-h-11 w-full border border-brand-300 bg-white px-4 pr-12 text-sm text-brand-950 outline-none transition focus:border-amber-600 focus:ring-2 focus:ring-amber-100"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  autoFocus
+                  aria-invalid={Boolean(errorMessage)}
+                  aria-describedby={errorMessage ? 'classic-login-error' : undefined}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center text-brand-500 transition hover:text-brand-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                >
+                  {showPassword ? <EyeOff aria-hidden="true" className="h-4 w-4" /> : <Eye aria-hidden="true" className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
             {errorMessage ? (
-              <p className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              <p id="classic-login-error" role="alert" className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800">
                 {errorMessage}
               </p>
             ) : (
-              <div className="rounded-2xl border border-brand-800 bg-brand-950/70 px-4 py-3 text-xs leading-6 text-brand-400">
-                Oturum acildiginda shell, entegrasyonlar ve operasyon ekranlari ayni masaustu akisi icinde yuklenir.
-              </div>
+              <p className="border-t border-brand-200 pt-4 text-xs leading-5 text-brand-500">Yetkili kullanıcı hesabı ile güvenli bağlantı kurulur.</p>
             )}
 
             <button
               type="submit"
               disabled={isPending}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 px-4 py-3 font-semibold text-white transition hover:bg-brand-400 disabled:opacity-60"
+              className="group flex min-h-12 w-full items-center justify-center gap-2 bg-brand-900 px-4 text-sm font-semibold text-white transition hover:bg-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <ShieldCheck className="h-4 w-4" />
-              {isPending ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+              <ShieldCheck aria-hidden="true" className="h-4 w-4 text-amber-300" />
+              {isPending ? 'Giriş yapılıyor…' : 'Giriş Yap'}
+              {!isPending ? <ArrowRight aria-hidden="true" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /> : null}
             </button>
           </form>
         </section>

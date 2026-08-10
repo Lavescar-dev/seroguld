@@ -101,20 +101,15 @@ export interface ModernActionItem {
 export interface ModernLoginFormModel {
   email: string;
   password: string;
-  remember: boolean;
-  isSubmitting?: boolean;
+  isSubmitting: boolean;
   errorMessage?: string | null;
-  onEmailChange?: (value: string) => void;
-  onPasswordChange?: (value: string) => void;
-  onRememberChange?: (value: boolean) => void;
-  onSubmit?: () => void;
+  onPasswordChange: (value: string) => void;
+  onSubmit: () => void;
 }
 
 export interface ModernLoginPageProps {
   runtime: ModernStatusItem[];
   form: ModernLoginFormModel;
-  workInboxPreview?: ModernInboxItem[];
-  helperNote?: string;
 }
 
 export interface ModernDashboardPageProps {

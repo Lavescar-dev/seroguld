@@ -99,3 +99,24 @@ input[data-zeroish-value='true']:focus {
 button {
   cursor: pointer;
 }
+
+@keyframes sero-login-surface-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-surface-enter {
+  animation: sero-login-surface-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-surface-enter {
+    animation: none;
+  }
+}
