@@ -38,6 +38,16 @@ const routeMeta: Record<string, { eyebrow: string; title: string; description: s
   '/reports': { eyebrow: 'Health', title: 'Raporlar ve Sağlık', description: 'Modül kapsamı, kontrat durumu ve doğrulama görünümü.' },
 };
 
+export function resolveRouteMeta(pathname: string) {
+  const exact = routeMeta[pathname];
+  if (exact) return exact;
+
+  const parentPath = Object.keys(routeMeta)
+    .filter((path) => path !== '/' && pathname.startsWith(`${path}/`))
+    .sort((left, right) => right.length - left.length)[0];
+  return routeMeta[parentPath ?? '/'];
+}
+
 function activePath(pathname: string, path: string) {
   return path === '/' ? pathname === '/' : pathname.startsWith(path);
 }
@@ -46,7 +56,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
   const location = useLocation();
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const meta = routeMeta[location.pathname] ?? routeMeta['/'];
+  const meta = resolveRouteMeta(location.pathname);
 
   useEffect(() => {
     if (!state.officeDock.document) return;

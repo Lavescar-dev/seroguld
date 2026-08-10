@@ -105,6 +105,33 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
               </button>
             ))}
           </div>
+
+          {!state.search && state.customerTotalPages > 1 ? (
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-sg-border pt-3">
+              <p className="text-xs text-sg-text-soft">
+                {(state.customerPage - 1) * state.customerPageSize + 1}–{Math.min(state.customerPage * state.customerPageSize, state.totalCustomers)} / {state.totalCustomers}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => state.onCustomerPageChange(state.customerPage - 1)}
+                  disabled={state.customerPage <= 1}
+                  className={shellButtonClass('secondary')}
+                >
+                  Önceki
+                </button>
+                <span className="text-xs font-semibold text-sg-text-soft">{state.customerPage} / {state.customerTotalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => state.onCustomerPageChange(state.customerPage + 1)}
+                  disabled={state.customerPage >= state.customerTotalPages}
+                  className={shellButtonClass('secondary')}
+                >
+                  Sonraki
+                </button>
+              </div>
+            </div>
+          ) : null}
         </ModernSection>
 
         <ModernSection title="Seçili Müşteri" subtitle="AFG geçmişi ve preview aksiyonları bu panelde tutulur.">

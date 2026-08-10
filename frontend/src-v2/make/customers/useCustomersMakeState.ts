@@ -25,6 +25,7 @@ export function useCustomersMakeState(): CustomersPageProps {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
+  const [customerPage, setCustomerPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('customer'));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedSequenceNo, setExpandedSequenceNo] = useState<number | null>(null);
@@ -51,13 +52,14 @@ export function useCustomersMakeState(): CustomersPageProps {
   }
 
   const customersQuery = useQuery({
-    queryKey: ['customers', search],
+    queryKey: ['customers', search, customerPage],
     queryFn: async () => {
       if (search.trim().length >= 2) {
         return await apiRequest<CustomerOut[]>(`/api/v2/musteriler/search?q=${encodeURIComponent(search.trim())}`);
       }
-      const response = await apiRequest<PaginatedResponse<CustomerOut>>('/api/v2/musteriler?page_size=100');
-      return response.items;
+      return await apiRequest<PaginatedResponse<CustomerOut>>(
+        `/api/v2/musteriler?page=${customerPage}&page_size=100`,
+      );
     },
   });
 
@@ -134,7 +136,16 @@ export function useCustomersMakeState(): CustomersPageProps {
     },
   });
 
-  const customers = customersQuery.data || [];
+  const customers = Array.isArray(customersQuery.data) ? customersQuery.data : customersQuery.data?.items || [];
+  const totalCustomers = Array.isArray(customersQuery.data)
+    ? customers.length
+    : customersQuery.data?.total || 0;
+  const customerPageSize = Array.isArray(customersQuery.data)
+    ? Math.max(customers.length, 1)
+    : customersQuery.data?.page_size || 100;
+  const customerTotalPages = Array.isArray(customersQuery.data)
+    ? 1
+    : customersQuery.data?.total_pages || 1;
   const selectedCustomer = detailQuery.data || customers.find((item) => item.id === selectedId) || null;
   const historyItems = historyQuery.data || [];
   const historySummary = useMemo(
@@ -200,8 +211,18 @@ export function useCustomersMakeState(): CustomersPageProps {
 
   return {
     search,
-    onSearchChange: setSearch,
+    onSearchChange: (value) => {
+      setSearch(value);
+      setCustomerPage(1);
+    },
     customers,
+    totalCustomers,
+    customerPage,
+    customerPageSize,
+    customerTotalPages,
+    onCustomerPageChange: (page) => {
+      setCustomerPage(Math.max(1, Math.min(page, customerTotalPages)));
+    },
     selectedId,
     onSelectCustomer: (customerId) => setSelectedCustomerId(customerId),
     editingId,

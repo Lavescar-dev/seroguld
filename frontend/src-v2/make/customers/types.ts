@@ -39,6 +39,11 @@ export interface CustomersPageProps {
   search: string;
   onSearchChange: (value: string) => void;
   customers: CustomerOut[];
+  totalCustomers: number;
+  customerPage: number;
+  customerPageSize: number;
+  customerTotalPages: number;
+  onCustomerPageChange: (page: number) => void;
   selectedId: string | null;
   onSelectCustomer: (customerId: string | null) => void;
   editingId: string | null;

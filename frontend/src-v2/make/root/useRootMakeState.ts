@@ -58,6 +58,17 @@ function tryNum(key: string, fallback: number): number {
   return value ? Number.parseFloat(value) || fallback : fallback;
 }
 
+export function resolveMarketStat(key: string, bootstrapValue: unknown, fallback: number): number {
+  const liveValue = Number(bootstrapValue);
+  if (bootstrapValue !== null && bootstrapValue !== '' && Number.isFinite(liveValue) && liveValue > 0) {
+    return liveValue;
+  }
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  return tryNum(key, fallback);
+}
+
 function loadStats(bootstrap?: DesktopBootstrap): SidebarStats {
   if (typeof window === 'undefined') {
     return {
@@ -105,9 +116,9 @@ function loadStats(bootstrap?: DesktopBootstrap): SidebarStats {
     logCount: logItems.length || bootstrap?.navigation.total_documents || 0,
     ayirmaCount: ayirItems.length,
     eritmeCount: eritItems.length,
-    goldPrice: tryNum('market_gold', Number(bootstrap?.market_rates.yellow_gold ?? 2850)),
-    silverPrice: tryNum('market_silver', Number(bootstrap?.market_rates.silver ?? 8.5)),
-    platinPrice: tryNum('market_platin', Number(bootstrap?.market_rates.platinum ?? 280)),
+    goldPrice: resolveMarketStat('market_gold', bootstrap?.market_rates.yellow_gold, 2850),
+    silverPrice: resolveMarketStat('market_silver', bootstrap?.market_rates.silver, 8.5),
+    platinPrice: resolveMarketStat('market_platin', bootstrap?.market_rates.platinum, 280),
     finguld,
     finsolv,
   };

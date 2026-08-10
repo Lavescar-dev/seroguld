@@ -4,6 +4,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModernUnicontaPage } from '../ModernUnicontaPage';
 import type { ModernUnicontaPageProps } from '../types';
 
+function invoice(id: string) {
+  return {
+    id,
+    fakturanummer: id,
+    ordrenummer: id,
+    type: 'Salgsfaktura' as const,
+    fakturadato: '2026-08-09',
+    konto: 'CRM-1',
+    kunde: { id: '1', navn: 'Test' },
+    kalemler: [],
+    subtotal: 10,
+    momsTotal: 0,
+    total: 10,
+    valuta: 'DKK' as const,
+  };
+}
+
 const baseProps: ModernUnicontaPageProps = {
   connectionStatus: 'bagli_degil',
   config: {
@@ -73,5 +90,33 @@ describe('ModernUnicontaPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /outbox/i }));
     expect(screen.getByRole('button', { name: /deneniyor/i })).toBeDisabled();
+  });
+
+  it('keeps connection settings usable while remote invoice pagination is loading', () => {
+    render(
+      <ModernUnicontaPage
+        {...baseProps}
+        invoicesLoading
+        onRefresh={() => undefined}
+        onOpenConnectionSettings={() => undefined}
+        onConnect={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /^Yenile$/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Ayarlar$/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Bağlantıyı test et$/ })).toBeEnabled();
+  });
+
+  it('paginates large invoice lists while preserving the total count', () => {
+    render(<ModernUnicontaPage {...baseProps} invoices={Array.from({ length: 55 }, (_, index) => invoice(`I-${index}`))} onSelectInvoice={() => undefined} />);
+
+    expect(screen.getAllByRole('button', { name: /^Aç$/ })).toHaveLength(50);
+    expect(screen.getByText('Faturalar 1–50 / 55')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Sonraki$/ }));
+
+    expect(screen.getAllByRole('button', { name: /^Aç$/ })).toHaveLength(5);
+    expect(screen.getByText('Faturalar 51–55 / 55')).toBeInTheDocument();
   });
 });

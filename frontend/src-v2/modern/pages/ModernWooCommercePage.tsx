@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, Globe2, Package2, RefreshCw, ShieldCheck, Webhook } from 'lucide-react';
 
 import {
@@ -17,6 +17,7 @@ import { AvailabilityBanner, DetailGrid, StatusGrid, TimelineList, formatMoney, 
 import type { ModernWooPageProps } from './types';
 
 type WooTab = 'products' | 'orders' | 'webhooks' | 'bridge';
+const PRODUCT_PAGE_SIZE = 25;
 
 const tabLabels: Array<{ id: WooTab; label: string }> = [
   { id: 'products', label: 'Ürünler' },
@@ -36,6 +37,13 @@ export function ModernWooCommercePage({
   onSync,
 }: ModernWooPageProps) {
   const [activeTab, setActiveTab] = useState<WooTab>('products');
+  const [productPage, setProductPage] = useState(0);
+  const productPageCount = Math.max(1, Math.ceil(items.length / PRODUCT_PAGE_SIZE));
+  const visibleItems = items.slice(productPage * PRODUCT_PAGE_SIZE, (productPage + 1) * PRODUCT_PAGE_SIZE);
+
+  useEffect(() => {
+    setProductPage((current) => Math.min(current, productPageCount - 1));
+  }, [productPageCount]);
   const publishedCount = items.filter((item) => item.publishState === 'Yayında').length;
   const bridgeStatus = readiness.find((item) => item.label.toLocaleLowerCase().includes('bridge'));
   const webhookStatus = readiness.find((item) => item.label.toLocaleLowerCase().includes('webhook'));
@@ -88,7 +96,7 @@ export function ModernWooCommercePage({
             <ModernSectionHeader title="CRM ürün kaynağı" description="Publish readiness ve remote farkı gerçek inventory satırlarından okunur." action={<ModernBadge tone="info">Product master</ModernBadge>} />
             <div className="mt-4">
               <ModernDataTable
-                items={items}
+                items={visibleItems}
                 getRowKey={(item) => item.id}
                 emptyTitle="Ürün bulunmuyor"
                 emptyDescription="Woo workspace gerçek ürün satırı döndürdüğünde liste burada görünür."
@@ -105,6 +113,34 @@ export function ModernWooCommercePage({
                 ]}
               />
             </div>
+            {items.length > PRODUCT_PAGE_SIZE ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border-soft pt-3 text-xs text-sg-text-soft">
+                <span>
+                  Ürünler {productPage * PRODUCT_PAGE_SIZE + 1}–{Math.min((productPage + 1) * PRODUCT_PAGE_SIZE, items.length)} / {items.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <ModernButton
+                    tone="ghost"
+                    size="sm"
+                    onClick={() => setProductPage((current) => Math.max(0, current - 1))}
+                    disabled={productPage === 0}
+                  >
+                    Önceki
+                  </ModernButton>
+                  <span aria-live="polite" className="min-w-20 text-center font-semibold text-sg-text">
+                    Sayfa {productPage + 1} / {productPageCount}
+                  </span>
+                  <ModernButton
+                    tone="ghost"
+                    size="sm"
+                    onClick={() => setProductPage((current) => Math.min(productPageCount - 1, current + 1))}
+                    disabled={productPage >= productPageCount - 1}
+                  >
+                    Sonraki
+                  </ModernButton>
+                </div>
+              </div>
+            ) : null}
           </ModernSection>
 
           <div className="space-y-5">

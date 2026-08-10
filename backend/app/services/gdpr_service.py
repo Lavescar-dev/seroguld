@@ -11,7 +11,9 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, insert, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -204,26 +206,47 @@ def _coerce_utc_datetime(value: Any) -> Any:
 
 
 async def ensure_gdpr_seed_data(session: AsyncSession) -> None:
-    existing_policy_keys = set((await session.scalars(select(GdprRetentionPolicy.policy_key))).all())
-    for policy in DEFAULT_RETENTION_POLICIES:
-        if policy["policy_key"] in existing_policy_keys:
-            continue
-        session.add(GdprRetentionPolicy(**policy))
-
-    existing_processor_keys = set((await session.scalars(select(GdprProcessor.processor_key))).all())
-    for key, title, category, system_name in DEFAULT_PROCESSORS:
-        if key in existing_processor_keys:
-            continue
-        session.add(
-            GdprProcessor(
-                processor_key=key,
-                title=title,
-                category=category,
-                system_name=system_name,
-                status="configured" if key == "crm" else "missing",
-                configured=(key == "crm"),
-            )
+    # The cockpit loads several GDPR endpoints concurrently. On a clean
+    # database, conflict-safe inserts prevent those first requests from
+    # racing while creating the same default rows.
+    dialect = session.get_bind().dialect.name
+    insert_builder = (
+        sqlite_insert if dialect == "sqlite"
+        else postgresql_insert if dialect == "postgresql"
+        else insert
+    )
+    policy_rows = [dict(policy) for policy in DEFAULT_RETENTION_POLICIES]
+    processor_rows = [
+        {
+            "processor_key": key,
+            "title": title,
+            "category": category,
+            "system_name": system_name,
+            "status": "configured" if key == "crm" else "missing",
+            "configured": key == "crm",
+        }
+        for key, title, category, system_name in DEFAULT_PROCESSORS
+    ]
+    if dialect in {"sqlite", "postgresql"}:
+        await session.execute(
+            insert_builder(GdprRetentionPolicy)
+            .values(policy_rows)
+            .on_conflict_do_nothing(index_elements=["policy_key"])
         )
+        await session.execute(
+            insert_builder(GdprProcessor)
+            .values(processor_rows)
+            .on_conflict_do_nothing(index_elements=["processor_key"])
+        )
+    else:
+        existing_policy_keys = set((await session.scalars(select(GdprRetentionPolicy.policy_key))).all())
+        for policy in policy_rows:
+            if policy["policy_key"] not in existing_policy_keys:
+                session.add(GdprRetentionPolicy(**policy))
+        existing_processor_keys = set((await session.scalars(select(GdprProcessor.processor_key))).all())
+        for processor in processor_rows:
+            if processor["processor_key"] not in existing_processor_keys:
+                session.add(GdprProcessor(**processor))
     await session.flush()
 
 

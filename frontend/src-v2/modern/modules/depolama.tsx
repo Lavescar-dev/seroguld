@@ -1,6 +1,7 @@
 import { Camera, Eye, FileSpreadsheet, Search, Tag } from 'lucide-react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
+import { DepolamaPage } from '@/make/depolama/DepolamaPage';
 import { formatDate, formatMoney, formatNumber, labelInventoryCategory, labelInventorySubcategory, labelShopSyncStatus } from '@/lib/format';
 import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
 
@@ -10,6 +11,14 @@ import { ModernOfficeSurface } from './ModernOfficeSurface';
 export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaViewModel }) {
   const { state } = viewModel;
   const selected = state.selectedProduct;
+
+  // The modern shell owns the list/detail surface, while the established form
+  // still owns the complete create/edit contract (validation, save and photo
+  // fields). Keep that contract reachable after the modern action button sets
+  // `editing`; otherwise “Yeni Ürün” changes state without rendering anything.
+  if (state.editing) {
+    return <DepolamaPage {...state} />;
+  }
 
   return (
     <ModernModuleShell

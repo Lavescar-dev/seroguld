@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -11,6 +12,8 @@ from app.models.enums import IdentityDocTypeEnum, RoleEnum
 from app.models.gdpr_request import GdprRequest
 from app.models.gdpr_request_event import GdprRequestEvent
 from app.models.gdpr_copy_task import GdprCopyTask
+from app.models.gdpr_processor import GdprProcessor
+from app.models.gdpr_retention_policy import GdprRetentionPolicy
 from app.models.user import User
 from app.schemas.gdpr import GdprPublicRequestCreateIn
 from app.services.gdpr_service import (
@@ -19,6 +22,7 @@ from app.services.gdpr_service import (
     submit_public_gdpr_request,
     update_gdpr_copy_task,
 )
+from app.services.gdpr_service import ensure_gdpr_seed_data
 from app.utils.helpers import utc_now
 from app.utils.security import encrypt_field
 
@@ -52,6 +56,28 @@ def test_submit_public_gdpr_request_and_status_tracking() -> None:
             assert status_payload.status == "identity_pending"
             assert status_payload.request_type == "access_export"
 
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_concurrent_gdpr_seed_is_idempotent(tmp_path: Path) -> None:
+    async def run() -> None:
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'gdpr-seed.db'}")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+        async def seed_once() -> None:
+            async with Session() as session:
+                await ensure_gdpr_seed_data(session)
+                await session.commit()
+
+        await asyncio.gather(*(seed_once() for _ in range(3)))
+        async with Session() as session:
+            assert await session.scalar(select(func.count(GdprRetentionPolicy.id))) == 8
+            assert await session.scalar(select(func.count(GdprProcessor.id))) == 9
         await engine.dispose()
 
     asyncio.run(run())

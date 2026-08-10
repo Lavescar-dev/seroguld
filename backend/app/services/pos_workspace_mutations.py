@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.enums import MetalTypeEnum, PosRateSourceEnum, PosSessionStatusEnum, PosTradeSideEnum, ProductTypeEnum
 from app.models.pos_session import PosSession
@@ -86,15 +87,26 @@ async def _claim_workspace_revision(
             },
         )
     pos_session.notes = claimed_notes
+    # The CAS statement autoflushes pending workspace changes (for example a
+    # newly selected customer).  That UPDATE expires the server-maintained
+    # ``updated_at`` scalar; every mutation renders a display snapshot before
+    # commit, where implicit async lazy-loading would raise MissingGreenlet.
+    await session.refresh(pos_session, attribute_names=["updated_at"])
     return note_payload
 
 
 async def _lock_workspace_session(session: AsyncSession, pos_session: PosSession) -> PosSession:
-    locked = await session.get(
-        PosSession,
-        pos_session.id,
-        populate_existing=True,
-        with_for_update=True,
+    # ``AsyncSession`` cannot lazy-load relationships from normal attribute
+    # access.  Mutation paths immediately render the display snapshot and
+    # therefore read ``pos_session.customer`` after taking the lock.  Keep the
+    # lock query eager-loaded so customer/rows/note saves do not fail with
+    # ``MissingGreenlet`` on SQLite or PostgreSQL.
+    locked = await session.scalar(
+        select(PosSession)
+        .where(PosSession.id == pos_session.id)
+        .options(selectinload(PosSession.customer), selectinload(PosSession.clerk_user))
+        .execution_options(populate_existing=True)
+        .with_for_update()
     )
     if locked is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace bulunamadı")

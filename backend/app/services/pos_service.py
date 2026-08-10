@@ -472,6 +472,12 @@ async def _sync_buy_session_summary_from_lines(
         )
     ).all()
 
+    # SQLite (and some PostgreSQL server-default paths) expires ``updated_at``
+    # after the flush that updates the draft.  The display snapshot is built
+    # in the same async transaction, so refresh this server-maintained scalar
+    # before normal attribute access can trigger a forbidden lazy load.
+    await session.refresh(pos_session, attribute_names=["updated_at"])
+
     if not rows:
         pos_session.product_type = None
         pos_session.metal_type = None

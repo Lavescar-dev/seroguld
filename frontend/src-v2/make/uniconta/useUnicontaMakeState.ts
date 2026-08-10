@@ -283,7 +283,7 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   }, [faturalar, secilenFatura]);
 
   const baglantiDurumu = normalizeBaglantiDurumu(
-    connectMutation.isPending || configQuery.isFetching || invoicesQuery.isFetching
+    connectMutation.isPending || configQuery.isFetching
       ? 'yukleniyor'
       : connectMutation.data?.connectionStatus
         ?? (invoicesQuery.isError || healthQuery.data?.last_call_ok === false
@@ -292,7 +292,10 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
             ? 'bagli'
             : configQuery.data?.connectionStatus),
   );
-  const yukleniyor = invoicesQuery.isFetching || connectMutation.isPending || configQuery.isFetching;
+  // Remote invoice pagination can take several requests (up to 30 pages).
+  // Keep connection settings/test usable while that read-only list refreshes;
+  // the page separately disables only the Yenile action during the fetch.
+  const yukleniyor = connectMutation.isPending || configQuery.isFetching;
   const sonYenileme = invoicesQuery.data?.generatedAt ? new Date(invoicesQuery.data.generatedAt) : null;
 
   const baglan = (draft: UnicontaConnectionDraft = kimlik) => {

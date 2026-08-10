@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import httpx
 import io
@@ -232,6 +232,13 @@ CAT_LABELS = {
     "gumus": "Gumus",
     "platin_pd": "Platin/Pd",
 }
+
+
+def _as_utc_datetime(value: datetime) -> datetime:
+    """Normalize SQLite-naive and PostgreSQL-aware timestamps to UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def _lookup_danish_postal_code(
@@ -2112,7 +2119,7 @@ async def get_musteri_alis_summary_v2(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> CustomerAlisSummaryOut:
-    from datetime import timedelta, timezone
+    from datetime import timedelta
 
     from app.models.pos_session_line import PosSessionLine
 
@@ -2145,8 +2152,8 @@ async def get_musteri_alis_summary_v2(
     now = datetime.now(timezone.utc)
     cutoff_30 = now - timedelta(days=30)
     cutoff_365 = now - timedelta(days=365)
-    docs_30 = [d for d in documents if d.issued_at and d.issued_at >= cutoff_30]
-    docs_365 = [d for d in documents if d.issued_at and d.issued_at >= cutoff_365]
+    docs_30 = [d for d in documents if d.issued_at and _as_utc_datetime(d.issued_at) >= cutoff_30]
+    docs_365 = [d for d in documents if d.issued_at and _as_utc_datetime(d.issued_at) >= cutoff_365]
     amount_30 = sum((d.gross_amount_dkk or Decimal("0")) for d in docs_30)
     amount_365 = sum((d.gross_amount_dkk or Decimal("0")) for d in docs_365)
 

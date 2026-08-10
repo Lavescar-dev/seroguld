@@ -19,6 +19,7 @@ import { AvailabilityBanner, DetailGrid, formatDate, formatMoney, TimelineList, 
 import type { ModernUnicontaPageProps } from './types';
 
 type UnicontaTab = 'reconciliation' | 'outbox' | 'delivery' | 'connection';
+const INVOICE_PAGE_SIZE = 50;
 
 const tabLabels: Array<{ id: UnicontaTab; label: string }> = [
   { id: 'reconciliation', label: 'Mutabakat' },
@@ -86,6 +87,7 @@ export function ModernUnicontaPage({
   retryingSingleSeq,
 }: ModernUnicontaPageProps) {
   const [activeTab, setActiveTab] = useState<UnicontaTab>('reconciliation');
+  const [invoicePage, setInvoicePage] = useState(0);
   const [connectionDraftLocal, setConnectionDraftLocal] = useState(connectionDraft);
   const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>({
     url: null,
@@ -107,6 +109,16 @@ export function ModernUnicontaPage({
   const deliveredCount = stats?.eFakturaGonderildi ?? invoices.filter((invoice) => Boolean(invoice.eFakturaSendt)).length;
   const invoiceCount = stats?.toplam ?? invoices.length;
   const selected = selectedInvoice || invoices[0] || null;
+  const invoicePageCount = Math.max(1, Math.ceil(invoices.length / INVOICE_PAGE_SIZE));
+  const visibleInvoices = invoices.slice(invoicePage * INVOICE_PAGE_SIZE, (invoicePage + 1) * INVOICE_PAGE_SIZE);
+
+  useEffect(() => {
+    setInvoicePage(0);
+  }, [searchValue, typeFilter, mailFilter, eFaturaFilter, dateFilter, sortKey, sortDir]);
+
+  useEffect(() => {
+    setInvoicePage((current) => Math.min(current, invoicePageCount - 1));
+  }, [invoicePageCount]);
 
   const handlePdfRequest = async (invoice: typeof selected) => {
     if (!invoice) return;
@@ -157,7 +169,7 @@ export function ModernUnicontaPage({
           action={
             <div className="flex flex-wrap gap-2">
               <ModernButton tone="ghost" icon={Settings} onClick={onOpenConnectionSettings} disabled={!onOpenConnectionSettings || loading}>Ayarlar</ModernButton>
-              <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || loading}>Yenile</ModernButton>
+              <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || loading || invoicesLoading}>Yenile</ModernButton>
               <ModernButton
                 tone="primary"
                 icon={Building2}
@@ -281,7 +293,7 @@ export function ModernUnicontaPage({
             />
             <div className="mt-4">
               <ModernDataTable
-                items={invoices}
+                items={visibleInvoices}
                 getRowKey={(item) => item.id}
                 emptyTitle="Mutabakat satırı bulunmuyor"
                 emptyDescription="Uniconta fatura endpoint'i gerçek satır döndürdüğünde çalışma listesi burada açılır."
@@ -315,6 +327,18 @@ export function ModernUnicontaPage({
                 ]}
               />
             </div>
+            {invoices.length > INVOICE_PAGE_SIZE ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border-soft pt-3 text-xs text-sg-text-soft">
+                <span>
+                  Faturalar {invoicePage * INVOICE_PAGE_SIZE + 1}–{Math.min((invoicePage + 1) * INVOICE_PAGE_SIZE, invoices.length)} / {invoices.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <ModernButton tone="ghost" size="sm" onClick={() => setInvoicePage((current) => Math.max(0, current - 1))} disabled={invoicePage === 0}>Önceki</ModernButton>
+                  <span aria-live="polite" className="min-w-20 text-center font-semibold text-sg-text">Sayfa {invoicePage + 1} / {invoicePageCount}</span>
+                  <ModernButton tone="ghost" size="sm" onClick={() => setInvoicePage((current) => Math.min(invoicePageCount - 1, current + 1))} disabled={invoicePage >= invoicePageCount - 1}>Sonraki</ModernButton>
+                </div>
+              </div>
+            ) : null}
           </ModernSection>
 
           <div className="space-y-5">
