@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
@@ -155,6 +155,14 @@ export interface WooMakeState {
   uploadPhotos: (files: File[]) => void;
   deletePhoto: (photoId: string) => void;
   createProductFromDraft: (draft: NewWooProductDraft) => Promise<ProductOut | null>;
+}
+
+export function resolveWooSelectedProductId(
+  requestedProductId: string | null,
+  items: Array<Pick<WooListItem, 'id'>>,
+): string | null {
+  if (requestedProductId && items.some((item) => item.id === requestedProductId)) return requestedProductId;
+  return items[0]?.id ?? null;
 }
 
 export function emptySeoData(): SeoData {
@@ -417,7 +425,6 @@ export function useWooMakeState(): WooMakeState {
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WooFilter>('all');
-  const [secilenId, setSecilenId] = useState<string | null>(null);
   const [publishPrice, setPublishPrice] = useState('');
   const [aiDraft, setAiDraft] = useState('');
   const [rawOpen, setRawOpen] = useState(false);
@@ -447,36 +454,32 @@ export function useWooMakeState(): WooMakeState {
 
   const stokList = useMemo(() => allRows.map(rowToStokItem), [allRows]);
 
-  useEffect(() => {
-    if (urunler.length === 0) {
-      setSecilenId(null);
-      return;
-    }
-    if (requestedProductId && urunler.some((item) => item.id === requestedProductId)) {
-      if (secilenId !== requestedProductId) {
-        setSecilenId(requestedProductId);
-      }
-      return;
-    }
-    if (!secilenId || !urunler.some((item) => item.id === secilenId)) {
-      setSecilenId(urunler[0].id);
-    }
-  }, [urunler, requestedProductId, secilenId]);
+  // The URL is the single source of truth for the selected product. Keeping a
+  // second local selection state caused a click on B to be overwritten by the
+  // previous `?product=A` effect before the URL update landed.
+  const secilenId = useMemo(() => {
+    return resolveWooSelectedProductId(requestedProductId, urunler);
+  }, [requestedProductId, urunler]);
+
+  const setSecilenId = useCallback((nextId: string | null) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (nextId) next.set('product', nextId);
+      else next.delete('product');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   useEffect(() => {
-    const currentProductId = searchParams.get('product');
-    if (!secilenId) {
-      if (!currentProductId) return;
-      const next = new URLSearchParams(searchParams);
-      next.delete('product');
-      setSearchParams(next, { replace: true });
-      return;
-    }
-    if (currentProductId === secilenId) return;
-    const next = new URLSearchParams(searchParams);
-    next.set('product', secilenId);
-    setSearchParams(next, { replace: true });
-  }, [searchParams, secilenId, setSearchParams]);
+    if (secilenId === requestedProductId) return;
+    if (!secilenId && !requestedProductId) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (secilenId) next.set('product', secilenId);
+      else next.delete('product');
+      return next;
+    }, { replace: true });
+  }, [requestedProductId, secilenId, setSearchParams]);
 
   const secilen = useMemo(() => urunler.find((item) => item.id === secilenId) ?? null, [urunler, secilenId]);
 

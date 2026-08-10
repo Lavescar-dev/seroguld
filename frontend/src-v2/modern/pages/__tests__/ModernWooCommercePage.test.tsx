@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { WooMakeState } from '@/make/woocommerce/useWooMakeState';
+import { resolveWooSelectedProductId, type WooMakeState } from '@/make/woocommerce/useWooMakeState';
 import type { ProductOut } from '@/types';
 
 import { ModernWooCommercePage } from '../ModernWooCommercePage';
@@ -99,6 +99,11 @@ function makeDetailedState() {
 }
 
 describe('ModernWooCommercePage', () => {
+  it('keeps the URL-selected product instead of reverting to the previous row', () => {
+    expect(resolveWooSelectedProductId('product-1', items)).toBe('product-1');
+    expect(resolveWooSelectedProductId('missing', items)).toBe('product-0');
+  });
+
   it('paginates larger product lists without losing the selected detail surface', () => {
     render(<ModernWooCommercePage state={state} />);
 
