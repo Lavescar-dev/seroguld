@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -116,6 +119,58 @@ def test_workspace_revision_claim_refreshes_timestamp_after_customer_autoflush()
             assert snapshot.customer_name == "Customer"
             assert snapshot.workspace_revision == 2
             assert snapshot.updated_at is not None
+
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_workspace_revision_conflict_reloads_after_rollback_without_lazy_io() -> None:
+    """A losing autosave must return 409, never MissingGreenlet/500.
+
+    The failed CAS rolls back the AsyncSession and expires the stale ORM
+    object. The conflict handler therefore has to retain the session id before
+    rollback instead of reading an expired primary key afterward.
+    """
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with session_factory() as session:
+            clerk = User(email="conflict-clerk@test.local", password_hash="x", name="Clerk", role=RoleEnum.ADMIN)
+            session.add(clerk)
+            await session.flush()
+            pos_session = PosSession(
+                session_code="CONFLICT",
+                display_token="display-conflict-test",
+                clerk_user_id=clerk.id,
+                trade_side=PosTradeSideEnum.BUY_FROM_CUSTOMER,
+                status=PosSessionStatusEnum.DRAFT,
+                visible_snapshot={},
+            )
+            session.add(pos_session)
+            await session.commit()
+
+            stale = await _lock_workspace_session(session, pos_session)
+            winning_notes = pos_service._workspace_note_defaults()
+            winning_notes["workspace_revision"] = 2
+            await session.execute(
+                update(PosSession)
+                .where(PosSession.id == stale.id)
+                .values(notes=pos_service._serialize_workspace_note_payload(winning_notes))
+                .execution_options(synchronize_session=False)
+            )
+            await session.commit()
+
+            with pytest.raises(HTTPException) as exc:
+                await _claim_workspace_revision(session, pos_service, stale, base_revision=1)
+
+            assert exc.value.status_code == 409
+            assert exc.value.detail["code"] == "workspace_revision_conflict"
+            assert exc.value.detail["current_revision"] == 2
 
         await engine.dispose()
 

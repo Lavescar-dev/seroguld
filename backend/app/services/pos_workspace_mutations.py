@@ -49,6 +49,11 @@ async def _claim_workspace_revision(
     pos_session: PosSession,
     base_revision: int | None,
 ) -> dict:
+    # Rollback expires ORM attributes, including the primary key, in an
+    # AsyncSession. Keep the scalar id before the CAS so the conflict path can
+    # reload the winner without triggering an implicit (and forbidden) lazy
+    # query through ``pos_session.id`` after rollback.
+    pos_session_id = pos_session.id
     original_notes = pos_session.notes
     note_payload = core._parse_workspace_note_payload(original_notes)
     current_revision = int(note_payload.get("workspace_revision") or 1)
@@ -76,7 +81,7 @@ async def _claim_workspace_revision(
     )
     if result.rowcount != 1:
         await session.rollback()
-        fresh = await session.get(PosSession, pos_session.id, populate_existing=True)
+        fresh = await session.get(PosSession, pos_session_id, populate_existing=True)
         fresh_payload = core._parse_workspace_note_payload(fresh.notes if fresh is not None else None)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
