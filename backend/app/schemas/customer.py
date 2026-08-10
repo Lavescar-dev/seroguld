@@ -15,6 +15,7 @@ class CustomerCreate(AppBaseModel):
     phone: str | None = Field(default=None, max_length=30)
     address: str | None = None
     postal_code: str | None = Field(default=None, max_length=20)
+    city: str | None = Field(default=None, max_length=120)
     cpr_number: str | None = Field(default=None, max_length=20)
     identity_doc_type: IdentityDocTypeEnum | None = None
     identity_doc_number: str | None = Field(default=None, max_length=50)
@@ -29,6 +30,7 @@ class CustomerUpdate(AppBaseModel):
     phone: str | None = Field(default=None, max_length=30)
     address: str | None = None
     postal_code: str | None = Field(default=None, max_length=20)
+    city: str | None = Field(default=None, max_length=120)
     cpr_number: str | None = Field(default=None, max_length=20)
     identity_doc_type: IdentityDocTypeEnum | None = None
     identity_doc_number: str | None = Field(default=None, max_length=50)
@@ -59,6 +61,7 @@ class CustomerOut(AppBaseModel):
     phone: str | None
     address: str | None
     postal_code: str | None
+    city: str | None
     cpr_number: str | None
     cpr_number_masked: str | None
     identity_doc_type: IdentityDocTypeEnum | None = None

@@ -6,7 +6,9 @@ export type EditableCustomer = {
   postal_code: string;
   city: string;
   cpr_number: string;
+  identity_doc_type: string;
   identity_doc_number: string;
+  identity_doc_country: string;
 };
 
 export type EditableGoldRow = {

@@ -8,6 +8,62 @@ type TauriGlobal = typeof globalThis & {
   isTauri?: boolean;
 };
 
+export type IdentityScanSide = 'front' | 'back';
+export type IdentityScanSource = 'wia' | 'file';
+export type IdentityScanMimeType = 'image/jpeg' | 'image/png' | 'image/tiff' | 'image/bmp';
+export type IdentityScannerPlatform = 'windows' | 'macos' | 'linux' | 'unknown';
+export type IdentityScannerErrorCode =
+  | 'UNSUPPORTED_PLATFORM'
+  | 'BRIDGE_UNAVAILABLE'
+  | 'INVALID_REQUEST'
+  | 'SCAN_CANCELLED'
+  | 'SCANNER_UNAVAILABLE'
+  | 'ACQUISITION_FAILED'
+  | 'INVALID_IMAGE'
+  | 'FILE_TOO_LARGE'
+  | 'FILE_READ_FAILED'
+  | 'OCR_UNAVAILABLE'
+  | 'OCR_FAILED'
+  | 'TEMP_CLEANUP_FAILED'
+  | 'INTERNAL_ERROR';
+
+export interface IdentityScannerCapabilities {
+  supported: boolean;
+  platform: IdentityScannerPlatform;
+  wiaAcquisition: boolean;
+  localOcr: boolean;
+  imageFileFallback: boolean;
+  maxFileBytes: number;
+  acceptedMimeTypes: IdentityScanMimeType[];
+}
+
+export interface IdentityScanResult {
+  side: IdentityScanSide;
+  source: IdentityScanSource;
+  mimeType: IdentityScanMimeType;
+  previewDataUrl: string;
+  ocrText: string;
+  ocrLines: string[];
+}
+
+export interface IdentityScannerErrorPayload {
+  code: IdentityScannerErrorCode;
+  message: string;
+  retryable: boolean;
+}
+
+export class IdentityScannerBridgeError extends Error implements IdentityScannerErrorPayload {
+  readonly code: IdentityScannerErrorCode;
+  readonly retryable: boolean;
+
+  constructor({ code, message, retryable }: IdentityScannerErrorPayload) {
+    super(message);
+    this.name = 'IdentityScannerBridgeError';
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+
 export type DesktopDisplayWindowState = {
   has_secondary_monitor: boolean;
   active_route: string;
@@ -94,6 +150,117 @@ async function invokeDesktop<T = unknown>(command: string, args?: Record<string,
     throw new Error('Tauri runtime bulunamadı');
   }
   return invoke<T>(command, args);
+}
+
+const IDENTITY_SCANNER_ERROR_CODES: IdentityScannerErrorCode[] = [
+  'UNSUPPORTED_PLATFORM',
+  'BRIDGE_UNAVAILABLE',
+  'INVALID_REQUEST',
+  'SCAN_CANCELLED',
+  'SCANNER_UNAVAILABLE',
+  'ACQUISITION_FAILED',
+  'INVALID_IMAGE',
+  'FILE_TOO_LARGE',
+  'FILE_READ_FAILED',
+  'OCR_UNAVAILABLE',
+  'OCR_FAILED',
+  'TEMP_CLEANUP_FAILED',
+  'INTERNAL_ERROR',
+];
+
+function unsupportedIdentityScannerCapabilities(platform: IdentityScannerPlatform = 'unknown'): IdentityScannerCapabilities {
+  return {
+    supported: false,
+    platform,
+    wiaAcquisition: false,
+    localOcr: false,
+    imageFileFallback: false,
+    maxFileBytes: 10 * 1024 * 1024,
+    acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
+  };
+}
+
+function isIdentityScannerErrorCode(value: unknown): value is IdentityScannerErrorCode {
+  return typeof value === 'string' && IDENTITY_SCANNER_ERROR_CODES.includes(value as IdentityScannerErrorCode);
+}
+
+function identityScannerBridgeError(error: unknown): IdentityScannerBridgeError {
+  if (error instanceof IdentityScannerBridgeError) return error;
+
+  const payload = error && typeof error === 'object' ? (error as Partial<IdentityScannerErrorPayload>) : null;
+  if (payload && isIdentityScannerErrorCode(payload.code) && typeof payload.message === 'string') {
+    return new IdentityScannerBridgeError({
+      code: payload.code,
+      message: payload.message,
+      retryable: payload.retryable === true,
+    });
+  }
+
+  return new IdentityScannerBridgeError({
+    code: 'BRIDGE_UNAVAILABLE',
+    message: 'Kimlik tarama masaüstü köprüsüne ulaşılamıyor.',
+    retryable: false,
+  });
+}
+
+async function requireIdentityScannerCapabilities(): Promise<IdentityScannerCapabilities> {
+  const capabilities = await getIdentityScannerCapabilities();
+  if (!capabilities.supported) {
+    throw new IdentityScannerBridgeError({
+      code: 'UNSUPPORTED_PLATFORM',
+      message: 'Kimlik tarama yalnızca Windows masaüstü uygulamasında kullanılabilir.',
+      retryable: false,
+    });
+  }
+  return capabilities;
+}
+
+/**
+ * Reports the local-only identity scan options. Browser callers get an explicit
+ * unsupported capability response; no browser upload fallback is attempted.
+ */
+export async function getIdentityScannerCapabilities(): Promise<IdentityScannerCapabilities> {
+  if (!isTauriRuntime()) {
+    return unsupportedIdentityScannerCapabilities();
+  }
+  try {
+    return await invokeDesktop<IdentityScannerCapabilities>('get_identity_scanner_capabilities');
+  } catch {
+    return unsupportedIdentityScannerCapabilities();
+  }
+}
+
+/** Acquires one identity side using the Windows WIA device chooser. */
+export async function acquireIdentityScan(side: IdentityScanSide): Promise<IdentityScanResult> {
+  await requireIdentityScannerCapabilities();
+  try {
+    return await invokeDesktop<IdentityScanResult>('acquire_identity_scan', { side });
+  } catch (error) {
+    throw identityScannerBridgeError(error);
+  }
+}
+
+/** Opens the native Windows file chooser for a validated local image fallback. */
+export async function pickIdentityScanFile(side: IdentityScanSide): Promise<IdentityScanResult> {
+  await requireIdentityScannerCapabilities();
+  try {
+    return await invokeDesktop<IdentityScanResult>('pick_identity_scan_file', { side });
+  } catch (error) {
+    throw identityScannerBridgeError(error);
+  }
+}
+
+/**
+ * The desktop bridge stores no identity scans. This verifies/finishes the
+ * native lifecycle without exposing any temporary file path to the frontend.
+ */
+export async function discardIdentityScan(): Promise<boolean> {
+  await requireIdentityScannerCapabilities();
+  try {
+    return await invokeDesktop<boolean>('discard_identity_scan');
+  } catch (error) {
+    throw identityScannerBridgeError(error);
+  }
 }
 
 export async function getDesktopMonitorSetup(): Promise<DesktopDisplayWindowState | null> {

@@ -4,7 +4,7 @@ import json
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
@@ -61,6 +61,7 @@ from app.database import get_db
 from app.models.enums import PosTradeSideEnum
 from app.models.user import User
 from app.schemas.document_artifact import DocumentArtifactReconcilePreviewOut
+from app.schemas.address import CustomerMatchOut, CustomerMatchRequest, KdsAddressResolveOut, KdsAddressSearchOut
 from app.schemas.pos import (
     PosDocumentDetailOut,
     PosPostalLookupOut,
@@ -102,9 +103,18 @@ from app.services.pos_service import (
     update_purchase_workspace_draft_customer,
 )
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
+from app.services.customer_service import customer_identity_match
+from app.services.kds_address_service import KdsAddressError, kds_address_service
 from app.schemas.pos import PosSessionCreate
 
 router = APIRouter()
+
+
+def _address_lookup_http_error(exc: KdsAddressError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.message},
+    )
 
 
 @router.get("/alis/workspace/open-draft", response_model=PosWorkspaceOut | None)
@@ -228,6 +238,48 @@ async def get_alis_postal_lookup_v2(
     _: User = Depends(require_admin),
 ) -> PosPostalLookupOut:
     return await _lookup_danish_postal_code(postal_code)
+
+
+@router.get("/alis/address-search", response_model=KdsAddressSearchOut)
+async def get_alis_address_search_v2(
+    q: str = Query(min_length=1, max_length=73),
+    postal_code: str | None = Query(default=None, pattern=r"^\d{4}$"),
+    limit: int = Query(default=8, ge=1, le=10),
+    _: User = Depends(require_admin),
+) -> KdsAddressSearchOut:
+    try:
+        return await kds_address_service.search(q, postal_code=postal_code, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KdsAddressError as exc:
+        raise _address_lookup_http_error(exc) from exc
+
+
+@router.get("/alis/address-resolve/{address_id}", response_model=KdsAddressResolveOut)
+async def get_alis_address_resolve_v2(
+    address_id: str,
+    postal_code: str | None = Query(default=None, pattern=r"^\d{4}$"),
+    _: User = Depends(require_admin),
+) -> KdsAddressResolveOut:
+    try:
+        return await kds_address_service.resolve(address_id, postal_code=postal_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KdsAddressError as exc:
+        raise _address_lookup_http_error(exc) from exc
+
+
+@router.post("/alis/customer-match", response_model=CustomerMatchOut)
+async def post_alis_customer_match_v2(
+    payload: CustomerMatchRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> CustomerMatchOut:
+    return await customer_identity_match(
+        db,
+        cpr_number=payload.cpr_number,
+        identity_doc_number=payload.identity_doc_number,
+    )
 
 
 @router.post("/alis/workspace/{session_id}/customer/select", response_model=PosWorkspaceOut)

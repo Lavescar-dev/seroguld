@@ -1,77 +1,16 @@
-import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, Pencil, RefreshCcw, ScanLine, Zap } from 'lucide-react';
+import { type Dispatch, type SetStateAction, useMemo, useState } from 'react';
+import { AlertCircle, CheckCircle2, ChevronDown, Pencil, RefreshCcw, ScanLine } from 'lucide-react';
 
-import { apiRequest } from '@/lib/api';
 import { validateCpr } from '@/lib/cpr';
-import type { PosPostalLookup, PosWorkspaceBankInfo } from '@/types';
+import type { PosWorkspaceBankInfo } from '@/types';
 
+import { normalizePostalCode, useAddressAutocomplete } from './addressAutocomplete';
+import { useCustomerMatch } from './customerMatch';
+import { type IdentityFieldName, useIdentityScan } from './identityScan';
 import type { EditableCustomer, PaymentMethod } from './types';
-
-type ScanStatus = 'idle' | 'ready' | 'done' | 'error';
-type PostalLookupStatus = 'idle' | 'loading' | 'ready' | 'not_found' | 'unavailable';
-
-export type MRZResult = {
-  fullName?: string;
-  docNumber?: string;
-  cprHint?: string;
-  adresse?: string;
-  postnr?: string;
-  docType?: string;
-  rawLines?: string[];
-};
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 const sansStyle = { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" } as const;
-
-function cleanMrzField(value: string): string {
-  return value.replace(/</g, ' ').trim().replace(/\s+/g, ' ');
-}
-
-export function parseMrzLines(raw: string): MRZResult {
-  const lines = raw
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length >= 20 && /^[A-Z0-9<]+$/.test(line));
-
-  if (lines.length === 0) {
-    return { rawLines: [] };
-  }
-
-  if (lines.length >= 2 && lines[0].length >= 44 && lines[1].length >= 44) {
-    const first = lines[0];
-    const second = lines[1];
-    const nameField = first.substring(5, 44);
-    const separator = nameField.indexOf('<<');
-    const surname = separator >= 0 ? cleanMrzField(nameField.substring(0, separator)) : cleanMrzField(nameField);
-    const given = separator >= 0 ? cleanMrzField(nameField.substring(separator + 2)) : '';
-    const docNumber = second.substring(0, 9).replace(/</g, '');
-    const dob = second.substring(13, 19);
-    const cprHint =
-      dob.length === 6 ? `${dob.substring(4, 6)}${dob.substring(2, 4)}${dob.substring(0, 2)}-????` : '';
-    return {
-      fullName: `${given} ${surname}`.trim(),
-      docNumber,
-      cprHint,
-      docType: 'MRZ / Pasaport',
-      rawLines: lines,
-    };
-  }
-
-  if (lines.length >= 3) {
-    const normalized = lines.join('');
-    const docMatch = normalized.match(/[A-Z]{0,3}\d{6,12}/);
-    const cprMatch = normalized.match(/(\d{2})(\d{2})(\d{2})(\d{4})?/);
-    return {
-      docNumber: docMatch?.[0] || undefined,
-      cprHint: cprMatch ? `${cprMatch[1]}${cprMatch[2]}${cprMatch[3]}-${cprMatch[4] || '????'}` : undefined,
-      docType: 'Kimlik / Ehliyet',
-      rawLines: lines,
-    };
-  }
-
-  return { rawLines: lines };
-}
 
 export function PaymentMethodToggle({
   setPaymentMethod,
@@ -109,6 +48,8 @@ export function CustomerInfoTable({
     { label: 'Navn / Ad Soyad', key: 'name', type: 'text' },
     { label: 'CPR nr.', key: 'cpr_number', mono: true, type: 'text' },
     { label: 'Kørekort / Pas', key: 'identity_doc_number', mono: true, type: 'text' },
+    { label: 'Belge türü', key: 'identity_doc_type', type: 'text' },
+    { label: 'Belge ülkesi', key: 'identity_doc_country', mono: true, type: 'text' },
     { label: 'Tlf.', key: 'phone', mono: true, type: 'text' },
     { label: 'E-mail', key: 'email', type: 'email' },
     { label: 'Adresse', key: 'address', type: 'text' },
@@ -116,10 +57,16 @@ export function CustomerInfoTable({
     { label: 'Postnr.', key: 'postal_code', mono: true, type: 'text' },
   ];
   const [bankOpen, setBankOpen] = useState(false);
+  const address = useAddressAutocomplete({ customer, setCustomer, onApplied: onBlur });
   const hasBankData = Boolean(bankInfo.reg_number || bankInfo.account_number);
   const cellInput =
     'w-full px-2 py-1 border border-brand-200 bg-white focus:outline-none focus:border-brand-700 focus:bg-brand-50 text-brand-900 text-sm';
   const mainFields = fields.filter((field) => !field.section);
+  const updateField = (field: keyof EditableCustomer, value: string) => {
+    if (field === 'postal_code') value = normalizePostalCode(value);
+    if (field === 'identity_doc_country') value = value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3);
+    setCustomer((current) => ({ ...current, [field]: value }));
+  };
 
   return (
     <table className="w-full border-collapse">
@@ -133,16 +80,28 @@ export function CustomerInfoTable({
               {field.key === 'cpr_number' ? (
                 <CprInput
                   value={customer[field.key]}
-                  onChange={(value) => setCustomer((current) => ({ ...current, [field.key]: value }))}
+                  onChange={(value) => updateField(field.key, value)}
                   onBlur={onBlur}
                   className={`${cellInput} ${field.mono ? 'mono' : ''}`}
                   style={field.mono ? monoStyle : sansStyle}
                 />
+              ) : field.key === 'identity_doc_type' ? (
+                <select
+                  value={customer.identity_doc_type}
+                  onChange={(event) => updateField('identity_doc_type', event.target.value)}
+                  onBlur={onBlur}
+                  className={cellInput}
+                >
+                  <option value="">Seçin</option>
+                  <option value="passport">Pasaport</option>
+                  <option value="id_card">Kimlik kartı</option>
+                  <option value="driver_license">Ehliyet</option>
+                </select>
               ) : (
                 <input
                   type={field.type || 'text'}
                   value={customer[field.key]}
-                  onChange={(event) => setCustomer((current) => ({ ...current, [field.key]: event.target.value }))}
+                  onChange={(event) => updateField(field.key, event.target.value)}
                   onBlur={onBlur}
                   className={`${cellInput} ${field.mono ? 'mono' : ''}`}
                   style={field.mono ? monoStyle : sansStyle}
@@ -151,6 +110,16 @@ export function CustomerInfoTable({
             </td>
           </tr>
         ))}
+        {address.status !== 'idle' ? (
+          <tr>
+            <td colSpan={2} className="border-b border-brand-100 bg-brand-50 px-3 py-2">
+              {address.status === 'loading' || address.postalLookupStatus === 'loading' ? <p className="text-[10px] font-medium text-brand-400">Adres / posta kodu aranıyor...</p> : null}
+              {address.status === 'ready' ? <div className="space-y-1">{address.suggestions.map((suggestion) => <button key={suggestion.id} type="button" onClick={() => address.selectSuggestion(suggestion)} disabled={address.selectedId === suggestion.id} className="block w-full border border-brand-200 bg-white px-2 py-1 text-left text-[10px] font-semibold text-brand-700 hover:border-brand-500 disabled:opacity-60">{suggestion.title}</button>)}</div> : null}
+              {address.status === 'empty' ? <p className="text-[10px] font-medium text-amber-600">Bu postnr. ve sokak için adres bulunamadı.</p> : null}
+              {address.status === 'unavailable' || address.postalLookupStatus === 'unavailable' ? <p className="text-[10px] font-medium text-amber-600">Adres servisine şu an ulaşılamıyor.</p> : null}
+            </td>
+          </tr>
+        ) : null}
         <tr>
           <td colSpan={2} className="border-t border-emerald-200">
             <button
@@ -345,6 +314,18 @@ function CprInput({
   );
 }
 
+function identityFieldLabel(field: IdentityFieldName) {
+  return {
+    name: 'Navn / Ad Soyad',
+    identity_doc_number: 'Kørekort / Pas',
+    identity_doc_type: 'Belge türü',
+    identity_doc_country: 'Belge ülkesi',
+    address: 'Adresse',
+    postal_code: 'Postnr.',
+    city: 'Şehir / By',
+  }[field];
+}
+
 export function CustomerEditorTable({
   customer,
   setCustomer,
@@ -354,6 +335,7 @@ export function CustomerEditorTable({
   paymentMethod,
   setPaymentMethod,
   showPaymentSection = true,
+  onSelectMatchedCustomer,
 }: {
   customer: EditableCustomer;
   setCustomer: Dispatch<SetStateAction<EditableCustomer>>;
@@ -363,70 +345,12 @@ export function CustomerEditorTable({
   paymentMethod: PaymentMethod;
   setPaymentMethod: Dispatch<SetStateAction<PaymentMethod>>;
   showPaymentSection?: boolean;
+  onSelectMatchedCustomer?: (customerId: string) => void;
 }) {
-  const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
-  const [scanBuffer, setScanBuffer] = useState('');
-  const [scanResult, setScanResult] = useState<MRZResult | null>(null);
-  const [scanSources, setScanSources] = useState<Set<keyof EditableCustomer>>(new Set());
-  const [showRaw, setShowRaw] = useState(false);
   const [bankOpen, setBankOpen] = useState(false);
-  const [postalLookupStatus, setPostalLookupStatus] = useState<PostalLookupStatus>('idle');
-  const [postalLookup, setPostalLookup] = useState<PosPostalLookup | null>(null);
-  const timerRef = useRef<number | null>(null);
-  const scanRef = useRef<HTMLTextAreaElement | null>(null);
-  const postalLookupAutoCityRef = useRef('');
-  const postalLookupRequestRef = useRef(0);
-
-  useEffect(() => () => {
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-  }, []);
-
-  useEffect(() => {
-    const normalizedPostalCode = customer.postal_code.replace(/\D/g, '').slice(0, 4);
-    if (normalizedPostalCode.length !== 4) {
-      setPostalLookup(null);
-      setPostalLookupStatus('idle');
-      return;
-    }
-
-    const requestId = ++postalLookupRequestRef.current;
-    setPostalLookupStatus('loading');
-    const timeoutId = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const result = await apiRequest<PosPostalLookup>(`/api/v2/alis/postal-lookup/${normalizedPostalCode}`);
-          if (postalLookupRequestRef.current !== requestId) return;
-          setPostalLookup(result);
-          if (!result.available) {
-            setPostalLookupStatus('unavailable');
-            return;
-          }
-          if (!result.found || !result.postal_district) {
-            setPostalLookupStatus('not_found');
-            return;
-          }
-          setPostalLookupStatus('ready');
-          setCustomer((current) => {
-            const nextCity = (result.postal_district || '').trim();
-            const currentCity = String(current.city || '').trim();
-            const previousAutoCity = postalLookupAutoCityRef.current.trim();
-            if (!nextCity || (currentCity && currentCity !== previousAutoCity)) {
-              return current;
-            }
-            postalLookupAutoCityRef.current = nextCity;
-            return current.city === nextCity ? current : { ...current, city: nextCity };
-          });
-          window.setTimeout(() => onBlur?.(), 0);
-        } catch {
-          if (postalLookupRequestRef.current !== requestId) return;
-          setPostalLookup(null);
-          setPostalLookupStatus('unavailable');
-        }
-      })();
-    }, 250);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [customer.postal_code, onBlur, setCustomer]);
+  const identity = useIdentityScan({ customer, setCustomer, onApplied: onBlur });
+  const address = useAddressAutocomplete({ customer, setCustomer, onApplied: onBlur });
+  const customerMatch = useCustomerMatch(customer);
 
   const bankFields: Array<{ label: string; key: 'reg_number' | 'account_number'; placeholder: string }> = [
     { label: 'Reg.nr.', key: 'reg_number', placeholder: '0000' },
@@ -436,6 +360,8 @@ export function CustomerEditorTable({
     { label: 'Navn / Ad Soyad *', key: 'name', placeholder: 'Ad Soyad' },
     { label: 'CPR nr. *', key: 'cpr_number', placeholder: '120385-????', mono: true },
     { label: 'Kørekort / Pas', key: 'identity_doc_number', placeholder: 'Belge No', mono: true },
+    { label: 'Belge türü', key: 'identity_doc_type', placeholder: 'Belge türünü seçin' },
+    { label: 'Belge ülkesi', key: 'identity_doc_country', placeholder: 'DNK', mono: true },
     { label: 'Adresse', key: 'address', placeholder: 'Sokak, No.' },
     { label: 'Şehir / By', key: 'city', placeholder: 'Şehir' },
     { label: 'Postnr.', key: 'postal_code', placeholder: '0000', mono: true },
@@ -452,104 +378,13 @@ export function CustomerEditorTable({
 
   function updateField(field: keyof EditableCustomer, value: string) {
     if (field === 'postal_code') {
-      value = value.replace(/\D/g, '').slice(0, 4);
+      value = normalizePostalCode(value);
     }
-    if (field === 'city' && value.trim() !== postalLookupAutoCityRef.current.trim()) {
-      postalLookupAutoCityRef.current = '';
+    if (field === 'identity_doc_country') {
+      value = value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3);
     }
     setCustomer((current) => ({ ...current, [field]: value }));
   }
-
-  function applyScanResult(result: MRZResult) {
-    const sources = new Set<keyof EditableCustomer>();
-    if (result.fullName) {
-      updateField('name', result.fullName);
-      sources.add('name');
-    }
-    if (result.cprHint) {
-      updateField('cpr_number', result.cprHint);
-      sources.add('cpr_number');
-    }
-    if (result.docNumber) {
-      updateField('identity_doc_number', result.docNumber);
-      sources.add('identity_doc_number');
-    }
-    if (result.adresse) {
-      updateField('address', result.adresse);
-      sources.add('address');
-    }
-    if (result.postnr) {
-      updateField('postal_code', result.postnr);
-      sources.add('postal_code');
-    }
-    setScanSources(sources);
-    setScanResult(result);
-    setScanStatus(sources.size > 0 ? 'done' : 'error');
-    window.setTimeout(() => onBlur?.(), 0);
-  }
-
-  function triggerParse(value: string) {
-    setScanBuffer(value);
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => {
-      if (value.trim().length > 10) {
-        applyScanResult(parseMrzLines(value));
-      }
-    }, 150);
-  }
-
-  function loadDemo() {
-    const result: MRZResult = {
-      fullName: 'Lars Christian Nielsen',
-      docNumber: 'DK-123456789',
-      cprHint: '120385-????',
-      docType: 'Kimlik / Ehliyet (Demo)',
-      rawLines: [
-        'IDDNK1234567890<<<<<<<<<<<<<<<',
-        '8503126M3012315DNK<<<<<<<<<<<4',
-        'NIELSEN<<LARS<CHRISTIAN<<<<<<<',
-      ],
-    };
-    setScanBuffer(result.rawLines?.join('\n') || '');
-    applyScanResult(result);
-  }
-
-  function resetScanner() {
-    setScanStatus('idle');
-    setScanBuffer('');
-    setScanResult(null);
-    setScanSources(new Set());
-    setPostalLookup(null);
-    setPostalLookupStatus('idle');
-    postalLookupAutoCityRef.current = '';
-    setShowRaw(false);
-    (['name', 'cpr_number', 'identity_doc_number', 'address', 'city', 'postal_code'] as Array<keyof EditableCustomer>).forEach((field) => {
-      updateField(field, '');
-    });
-    window.setTimeout(() => onBlur?.(), 0);
-  }
-
-  function activateScanner() {
-    setScanStatus('ready');
-    setScanBuffer('');
-    setScanResult(null);
-    setShowRaw(false);
-    window.setTimeout(() => scanRef.current?.focus(), 60);
-  }
-
-  const statusStyles: Record<ScanStatus, { bar: string; dot: string; text: string }> = {
-    idle: { bar: 'bg-brand-100 border-brand-200', dot: 'bg-brand-400', text: 'text-brand-500' },
-    ready: { bar: 'bg-emerald-100 border-emerald-300', dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-800' },
-    done: { bar: 'bg-emerald-800 border-emerald-700', dot: 'bg-emerald-300', text: 'text-white' },
-    error: { bar: 'bg-red-100 border-red-300', dot: 'bg-red-500', text: 'text-red-800' },
-  };
-  const statusText: Record<ScanStatus, string> = {
-    idle: 'Hazır — Tarayıcı bekleniyor',
-    ready: '● Aktif — Kimliği tarayıcıya yerleştirin',
-    done: `✓ Tarama başarılı — ${scanResult?.docType || 'Belge'}`,
-    error: '✕ Okunamadı — MRZ / barkod tanımsız',
-  };
-  const statusStyle = statusStyles[scanStatus];
 
   return (
     <div>
@@ -557,83 +392,71 @@ export function CustomerEditorTable({
         <div className="flex items-center justify-between bg-brand-900 px-4 py-2">
           <div className="flex items-center gap-2">
             <ScanLine className="h-3.5 w-3.5 flex-shrink-0 text-emerald-400" />
-            <span className="text-xs font-black uppercase tracking-widest text-white">IDScanner 365</span>
-            <span className="hidden text-[10px] font-bold uppercase tracking-wider text-brand-500 sm:inline">— Otomatik Kimlik Okuyucu</span>
+            <span className="text-xs font-black uppercase tracking-widest text-white">Kimlik tarama</span>
+            <span className="hidden text-[10px] font-bold uppercase tracking-wider text-brand-500 sm:inline">— yerel tarayıcı / dosya</span>
           </div>
           <div className="flex items-center gap-1.5">
-            {scanStatus !== 'idle' ? (
-              <button
-                type="button"
-                onClick={resetScanner}
-                title="Sıfırla"
-                className="inline-flex items-center gap-1 border border-brand-600 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-brand-400 transition-colors hover:border-brand-400 hover:text-white"
-              >
-                <RefreshCcw className="h-2.5 w-2.5" />
-                Sıfırla
-              </button>
-            ) : null}
             <button
               type="button"
-              onClick={loadDemo}
+              onClick={() => void identity.refreshCapabilities()}
               className="border border-brand-600 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-brand-300 transition hover:border-brand-400 hover:text-white"
             >
-              Demo
+              <RefreshCcw className="mr-1 inline h-2.5 w-2.5" /> Yenile
             </button>
             <button
               type="button"
-              onClick={activateScanner}
+              disabled={!identity.capabilities.scanner || identity.status === 'acquiring'}
+              onClick={() => void identity.acquire('front')}
               className="inline-flex items-center gap-1 border border-emerald-600 bg-emerald-700 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white transition hover:bg-emerald-600"
             >
-              <Zap className="h-2.5 w-2.5" />
-              Tara
+              Ön yüz tara
             </button>
-          </div>
-        </div>
-
-        <div className={`flex items-center justify-between border-b px-3 py-1.5 ${statusStyle.bar}`}>
-          <div className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${statusStyle.dot}`} />
-            <span className={`text-[10px] font-black uppercase tracking-widest ${statusStyle.text}`}>{statusText[scanStatus]}</span>
-          </div>
-          {scanStatus === 'done' && scanResult?.rawLines?.length ? (
             <button
               type="button"
-              onClick={() => setShowRaw((current) => !current)}
-              className="text-[10px] text-emerald-300 underline transition-colors hover:text-white"
+              disabled={!identity.capabilities.file || identity.status === 'acquiring'}
+              onClick={() => void identity.pickFile('front')}
+              className="border border-brand-600 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-brand-300 transition hover:border-brand-400 hover:text-white"
             >
-              {showRaw ? 'Ham veriyi gizle' : 'Ham veriyi gör'}
+              Dosyadan oku
             </button>
-          ) : null}
-          {scanStatus === 'error' ? <AlertCircle className="h-3 w-3 text-red-500" /> : null}
+          </div>
         </div>
 
-        {showRaw && scanResult?.rawLines?.length ? (
-          <div className="border-b border-brand-700 bg-brand-900 px-4 py-2">
-            <p className="mb-1 text-[9px] font-black uppercase tracking-widest text-brand-500">MRZ / Barkod Çıktısı</p>
-            <pre className="mono whitespace-pre-wrap text-[10px] leading-relaxed text-emerald-300">{scanResult.rawLines.join('\n')}</pre>
+        <div className="flex items-center justify-between border-b border-brand-700 bg-brand-800 px-3 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-brand-100">
+              {identity.status === 'checking'
+                ? 'Tarayıcı özellikleri denetleniyor'
+                : identity.status === 'acquiring'
+                  ? 'Belge okunuyor'
+                  : identity.status === 'review'
+                    ? 'İnceleme ve onay gerekli'
+                    : identity.status === 'applied'
+                      ? 'Onaylanan alanlar uygulandı'
+                      : identity.status === 'unavailable'
+                        ? 'Tarayıcı / dosya desteği yok'
+                        : identity.error || 'CPR doğum tarihinden türetilmez'}
+            </span>
           </div>
-        ) : null}
+          {identity.result?.documentType === 'id_card' ? (
+            <div className="flex gap-1.5">
+              <button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('back')} className="text-[10px] text-emerald-300 underline disabled:opacity-40">Arka yüz tara</button>
+              <button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('back')} className="text-[10px] text-emerald-300 underline disabled:opacity-40">Arka yüz dosyası</button>
+            </div>
+          ) : null}
+        </div>
 
-        {scanStatus === 'ready' ? (
+        {identity.result ? (
           <div className="border-b border-emerald-300 bg-emerald-50 px-4 py-3">
-            <p className="mb-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-700">
-              ↓ Aşağıya tıklayın ve kimliği tarayıcıya yerleştirin
-            </p>
-            <textarea
-              ref={scanRef}
-              value={scanBuffer}
-              onChange={(event) => triggerParse(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && scanBuffer.trim().length > 10) {
-                  event.preventDefault();
-                  applyScanResult(parseMrzLines(scanBuffer));
-                }
-              }}
-              rows={3}
-              className="mono w-full resize-none border-2 border-emerald-500 bg-white px-3 py-2 text-xs text-emerald-900 outline-none ring-2 ring-emerald-200 focus:border-emerald-700 focus:ring-emerald-400"
-              placeholder="Tarayıcı çıktısı buraya gelecek..."
-              spellCheck={false}
-            />
+            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Okunan alanları inceleyin</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {Object.entries(identity.result.fields).map(([field, parsed]) => parsed ? (
+                <p key={field} className="text-xs text-emerald-900"><strong>{identityFieldLabel(field as IdentityFieldName)}:</strong> {parsed.value} <span className={parsed.review === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p>
+              ) : null)}
+            </div>
+            {Object.keys(identity.previews).length ? <div className="mt-2 flex gap-2">{(['front', 'back'] as const).map((side) => identity.previews[side] ? <img key={side} src={identity.previews[side]} alt={`Kimlik ${side === 'front' ? 'ön' : 'arka'} yüz önizlemesi`} className="h-16 max-w-28 border border-emerald-300 object-cover" /> : null)}</div> : null}
+            <div className="mt-2 flex justify-end gap-2"><button type="button" onClick={identity.clear} className="border border-emerald-300 px-2 py-1 text-[10px] font-bold text-emerald-800">Vazgeç</button><button type="button" onClick={identity.confirm} className="border border-emerald-700 bg-emerald-700 px-2 py-1 text-[10px] font-black text-white">İnceledim, alanları uygula</button></div>
           </div>
         ) : null}
       </div>
@@ -647,7 +470,7 @@ export function CustomerEditorTable({
         <table className="w-full border-collapse">
           <tbody>
             {autoFields.map((field) => {
-              const fromScanner = scanSources.has(field.key);
+              const fromScanner = Boolean(identity.result?.fields[field.key as IdentityFieldName]) && identity.status === 'review';
               return (
                 <tr key={field.key} className="border-b border-brand-100">
                   <td className="w-36 border-r border-brand-200 bg-brand-50 px-3 py-1.5">
@@ -660,10 +483,6 @@ export function CustomerEditorTable({
                           <CheckCircle2 className="h-2 w-2" />
                           ID
                         </span>
-                      ) : field.key === 'city' && postalLookupStatus === 'ready' && customer.city.trim() === postalLookupAutoCityRef.current.trim() ? (
-                        <span className="inline-flex items-center gap-0.5 border border-sky-300 bg-sky-50 px-1 py-0.5 text-[9px] font-black uppercase tracking-wide text-sky-700">
-                          POSTNR
-                        </span>
                       ) : (
                         <span className="w-8 shrink-0" />
                       )}
@@ -672,18 +491,23 @@ export function CustomerEditorTable({
                           value={customer[field.key]}
                           onChange={(value) => {
                             updateField(field.key, value);
-                            if (fromScanner && value && !value.includes('????')) {
-                              setScanSources((current) => {
-                                const next = new Set(current);
-                                next.delete(field.key);
-                                return next;
-                              });
-                            }
                           }}
                           onBlur={onBlur}
                           className={`${fromScanner ? scannedInputClass : baseInputClass} ${field.mono ? 'mono' : ''}`}
                           style={field.mono ? monoStyle : sansStyle}
                         />
+                      ) : field.key === 'identity_doc_type' ? (
+                        <select
+                          value={customer.identity_doc_type}
+                          onChange={(event) => updateField('identity_doc_type', event.target.value)}
+                          onBlur={onBlur}
+                          className={`${fromScanner ? scannedInputClass : baseInputClass}`}
+                        >
+                          <option value="">Seçin</option>
+                          <option value="passport">Pasaport</option>
+                          <option value="id_card">Kimlik kartı</option>
+                          <option value="driver_license">Ehliyet</option>
+                        </select>
                       ) : (
                         <input
                           type="text"
@@ -691,13 +515,6 @@ export function CustomerEditorTable({
                           value={customer[field.key]}
                           onChange={(event) => {
                             updateField(field.key, event.target.value);
-                            if (fromScanner) {
-                              setScanSources((current) => {
-                                const next = new Set(current);
-                                next.delete(field.key);
-                                return next;
-                              });
-                            }
                           }}
                           onBlur={onBlur}
                           className={`${fromScanner ? scannedInputClass : baseInputClass} ${field.mono ? 'mono' : ''}`}
@@ -707,33 +524,23 @@ export function CustomerEditorTable({
                     </div>
                     {field.key === 'postal_code' ? (
                       <div className="ml-[2.4rem] mt-1.5">
-                        {postalLookupStatus === 'loading' ? (
-                          <p className="text-[10px] font-medium text-brand-400">Posta kodu çözülüyor...</p>
+                        {address.status === 'loading' ? (
+                          <p className="text-[10px] font-medium text-brand-400">Adres aranıyor...</p>
                         ) : null}
-                        {postalLookupStatus === 'ready' && postalLookup ? (
-                          <div className="flex flex-wrap gap-1.5">
-                            {postalLookup.region_name ? (
-                              <span className="inline-flex items-center border border-brand-200 bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-600">
-                                İl: {postalLookup.region_name}
-                              </span>
-                            ) : null}
-                            {postalLookup.municipality_name ? (
-                              <span className="inline-flex items-center border border-brand-200 bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-600">
-                                İlçe / Kommune: {postalLookup.municipality_name}
-                              </span>
-                            ) : null}
-                            {postalLookup.postal_district ? (
-                              <span className="inline-flex items-center border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700">
-                                Mahalle / Bölge: {postalLookup.postal_district}
-                              </span>
-                            ) : null}
+                        {address.status === 'ready' ? (
+                          <div className="space-y-1">
+                            {address.suggestions.map((suggestion) => (
+                              <button key={suggestion.id} type="button" onClick={() => address.selectSuggestion(suggestion)} disabled={address.selectedId === suggestion.id} className="block w-full border border-brand-200 bg-white px-1.5 py-1 text-left text-[10px] font-semibold text-brand-700 hover:border-brand-500 disabled:opacity-60">
+                                {suggestion.title}
+                              </button>
+                            ))}
                           </div>
                         ) : null}
-                        {postalLookupStatus === 'not_found' ? (
-                          <p className="text-[10px] font-medium text-amber-600">Bu postnr. için otomatik bölge bilgisi bulunamadı.</p>
+                        {address.status === 'empty' ? (
+                          <p className="text-[10px] font-medium text-amber-600">Bu postnr. ve sokak için adres bulunamadı.</p>
                         ) : null}
-                        {postalLookupStatus === 'unavailable' ? (
-                          <p className="text-[10px] font-medium text-amber-600">Posta kodu servisine şu an ulaşılamıyor.</p>
+                        {address.status === 'unavailable' ? (
+                          <p className="text-[10px] font-medium text-amber-600">Adres servisine şu an ulaşılamıyor.</p>
                         ) : null}
                       </div>
                     ) : null}
@@ -780,6 +587,25 @@ export function CustomerEditorTable({
           </tbody>
         </table>
       </div>
+
+      {customerMatch.loading || customerMatch.response || customerMatch.error ? (
+        <div className={`border-b px-3 py-2 text-xs ${customerMatch.response?.status === 'conflict' || customerMatch.error ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-brand-100 bg-brand-50 text-brand-600'}`}>
+          {customerMatch.loading ? 'Müşteri eşleşmesi kontrol ediliyor...' : null}
+          {customerMatch.error ? 'Müşteri eşleşmesi şu an kontrol edilemedi.' : null}
+          {customerMatch.response?.status === 'none' ? 'Mevcut müşteri eşleşmesi yok; yeni kayıt yalnız operatör onayıyla oluşturulur.' : null}
+          {customerMatch.response?.status === 'single' ? (
+            <span>
+              Eşleşen müşteri: <strong>{customerMatch.response.matches[0]?.name}</strong>
+              {onSelectMatchedCustomer && customerMatch.response.matches[0] ? (
+                <button type="button" onClick={() => onSelectMatchedCustomer(customerMatch.response!.matches[0].id)} className="ml-2 underline">Mevcut müşteriyi seç</button>
+              ) : null}
+            </span>
+          ) : null}
+          {customerMatch.response?.status === 'conflict' ? (
+            <span><strong>Çakışan kayıtlar:</strong> {customerMatch.response.matches.map((item) => item.name).join(', ')}. Kaydı seçip inceleyin.</span>
+          ) : null}
+        </div>
+      ) : null}
 
       <table className="w-full border-collapse">
         <tbody>

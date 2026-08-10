@@ -63,7 +63,9 @@ const EMPTY_CUSTOMER: EditableCustomer = {
   postal_code: '',
   city: '',
   cpr_number: '',
+  identity_doc_type: '',
   identity_doc_number: '',
+  identity_doc_country: '',
 };
 
 const EMPTY_BANK_INFO: PosWorkspaceBankInfo = {
@@ -278,7 +280,9 @@ function toEditableCustomer(workspace: PosWorkspace): EditableCustomer {
     postal_code: workspace.customer.postal_code || '',
     city: workspace.customer.city || '',
     cpr_number: workspace.customer.cpr_number || '',
+    identity_doc_type: workspace.customer.identity_doc_type || '',
     identity_doc_number: workspace.customer.identity_doc_number || '',
+    identity_doc_country: workspace.customer.identity_doc_country || '',
   };
 }
 
@@ -291,7 +295,9 @@ function hasEditableCustomerData(customer: EditableCustomer) {
       customer.postal_code.trim() ||
       customer.city.trim() ||
       customer.cpr_number.trim() ||
-      customer.identity_doc_number.trim(),
+      customer.identity_doc_number.trim() ||
+      customer.identity_doc_type.trim() ||
+      customer.identity_doc_country.trim(),
   );
 }
 
@@ -305,13 +311,35 @@ function customerRequestPayload(customer: EditableCustomer) {
     postal_code: normalizedPostal || null,
     city: customer.city.trim() || null,
     cpr_number: customer.cpr_number.trim() || null,
+    identity_doc_type: customer.identity_doc_type.trim() || null,
     identity_doc_number: customer.identity_doc_number.trim() || null,
+    identity_doc_country: customer.identity_doc_country.trim() || null,
   };
 }
 
 function hasPartialPostalCode(customer: EditableCustomer) {
   const normalizedPostal = customer.postal_code.replace(/\D/g, '');
   return normalizedPostal.length > 0 && normalizedPostal.length < 4;
+}
+
+export function reconcileDraftCustomerAutosaveAcknowledgement({
+  customerMode,
+  customerForm,
+  newCustomer,
+  acknowledgedPayload,
+  savedCustomer,
+}: {
+  customerMode: 'existing' | 'new' | null;
+  customerForm: EditableCustomer;
+  newCustomer: EditableCustomer;
+  acknowledgedPayload: EditableCustomer;
+  savedCustomer: EditableCustomer;
+}): { settled: boolean; autosaveKey?: string } {
+  const activeCustomer = customerMode === 'new' ? newCustomer : customerForm;
+  if (JSON.stringify(activeCustomer) !== JSON.stringify(acknowledgedPayload)) {
+    return { settled: false };
+  }
+  return { settled: true, autosaveKey: JSON.stringify(savedCustomer) };
 }
 
 function toEditableGoldRows(rows: PosWorkspaceGoldRow[]): EditableGoldRow[] {
@@ -1013,17 +1041,24 @@ export function useAlisMakeState(): AlisPageProps {
     onSuccess: (data, payload) => {
       if (initializedSessionRef.current !== data.session.id) return;
       if (isStaleWorkspaceResponse(data)) return;
-      // A response may belong to an older edit.  Keep the newer local fields
-      // visible; only the acknowledged payload may advance the baseline.
-      const newerCustomerEdit = JSON.stringify(customerForm) !== JSON.stringify(payload);
-      if (newerCustomerEdit) {
+      // Draft-customer saves originate from newCustomer. Comparing against
+      // customerForm here would make every successful new draft look stale,
+      // leaving its autosave key behind and blocking a view switch/finalize.
+      const acknowledgement = reconcileDraftCustomerAutosaveAcknowledgement({
+        customerMode,
+        customerForm,
+        newCustomer,
+        acknowledgedPayload: payload,
+        savedCustomer: toEditableCustomer(data),
+      });
+      if (!acknowledgement.settled) {
         workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
         setWorkspace((current) => current ? { ...current, workspace_revision: data.workspace_revision } : data);
         return;
       }
       if (!applyWorkspace(data)) return;
       setWorkspace(data);
-      customerAutosaveKeyRef.current = JSON.stringify(payload);
+      customerAutosaveKeyRef.current = acknowledgement.autosaveKey || '';
       emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
     },
     onError: (error) => {
@@ -1811,7 +1846,9 @@ export function useAlisMakeState(): AlisPageProps {
         city: newCustomer.city || null,
         postal_code: newCustomer.postal_code || null,
         cpr_number: newCustomer.cpr_number || null,
+        identity_doc_type: newCustomer.identity_doc_type || null,
         identity_doc_number: newCustomer.identity_doc_number || null,
+        identity_doc_country: newCustomer.identity_doc_country || null,
       },
     });
   }

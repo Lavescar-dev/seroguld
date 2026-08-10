@@ -21,13 +21,14 @@ import {
 } from 'lucide-react';
 
 import { formatMoney, formatNumber, formatRelativeTime } from '@/lib/format';
-import { apiRequest } from '@/lib/api';
 import { validateCpr } from '@/lib/cpr';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, normalizeTextInput, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
 import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
-import { parseMrzLines } from '@/make/alis/customerEditors';
-import type { PosDocumentDetail, PosPostalLookup, PosSavedPurchaseListItem } from '@/types';
+import { normalizePostalCode, useAddressAutocomplete } from '@/make/alis/addressAutocomplete';
+import { useCustomerMatch } from '@/make/alis/customerMatch';
+import { type IdentityFieldName, useIdentityScan } from '@/make/alis/identityScan';
+import type { PosDocumentDetail, PosSavedPurchaseListItem } from '@/types';
 import type { EditableCustomer } from '@/make/alis/types';
 import type { ModernAlisViewModel } from '@/modern/adapters/alis';
 import type { UnsupportedControlDescriptor } from '@/modern/adapters/types';
@@ -40,6 +41,8 @@ const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?:
   { key: 'name', label: 'Ad Soyad' },
   { key: 'cpr_number', label: 'CPR nr.' },
   { key: 'identity_doc_number', label: 'Kimlik / Pasaport' },
+  { key: 'identity_doc_type', label: 'Belge türü' },
+  { key: 'identity_doc_country', label: 'Belge ülkesi' },
   { key: 'phone', label: 'Telefon' },
   { key: 'email', label: 'E-posta', type: 'email' },
   { key: 'address', label: 'Adres' },
@@ -427,7 +430,7 @@ function AlisToolSheet({ tool, state, hasSelectedCustomer, filters, onFilterChan
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, [tool]);
   const title = tool === 'customer' ? 'Müşteri' : tool === 'rates' ? 'Piyasa oranları' : tool === 'calculator' ? 'Hesaplayıcılar' : tool === 'filters' ? 'Geçmiş filtreleri' : 'Hazır olmayan entegrasyonlar';
-  return <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} />{hasSelectedCustomer ? <PostalLookupHint customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} /> : null}</> : null}{tool === 'rates' || tool === 'calculator' ? <WorkspaceControls state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
+  return <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /></> : null}{tool === 'rates' || tool === 'calculator' ? <WorkspaceControls state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
 }
 
 function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewModel['state']; hasSelectedCustomer: boolean }) {
@@ -512,7 +515,7 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
         <ModernIdentityScanner customer={state.newCustomer} setCustomer={state.setNewCustomer} />
         <EditableCustomerFields customer={state.newCustomer} setCustomer={state.setNewCustomer} />
       </div>
-      <PostalLookupHint customer={state.newCustomer} setCustomer={state.setNewCustomer} />
+      <ModernCustomerMatch customer={state.newCustomer} onSelect={(customerId) => state.onSelectExistingCustomer(customerId)} />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border-soft pt-4">
         <p className="text-xs text-sg-text-soft">Ad, telefon, CPR ve kimlik belgesi zorunludur.</p>
         <button type="submit" disabled={!hasValidNewCustomer || !hasValidPostal || state.customerSelecting} className={shellButtonClass('primary')}>
@@ -536,23 +539,32 @@ function EditableCustomerFields({
   compact?: boolean;
 }) {
   const cprValidation = validateCpr(customer.cpr_number || '');
+  const address = useAddressAutocomplete({ customer, setCustomer, onApplied: onBlur });
   return (
     <>
       {customerFields.map((field) => (
         <label key={field.key} className={compact ? 'text-xs font-semibold text-sg-text-soft' : 'text-sm font-semibold text-sg-text-soft'}>
           {field.label}
-          <input
-            type={field.type || 'text'}
-            value={customer[field.key]}
-            onChange={(event) => setCustomer((current) => ({
-              ...current,
-              [field.key]: field.key === 'postal_code'
-                ? event.target.value.replace(/\D/g, '').slice(0, 4)
-                : event.target.value,
-            }))}
-            onBlur={onBlur}
-            className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
-          />
+          {field.key === 'identity_doc_type' ? (
+            <select value={customer.identity_doc_type} onChange={(event) => setCustomer((current) => ({ ...current, identity_doc_type: event.target.value }))} onBlur={onBlur} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10">
+              <option value="">Seçin</option><option value="passport">Pasaport</option><option value="id_card">Kimlik kartı</option><option value="driver_license">Ehliyet</option>
+            </select>
+          ) : (
+            <input
+              type={field.type || 'text'}
+              value={customer[field.key]}
+              onChange={(event) => setCustomer((current) => ({
+                ...current,
+                [field.key]: field.key === 'postal_code'
+                  ? event.target.value.replace(/\D/g, '').slice(0, 4)
+                  : field.key === 'identity_doc_country'
+                    ? event.target.value.replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3)
+                  : event.target.value,
+              }))}
+              onBlur={onBlur}
+              className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
+            />
+          )}
           {field.key === 'cpr_number' && customer.cpr_number ? (
             <span className={`mt-1 block text-[10px] font-semibold ${cprValidation.formatOk && cprValidation.mod11Ok ? 'text-sg-green-strong' : cprValidation.formatOk ? 'text-sg-amber' : 'text-sg-red'}`}>
               {cprValidation.formatOk && cprValidation.mod11Ok ? 'CPR mod-11 doğrulandı' : cprValidation.formatOk ? 'CPR formatı tamamlandı; mod-11 uyarısı' : 'CPR formatı eksik veya geçersiz'}
@@ -560,6 +572,7 @@ function EditableCustomerFields({
           ) : null}
         </label>
       ))}
+      <ModernAddressSuggestions address={address} />
     </>
   );
 }
@@ -571,104 +584,37 @@ function ModernIdentityScanner({
   customer: EditableCustomer;
   setCustomer: Dispatch<SetStateAction<EditableCustomer>>;
 }) {
-  const [raw, setRaw] = useState('');
-  const [status, setStatus] = useState<'idle' | 'ready' | 'done' | 'error'>('idle');
-
-  function parseIdentity() {
-    const result = parseMrzLines(raw);
-    const hasResult = Boolean(result.fullName || result.cprHint || result.docNumber || result.adresse || result.postnr);
-    if (!hasResult) {
-      setStatus('error');
-      return;
-    }
-    setCustomer((current) => ({
-      ...current,
-      name: result.fullName || current.name,
-      cpr_number: result.cprHint || current.cpr_number,
-      identity_doc_number: result.docNumber || current.identity_doc_number,
-      address: result.adresse || current.address,
-      postal_code: result.postnr ? result.postnr.replace(/\D/g, '').slice(0, 4) : current.postal_code,
-    }));
-    setStatus('done');
-  }
+  const identity = useIdentityScan({ customer, setCustomer });
 
   return (
     <div className="rounded-sg-md border border-sg-border bg-sg-surface p-3 sm:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><p className="text-xs font-semibold text-sg-text">Kimlik tarama / MRZ</p><p className="mt-1 text-[11px] text-sg-text-soft">Keyboard scanner veya yapıştırılan MRZ metni local olarak parse edilir.</p></div>
-        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${status === 'done' ? 'bg-sg-green-soft text-sg-green-strong' : status === 'error' ? 'bg-sg-red-soft text-sg-red' : 'bg-sg-surface-soft text-sg-text-soft'}`}>
-          {status === 'done' ? 'Alanlar dolduruldu' : status === 'error' ? 'MRZ tanınamadı' : status === 'ready' ? 'Hazır' : 'Bekliyor'}
+        <div><p className="text-xs font-semibold text-sg-text">Kimlik tarama</p><p className="mt-1 text-[11px] text-sg-text-soft">Yerel tarayıcı veya kimlik dosyasıyla alınan metin cihazda ayrıştırılır. CPR doğum tarihinden türetilmez.</p></div>
+        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${identity.status === 'applied' ? 'bg-sg-green-soft text-sg-green-strong' : identity.status === 'error' ? 'bg-sg-red-soft text-sg-red' : 'bg-sg-surface-soft text-sg-text-soft'}`}>
+          {identity.status === 'applied' ? 'Alanlar uygulandı' : identity.status === 'review' ? 'İnceleme gerekli' : identity.status === 'acquiring' ? 'Okunuyor' : identity.status === 'unavailable' ? 'Destek yok' : 'Hazır'}
         </span>
       </div>
-      <textarea value={raw} onChange={(event) => { setRaw(event.target.value); setStatus(event.target.value.trim() ? 'ready' : 'idle'); }} rows={2} placeholder="MRZ / kimlik metnini buraya yapıştırın" className="mt-3 w-full rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2 font-mono text-xs text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" />
-      <div className="mt-2 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => { setRaw(''); setStatus('idle'); }} className={shellButtonClass('ghost')}>Temizle</button><button type="button" onClick={parseIdentity} disabled={!raw.trim()} className={shellButtonClass('secondary')}>Alanları doldur</button></div>
+      <div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('front')} className={shellButtonClass('secondary')}>Ön yüz tara</button><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('front')} className={shellButtonClass('ghost')}>Ön yüz dosyası</button><button type="button" onClick={() => void identity.refreshCapabilities()} className={shellButtonClass('ghost')}>Yenile</button>{identity.result?.documentType === 'id_card' ? <><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('back')} className={shellButtonClass('ghost')}>Arka yüz tara</button><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('back')} className={shellButtonClass('ghost')}>Arka yüz dosyası</button></> : null}</div>
+      {identity.error ? <p className="mt-2 text-xs font-semibold text-sg-red">{identity.error}</p> : null}
+      {identity.result ? <div className="mt-3 rounded-sg-md border border-sg-green-soft bg-sg-green-soft p-3"><p className="text-xs font-semibold text-sg-green-strong">Okunan alanlar — doğrulanmayanları inceleyin</p><div className="mt-2 grid gap-1 sm:grid-cols-2">{Object.entries(identity.result.fields).map(([field, parsed]) => parsed ? <p key={field} className="text-xs text-sg-text"><span className="font-semibold">{modernIdentityFieldLabel(field as IdentityFieldName)}:</span> {parsed.value} <span className={parsed.review === 'validated' ? 'text-sg-green-strong' : 'text-sg-amber'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p> : null)}</div>{Object.keys(identity.previews).length ? <div className="mt-3 flex gap-2">{(['front', 'back'] as const).map((side) => identity.previews[side] ? <img key={side} src={identity.previews[side]} alt={`Kimlik ${side === 'front' ? 'ön' : 'arka'} yüz önizlemesi`} className="h-20 max-w-32 rounded-sg-sm border border-sg-border object-cover" /> : null)}</div> : null}<div className="mt-3 flex justify-end gap-2"><button type="button" onClick={identity.clear} className={shellButtonClass('ghost')}>Vazgeç</button><button type="button" onClick={identity.confirm} className={shellButtonClass('primary')}>İnceledim, alanları uygula</button></div></div> : null}
     </div>
   );
 }
 
-function PostalLookupHint({
-  customer,
-  setCustomer,
-  onBlur,
-}: {
-  customer: EditableCustomer;
-  setCustomer: Dispatch<SetStateAction<EditableCustomer>>;
-  onBlur?: () => void;
-}) {
-  const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'not_found' | 'unavailable'>('idle');
-  const autoCityRef = useRef('');
-  const normalizedPostalCode = customer.postal_code.replace(/\D/g, '').slice(0, 4);
+function modernIdentityFieldLabel(field: IdentityFieldName): string {
+  return { name: 'Ad', identity_doc_number: 'Belge no', identity_doc_type: 'Belge türü', identity_doc_country: 'Ülke', address: 'Adres', postal_code: 'Posta kodu', city: 'Şehir' }[field];
+}
 
-  useEffect(() => {
-    if (normalizedPostalCode.length !== 4) {
-      setStatus('idle');
-      return;
-    }
-    let cancelled = false;
-    setStatus('loading');
-    const timeoutId = window.setTimeout(() => {
-      void apiRequest<PosPostalLookup>(`/api/v2/alis/postal-lookup/${normalizedPostalCode}`)
-        .then((result) => {
-          if (cancelled) return;
-          if (!result.available) {
-            setStatus('unavailable');
-            return;
-          }
-          if (!result.found || !result.postal_district) {
-            setStatus('not_found');
-            return;
-          }
-          setStatus('ready');
-          setCustomer((current) => {
-            const nextCity = (result.postal_district || '').trim();
-            const currentCity = current.city.trim();
-            const previousAutoCity = autoCityRef.current.trim();
-            if (!nextCity || (currentCity && currentCity !== previousAutoCity)) return current;
-            autoCityRef.current = nextCity;
-            return current.city === nextCity ? current : { ...current, city: nextCity };
-          });
-          window.setTimeout(() => onBlur?.(), 0);
-        })
-        .catch(() => {
-          if (!cancelled) setStatus('unavailable');
-        });
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [normalizedPostalCode, setCustomer]);
+function ModernAddressSuggestions({ address }: { address: ReturnType<typeof useAddressAutocomplete> }) {
+  if (address.status === 'idle') return null;
+  return <div className="sm:col-span-2"><p className="text-xs font-semibold text-sg-text-soft">{address.status === 'loading' ? 'Adres aranıyor...' : address.status === 'resolving' ? 'Adres çözülüyor...' : address.status === 'empty' ? 'Bu posta kodu ve sokak için öneri bulunamadı.' : address.status === 'unavailable' ? 'Adres servisi kullanılamıyor.' : 'Adres önerileri'}</p>{address.status === 'ready' ? <div className="mt-2 grid gap-1">{address.suggestions.map((suggestion) => <button key={suggestion.id} type="button" disabled={address.selectedId === suggestion.id} onClick={() => address.selectSuggestion(suggestion)} className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-left text-xs text-sg-text hover:border-sg-accent disabled:opacity-60">{suggestion.title}</button>)}</div> : null}</div>;
+}
 
-  if (status === 'idle') return null;
-  const message = status === 'loading'
-    ? 'Posta kodu aranıyor...'
-    : status === 'ready'
-      ? 'Şehir posta kodundan dolduruldu.'
-      : status === 'not_found'
-        ? 'Bu posta kodu bulunamadı.'
-        : 'Posta servisi kullanılamıyor.';
-  const tone = status === 'ready' ? 'text-sg-green-strong' : status === 'not_found' || status === 'unavailable' ? 'text-sg-amber' : 'text-sg-text-soft';
-  return <p className={`mt-2 text-xs font-semibold ${tone}`}>{message}</p>;
+function ModernCustomerMatch({ customer, onSelect }: { customer: EditableCustomer; onSelect: (customerId: string) => void }) {
+  const match = useCustomerMatch(customer);
+  if (!match.loading && !match.response && !match.error) return null;
+  const tone = match.response?.status === 'conflict' || match.error ? 'border-sg-amber bg-sg-amber-soft text-sg-amber' : 'border-sg-border bg-sg-surface text-sg-text-soft';
+  return <div className={`mt-3 rounded-sg-md border px-3 py-2 text-xs ${tone}`}>{match.loading ? 'Müşteri eşleşmesi kontrol ediliyor...' : match.error ? 'Müşteri eşleşmesi şu an kontrol edilemedi.' : match.response?.status === 'none' ? 'Mevcut müşteri eşleşmesi yok; yeni kayıt yalnız operatör onayıyla oluşturulur.' : match.response?.status === 'single' ? <span>Eşleşen müşteri: <strong>{match.response.matches[0]?.name}</strong>{match.response.matches[0] ? <button type="button" onClick={() => onSelect(match.response!.matches[0].id)} className="ml-2 underline">Mevcut müşteriyi seç</button> : null}</span> : <span><strong>Çakışan kayıtlar:</strong> {match.response?.matches.map((item) => item.name).join(', ')}. Kaydı seçip inceleyin.</span>}</div>;
 }
 
 function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {

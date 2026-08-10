@@ -951,6 +951,34 @@ export interface PosPostalLookup {
   region_name?: string | null;
 }
 
+export interface PosAddressSearchSuggestion {
+  id: string;
+  type: string;
+  title: string;
+}
+
+export interface PosAddressSearchResponse {
+  available: boolean;
+  results: PosAddressSearchSuggestion[];
+}
+
+export interface PosAddressResolveResponse {
+  address: string;
+  postal_code: string;
+  city: string;
+}
+
+export interface PosCustomerMatchItem {
+  id: string;
+  name: string;
+  matched_by?: string | null;
+}
+
+export interface PosCustomerMatchResponse {
+  status: 'none' | 'single' | 'conflict';
+  matches: PosCustomerMatchItem[];
+}
+
 export interface PosWorkspaceGoldRow {
   row_key: string;
   line_id?: string | null;

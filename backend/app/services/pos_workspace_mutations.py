@@ -43,6 +43,28 @@ def _validate_workspace_postal(value: str | None) -> str | None:
     return postal
 
 
+def _merge_workspace_customer_snapshot(core, current, payload: PosWorkspaceCustomerUpdate) -> dict:
+    """Apply a partial customer mutation without treating omitted fields as clears."""
+
+    snapshot = core._workspace_draft_customer_payload(current) if current is not None else {}
+    incoming = core._workspace_draft_customer_payload(payload)
+    for field in (
+        "name",
+        "email",
+        "phone",
+        "address",
+        "postal_code",
+        "city",
+        "cpr_number",
+        "identity_doc_type",
+        "identity_doc_number",
+        "identity_doc_country",
+    ):
+        if field in payload.model_fields_set:
+            snapshot[field] = incoming[field]
+    return snapshot
+
+
 async def _claim_workspace_revision(
     session: AsyncSession,
     core,
@@ -145,19 +167,24 @@ async def update_purchase_workspace_customer(
         if claim_revision
         else core._parse_workspace_note_payload(pos_session.notes)
     )
-    # Workspace edits remain session-local for identity/contact fields.  The
-    # one master-data exception is a valid postal code: this fixes the
-    # existing-customer edit path without making a temporary blank in the
-    # workspace erase the canonical customer record.
-    postal_value = _validate_workspace_postal(payload.postal_code) if "postal_code" in payload.model_fields_set else None
-    if postal_value is not None:
-        await core.update_customer(session, customer, CustomerUpdate(postal_code=postal_value))
+    current_snapshot = await core._workspace_customer_from_session(session, pos_session)
+    # Address city/postcode are durable customer-master fields.  Preserve
+    # Pydantic field presence: explicit null clears the master value, while an
+    # omitted field remains untouched during a partial workspace save.
+    master_address_update: dict[str, str | None] = {}
+    if "postal_code" in payload.model_fields_set:
+        master_address_update["postal_code"] = _validate_workspace_postal(payload.postal_code)
+    if "city" in payload.model_fields_set:
+        master_address_update["city"] = str(payload.city or "").strip() or None
+    if master_address_update:
+        await core.update_customer(session, customer, CustomerUpdate(**master_address_update))
         await session.refresh(pos_session)
-    snapshot = core._workspace_draft_customer_payload(payload)
+    snapshot = _merge_workspace_customer_snapshot(core, current_snapshot, payload)
     snapshot["customer_id"] = str(customer.id)
     snapshot["postal_code"] = _validate_workspace_postal(snapshot.get("postal_code"))
     note_payload["workspace_customer"] = snapshot
-    note_payload["workspace_customer_city"] = str(payload.city or "").strip() or None
+    if "city" in payload.model_fields_set:
+        note_payload["workspace_customer_city"] = snapshot.get("city")
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
     if commit:
@@ -192,12 +219,14 @@ async def update_purchase_workspace_draft_customer(
         if claim_revision
         else core._parse_workspace_note_payload(pos_session.notes)
     )
-    note_payload["draft_customer"] = core._workspace_draft_customer_payload(payload)
+    current_snapshot = core._workspace_draft_customer_from_note(note_payload)
+    note_payload["draft_customer"] = _merge_workspace_customer_snapshot(core, current_snapshot, payload)
     note_payload["draft_customer"]["postal_code"] = _validate_workspace_postal(
         note_payload["draft_customer"].get("postal_code")
     )
     note_payload["workspace_customer"] = note_payload["draft_customer"]
-    note_payload["workspace_customer_city"] = str(payload.city or "").strip() or None
+    if "city" in payload.model_fields_set:
+        note_payload["workspace_customer_city"] = note_payload["draft_customer"].get("city")
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
     if commit:

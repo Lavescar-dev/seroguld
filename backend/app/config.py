@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     woocommerce_webhook_secret: str = ""
     woocommerce_timeout_seconds: float = 20.0
 
+    # KDS Adressevælger is called only by the backend.  The token is kept out
+    # of browser requests so it can be changed when KDS enables user-specific
+    # access management.
+    kds_address_base_url: str = "https://adressevaelger.dk"
+    kds_address_token: str = "adressevaelger123"
+    kds_address_timeout_seconds: float = 4.0
+    kds_address_cache_seconds: int = 300
+
     wordpress_base_url: str = ""
     wp_app_username: str = ""
     wp_app_password: str = ""

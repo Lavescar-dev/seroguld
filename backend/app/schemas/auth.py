@@ -25,6 +25,7 @@ class RegisterRequest(AppBaseModel):
     role: RoleEnum = RoleEnum.CUSTOMER
     phone: str | None = None
     address: str | None = None
+    city: str | None = Field(default=None, max_length=120)
     cpr_number: str | None = None
 
 
@@ -35,6 +36,7 @@ class UserOut(AppBaseModel):
     role: RoleEnum
     phone: str | None = None
     address: str | None = None
+    city: str | None = None
     cpr_number_masked: str | None = None
     is_active: bool
     created_at: datetime

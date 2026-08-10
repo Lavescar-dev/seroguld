@@ -69,7 +69,7 @@ def _to_display_out(
         effective_customer_address = customer_address if customer else (draft_customer.address if draft_customer else None)
         effective_customer_postal_code = customer.postal_code if customer else (draft_customer.postal_code if draft_customer else None)
         effective_customer_city = str(note_payload.get("workspace_customer_city") or "").strip() or (
-            draft_customer.city if draft_customer else None
+            customer.city if customer else (draft_customer.city if draft_customer else None)
         )
         effective_customer_cpr = customer_cpr if customer else (draft_customer.cpr_number if draft_customer else None)
     display_lines = lines or []

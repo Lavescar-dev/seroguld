@@ -988,6 +988,7 @@ function ActiveWorkspaceView(props: {
                         paymentMethod={paymentMethod}
                         setPaymentMethod={setPaymentMethod}
                         showPaymentSection={false}
+                        onSelectMatchedCustomer={onSelectExistingCustomer}
                       />
                       <div className="border-t border-brand-200 px-4 py-3">
                         <button

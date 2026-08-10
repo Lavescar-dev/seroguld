@@ -8,8 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin
 from app.database import get_db
+from app.models.enums import RoleEnum
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UserOut
+from app.schemas.customer import CustomerCreate
+from app.services.customer_service import create_customer
+from app.utils.cpr import normalize_cpr
 from app.utils.security import (
     create_access_token,
     create_refresh_token,
@@ -35,6 +39,7 @@ def _to_user_out(user: User) -> UserOut:
         role=user.role,
         phone=user.phone,
         address=address_plain,
+        city=user.city,
         cpr_number_masked=mask_cpr(cpr_plain),
         is_active=user.is_active,
         created_at=user.created_at,
@@ -94,7 +99,26 @@ async def register(
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı")
 
-    cpr = payload.cpr_number.strip() if payload.cpr_number else None
+    # Customer registration must share the normalized CPR hashing, duplicate
+    # preflight, and savepoint race handling used by every other create path.
+    if payload.role == RoleEnum.CUSTOMER:
+        user = await create_customer(
+            db,
+            CustomerCreate(
+                email=payload.email,
+                password=payload.password,
+                name=payload.name,
+                phone=payload.phone,
+                address=payload.address,
+                city=payload.city,
+                cpr_number=payload.cpr_number,
+            ),
+        )
+        await db.commit()
+        await db.refresh(user)
+        return _to_user_out(user)
+
+    cpr = normalize_cpr(payload.cpr_number) or None
     user = User(
         email=payload.email,
         password_hash=get_password_hash(payload.password),
@@ -102,6 +126,7 @@ async def register(
         role=payload.role,
         phone=payload.phone,
         address_encrypted=encrypt_field(payload.address) if payload.address else None,
+        city=(payload.city or "").strip() or None,
         cpr_number_encrypted=encrypt_field(cpr) if cpr else None,
         cpr_hash=hash_cpr(cpr),
         cpr_last4=("".join(ch for ch in cpr if ch.isdigit())[-4:] if cpr else None),

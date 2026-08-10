@@ -1117,7 +1117,7 @@ async def _workspace_customer_from_session(
         phone=customer.phone,
         address=decrypt_field(customer.address_encrypted),
         postal_code=customer.postal_code,
-        city=str(note_payload.get("workspace_customer_city") or "").strip() or None,
+        city=str(note_payload.get("workspace_customer_city") or "").strip() or customer.city,
         cpr_number=cpr_plain,
         identity_doc_type=(identity.identity_doc_type if identity else None),
         identity_doc_number=identity_number,

@@ -19,6 +19,8 @@ const DISPLAY_WINDOW_LABEL: &str = "customer-display";
 const DOCUMENT_PREVIEW_WINDOW_LABEL: &str = "document-preview";
 const DISPLAY_IDLE_ROUTE: &str = "/display/idle";
 const DEV_DISPLAY_BASE_URL: &str = "http://127.0.0.1:3300";
+const IDENTITY_SCAN_MAX_BYTES: usize = 10 * 1024 * 1024;
+const IDENTITY_SCAN_MIME_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/tiff", "image/bmp"];
 
 #[derive(Debug, Serialize, Clone)]
 struct MonitorInfo {
@@ -42,6 +44,127 @@ struct DisplayWindowState {
 struct PickedDocumentFile {
     file_name: String,
     data_base64: String,
+}
+
+/// The identity scanner only ever exposes an in-memory preview and OCR result.
+/// It deliberately does not include a source path or persist a scan in the app.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IdentityScannerCapabilities {
+    supported: bool,
+    platform: String,
+    wia_acquisition: bool,
+    local_ocr: bool,
+    image_file_fallback: bool,
+    max_file_bytes: usize,
+    accepted_mime_types: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IdentityScanResult {
+    side: String,
+    source: String,
+    mime_type: String,
+    preview_data_url: String,
+    ocr_text: String,
+    ocr_lines: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IdentityScannerError {
+    code: &'static str,
+    message: &'static str,
+    retryable: bool,
+}
+
+impl IdentityScannerError {
+    const fn new(code: &'static str, message: &'static str, retryable: bool) -> Self {
+        Self {
+            code,
+            message,
+            retryable,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    const fn unsupported_platform() -> Self {
+        Self::new(
+            "UNSUPPORTED_PLATFORM",
+            "Kimlik tarama yalnızca Windows masaüstü uygulamasında kullanılabilir.",
+            false,
+        )
+    }
+
+    const fn invalid_side() -> Self {
+        Self::new("INVALID_REQUEST", "Kimlik yüzü geçersiz.", false)
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn cancelled() -> Self {
+        Self::new("SCAN_CANCELLED", "Tarama iptal edildi.", true)
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn scanner_unavailable() -> Self {
+        Self::new(
+            "SCANNER_UNAVAILABLE",
+            "WIA tarayıcı hizmeti veya cihazı kullanılamıyor.",
+            true,
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn acquisition_failed() -> Self {
+        Self::new("ACQUISITION_FAILED", "Tarama tamamlanamadı.", true)
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn invalid_image() -> Self {
+        Self::new(
+            "INVALID_IMAGE",
+            "Yalnızca geçerli JPG, PNG, TIFF veya BMP görüntüleri seçilebilir.",
+            false,
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn file_too_large() -> Self {
+        Self::new(
+            "FILE_TOO_LARGE",
+            "Görüntü dosyası 10 MB sınırını aşıyor.",
+            false,
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn file_read_failed() -> Self {
+        Self::new("FILE_READ_FAILED", "Görüntü dosyası okunamadı.", true)
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn ocr_unavailable() -> Self {
+        Self::new(
+            "OCR_UNAVAILABLE",
+            "Windows yerel OCR özelliği kullanılamıyor.",
+            false,
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn ocr_failed() -> Self {
+        Self::new("OCR_FAILED", "Yerel OCR işlemi tamamlanamadı.", true)
+    }
+
+    #[cfg(target_os = "windows")]
+    const fn temp_cleanup_failed() -> Self {
+        Self::new(
+            "TEMP_CLEANUP_FAILED",
+            "Geçici tarama dosyası temizlenemedi.",
+            true,
+        )
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -217,6 +340,319 @@ fn ensure_window_route_if_needed(
     }
 }
 
+fn identity_scanner_platform() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "windows"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux"
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "unknown"
+    }
+}
+
+fn identity_scanner_capabilities() -> IdentityScannerCapabilities {
+    let supported = cfg!(target_os = "windows");
+    IdentityScannerCapabilities {
+        supported,
+        platform: identity_scanner_platform().to_string(),
+        wia_acquisition: supported,
+        local_ocr: supported,
+        image_file_fallback: supported,
+        max_file_bytes: IDENTITY_SCAN_MAX_BYTES,
+        accepted_mime_types: IDENTITY_SCAN_MIME_TYPES
+            .iter()
+            .map(|mime_type| (*mime_type).to_string())
+            .collect(),
+    }
+}
+
+fn validate_identity_scan_side(side: &str) -> Result<(), IdentityScannerError> {
+    if matches!(side, "front" | "back") {
+        Ok(())
+    } else {
+        Err(IdentityScannerError::invalid_side())
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn identity_mime_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n']) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[b'I', b'I', 0x2A, 0x00]) || bytes.starts_with(&[b'M', b'M', 0x00, 0x2A])
+    {
+        return Some("image/tiff");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("image/bmp");
+    }
+    None
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn expected_identity_mime_type(path: &std::path::Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "tif" | "tiff" => Some("image/tiff"),
+        "bmp" => Some("image/bmp"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_identity_image(
+    path: &std::path::Path,
+) -> Result<(Vec<u8>, &'static str), IdentityScannerError> {
+    let metadata = fs::metadata(path).map_err(|_| IdentityScannerError::file_read_failed())?;
+    if !metadata.is_file() {
+        return Err(IdentityScannerError::invalid_image());
+    }
+    if metadata.len() > IDENTITY_SCAN_MAX_BYTES as u64 {
+        return Err(IdentityScannerError::file_too_large());
+    }
+
+    let bytes = fs::read(path).map_err(|_| IdentityScannerError::file_read_failed())?;
+    if bytes.len() > IDENTITY_SCAN_MAX_BYTES {
+        return Err(IdentityScannerError::file_too_large());
+    }
+
+    let detected_mime_type =
+        identity_mime_type(&bytes).ok_or_else(IdentityScannerError::invalid_image)?;
+    if expected_identity_mime_type(path) != Some(detected_mime_type) {
+        return Err(IdentityScannerError::invalid_image());
+    }
+
+    Ok((bytes, detected_mime_type))
+}
+
+#[cfg(target_os = "windows")]
+fn identity_scan_result(
+    side: &str,
+    source: &str,
+    image_bytes: Vec<u8>,
+    mime_type: &str,
+    ocr_lines: Vec<String>,
+) -> IdentityScanResult {
+    IdentityScanResult {
+        side: side.to_string(),
+        source: source.to_string(),
+        mime_type: mime_type.to_string(),
+        preview_data_url: format!("data:{mime_type};base64,{}", BASE64.encode(image_bytes)),
+        ocr_text: ocr_lines.join("\n"),
+        ocr_lines,
+    }
+}
+
+#[cfg(target_os = "windows")]
+const WIA_ACQUIRE_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+try {
+  $dialog = New-Object -ComObject WIA.CommonDialog
+} catch {
+  exit 3
+}
+try {
+  $device = $dialog.ShowSelectDevice()
+  if ($null -eq $device) { exit 2 }
+  $item = $device.Items.Item(1)
+  $image = $dialog.ShowTransfer($item)
+  if ($null -eq $image) { exit 2 }
+  $image.SaveFile($args[0])
+  exit 0
+} catch {
+  exit 1
+}
+"#;
+
+#[cfg(target_os = "windows")]
+const WINDOWS_OCR_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+  $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+  $null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime]
+
+  function Await-WinRt($operation) {
+    $task = [System.WindowsRuntimeSystemExtensions]::AsTask($operation)
+    $task.Wait()
+    return $task.Result
+  }
+
+  $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($args[0]))
+  $stream = Await-WinRt ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read))
+  $decoder = Await-WinRt ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream))
+  $bitmap = Await-WinRt ($decoder.GetSoftwareBitmapAsync())
+  $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+  if ($null -eq $engine) { exit 3 }
+  $result = Await-WinRt ($engine.RecognizeAsync($bitmap))
+  $lines = @($result.Lines | ForEach-Object { $_.Text })
+  $json = $lines | ConvertTo-Json -Compress
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  [Console]::WriteLine([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($json)))
+  exit 0
+} catch {
+  exit 1
+}
+"#;
+
+#[cfg(target_os = "windows")]
+struct TemporaryIdentityImage {
+    directory: PathBuf,
+    path: PathBuf,
+}
+
+#[cfg(target_os = "windows")]
+impl TemporaryIdentityImage {
+    fn new(app: &AppHandle) -> Result<Self, IdentityScannerError> {
+        let scan_root = app
+            .path()
+            .app_cache_dir()
+            .map_err(|_| IdentityScannerError::acquisition_failed())?
+            .join("identity-scans");
+        fs::create_dir_all(&scan_root).map_err(|_| IdentityScannerError::acquisition_failed())?;
+
+        for _ in 0..16 {
+            let directory_name =
+                format!("scan-{}-{:016x}", std::process::id(), rand::random::<u64>());
+            let directory = scan_root.join(directory_name);
+            match fs::create_dir(&directory) {
+                Ok(()) => {
+                    return Ok(Self {
+                        path: directory.join("identity-scan.jpg"),
+                        directory,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => return Err(IdentityScannerError::acquisition_failed()),
+            }
+        }
+        Err(IdentityScannerError::acquisition_failed())
+    }
+
+    fn remove(&self) -> Result<(), IdentityScannerError> {
+        let file_result = match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(IdentityScannerError::temp_cleanup_failed()),
+        };
+        let directory_result = match fs::remove_dir(&self.directory) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(IdentityScannerError::temp_cleanup_failed()),
+        };
+        match (file_result, directory_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for TemporaryIdentityImage {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_powershell(
+    script: &str,
+    path: &std::path::Path,
+) -> Result<std::process::Output, ()> {
+    Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .arg(path)
+        .output()
+        .map_err(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn acquire_wia_image(path: &std::path::Path) -> Result<(), IdentityScannerError> {
+    let output = run_windows_powershell(WIA_ACQUIRE_SCRIPT, path)
+        .map_err(|_| IdentityScannerError::scanner_unavailable())?;
+    match output.status.code() {
+        Some(0) if path.is_file() => Ok(()),
+        Some(2) => Err(IdentityScannerError::cancelled()),
+        Some(3) => Err(IdentityScannerError::scanner_unavailable()),
+        _ => Err(IdentityScannerError::acquisition_failed()),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_local_ocr(path: &std::path::Path) -> Result<Vec<String>, IdentityScannerError> {
+    let output = run_windows_powershell(WINDOWS_OCR_SCRIPT, path)
+        .map_err(|_| IdentityScannerError::ocr_unavailable())?;
+    match output.status.code() {
+        Some(0) => {}
+        Some(3) => return Err(IdentityScannerError::ocr_unavailable()),
+        _ => return Err(IdentityScannerError::ocr_failed()),
+    }
+
+    if output.stdout.len() > 96 * 1024 {
+        return Err(IdentityScannerError::ocr_failed());
+    }
+    let encoded_lines = std::str::from_utf8(&output.stdout)
+        .map_err(|_| IdentityScannerError::ocr_failed())?
+        .trim();
+    let json = BASE64
+        .decode(encoded_lines)
+        .map_err(|_| IdentityScannerError::ocr_failed())?;
+    let lines: Vec<String> =
+        serde_json::from_slice(&json).map_err(|_| IdentityScannerError::ocr_failed())?;
+    let mut sanitized_lines = Vec::new();
+    let mut total_length = 0usize;
+    for line in lines {
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        total_length += line.len();
+        if total_length > 64 * 1024 {
+            return Err(IdentityScannerError::ocr_failed());
+        }
+        sanitized_lines.push(line);
+    }
+    Ok(sanitized_lines)
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_identity_scan_result(
+    side: &str,
+    source: &str,
+    image_path: &std::path::Path,
+) -> Result<IdentityScanResult, IdentityScannerError> {
+    let (image_bytes, mime_type) = read_identity_image(image_path)?;
+    let ocr_lines = run_windows_local_ocr(image_path)?;
+    Ok(identity_scan_result(
+        side,
+        source,
+        image_bytes,
+        mime_type,
+        ocr_lines,
+    ))
+}
+
 fn show_customer_display_window(
     window: &tauri::WebviewWindow,
     route: &str,
@@ -291,6 +727,44 @@ mod tests {
             error_code: "customer@example.com".to_string(),
         };
         assert!(validate_ui_diagnostic(payload).is_err());
+    }
+
+    #[test]
+    fn validates_identity_scan_side_and_image_magic_bytes() {
+        assert!(validate_identity_scan_side("front").is_ok());
+        assert!(validate_identity_scan_side("back").is_ok());
+        assert!(validate_identity_scan_side("other").is_err());
+
+        assert_eq!(
+            identity_mime_type(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            identity_mime_type(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n']),
+            Some("image/png")
+        );
+        assert_eq!(
+            identity_mime_type(&[b'I', b'I', 0x2A, 0x00]),
+            Some("image/tiff")
+        );
+        assert_eq!(identity_mime_type(b"BM\0\0"), Some("image/bmp"));
+        assert_eq!(identity_mime_type(b"not-an-image"), None);
+    }
+
+    #[test]
+    fn requires_matching_image_extension_and_content_type() {
+        assert_eq!(
+            expected_identity_mime_type(std::path::Path::new("identity.jpeg")),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            expected_identity_mime_type(std::path::Path::new("identity.tiff")),
+            Some("image/tiff")
+        );
+        assert_eq!(
+            expected_identity_mime_type(std::path::Path::new("identity.pdf")),
+            None
+        );
     }
 
     #[cfg(not(debug_assertions))]
@@ -580,6 +1054,74 @@ async fn reopen_document_preview_window(
 }
 
 #[tauri::command]
+async fn get_identity_scanner_capabilities() -> IdentityScannerCapabilities {
+    identity_scanner_capabilities()
+}
+
+#[tauri::command]
+async fn acquire_identity_scan(
+    app: AppHandle,
+    side: String,
+) -> Result<IdentityScanResult, IdentityScannerError> {
+    validate_identity_scan_side(&side)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let temporary_image = TemporaryIdentityImage::new(&app)?;
+        let result = acquire_wia_image(&temporary_image.path)
+            .and_then(|()| build_windows_identity_scan_result(&side, "wia", &temporary_image.path));
+        let cleanup = temporary_image.remove();
+        cleanup?;
+        result
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        let _ = side;
+        Err(IdentityScannerError::unsupported_platform())
+    }
+}
+
+#[tauri::command]
+async fn pick_identity_scan_file(side: String) -> Result<IdentityScanResult, IdentityScannerError> {
+    validate_identity_scan_side(&side)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let picked = rfd::FileDialog::new()
+            .add_filter(
+                "Kimlik görüntüsü",
+                &["jpg", "jpeg", "png", "tif", "tiff", "bmp"],
+            )
+            .pick_file()
+            .ok_or_else(IdentityScannerError::cancelled)?;
+        build_windows_identity_scan_result(&side, "file", &picked)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = side;
+        Err(IdentityScannerError::unsupported_platform())
+    }
+}
+
+/// Scans are returned directly to the frontend and are never persisted by the desktop shell.
+/// This command lets callers use one explicit lifecycle method without retaining file paths.
+#[tauri::command]
+async fn discard_identity_scan() -> Result<bool, IdentityScannerError> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(true)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(IdentityScannerError::unsupported_platform())
+    }
+}
+
+#[tauri::command]
 async fn pick_document_import_file() -> Result<PickedDocumentFile, String> {
     let picked = rfd::FileDialog::new()
         .add_filter("Excel", &["xlsx", "xlsm"])
@@ -703,6 +1245,10 @@ fn main() {
             ensure_document_preview_window,
             close_document_preview_window,
             reopen_document_preview_window,
+            get_identity_scanner_capabilities,
+            acquire_identity_scan,
+            pick_identity_scan_file,
+            discard_identity_scan,
             pick_document_import_file,
             export_document_bytes,
             pending_purchase_draft::persist_pending_purchase_draft,

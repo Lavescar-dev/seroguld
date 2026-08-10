@@ -6,7 +6,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.customer_activity import CustomerActivityEvent
@@ -22,6 +23,7 @@ from app.schemas.customer import (
     CustomerStats,
     CustomerUpdate,
 )
+from app.schemas.address import CustomerMatchItemOut, CustomerMatchOut
 from app.utils.helpers import utc_now
 from app.utils.security import (
     decrypt_field,
@@ -71,6 +73,10 @@ def _normalize_cpr(value: str | None) -> str | None:
     return digits or None
 
 
+def _normalize_city(value: str | None) -> str | None:
+    return (value or "").strip() or None
+
+
 def _validate_customer_identity_inputs(
     *,
     phone: str | None,
@@ -110,6 +116,7 @@ def _customer_out(user: User, identity: CustomerIdentityDocument | None) -> Cust
         phone=user.phone,
         address=address_plain,
         postal_code=user.postal_code,
+        city=user.city,
         cpr_number=cpr_plain,
         cpr_number_masked=mask_cpr(cpr_plain),
         identity_doc_type=(identity.identity_doc_type if identity else None),
@@ -139,38 +146,156 @@ async def _upsert_identity_document(
     identity_doc_number: str | None,
     identity_doc_country: str | None,
     identity_photo_refs: list[str] | None,
+    fields_set: set[str] | None = None,
 ) -> None:
-    if (
-        identity_doc_type is None
-        and identity_doc_number is None
-        and identity_doc_country is None
-        and identity_photo_refs is None
-    ):
+    apply_type = identity_doc_type is not None if fields_set is None else "identity_doc_type" in fields_set
+    apply_number = identity_doc_number is not None if fields_set is None else "identity_doc_number" in fields_set
+    apply_country = identity_doc_country is not None if fields_set is None else "identity_doc_country" in fields_set
+    apply_photos = identity_photo_refs is not None if fields_set is None else "identity_photo_refs" in fields_set
+    if not (apply_type or apply_number or apply_country or apply_photos):
         return
 
     document = await _get_identity(session, user_id)
     if document is None:
+        # An explicit clear should not create an otherwise empty identity row.
+        has_value = bool(
+            identity_doc_type
+            or (identity_doc_number or "").strip()
+            or (identity_doc_country or "").strip()
+            or identity_photo_refs
+        )
+        if not has_value:
+            return
         document = CustomerIdentityDocument(user_id=user_id)
         session.add(document)
         await session.flush()
 
-    if identity_doc_type is not None:
+    if apply_type:
         document.identity_doc_type = identity_doc_type
-    if identity_doc_number is not None:
-        clean = identity_doc_number.strip()
-        document.identity_doc_number_encrypted = encrypt_field(clean)
-        document.identity_doc_number_hash = hash_sensitive_value(clean)
-    if identity_doc_country is not None:
-        stripped = identity_doc_country.strip()
+    if apply_number:
+        clean = (identity_doc_number or "").strip()
+        document.identity_doc_number_encrypted = encrypt_field(clean) if clean else None
+        document.identity_doc_number_hash = hash_sensitive_value(clean) if clean else None
+    if apply_country:
+        stripped = (identity_doc_country or "").strip()
         document.identity_doc_country = stripped.upper() if stripped else None
-    if identity_photo_refs is not None:
-        document.identity_photo_refs = identity_photo_refs
+    if apply_photos:
+        document.identity_photo_refs = identity_photo_refs or []
+
+
+async def _identity_conflicting_customer_ids(
+    session: AsyncSession,
+    *,
+    cpr_hash: str | None,
+    identity_doc_number_hash: str | None,
+    exclude_user_id=None,
+) -> set:
+    conditions = []
+    if cpr_hash:
+        conditions.append(User.cpr_hash == cpr_hash)
+    if identity_doc_number_hash:
+        conditions.append(CustomerIdentityDocument.identity_doc_number_hash == identity_doc_number_hash)
+    if not conditions:
+        return set()
+    statement = (
+        select(User.id)
+        .outerjoin(CustomerIdentityDocument, CustomerIdentityDocument.user_id == User.id)
+        .where(User.role == RoleEnum.CUSTOMER, or_(*conditions))
+    )
+    if exclude_user_id is not None:
+        statement = statement.where(User.id != exclude_user_id)
+    return set((await session.scalars(statement)).all())
+
+
+def _identity_conflict_detail(*, has_cpr: bool, has_identity_doc: bool) -> str:
+    if has_cpr and has_identity_doc:
+        return "Bu CPR veya kimlik belge numarasıyla kayıtlı bir müşteri zaten var."
+    if has_cpr:
+        return "Bu CPR ile kayıtlı bir müşteri zaten var."
+    return "Bu kimlik belge numarasıyla kayıtlı bir müşteri zaten var."
+
+
+async def _ensure_identity_values_available(
+    session: AsyncSession,
+    *,
+    cpr: str | None,
+    identity_doc_number: str | None,
+    exclude_user_id=None,
+) -> None:
+    cpr_hash = hash_cpr(cpr)
+    doc_hash = hash_sensitive_value(identity_doc_number) if identity_doc_number else None
+    conflicts = await _identity_conflicting_customer_ids(
+        session,
+        cpr_hash=cpr_hash,
+        identity_doc_number_hash=doc_hash,
+        exclude_user_id=exclude_user_id,
+    )
+    if conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_identity_conflict_detail(has_cpr=bool(cpr), has_identity_doc=bool(identity_doc_number)),
+        )
+
+
+async def customer_identity_match(
+    session: AsyncSession,
+    *,
+    cpr_number: str | None,
+    identity_doc_number: str | None,
+) -> CustomerMatchOut:
+    """Return exact hash matches without disclosing raw identity values."""
+
+    cpr = _normalize_cpr(cpr_number)
+    cpr_hash = hash_cpr(cpr) if cpr and len(cpr) == 10 else None
+    doc_number = (identity_doc_number or "").strip() or None
+    doc_hash = hash_sensitive_value(doc_number) if doc_number and len(doc_number) >= 4 else None
+    if not cpr_hash and not doc_hash:
+        return CustomerMatchOut(status="none")
+
+    conditions = []
+    if cpr_hash:
+        conditions.append(User.cpr_hash == cpr_hash)
+    if doc_hash:
+        conditions.append(CustomerIdentityDocument.identity_doc_number_hash == doc_hash)
+    rows = (
+        await session.execute(
+            select(User, CustomerIdentityDocument)
+            .outerjoin(CustomerIdentityDocument, CustomerIdentityDocument.user_id == User.id)
+            .where(User.role == RoleEnum.CUSTOMER, or_(*conditions))
+            .order_by(User.created_at.asc())
+        )
+    ).all()
+
+    matches: list[CustomerMatchItemOut] = []
+    for user, document in rows:
+        matched_fields: list[str] = []
+        if cpr_hash and user.cpr_hash == cpr_hash:
+            matched_fields.append("cpr")
+        if doc_hash and document and document.identity_doc_number_hash == doc_hash:
+            matched_fields.append("identity_doc_number")
+        if not matched_fields:
+            continue
+        matches.append(
+            CustomerMatchItemOut(
+                id=str(user.id),
+                name=user.name,
+                cpr_number_masked=(f"******{user.cpr_last4}" if user.cpr_last4 else None),
+                identity_doc_number_masked=mask_last4(
+                    decrypt_field(document.identity_doc_number_encrypted) if document else None
+                ),
+                matched_by=", ".join(matched_fields),
+            )
+        )
+
+    match_status = "none" if not matches else "single" if len(matches) == 1 else "conflict"
+    return CustomerMatchOut(status=match_status, matches=matches)
 
 
 async def create_customer(session: AsyncSession, payload: CustomerCreate) -> User:
     email = payload.email or _normalize_generated_email()
     phone = _normalize_phone(payload.phone)
     postal_code = _normalize_postal_code(payload.postal_code)
+    city = _normalize_city(payload.city)
     cpr = _normalize_cpr(payload.cpr_number)
     identity_doc_number = payload.identity_doc_number.strip() if payload.identity_doc_number else None
     _validate_customer_identity_inputs(phone=phone, cpr=cpr, identity_doc_number=identity_doc_number)
@@ -190,51 +315,105 @@ async def create_customer(session: AsyncSession, payload: CustomerCreate) -> Use
                     detail="Bu telefon numarası ile kayıtlı bir müşteri zaten var.",
                 )
 
-    if cpr:
-        cpr_hash = hash_cpr(cpr)
-        if cpr_hash:
-            existing_by_cpr = await session.scalar(
-                select(User)
-                .where(User.role == RoleEnum.CUSTOMER, User.cpr_hash == cpr_hash)
-                .limit(1)
-            )
-            if existing_by_cpr:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Bu CPR ile kayıtlı bir müşteri zaten var.",
-                )
+    await _ensure_identity_values_available(
+        session,
+        cpr=cpr,
+        identity_doc_number=identity_doc_number,
+    )
 
     password = payload.password or secrets.token_urlsafe(12)
 
-    user = User(
-        email=email,
-        password_hash=get_password_hash(password),
-        name=payload.name,
-        role=RoleEnum.CUSTOMER,
-        phone=phone,
-        postal_code=postal_code,
-        address_encrypted=encrypt_field(payload.address.strip()) if payload.address else None,
-        cpr_number_encrypted=encrypt_field(cpr) if cpr else None,
-        cpr_hash=hash_cpr(cpr),
-        cpr_last4=(cpr[-4:] if cpr else None),
-        is_active=True,
-    )
-    session.add(user)
-    await session.flush()
+    try:
+        # The duplicate lookup is only a friendly early warning.  The partial
+        # unique indexes are the authoritative race guard; use a savepoint so
+        # an index collision leaves the caller's outer transaction usable.
+        async with session.begin_nested():
+            await _ensure_identity_values_available(
+                session,
+                cpr=cpr,
+                identity_doc_number=identity_doc_number,
+            )
+            user = User(
+                email=email,
+                password_hash=get_password_hash(password),
+                name=payload.name,
+                role=RoleEnum.CUSTOMER,
+                phone=phone,
+                postal_code=postal_code,
+                city=city,
+                address_encrypted=encrypt_field(payload.address.strip()) if payload.address else None,
+                cpr_number_encrypted=encrypt_field(cpr) if cpr else None,
+                cpr_hash=hash_cpr(cpr),
+                cpr_last4=(cpr[-4:] if cpr else None),
+                is_active=True,
+            )
+            session.add(user)
+            await session.flush()
 
-    await _upsert_identity_document(
-        session,
-        user_id=user.id,
-        identity_doc_type=payload.identity_doc_type,
-        identity_doc_number=identity_doc_number,
-        identity_doc_country=payload.identity_doc_country,
-        identity_photo_refs=payload.identity_photo_refs,
-    )
+            await _upsert_identity_document(
+                session,
+                user_id=user.id,
+                identity_doc_type=payload.identity_doc_type,
+                identity_doc_number=identity_doc_number,
+                identity_doc_country=payload.identity_doc_country,
+                identity_photo_refs=payload.identity_photo_refs,
+                fields_set={
+                    "identity_doc_type",
+                    "identity_doc_number",
+                    "identity_doc_country",
+                    "identity_photo_refs",
+                },
+            )
+            await session.flush()
+    except IntegrityError as exc:
+        concurrent_email = await session.scalar(select(User.id).where(User.email == email))
+        if concurrent_email is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı") from exc
+        await _ensure_identity_values_available(
+            session,
+            cpr=cpr,
+            identity_doc_number=identity_doc_number,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Müşteri kaydedilirken bir çakışma oluştu. Tekrar arayın.",
+        ) from exc
 
     return user
 
 
 async def update_customer(session: AsyncSession, user: User, payload: CustomerUpdate) -> User:
+    user_id = user.id
+    fields = payload.model_fields_set
+    submitted_cpr = _normalize_cpr(payload.cpr_number) if "cpr_number" in fields else None
+    submitted_identity_doc = (payload.identity_doc_number or "").strip() or None
+    try:
+        # As with creates, the indexes are the final concurrency guard.  A
+        # savepoint contains a losing update race so callers get a usable 409
+        # instead of leaving the outer request transaction in error state.
+        async with session.begin_nested():
+            await _apply_customer_update(session, user, payload)
+    except IntegrityError as exc:
+        if "email" in fields and payload.email is not None:
+            concurrent_email = await session.scalar(
+                select(User.id).where(User.email == payload.email, User.id != user_id)
+            )
+            if concurrent_email is not None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı") from exc
+        await _ensure_identity_values_available(
+            session,
+            cpr=submitted_cpr,
+            identity_doc_number=submitted_identity_doc if "identity_doc_number" in fields else None,
+            exclude_user_id=user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Müşteri bilgileri aynı anda değiştirildi. Güncel kaydı açıp tekrar deneyin.",
+        ) from exc
+    return user
+
+
+async def _apply_customer_update(session: AsyncSession, user: User, payload: CustomerUpdate) -> None:
     fields = payload.model_fields_set
     if "name" in fields and payload.name is not None:
         user.name = payload.name
@@ -249,28 +428,46 @@ async def update_customer(session: AsyncSession, user: User, payload: CustomerUp
         user.phone = phone
     if "postal_code" in fields:
         user.postal_code = _normalize_postal_code(payload.postal_code)
+    if "city" in fields:
+        user.city = _normalize_city(payload.city)
     if "address" in fields:
         user.address_encrypted = encrypt_field(payload.address) if payload.address else None
     if "cpr_number" in fields:
         cpr = _normalize_cpr(payload.cpr_number)
         _validate_customer_identity_inputs(phone=None, cpr=payload.cpr_number, identity_doc_number=None)
+        await _ensure_identity_values_available(
+            session,
+            cpr=cpr,
+            identity_doc_number=None,
+            exclude_user_id=user.id,
+        )
         user.cpr_number_encrypted = encrypt_field(cpr) if cpr else None
         user.cpr_hash = hash_cpr(cpr)
         user.cpr_last4 = cpr[-4:] if cpr else None
-    if payload.is_active is not None:
+    if "is_active" in fields and payload.is_active is not None:
         user.is_active = payload.is_active
+
+    identity_doc_number = payload.identity_doc_number.strip() if payload.identity_doc_number else None
+    if "identity_doc_number" in fields:
+        _validate_customer_identity_inputs(phone=None, cpr=None, identity_doc_number=payload.identity_doc_number)
+        await _ensure_identity_values_available(
+            session,
+            cpr=None,
+            identity_doc_number=identity_doc_number,
+            exclude_user_id=user.id,
+        )
 
     await _upsert_identity_document(
         session,
         user_id=user.id,
         identity_doc_type=payload.identity_doc_type,
-        identity_doc_number=payload.identity_doc_number.strip() if payload.identity_doc_number else payload.identity_doc_number,
+        identity_doc_number=identity_doc_number,
         identity_doc_country=payload.identity_doc_country,
         identity_photo_refs=payload.identity_photo_refs,
+        fields_set=fields,
     )
 
     await session.flush()
-    return user
 
 
 async def get_customer_detail(session: AsyncSession, user: User) -> CustomerDetailOut:

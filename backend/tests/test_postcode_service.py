@@ -146,6 +146,31 @@ async def test_missing_cache_reports_dataset_not_available_without_db_write() ->
     assert factory.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_kds_fallback_preserves_postal_lookup_when_legacy_source_is_down() -> None:
+    factory = FakeClientFactory(error=RuntimeError("legacy source offline"))
+
+    async def kds_fallback(postal_code: str) -> str | None:
+        assert postal_code == "1000"
+        return "København K"
+
+    service = DanishPostcodeService(
+        client_factory=factory,
+        postal_district_fallback=kds_fallback,
+        clock=_clock,
+    )
+
+    result = await service.lookup("1000")
+
+    assert result.found is True
+    assert result.available is True
+    assert result.status == "KDS_FALLBACK"
+    assert result.postal_district == "København K"
+    assert result.source == "adressevaelger.dk"
+    assert result.provenance == "fallback:adressevaelger.dk"
+    assert factory.calls == 1
+
+
 def test_invalid_postcode_is_rejected_before_network() -> None:
     factory = FakeClientFactory(error=RuntimeError("network must not run"))
     service = DanishPostcodeService(client_factory=factory, clock=_clock)
