@@ -1,10 +1,7 @@
-import { MakeOfficeDocumentPage } from '@/make/office/OfficeDocumentPage';
-import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
-import { ModernOfficeSurface } from '@/modern/modules/ModernOfficeSurface';
-import { useUiVariant } from '@/ui-variants';
+import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
+import { useParams } from 'react-router-dom';
 
 export function OfficeDocumentPage() {
-  const state = useOfficeDocumentState();
-  const { variant } = useUiVariant();
-  return variant === 'modern' ? <ModernOfficeSurface state={state} mode="page" /> : <MakeOfficeDocumentPage {...state} />;
+  const { kind = '', key = '' } = useParams<{ kind: string; key: string }>();
+  return <EmbeddedWorkbookPanel kind={kind} artifactKey={key} layoutMode="page" />;
 }

@@ -60,10 +60,8 @@ const INTEGRATION_GROUPS: { title: string; fields: FieldDef[] }[] = [
       { key: 'uniconta_password', label: 'Uniconta şifre' },
       { key: 'uniconta_company_id', label: 'Company ID' },
       { key: 'uniconta_api_key', label: 'Uniconta API key' },
-      { key: 'market_gold', label: 'Altın' },
-      { key: 'market_silver', label: 'Gümüş' },
-      { key: 'market_platin', label: 'Platin' },
-      { key: 'market_palladyum', label: 'Palladyum' },
+      { key: 'uniconta_purchase_vat_code_25', label: '%25 alış KDV kodu' },
+      { key: 'uniconta_purchase_vat_code_0', label: '%0 alış KDV kodu' },
     ],
   },
 ];
@@ -79,17 +77,24 @@ type TabKey = (typeof TABS)[number]['key'];
 
 function SecretField({
   value,
+  configured,
   onChange,
 }: {
   value: string;
+  configured: boolean;
   onChange?: (value: string) => void;
 }) {
-  const concealed = useMemo(() => !value || /^(\*|•)+$/.test(value) ? value : '••••••••••••', [value]);
   return (
     <div className="relative">
-      <ModernTextInput type="password" value={value || concealed} onChange={(event) => onChange?.(event.target.value)} />
+      <ModernTextInput
+        type="password"
+        value={value}
+        autoComplete="new-password"
+        placeholder={configured ? 'Yapılandırıldı · değiştirmek için yeni değer girin' : 'Yeni değer girin'}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
       <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-sg-text-soft/50">
-        {value ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        {configured ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </span>
     </div>
   );
@@ -100,6 +105,8 @@ export function ModernSettingsPage({
   runtime,
   secretFieldKeys = [],
   uiVariantSlot,
+  languageSettingsSlot,
+  customerDisplayMonitorSlot,
   onFieldChange,
   onSave,
   onImport,
@@ -113,9 +120,13 @@ export function ModernSettingsPage({
   const renderField = (field: FieldDef) => (
     <ModernField key={field.key} label={field.label}>
       {secretFieldKeys.includes(field.key) ? (
-        <SecretField value={config[field.key]} onChange={(value) => onFieldChange?.(field.key, value)} />
+        <SecretField
+          value={String(config[field.key] ?? '')}
+          configured={Boolean(config.secret_fields_configured?.includes(String(field.key)))}
+          onChange={(value) => onFieldChange?.(field.key, value)}
+        />
       ) : (
-        <ModernTextInput value={config[field.key]} onChange={(event) => onFieldChange?.(field.key, event.target.value)} />
+        <ModernTextInput value={String(config[field.key] ?? '')} onChange={(event) => onFieldChange?.(field.key, event.target.value)} />
       )}
     </ModernField>
   );
@@ -143,7 +154,7 @@ export function ModernSettingsPage({
             </div>
           }
         />
-        <div className="mt-4 flex flex-wrap gap-1 border-b border-sg-border-soft pb-px" role="tablist" aria-label="Ayar bölümleri">
+        <div className="mt-5 grid grid-cols-2 gap-2 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-2 lg:grid-cols-4" role="tablist" aria-label="Ayar bölümleri">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -152,10 +163,10 @@ export function ModernSettingsPage({
               aria-selected={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={cn(
-                '-mb-px border-b-2 px-3.5 py-2.5 text-sm font-medium transition motion-reduce:transition-none',
+                'rounded-sg-md border px-3.5 py-3 text-sm font-semibold transition motion-reduce:transition-none',
                 activeTab === tab.key
-                  ? 'border-sg-accent text-sg-accent-dark'
-                  : 'border-transparent text-sg-text-soft hover:text-sg-text',
+                  ? 'border-sg-accent/30 bg-white text-sg-accent-dark shadow-sm'
+                  : 'border-transparent text-sg-text-soft hover:border-sg-border hover:bg-white/70 hover:text-sg-text',
               )}
             >
               {tab.label}
@@ -166,16 +177,49 @@ export function ModernSettingsPage({
 
       {activeTab === 'platform' ? (
         <>
+          <div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+            <ModernSection>
+              <ModernSectionHeader title="Entegrasyon durumu" description="Bağlantıların güncel hazır olma durumu." />
+              <div className="mt-4">
+                <StatusGrid items={runtime} />
+              </div>
+            </ModernSection>
+            <ModernSection>
+              <ModernSectionHeader title="Firma bilgileri" description="Belge, çıktı ve operasyon ekranlarında kullanılan temel bilgiler." />
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {PLATFORM_FIELDS.map(renderField)}
+              </div>
+            </ModernSection>
+          </div>
           <ModernSection>
-            <ModernSectionHeader title="Entegrasyon durumu" description="Yapılandırılan bağlantıların mevcut readiness görünümü." />
-            <div className="mt-4">
-              <StatusGrid items={runtime} />
-            </div>
-          </ModernSection>
-          <ModernSection>
-            <ModernSectionHeader title="Şirket ve runtime" />
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {PLATFORM_FIELDS.map(renderField)}
+            <ModernSectionHeader title="Piyasa oranları" description="Global oran profili ve canlı piyasa kaynağı." />
+            <div className="mt-4 space-y-4">
+              <label className="flex items-start gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft p-4">
+                <input
+                  type="checkbox"
+                  checked={Boolean(config.market_rates_live_enabled)}
+                  onChange={(event) => onFieldChange?.('market_rates_live_enabled', event.target.checked)}
+                  className="mt-1 h-4 w-4 accent-sg-accent"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-sg-text">Canlı piyasa fiyatlarını otomatik kullan</span>
+                  <span className="mt-1 block text-sm leading-6 text-sg-text-soft">Kapalıyken topbardaki oran editöründe kaydedilen global profil kullanılır.</span>
+                </span>
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  ['Au 24K', config.market_gold],
+                  ['Ag 999', config.market_silver],
+                  ['Pt', config.market_platin],
+                  ['Pd', config.market_palladyum],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-sg-md border border-sg-border bg-sg-surface-soft p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{label}</p>
+                    <p className="mt-1 text-sm font-semibold text-sg-text">{value} DKK/g</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-sm text-sg-text-soft">Detaylı karat ve gümüş oranları topbardaki Au/Ag alanından açılan global editörden düzenlenir.</p>
             </div>
           </ModernSection>
         </>
@@ -214,14 +258,20 @@ export function ModernSettingsPage({
         </>
       ) : null}
 
-      {activeTab === 'appearance' && uiVariantSlot ? (
-        <ModernSection>
-          <ModernSectionHeader
-            title="Arayüz deneyimi"
-            description="Klasik ve yeni arayüz seçimi bu cihaza özeldir; veri ve açık taslaklar korunur."
-          />
-          <div className="mt-4">{uiVariantSlot}</div>
-        </ModernSection>
+      {activeTab === 'appearance' ? (
+        <>
+          {uiVariantSlot ? (
+            <ModernSection>
+              <ModernSectionHeader
+                title="Arayüz deneyimi"
+                description="Klasik ve yeni arayüz seçimi bu cihaza özeldir; veri ve açık taslaklar korunur."
+              />
+              <div className="mt-4">{uiVariantSlot}</div>
+            </ModernSection>
+          ) : null}
+          {languageSettingsSlot ? <ModernSection><ModernSectionHeader title="Dil tercihleri" description="Operatör arayüzü ve müşteri ekranı için ayrı dil seçin." /><div className="mt-4">{languageSettingsSlot}</div></ModernSection> : null}
+          {customerDisplayMonitorSlot}
+        </>
       ) : null}
     </ModernPage>
   );

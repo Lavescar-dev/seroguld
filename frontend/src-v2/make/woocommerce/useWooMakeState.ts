@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
-import { apiRequest } from '@/lib/api';
+import { ApiError, apiRequest } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import type {
   DesktopBootstrap,
@@ -23,6 +23,16 @@ export type WooFilter = 'all' | 'published' | 'draft' | 'unpublished';
 export type MainKat = 'kulce' | 'sikke' | 'taki' | 'gumus' | 'platin_pd';
 export type SilverSub = 'smykker' | 'barrer' | 'monter';
 export type PlatinumSub = 'platin' | 'palladyum';
+
+export const wooCatalogQueryKeys = {
+  root: ['woocommerce-catalog'] as const,
+  status: ['woocommerce-catalog', 'status'] as const,
+  list: (page: number, search: string) => ['woocommerce-catalog', 'list', { page, search }] as const,
+};
+
+export function isCatalogPreviewInvalidatedError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 409 || error.status === 403);
+}
 
 export interface SeoData {
   title: string;
@@ -110,6 +120,78 @@ export interface NewWooProductDraft {
   notlar: string;
 }
 
+export interface WooCatalogStatus {
+  configured: boolean;
+  reachable: boolean;
+  remote_published_count: number | null;
+  local_active_count: number;
+  local_inactive_count: number;
+  catalog_revision: number;
+  last_synced_at: string | null;
+  checked_at: string;
+  message: string;
+}
+
+export interface WooCatalogItem {
+  id: string;
+  woocommerce_product_id: number;
+  name: string;
+  slug: string;
+  sku: string | null;
+  permalink: string | null;
+  remote_status: string;
+  catalog_visibility: string | null;
+  stock_status: string | null;
+  stock_quantity: number | null;
+  price_dkk: string | number | null;
+  regular_price_dkk: string | number | null;
+  sale_price_dkk: string | number | null;
+  weight_raw: string | null;
+  weight_grams: string | number | null;
+  weight_missing: boolean;
+  manual_review_required: boolean;
+  manual_review_reasons: string[];
+  photo_missing: boolean;
+  image_count: number;
+  images: Array<{ id?: number; src?: string; name?: string; alt?: string }>;
+  categories: Array<{ id?: number; name?: string; slug?: string }>;
+  is_active: boolean;
+  linked_product_id: string | null;
+  remote_created_at: string | null;
+  remote_modified_at: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  updated_at: string;
+}
+
+export interface WooCatalogPage {
+  items: WooCatalogItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+  catalog_revision: number;
+}
+
+export interface WooCatalogSyncSummary {
+  remote_published_count: number;
+  create_count: number;
+  update_count: number;
+  unchanged_count: number;
+  deactivate_count: number;
+  weight_missing_count: number;
+  manual_review_count: number;
+  photo_missing_count: number;
+}
+
+export interface WooCatalogSyncPreview {
+  preview_revision: string;
+  base_revision: number;
+  expires_at: string;
+  summary: WooCatalogSyncSummary;
+  warnings: string[];
+}
+
 export interface WooMakeState {
   search: string;
   setSearch: (value: string) => void;
@@ -155,6 +237,20 @@ export interface WooMakeState {
   uploadPhotos: (files: File[]) => void;
   deletePhoto: (photoId: string) => void;
   createProductFromDraft: (draft: NewWooProductDraft) => Promise<ProductOut | null>;
+  catalogSearch: string;
+  setCatalogSearch: (value: string) => void;
+  catalogPageNumber: number;
+  setCatalogPageNumber: (value: number) => void;
+  catalog: WooCatalogPage | null;
+  catalogStatus: WooCatalogStatus | null;
+  catalogPreview: WooCatalogSyncPreview | null;
+  catalogLoading: boolean;
+  catalogError: string | null;
+  isPreviewingCatalog: boolean;
+  isApplyingCatalog: boolean;
+  refreshCatalog: () => Promise<void>;
+  previewCatalogSync: () => void;
+  applyCatalogSync: () => void;
 }
 
 export function resolveWooSelectedProductId(
@@ -253,8 +349,8 @@ function mapTip(row: InventoryGridRow): UrunTip {
   return 'Smykke';
 }
 
-function mapWooYayin(row: InventoryGridRow): WooYayinDurum {
-  if (row.shop_sync_status === 'listelendi') return 'Yayında';
+export function mapWooYayin(row: InventoryGridRow): WooYayinDurum {
+  if (row.is_published_to_site) return 'Yayında';
   if (row.shop_sync_status === 'hazir') return 'Taslak';
   return 'Yayınlanmadı';
 }
@@ -428,6 +524,9 @@ export function useWooMakeState(): WooMakeState {
   const [publishPrice, setPublishPrice] = useState('');
   const [aiDraft, setAiDraft] = useState('');
   const [rawOpen, setRawOpen] = useState(false);
+  const [catalogSearch, setCatalogSearchState] = useState('');
+  const [catalogPageNumber, setCatalogPageNumber] = useState(1);
+  const [catalogPreview, setCatalogPreview] = useState<WooCatalogSyncPreview | null>(null);
 
   const bootstrapQuery = useQuery({
     queryKey: ['bootstrap'],
@@ -439,6 +538,29 @@ export function useWooMakeState(): WooMakeState {
     queryFn: () =>
       apiRequest<WooWorkspace>(`/api/v2/woocommerce/workspace${search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ''}`),
   });
+
+  const catalogStatusQuery = useQuery({
+    queryKey: wooCatalogQueryKeys.status,
+    queryFn: () => apiRequest<WooCatalogStatus>('/api/v2/woocommerce/status'),
+    staleTime: 60_000,
+  });
+
+  const catalogQuery = useQuery({
+    queryKey: wooCatalogQueryKeys.list(catalogPageNumber, catalogSearch.trim()),
+    queryFn: () => {
+      const params = new URLSearchParams({
+        page: String(catalogPageNumber),
+        page_size: '50',
+      });
+      if (catalogSearch.trim()) params.set('q', catalogSearch.trim());
+      return apiRequest<WooCatalogPage>(`/api/v2/woocommerce/catalog?${params.toString()}`);
+    },
+  });
+
+  const setCatalogSearch = useCallback((value: string) => {
+    setCatalogSearchState(value);
+    setCatalogPageNumber(1);
+  }, []);
 
   const allRows = workspaceQuery.data?.rows || [];
   const requestedProductId = searchParams.get('product');
@@ -680,11 +802,59 @@ export function useWooMakeState(): WooMakeState {
     onError: (error) => toast.error('Ürün oluşturulamadı', extractApiMessage(error, 'Sunucu hatası')),
   });
 
+  const catalogPreviewMutation = useMutation({
+    mutationFn: () => apiRequest<WooCatalogSyncPreview>('/api/v2/woocommerce/catalog/sync/preview', { method: 'POST' }),
+    onSuccess: (payload) => {
+      setCatalogPreview(payload);
+      toast.info(
+        'WooCommerce senkronizasyon önizlemesi hazır',
+        `${payload.summary.remote_published_count} yayınlı ürün kontrol edildi.`,
+      );
+    },
+    onError: (error) => toast.error('WooCommerce kataloğu kontrol edilemedi', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
+  const catalogApplyMutation = useMutation({
+    mutationFn: (previewRevision: string) =>
+      apiRequest<{ status: string; revision: number; summary: WooCatalogSyncSummary; synced_at: string }>(
+        '/api/v2/woocommerce/catalog/sync',
+        {
+          method: 'POST',
+          body: JSON.stringify({ preview_revision: previewRevision }),
+        },
+      ),
+    onSuccess: async (payload) => {
+      setCatalogPreview(null);
+      setCatalogPageNumber(1);
+      await queryClient.invalidateQueries({ queryKey: wooCatalogQueryKeys.root });
+      toast.success(
+        'WooCommerce kataloğu güncellendi',
+        `${payload.summary.create_count} yeni, ${payload.summary.update_count} güncellenen ürün.`,
+      );
+    },
+    onError: async (error) => {
+      if (isCatalogPreviewInvalidatedError(error)) {
+        setCatalogPreview(null);
+        await queryClient.invalidateQueries({ queryKey: wooCatalogQueryKeys.root });
+        toast.error(
+          'WooCommerce önizlemesi geçersiz',
+          'Önizlemenin süresi doldu veya katalog değişti. Yeni bir önizleme oluşturun.',
+        );
+        return;
+      }
+      toast.error('WooCommerce kataloğu güncellenemedi', extractApiMessage(error, 'Sunucu hatası'));
+    },
+  });
+
   async function refreshWorkspace() {
     await workspaceQuery.refetch();
     if (secilenId) {
       await Promise.all([detailQuery.refetch(), historyQuery.refetch(), syncLogQuery.refetch()]);
     }
+  }
+
+  async function refreshCatalog() {
+    await Promise.all([catalogStatusQuery.refetch(), catalogQuery.refetch()]);
   }
 
   return {
@@ -773,6 +943,31 @@ export function useWooMakeState(): WooMakeState {
       }
     },
     createProductFromDraft: async (draft) => createProductMutation.mutateAsync(draft),
+    catalogSearch,
+    setCatalogSearch,
+    catalogPageNumber,
+    setCatalogPageNumber,
+    catalog: catalogQuery.data ?? null,
+    catalogStatus: catalogStatusQuery.data ?? null,
+    catalogPreview,
+    catalogLoading: catalogQuery.isLoading || catalogStatusQuery.isLoading,
+    catalogError:
+      catalogQuery.error instanceof Error
+        ? catalogQuery.error.message
+        : catalogStatusQuery.error instanceof Error
+          ? catalogStatusQuery.error.message
+          : catalogQuery.error || catalogStatusQuery.error
+            ? 'WooCommerce kataloğu yüklenemedi.'
+            : null,
+    isPreviewingCatalog: catalogPreviewMutation.isPending,
+    isApplyingCatalog: catalogApplyMutation.isPending,
+    refreshCatalog,
+    previewCatalogSync: () => catalogPreviewMutation.mutate(),
+    applyCatalogSync: () => {
+      if (catalogPreview?.preview_revision) {
+        catalogApplyMutation.mutate(catalogPreview.preview_revision);
+      }
+    },
   };
 }
 

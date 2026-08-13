@@ -92,9 +92,21 @@ export type ModernUiFallbackEvent = {
   diagnostic: ModernUiFailureDiagnostic;
   supportPath?: string | null;
   hash: string;
+  /** Set only when the operator explicitly chooses the classic recovery action. */
+  explicitClassic?: boolean;
 };
 
-export const UI_VARIANT_STORAGE_KEY = 'seroguld.ui.variant.v1';
+/**
+ * Older desktop builds wrote v1 and v2 preferences. Neither key is read by
+ * the 0.3.1 build: a stale classic value must not make a fresh install open
+ * the retired shell.
+ */
+export const UI_VARIANT_LEGACY_STORAGE_KEYS = [
+  'seroguld.ui.variant.v1',
+  'seroguld.ui.variant.v2',
+] as const;
+/** Explicit modern/classic choices made in the 0.3.1 build are persisted here. */
+export const UI_VARIANT_STORAGE_KEY = 'seroguld.ui.variant.v3';
 export const UI_VARIANT_MODERN_BANNER_DISMISSED_KEY =
   'seroguld.ui.modern-banner.dismissed.v1';
 
@@ -163,4 +175,4 @@ export const UI_VARIANT_MODERN_RETURN_TEXT = 'Klasik arayüze dön';
 export const UI_VARIANT_BLOCKED_NOTICE = 'Arayüz değişikliği şu anda tamamlanamadı.';
 export const UI_VARIANT_SETTLING_NOTICE = 'Kaydetme tamamlanıyor.';
 export const UI_VARIANT_MODERN_BOOTSTRAP_FAILED_NOTICE =
-  'Yeni arayüz başlatılamadı, klasik arayüze dönüldü.';
+  'Yeni arayüz başlatılamadı. Klasik arayüze yalnızca açık seçiminizle dönebilirsiniz.';

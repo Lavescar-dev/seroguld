@@ -410,6 +410,10 @@ class PosWorkspaceSummaryOut(AppBaseModel):
     gold_weight_grams: Decimal = Decimal("0.00")
     silver_weight_grams: Decimal = Decimal("0.00")
     total_amount_dkk: Decimal = Decimal("0.00")
+    net_amount_dkk: Decimal = Decimal("0.00")
+    vat_rate_percent: Decimal = Decimal("0.00")
+    vat_amount_dkk: Decimal = Decimal("0.00")
+    gross_amount_dkk: Decimal = Decimal("0.00")
 
 
 class PosWorkspaceNumberingOut(AppBaseModel):
@@ -510,6 +514,8 @@ class PosWorkspaceSectionsUpdate(AppBaseModel):
     bank_info: PosWorkspaceBankInfo | None = None
     market_rates: PosWorkspaceMarketRates | None = None
     afg_note: str | None = Field(default=None, max_length=1000)
+    purchase_vat_enabled: bool | None = None
+    purchase_vat_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
     calculators: PosWorkspaceCalculatorsUpdate | None = None
     payment_method: str | None = Field(default=None, pattern="^(bank|cash)$")
     numbering: PosWorkspaceNumberingUpdate | None = None
@@ -531,6 +537,8 @@ class PosWorkspaceFinalizeRequest(AppBaseModel):
     notes: str | None = Field(default=None, max_length=1000)
     bank_info: PosWorkspaceBankInfo | None = None
     payment_method: str | None = Field(default=None, pattern="^(bank|cash)$")
+    purchase_vat_enabled: bool | None = None
+    purchase_vat_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
 
 
 class PosWorkspaceFinalizeResponse(AppBaseModel):
@@ -558,6 +566,8 @@ class PosWorkspaceOut(AppBaseModel):
     payment_method: str = Field(default="bank", pattern="^(bank|cash)$")
     market_rates: PosWorkspaceMarketRates
     afg_note: str | None = None
+    purchase_vat_enabled: bool = True
+    purchase_vat_rate_percent: Decimal = Decimal("25.00")
     calculators: PosWorkspaceCalculatorsOut = Field(default_factory=PosWorkspaceCalculatorsOut)
     numbering_preview: PosWorkspaceNumberingOut
     invoice_gold_mode: str = Field(default="auto", pattern="^(auto|manual)$")
@@ -623,6 +633,7 @@ class PosDocumentListItemOut(AppBaseModel):
     currency_code: str
     gross_amount_dkk: Decimal
     net_amount_dkk: Decimal
+    vat_rate_percent: Decimal
     vat_amount_dkk: Decimal
     line_count: int = 0
     total_weight_grams: Decimal | None = None
@@ -634,6 +645,11 @@ class PosDocumentListItemOut(AppBaseModel):
     has_locked_products: bool = False
     issued_at: datetime
     confirmed_at: datetime | None = None
+    historical_imported_at: datetime | None = None
+    uniconta_sync_status: str | None = None
+    uniconta_invoice_number: str | None = None
+    uniconta_account: str | None = None
+    uniconta_pdf_available: bool = False
 
 
 class PosDocumentDetailLineOut(AppBaseModel):
@@ -682,6 +698,7 @@ class PosDocumentDetailOut(AppBaseModel):
     currency_code: str
     gross_amount_dkk: Decimal
     net_amount_dkk: Decimal
+    vat_rate_percent: Decimal
     vat_amount_dkk: Decimal
     line_count: int = 0
     total_weight_grams: Decimal | None = None

@@ -464,11 +464,13 @@ export function MakeSettingsPage({
           color="border-sky-300 bg-sky-100"
           description="Fatura, muhasebe ve ERP entegrasyonu"
         >
-          <FieldRow label="API URL"><TextInput value={config.uniconta_api_url} onChange={(value) => onUpdate('uniconta_api_url', value)} placeholder="https://www.uniconta.com/api" mono /></FieldRow>
+          <FieldRow label="API URL"><TextInput value={config.uniconta_api_url} onChange={(value) => onUpdate('uniconta_api_url', value)} placeholder="https://api.uniconta.com" mono /></FieldRow>
           <FieldRow label="API Key"><SecretInput value={config.uniconta_api_key} onChange={(value) => onUpdate('uniconta_api_key', value)} placeholder="uc_..." /></FieldRow>
           <FieldRow label="Kullanici Adi"><TextInput value={config.uniconta_username} onChange={(value) => onUpdate('uniconta_username', value)} placeholder="user@firma.dk" /></FieldRow>
           <FieldRow label="Sifre"><SecretInput value={config.uniconta_password} onChange={(value) => onUpdate('uniconta_password', value)} placeholder="********" /></FieldRow>
           <FieldRow label="Company ID" sublabel="Sirket numarasi"><TextInput value={config.uniconta_company_id} onChange={(value) => onUpdate('uniconta_company_id', value)} placeholder="12345" mono /></FieldRow>
+          <FieldRow label="%25 Alış KDV Kodu" sublabel="Varsayılan: Købsmoms"><TextInput value={config.uniconta_purchase_vat_code_25} onChange={(value) => onUpdate('uniconta_purchase_vat_code_25', value)} placeholder="Købsmoms" mono /></FieldRow>
+          <FieldRow label="%0 Alış KDV Kodu" sublabel="Varsayılan: KøbBrugtmoms"><TextInput value={config.uniconta_purchase_vat_code_0} onChange={(value) => onUpdate('uniconta_purchase_vat_code_0', value)} placeholder="KøbBrugtmoms" mono /></FieldRow>
         </SettingsSection>
 
         <SettingsSection

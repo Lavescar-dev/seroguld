@@ -85,7 +85,7 @@ async def _claim_workspace_revision(
             detail={
                 "code": "workspace_revision_conflict",
                 "current_revision": current_revision,
-                "message": "Workspace başka bir yüzeyde değişti; önce güncel taslağı alın.",
+                "message": "Çalışma alanı başka bir yüzeyde değişti; önce güncel taslağı alın.",
             },
         )
     note_payload["workspace_revision"] = current_revision + 1
@@ -110,7 +110,7 @@ async def _claim_workspace_revision(
             detail={
                 "code": "workspace_revision_conflict",
                 "current_revision": int(fresh_payload.get("workspace_revision") or 1),
-                "message": "Workspace başka bir yüzeyde değişti; önce güncel taslağı alın.",
+                "message": "Çalışma alanı başka bir yüzeyde değişti; önce güncel taslağı alın.",
             },
         )
     pos_session.notes = claimed_notes
@@ -136,7 +136,7 @@ async def _lock_workspace_session(session: AsyncSession, pos_session: PosSession
         .with_for_update()
     )
     if locked is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace bulunamadı")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Çalışma alanı bulunamadı")
     return locked
 
 
@@ -154,7 +154,7 @@ async def update_purchase_workspace_customer(
     if lock:
         pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yalnızca taslak alış çalışma alanı güncellenebilir.")
 
     customer = pos_session.customer
     if customer is None and pos_session.customer_id is not None:
@@ -212,7 +212,7 @@ async def update_purchase_workspace_draft_customer(
     if lock:
         pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yalnızca taslak alış çalışma alanı güncellenebilir.")
 
     note_payload = (
         await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
@@ -248,7 +248,7 @@ async def select_purchase_workspace_customer(
     core = _core()
     pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yalnızca taslak alış çalışma alanı güncellenebilir.")
 
     customer = await core._resolve_customer(
         session,
@@ -297,7 +297,7 @@ async def replace_purchase_workspace_sections(
     if lock:
         pos_session = await _lock_workspace_session(session, pos_session)
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace güncellenebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yalnızca taslak alış çalışma alanı güncellenebilir.")
 
     note_payload = (
         await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
@@ -333,6 +333,12 @@ async def replace_purchase_workspace_sections(
     # kept the old value and made it respawn after the response rehydrate.
     if "afg_note" in payload.model_fields_set:
         note_payload["freeform_note"] = str(payload.afg_note).strip() or None
+    if payload.purchase_vat_enabled is not None:
+        note_payload["purchase_vat_enabled"] = bool(payload.purchase_vat_enabled)
+    if payload.purchase_vat_rate_percent is not None:
+        note_payload["purchase_vat_rate_percent"] = str(
+            core.quantize_2(core.to_decimal(payload.purchase_vat_rate_percent))
+        )
     if payload.calculators is not None:
         note_payload["calculators"] = core._serialize_workspace_calculators_payload(payload.calculators)
     if payload.payment_method is not None:

@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/#/login');
   await expect(page.getByRole('heading', { name: /Desktop Sign In/i })).toBeVisible();
-  await page.getByLabel('Şifre').fill('Admin123!');
+  await page.locator('input[type="password"]').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
 
   // The login mutation navigates asynchronously.  Re-enter the hash route

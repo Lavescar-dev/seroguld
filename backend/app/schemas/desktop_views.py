@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from app.schemas.base import AppBaseModel
 
 
@@ -82,19 +84,35 @@ class SettingsScreenOut(AppBaseModel):
     uniconta_password: str
     uniconta_company_id: str
     uniconta_api_key: str
+    uniconta_purchase_vat_code_25: str = "Købsmoms"
+    uniconta_purchase_vat_code_0: str = "KøbBrugtmoms"
     market_gold: str
     market_silver: str
     market_platin: str
     market_palladyum: str
+    market_rates_live_enabled: bool = False
     firma_adi: str
     firma_cvr: str
     firma_telefon: str
     firma_email: str
     firma_adres: str
+    # Secret alanlar istemciye asla geri dönmez. Bu liste yalnızca mevcut
+    # değerin yapılandırılıp yapılandırılmadığını bildirir.
+    secret_fields_configured: list[str] = []
 
 
 class SettingsScreenUpdateIn(SettingsScreenOut):
-    pass
+    # Boş veya gönderilmeyen secret alanları mevcut değeri korur. Secret
+    # temizleme normal kaydetme akışından ayrı tutulur.
+    openai_api_key: str | None = None
+    opmc_api_key: str | None = None
+    opmc_webhook_secret: str | None = None
+    woo_consumer_key: str | None = None
+    woo_consumer_secret: str | None = None
+    woo_webhook_secret: str | None = None
+    wp_app_password: str | None = None
+    uniconta_password: str | None = None
+    uniconta_api_key: str | None = None
 
 
 class UnicontaConfigOut(AppBaseModel):
@@ -207,6 +225,8 @@ class UnicontaInvoiceOut(AppBaseModel):
     subtotal: float
     momsTotal: float
     total: float
+    signedTotalAmount: float
+    amountDirection: Literal["income", "expense", "neutral"]
     valuta: str
     note: str | None = None
     wooOrderId: str | None = None

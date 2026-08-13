@@ -815,6 +815,7 @@ def build_uniconta_lines_from_pos_lines(
     pos_lines: list[Any],
     *,
     trade_side: PosTradeSideEnum | str | None = None,
+    vat_code: str | None = None,
 ) -> list[dict[str, Any]]:
     """CRM PosSessionLine list'inden Uniconta line payload'u inşa et.
 
@@ -846,14 +847,15 @@ def build_uniconta_lines_from_pos_lines(
         net_offer = _pos_line_net_offer_dkk(line, trade_side=resolved_side)
         if net_offer is not None:
             # Kanonik yol: Qty=1, Price=CRM satır net teklifi → øre parity garantili.
-            out.append(
-                {
+            row_payload = {
                     "Item": None,
                     "Text": text,
                     "Qty": 1.0,
                     "Price": float(net_offer),
                 }
-            )
+            if vat_code:
+                row_payload["Vat"] = vat_code
+            out.append(row_payload)
             continue
 
         # Legacy fallback (net offer hiç hesaplanamıyor): margin-uygulanmamış
@@ -869,15 +871,64 @@ def build_uniconta_lines_from_pos_lines(
             qty = float(weight)
         except (TypeError, ValueError):
             qty = 0.0
-        out.append(
-            {
+        row_payload = {
                 "Item": None,
                 "Text": text,
                 "Qty": qty,
                 "Price": round(rate_value, 2),
             }
-        )
+        if vat_code:
+            row_payload["Vat"] = vat_code
+        out.append(row_payload)
     return out
+
+
+async def validate_purchase_vat_code(
+    client: UnicontaClient,
+    *,
+    vat_code: str,
+    expected_rate: Decimal,
+) -> dict[str, Any]:
+    """Fail closed when the configured Uniconta purchase VAT code is unsafe.
+
+    Uniconta may inherit a debtor-group VAT code when a line omits ``Vat``.
+    Purchase documents must never rely on that implicit selection.
+    """
+
+    code = str(vat_code or "").strip()
+    if not code:
+        raise UnicontaError("Uniconta alış KDV kodu yapılandırılmamış.")
+    rows = await client.query("GLVatClient", top=500)
+    row = next(
+        (
+            candidate
+            for candidate in rows
+            if code.casefold()
+            in {
+                str(candidate.get("Vat") or "").strip().casefold(),
+                str(candidate.get("Code") or "").strip().casefold(),
+            }
+        ),
+        None,
+    )
+    if row is None:
+        raise UnicontaError(f"Uniconta alış KDV kodu bulunamadı: {code}")
+    blocked_value = row.get("Blocked") if row.get("Blocked") is not None else row.get("IsBlocked")
+    is_blocked = (
+        blocked_value
+        if isinstance(blocked_value, bool)
+        else str(blocked_value or "").strip().casefold() in {"1", "true", "yes", "ja", "blocked"}
+    )
+    if is_blocked:
+        raise UnicontaError(f"Uniconta alış KDV kodu engellenmiş: {code}")
+    actual_rate = quantize_2(to_decimal(row.get("Rate") or 0))
+    if actual_rate != quantize_2(expected_rate):
+        raise UnicontaError(
+            f"Uniconta alış KDV kodu oranı uyuşmuyor: {code} (%{actual_rate}, beklenen %{quantize_2(expected_rate)})"
+        )
+    if not str(row.get("TypeBuy") or "").strip():
+        raise UnicontaError(f"Uniconta KDV kodu alış türünde değil: {code}")
+    return row
 
 
 async def sync_pos_document_to_uniconta(
@@ -1031,12 +1082,34 @@ async def sync_pos_document_to_uniconta(
             }
 
         invoice_date = _dt.now(timezone.utc).date().isoformat()
+        settings = get_settings()
+        purchase_vat_enabled = bool(note_payload.get("purchase_vat_enabled", True))
+        purchase_vat_rate = (
+            quantize_2(to_decimal(note_payload.get("purchase_vat_rate_percent") or Decimal("25.00")))
+            if purchase_vat_enabled
+            else Decimal("0.00")
+        )
+        purchase_vat_code = (
+            str(getattr(settings, "uniconta_purchase_vat_code_25", "Købsmoms") or "Købsmoms").strip()
+            if purchase_vat_enabled
+            else str(getattr(settings, "uniconta_purchase_vat_code_0", "KøbBrugtmoms") or "KøbBrugtmoms").strip()
+        )
+        await validate_purchase_vat_code(
+            client,
+            vat_code=purchase_vat_code,
+            expected_rate=purchase_vat_rate,
+        )
+
         order_payload: dict[str, Any] = {
             "Account": account,
             "Name": name[:200],
             "Date": invoice_date,
             "Currency": DEFAULT_UNICONTA_CURRENCY,
+            "PricesInclVat": False,
         }
+        freeform_note = str(note_payload.get("freeform_note") or "").strip()
+        if freeform_note:
+            order_payload["Remark"] = freeform_note[:1000]
         if address:
             order_payload["Address1"] = address[:200]
         if postal:
@@ -1048,18 +1121,18 @@ async def sync_pos_document_to_uniconta(
         lines_payload = build_uniconta_lines_from_pos_lines(
             pos_lines or [],
             trade_side=line_trade_side or PosTradeSideEnum.BUY_FROM_CUSTOMER,
+            vat_code=purchase_vat_code,
         )
         if not lines_payload:
             lines_payload = [
                 {
                     "Item": None,
-                    "Text": pos_document.notes or "AFG Satin Alma",
+                    "Text": freeform_note or "AFG Satin Alma",
                     "Qty": 1.0,
-                    "Price": float(pos_document.gross_amount_dkk or 0),
+                    "Price": float(pos_document.net_amount_dkk or 0),
+                    "Vat": purchase_vat_code,
                 }
             ]
-
-        settings = get_settings()
         gen_result = await client.generate_debtor_invoice(
             order=order_payload,
             lines=lines_payload,
@@ -1138,11 +1211,15 @@ def map_uniconta_invoice_to_dto(record: dict[str, Any]) -> dict[str, Any]:
         date_str = date_raw.split("T", 1)[0]
     else:
         date_str = str(date_raw or "")
+    total_amount = float(record.get("TotalAmount") or 0.0)
+    amount_direction = (
+        "income" if total_amount > 0 else "expense" if total_amount < 0 else "neutral"
+    )
     return {
         "id": str(record.get("PrimaryKeyId") or invoice_no_raw or ""),
         "fakturanummer": str(invoice_no_raw or ""),
         "ordrenummer": str(record.get("OrderNumber") or ""),
-        "type": "Salgsfaktura",
+        "type": "Kreditnota" if total_amount < 0 else "Salgsfaktura",
         "fakturadato": date_str,
         "konto": str(record.get("Account") or ""),
         "kunde": {
@@ -1157,7 +1234,12 @@ def map_uniconta_invoice_to_dto(record: dict[str, Any]) -> dict[str, Any]:
         "kalemler": [],
         "subtotal": float(record.get("NetAmount") or 0.0),
         "momsTotal": float(record.get("VatAmount") or 0.0),
-        "total": float(record.get("TotalAmount") or 0.0),
-        "valuta": "DKK",
+        # Preserve Uniconta's signed TotalAmount verbatim for list semantics.
+        # `total` remains for the existing detail contract; new list surfaces
+        # use the explicit field so they cannot accidentally show NetAmount.
+        "total": total_amount,
+        "signedTotalAmount": total_amount,
+        "amountDirection": amount_direction,
+        "valuta": str(record.get("Currency") or "DKK"),
         "unicontaRef": str(record.get("PrimaryKeyId") or ""),
     }

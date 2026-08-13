@@ -81,7 +81,11 @@ def build_purchase_workbook_bytes(
     payment_method: str,
     bank_info: PosWorkspaceBankInfo,
     lines: list[dict[str, str]],
-    total_amount_dkk: Decimal,
+    net_amount_dkk: Decimal,
+    vat_rate_percent: Decimal,
+    vat_amount_dkk: Decimal,
+    gross_amount_dkk: Decimal,
+    note: str | None,
 ) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
@@ -147,14 +151,27 @@ def build_purchase_workbook_bytes(
         row_cursor += 1
 
     total_row = row_cursor + 1
-    sheet.cell(row=total_row, column=6, value="I alt").font = Font(bold=True, color="FFFFFF")
-    sheet.cell(row=total_row, column=6).fill = total_fill
-    sheet.cell(row=total_row, column=7, value=_fmt_decimal(total_amount_dkk)).font = Font(
-        bold=True,
-        color="FFFFFF",
-        size=14,
-    )
-    sheet.cell(row=total_row, column=7).fill = total_fill
+    for offset, (label, value) in enumerate(
+        (
+            ("Netto", net_amount_dkk),
+            (f"Moms %{_fmt_decimal(vat_rate_percent)}", vat_amount_dkk),
+            ("I alt", gross_amount_dkk),
+        )
+    ):
+        row_idx = total_row + offset
+        sheet.cell(row=row_idx, column=6, value=label).font = Font(bold=True, color="FFFFFF")
+        sheet.cell(row=row_idx, column=6).fill = total_fill
+        sheet.cell(row=row_idx, column=7, value=_fmt_decimal(value)).font = Font(
+            bold=True,
+            color="FFFFFF",
+            size=14 if offset == 2 else 11,
+        )
+        sheet.cell(row=row_idx, column=7).fill = total_fill
+    if note:
+        note_row = total_row + 4
+        sheet.cell(row=note_row, column=1, value="Not").font = Font(bold=True)
+        sheet.cell(row=note_row, column=2, value=note)
+        sheet.merge_cells(start_row=note_row, start_column=2, end_row=note_row, end_column=7)
 
     for row_idx in range(header_row + 1, row_cursor):
         for col_idx in range(1, 8):
@@ -263,9 +280,11 @@ def render_purchase_workspace_print_html(
     </table>
 
     <div class="total">
-      <span>Genel Toplam / I alt</span>
-      <span class="mono" style="font-size:28px;font-weight:900">{html_escape(_fmt_decimal(workspace.summary.total_amount_dkk))} DKK</span>
+      <span>Netto {_fmt_decimal(workspace.summary.net_amount_dkk)} DKK · Moms %{_fmt_decimal(workspace.summary.vat_rate_percent)}: {_fmt_decimal(workspace.summary.vat_amount_dkk)} DKK<br><strong>Genel Toplam / I alt</strong></span>
+      <span class="mono" style="font-size:28px;font-weight:900">{html_escape(_fmt_decimal(workspace.summary.gross_amount_dkk))} DKK</span>
     </div>
+
+    {f'<div class="disclaimer"><strong>Not:</strong> {html_escape(workspace.afg_note)}</div>' if workspace.afg_note else ''}
 
     <div class="disclaimer">
       Undertegnede erklærer hermed, at de solgte varer er min ejendom og sælges frivilligt.

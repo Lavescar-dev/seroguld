@@ -38,8 +38,7 @@ import type {
   PosWorkspaceMarketRates,
 } from '@/types';
 
-import { MakeOfficeDocumentPage } from '../office/OfficeDocumentPage';
-import { useOfficeDocumentState } from '../office/useOfficeDocumentState';
+import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
 import {
   MarketRatesEditor,
   parseDecimalValue,
@@ -68,14 +67,14 @@ function formatDateOnly(value?: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString('tr-TR');
+  return date.toLocaleDateString(document.documentElement.lang);
 }
 
 function formatTimeOnly(value?: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return date.toLocaleTimeString(document.documentElement.lang, { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function buildWorkspaceWorkbookName(workspace: PosWorkspace) {
@@ -284,6 +283,8 @@ export type AlisPageProps = {
   setMarketRates: Dispatch<SetStateAction<PosWorkspaceMarketRates>>;
   afgNote: string;
   setAfgNote: Dispatch<SetStateAction<string>>;
+  purchaseVatEnabled: boolean;
+  setPurchaseVatEnabled: Dispatch<SetStateAction<boolean>>;
   calculators: PosWorkspaceCalculators;
   setCalculators: Dispatch<SetStateAction<PosWorkspaceCalculators>>;
   paymentMethod: PaymentMethod;
@@ -308,6 +309,7 @@ export type AlisPageProps = {
   expectedDisplayRoute?: string | null;
   routeMatches?: boolean;
   onOpenCustomerDisplay?: () => void | Promise<void>;
+  onCloseCustomerDisplay?: () => void | Promise<void>;
 };
 
 export function AlisPage(props: AlisPageProps) {
@@ -383,6 +385,8 @@ export function AlisPage(props: AlisPageProps) {
     setMarketRates,
     afgNote,
     setAfgNote,
+    purchaseVatEnabled,
+    setPurchaseVatEnabled,
     calculators,
     setCalculators,
     paymentMethod,
@@ -403,6 +407,7 @@ export function AlisPage(props: AlisPageProps) {
     expectedDisplayRoute,
     routeMatches,
     onOpenCustomerDisplay,
+    onCloseCustomerDisplay,
   } = props;
 
   return (
@@ -489,6 +494,8 @@ export function AlisPage(props: AlisPageProps) {
           setMarketRates={setMarketRates}
           afgNote={afgNote}
           setAfgNote={setAfgNote}
+          purchaseVatEnabled={purchaseVatEnabled}
+          setPurchaseVatEnabled={setPurchaseVatEnabled}
           calculators={calculators}
           setCalculators={setCalculators}
           paymentMethod={paymentMethod}
@@ -507,6 +514,7 @@ export function AlisPage(props: AlisPageProps) {
           expectedDisplayRoute={expectedDisplayRoute}
           routeMatches={routeMatches}
           onOpenCustomerDisplay={onOpenCustomerDisplay}
+          onCloseCustomerDisplay={onCloseCustomerDisplay}
         />
       ) : (
         <StartWorkspaceView
@@ -576,6 +584,8 @@ function ActiveWorkspaceView(props: {
   setMarketRates: Dispatch<SetStateAction<PosWorkspaceMarketRates>>;
   afgNote: string;
   setAfgNote: Dispatch<SetStateAction<string>>;
+  purchaseVatEnabled: boolean;
+  setPurchaseVatEnabled: Dispatch<SetStateAction<boolean>>;
   calculators: PosWorkspaceCalculators;
   setCalculators: Dispatch<SetStateAction<PosWorkspaceCalculators>>;
   paymentMethod: PaymentMethod;
@@ -594,6 +604,7 @@ function ActiveWorkspaceView(props: {
   expectedDisplayRoute?: string | null;
   routeMatches?: boolean;
   onOpenCustomerDisplay?: () => void | Promise<void>;
+  onCloseCustomerDisplay?: () => void | Promise<void>;
 }) {
   const {
     workspace,
@@ -633,6 +644,8 @@ function ActiveWorkspaceView(props: {
     setMarketRates,
     afgNote,
     setAfgNote,
+    purchaseVatEnabled,
+    setPurchaseVatEnabled,
     calculators,
     setCalculators,
     paymentMethod,
@@ -650,6 +663,7 @@ function ActiveWorkspaceView(props: {
     expectedDisplayRoute,
     routeMatches = false,
     onOpenCustomerDisplay,
+    onCloseCustomerDisplay,
   } = props;
   const hasSelectedCustomer = Boolean(workspace.customer.customer_id);
   const liveTotalWeight = useMemo(
@@ -660,6 +674,8 @@ function ActiveWorkspaceView(props: {
     () => [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.line_total_dkk), 0),
     [goldRows, silverRows],
   );
+  const liveVatAmount = purchaseVatEnabled ? Math.round(liveTotalAmount * 0.25 * 100) / 100 : 0;
+  const liveGrossAmount = Math.round((liveTotalAmount + liveVatAmount) * 100) / 100;
   const actualRoute = desktopDisplayState?.active_route ? normalizeDesktopDisplayRoute(desktopDisplayState.active_route) : '—';
   const workspaceWorkbookName = buildWorkspaceWorkbookName(workspace);
   const displayStatusTone = routeMatches
@@ -783,15 +799,26 @@ function ActiveWorkspaceView(props: {
             </div>
           </div>
 
-          {expectedDisplayRoute && onOpenCustomerDisplay ? (
-            <button
-              type="button"
-              onClick={onOpenCustomerDisplay}
-              className="whitespace-nowrap border border-brand-900 bg-brand-800 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-white transition hover:bg-brand-900"
-            >
-              Gerçek ekranı aç / öne getir
-            </button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {desktopDisplayState?.window_open && onCloseCustomerDisplay ? (
+              <button
+                type="button"
+                onClick={onCloseCustomerDisplay}
+                className="whitespace-nowrap border border-rose-400 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-widest text-rose-700 transition hover:bg-rose-50"
+              >
+                Müşteri ekranını kapat
+              </button>
+            ) : null}
+            {expectedDisplayRoute && onOpenCustomerDisplay ? (
+              <button
+                type="button"
+                onClick={onOpenCustomerDisplay}
+                className="whitespace-nowrap border border-brand-900 bg-brand-800 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-white transition hover:bg-brand-900"
+              >
+                Gerçek ekranı aç / öne getir
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -849,9 +876,24 @@ function ActiveWorkspaceView(props: {
                     <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">
                       Toplam gram: {formatNumber(liveTotalWeight)} g
                     </p>
-                    <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">
-                      I alt: {formatMoney(liveTotalAmount)} DKK
-                    </p>
+                    <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">Net: {formatMoney(liveTotalAmount)} DKK</p>
+                    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs font-bold text-brand-800">
+                      <input type="checkbox" checked={purchaseVatEnabled} onChange={(event) => setPurchaseVatEnabled(event.target.checked)} />
+                      %25 KDV ekle
+                    </label>
+                    <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">KDV: {formatMoney(liveVatAmount)} DKK</p>
+                    <p className="mono text-sm font-black uppercase tracking-wider text-emerald-800">Ödenecek: {formatMoney(liveGrossAmount)} DKK</p>
+                    <label className="mt-3 block text-[10px] font-black uppercase tracking-widest text-brand-500">
+                      AFG notu
+                      <textarea
+                        value={afgNote}
+                        maxLength={1000}
+                        onChange={(event) => setAfgNote(event.target.value)}
+                        rows={3}
+                        className="mt-1 w-full resize-y border border-brand-300 bg-white px-3 py-2 text-xs font-medium normal-case tracking-normal text-brand-900 outline-none focus:border-brand-700"
+                        placeholder="Belge, fatura ve Uniconta'ya aktarılacak not"
+                      />
+                    </label>
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                     <button
@@ -1100,16 +1142,10 @@ function WorkspaceSurfaceTabs({
 }
 
 function WorkspaceExcelSurface({ workspaceId }: { workspaceId: string }) {
-  const officeState = useOfficeDocumentState({
-    kind: 'alis-workspace',
-    artifactKey: workspaceId,
-    disableReopen: true,
-  });
-
   return (
     <div className="border-b-2 border-brand-300 bg-stone-100">
       <div className="h-[calc(100vh-17rem)] min-h-[760px]">
-        <MakeOfficeDocumentPage {...officeState} layoutMode="workspace" />
+        <EmbeddedWorkbookPanel kind="alis-workspace" artifactKey={workspaceId} layoutMode="workspace" />
       </div>
     </div>
   );
@@ -1186,7 +1222,7 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
         case 'issued_at':
           return a.issued_at.localeCompare(b.issued_at) * direction;
         case 'customer_name':
-          return (a.customer_name || '').localeCompare(b.customer_name || '', 'tr', { sensitivity: 'base' }) * direction;
+          return (a.customer_name || '').localeCompare(b.customer_name || '', document.documentElement.lang, { sensitivity: 'base' }) * direction;
         case 'gross_amount':
           return (Number(a.gross_amount_dkk || 0) - Number(b.gross_amount_dkk || 0)) * direction;
         case 'uniconta_status': {
@@ -2266,9 +2302,17 @@ function SavedPurchaseDetailModal({
                         );
                       })
                     )}
+                    <tr className="bg-brand-100">
+                      <td colSpan={3} className="border border-brand-300 px-3 py-2 text-right text-xs font-black uppercase tracking-wider text-brand-600">NET ALIŞ</td>
+                      <td className="border border-brand-300 px-3 py-2 text-right font-black text-brand-900" style={monoStyle}>{Number(detail.net_amount_dkk || 0).toFixed(2)} DKK</td>
+                    </tr>
+                    <tr className="bg-brand-100">
+                      <td colSpan={3} className="border border-brand-300 px-3 py-2 text-right text-xs font-black uppercase tracking-wider text-brand-600">KDV %{Number(detail.vat_rate_percent || 0).toFixed(0)}</td>
+                      <td className="border border-brand-300 px-3 py-2 text-right font-black text-brand-900" style={monoStyle}>{Number(detail.vat_amount_dkk || 0).toFixed(2)} DKK</td>
+                    </tr>
                     <tr className="bg-brand-900">
                       <td colSpan={3} className="border border-brand-700 px-3 py-2 text-right text-xs font-black uppercase tracking-wider text-brand-400">
-                        I ALT / TOPLAM
+                        ÖDENECEK / TOPLAM
                       </td>
                       <td className="border border-brand-700 px-3 py-2 text-right font-black text-amber-300" style={monoStyle}>
                         {Number(detail.gross_amount_dkk || 0).toFixed(2)} DKK

@@ -1,4 +1,4 @@
-import { clearAuth, getAccessToken, getRefreshToken, setAuth } from '@/lib/auth';
+import { clearAuth, getAccessToken, getRefreshToken, isAuthRemembered, setAuth } from '@/lib/auth';
 import type { AuthTokenResponse } from '@/types';
 
 export class ApiError extends Error {
@@ -18,6 +18,11 @@ export class TransportError extends Error {
     super(message);
     this.name = 'TransportError';
   }
+}
+
+export function localizeApiError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return 'İşlem tamamlanamadı. Lütfen tekrar deneyin.';
 }
 
 function toTransportError(error: unknown): TransportError {
@@ -92,7 +97,7 @@ async function refreshAccessToken(): Promise<string | null> {
     }
 
     const payload = (await response.json()) as AuthTokenResponse;
-    setAuth(payload.access_token, payload.refresh_token, payload.user);
+    setAuth(payload.access_token, payload.refresh_token, payload.user, isAuthRemembered());
     return payload.access_token;
   })();
 
@@ -148,6 +153,13 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
       const payload = rawBody ? JSON.parse(rawBody) as { detail?: unknown; request_id?: unknown } : null;
       if (typeof payload?.detail === 'string') {
         message = payload.detail;
+      } else if (
+        payload?.detail &&
+        typeof payload.detail === 'object' &&
+        'message' in payload.detail &&
+        typeof payload.detail.message === 'string'
+      ) {
+        message = payload.detail.message;
       }
       if (typeof payload?.request_id === 'string') {
         requestId = payload.request_id;

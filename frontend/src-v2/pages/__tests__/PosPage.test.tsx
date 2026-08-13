@@ -2,6 +2,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { UiVariantProvider } from '@/ui-variants';
+import { AppLocaleProvider } from '@/i18n';
 import { PosPage } from '@/pages/PosPage';
 
 const { createModernAlisViewModel, alisState, registeredGuards } = vi.hoisted(() => ({
@@ -44,6 +45,7 @@ vi.mock('@/modern/modules', () => ({
 }));
 
 vi.mock('@/lib/desktop', () => ({
+  isTauriRuntime: vi.fn(() => false),
   ensureCustomerDisplayWindow: vi.fn(async () => null),
   getDesktopMonitorSetup: vi.fn(async () => null),
   isDesktopDisplayRouteMatch: vi.fn(() => false),
@@ -53,9 +55,11 @@ vi.mock('@/lib/desktop', () => ({
 describe('PosPage variant guard wiring', () => {
   it('settles and flushes pending Alış workspace sync', async () => {
     render(
-      <UiVariantProvider initialVariant="modern">
-        <PosPage />
-      </UiVariantProvider>,
+      <AppLocaleProvider>
+        <UiVariantProvider initialVariant="modern">
+          <PosPage />
+        </UiVariantProvider>
+      </AppLocaleProvider>,
     );
 
     expect(createModernAlisViewModel).toHaveBeenCalledWith(alisState);

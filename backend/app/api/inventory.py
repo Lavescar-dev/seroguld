@@ -134,6 +134,7 @@ def _inventory_row(product: Product, prices: InventoryMarketPricesOut) -> Invent
         spot_degeri_dkk=spot_deger,
         shop_fiyati_dkk=(quantize_2(product.shop_price_dkk) if product.shop_price_dkk is not None else None),
         shop_sync_status=product.shop_sync_status,
+        is_published_to_site=bool(product.is_published_to_site),
         length_cm=product.length_cm,
         width_mm=(quantize_2(product.width_mm) if product.width_mm is not None else None),
         thickness_mm=(quantize_2(product.thickness_mm) if product.thickness_mm is not None else None),

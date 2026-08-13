@@ -45,8 +45,7 @@ import type {
   LogMeltLotLine,
   LogWorkspace,
 } from '@/types';
-import { MakeOfficeDocumentPage } from '../office/OfficeDocumentPage';
-import { useOfficeDocumentState } from '../office/useOfficeDocumentState';
+import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
 
 import {
   classificationOptions,
@@ -387,13 +386,13 @@ export function LogPage({
   const systemContent = isLoading ? (
     <div className="border-b-2 border-brand-200 bg-white px-6 py-16 text-center">
       <Loader2 className="mx-auto h-6 w-6 animate-spin text-brand-400" />
-      <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-brand-500">Workspace</p>
+      <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-brand-500">Çalışma alanı</p>
       <p className="mt-1 text-sm text-brand-600">Log workspace hazırlanıyor...</p>
     </div>
   ) : isError || !workspace ? (
     <div className="border-b-2 border-rose-200 bg-rose-50 px-6 py-12 text-center">
       <AlertTriangle className="mx-auto h-6 w-6 text-rose-500" />
-      <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-rose-600">Workspace</p>
+      <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-rose-600">Çalışma alanı</p>
       <p className="mt-1 text-sm text-rose-700">Log workspace alınamadı. Bağlantıyı kontrol edin.</p>
       <button
         type="button"
@@ -421,7 +420,7 @@ export function LogPage({
           tone="slate"
           badge="AG"
           label="Sølv — Gümüş"
-          subLabel="Silver same shell"
+          subLabel="Aynı gümüş arayüzü"
           count={silverBucket?.documents.length || 0}
           onClick={() => onActiveTabChange('silver')}
         />
@@ -580,7 +579,7 @@ function LotHistoryDrawer({
 }) {
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-brand-950/20">
-      <button type="button" className="flex-1 cursor-default" aria-label="History overlay" onClick={onClose} />
+      <button type="button" className="flex-1 cursor-default" aria-label="Geçmiş katmanı" onClick={onClose} />
       <aside className="relative h-full w-full max-w-[28rem] overflow-y-auto border-l-2 border-brand-300 bg-white shadow-2xl">
         <div className="sticky top-0 border-b border-brand-200 bg-white px-4 py-3">
           <div className="flex items-center justify-between">
@@ -611,7 +610,7 @@ function LotHistoryDrawer({
                     {HISTORY_ACTION_LABEL[entry.action] || entry.action}
                   </span>
                   <span className="mono text-[10px] text-brand-400">
-                    {new Date(entry.created_at).toLocaleString('da-DK')}
+                    {new Date(entry.created_at).toLocaleString(document.documentElement.lang)}
                   </span>
                 </div>
                 {entry.performed_by_email ? (
@@ -764,16 +763,10 @@ function LogSurfaceTabs({
 }
 
 function LogExcelSurface({ year }: { year: number }) {
-  const officeState = useOfficeDocumentState({
-    kind: 'log',
-    artifactKey: String(year),
-    disableReopen: true,
-  });
-
   return (
     <div className="flex-1 min-h-0 border-b-2 border-brand-300 bg-stone-100">
       <div className="h-[calc(100vh-16rem)] min-h-[760px]">
-        <MakeOfficeDocumentPage {...officeState} layoutMode="workspace" />
+        <EmbeddedWorkbookPanel kind="log" artifactKey={String(year)} layoutMode="workspace" />
       </div>
     </div>
   );
@@ -1467,7 +1460,7 @@ function PendingLinesTable({
                   <td className={TD}>
                     <p className="text-xs font-black text-brand-800" style={monoStyle}>#{line.line_no}</p>
                     <span className={`mt-2 inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${statusTone(effectiveLineState(line))}`}>{labelOperationState(effectiveLineState(line))}</span>
-                    {pending ? <p className="mt-2 text-[11px] font-black uppercase tracking-wider text-amber-700">Review</p> : null}
+                    {pending ? <p className="mt-2 text-[11px] font-black uppercase tracking-wider text-amber-700">İnceleme</p> : null}
                   </td>
                   <td className={TD}>
                     <p className="font-semibold text-brand-900">{labelProductType(line.product_type)} · {labelMetalType(line.metal_type)}</p>
@@ -1552,7 +1545,7 @@ function SplitGroupCard({
                 <div className="text-xs">
                   <p className={`font-bold ${meta.text}`} style={monoStyle}>{line.product_number || line.reference_number || line.document_number}</p>
                   <p className="mt-1 text-[11px] text-brand-400">#{line.line_no}</p>
-                  {pending ? <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-amber-700">Review</p> : null}
+                  {pending ? <p className="mt-1 text-[10px] font-black uppercase tracking-wider text-amber-700">İnceleme</p> : null}
                 </div>
                 <div className="text-center text-xs text-brand-800" style={monoStyle}>{toFloat(line.weight_grams).toFixed(2)}</div>
                 <div className="text-right text-xs text-brand-800" style={monoStyle}>{toFloat(line.line_total_dkk).toFixed(0)}</div>
@@ -1641,7 +1634,7 @@ function MeltLotCard({
           <span className="text-xs font-black uppercase tracking-widest text-orange-200">Lot #{index + 1}</span>
           {isFinalized ? (
             <span className="inline-flex items-center gap-1 border border-emerald-400 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-emerald-800">
-              <Lock className="h-2.5 w-2.5" /> Finalize
+              <Lock className="h-2.5 w-2.5" /> Kesinleştir
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-800">
@@ -1713,7 +1706,7 @@ function MeltLotCard({
               onClick={() => onFinalize(true)}
               disabled={finalizeBusy}
               className="inline-flex items-center gap-1 border border-amber-400 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
-              title="Reopen (draft'a geri al)"
+              title="Yeniden aç (taslak duruma al)"
             >
               <Unlock className="h-3 w-3" />
               Reopen
@@ -1757,7 +1750,7 @@ function MeltLotCard({
         <div className="space-y-3 p-4">
           <SectionTinyHeader title="Gram & Has Altın" />
           <DateField label="Gönderim Tarihi" value={draft.sent_date} onChange={(value) => onDraftChange({ sent_date: value })} />
-          <DateField label="Alış Başlangıcı (Købt fra)" value={draft.purchased_from_date} onChange={(value) => onDraftChange({ purchased_from_date: value })} />
+          <DateField label="Alış başlangıcı" value={draft.purchased_from_date} onChange={(value) => onDraftChange({ purchased_from_date: value })} />
           <div className="overflow-hidden border border-brand-100">
             <div className="grid grid-cols-3 border-b border-brand-100 bg-brand-50">
               <div className="border-r border-brand-100 px-2 py-1.5 text-xs font-black uppercase text-brand-500"></div>
@@ -1794,16 +1787,16 @@ function MeltLotCard({
 
         <div className="space-y-3 p-4">
           <SectionTinyHeader title="Giderler & Satış" />
-          <TextField label="Forsikring (Sigorta)" value={draft.insurance_dkk} onChange={(value) => onDraftChange({ insurance_dkk: value })} />
-          <TextField label="Forsendelse (Kargo)" value={draft.shipping_dkk} onChange={(value) => onDraftChange({ shipping_dkk: value })} />
-          <TextField label="Affinering (Rafinasyon)" value={draft.refining_dkk} onChange={(value) => onDraftChange({ refining_dkk: value })} />
+          <TextField label="Sigorta" value={draft.insurance_dkk} onChange={(value) => onDraftChange({ insurance_dkk: value })} />
+          <TextField label="Kargo" value={draft.shipping_dkk} onChange={(value) => onDraftChange({ shipping_dkk: value })} />
+          <TextField label="Rafinasyon" value={draft.refining_dkk} onChange={(value) => onDraftChange({ refining_dkk: value })} />
           <div className="flex items-center justify-between border border-brand-200 bg-brand-50 px-3 py-2">
             <span className="text-xs font-black uppercase tracking-wider text-brand-600">Toplam Gider</span>
             <span className="text-sm font-black text-brand-900" style={monoStyle}>{formatMoney(lot.cost_total_dkk)}</span>
           </div>
-          <DateField label="Dato for Salg" value={draft.sale_date} onChange={(value) => onDraftChange({ sale_date: value })} />
-          <TextField label="Quote (EUR)" value={draft.quote_eur} onChange={(value) => onDraftChange({ quote_eur: value })} />
-          <TextField label="Kurs (DKK/EUR)" value={draft.exchange_rate_dkk} onChange={(value) => onDraftChange({ exchange_rate_dkk: value })} />
+          <DateField label="Satış tarihi" value={draft.sale_date} onChange={(value) => onDraftChange({ sale_date: value })} />
+          <TextField label="Fiyat teklifi (EUR)" value={draft.quote_eur} onChange={(value) => onDraftChange({ quote_eur: value })} />
+          <TextField label="Kur (DKK/EUR)" value={draft.exchange_rate_dkk} onChange={(value) => onDraftChange({ exchange_rate_dkk: value })} />
         </div>
 
         <div className="space-y-3 p-4">
@@ -1824,7 +1817,7 @@ function MeltLotCard({
               <span className="text-sm font-black text-emerald-900" style={monoStyle}>{formatMoney(lot.estimated_sale_value_dkk)}</span>
             </div>
           </div>
-          <TextField label="Fået Udbetalt I alt" value={draft.payout_total_dkk} onChange={(value) => onDraftChange({ payout_total_dkk: value })} />
+          <TextField label="Toplam ödeme" value={draft.payout_total_dkk} onChange={(value) => onDraftChange({ payout_total_dkk: value })} />
           <div className="border border-brand-100">
             <div className="flex items-center justify-between border-b border-brand-50 px-3 py-1.5">
               <span className="text-xs text-brand-500">Alış maliyeti</span>

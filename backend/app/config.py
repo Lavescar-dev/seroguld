@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
+import sys
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -9,8 +11,21 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-ROOT_ENV_FILE = ROOT_DIR / ".env"
+ROOT_DIR = (
+    Path(getattr(sys, "_MEIPASS")).resolve()
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None)
+    else Path(__file__).resolve().parents[2]
+)
+APP_DATA_DIR = (
+    Path(os.environ["SEROGULD_DATA_DIR"]).expanduser()
+    if os.environ.get("SEROGULD_DATA_DIR")
+    else ROOT_DIR / "data"
+)
+ROOT_ENV_FILE = (
+    Path(os.environ["SEROGULD_CONFIG_FILE"]).expanduser()
+    if os.environ.get("SEROGULD_CONFIG_FILE")
+    else ROOT_DIR / ".env"
+)
 DEFAULT_DESKTOP_CORS_ORIGINS = (
     "http://127.0.0.1:3300",
     "http://localhost:3300",
@@ -22,6 +37,14 @@ DEFAULT_DESKTOP_CORS_ORIGINS = (
     "https://tauri.localhost",
     "tauri://localhost",
 )
+
+
+def _is_usable_field_encryption_key(value: str | None) -> bool:
+    candidate = str(value or "").strip()
+    return bool(candidate) and candidate not in {
+        "change-me-32-byte-base64-key",
+        "change-me",
+    } and len(candidate) >= 16
 
 
 class Settings(BaseSettings):
@@ -47,6 +70,11 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    kds_address_base_url: str = "https://api.dataforsyningen.dk/rest"
+    kds_address_token: str = ""
+    kds_address_timeout_seconds: float = 8.0
+    kds_address_cache_seconds: int = 300
+
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-5.4"
@@ -63,23 +91,19 @@ class Settings(BaseSettings):
     woocommerce_webhook_secret: str = ""
     woocommerce_timeout_seconds: float = 20.0
 
-    # KDS Adressevælger is called only by the backend.  The token is kept out
-    # of browser requests so it can be changed when KDS enables user-specific
-    # access management.
-    kds_address_base_url: str = "https://adressevaelger.dk"
-    kds_address_token: str = "adressevaelger123"
-    kds_address_timeout_seconds: float = 4.0
-    kds_address_cache_seconds: int = 300
-
     wordpress_base_url: str = ""
     wp_app_username: str = ""
     wp_app_password: str = ""
 
-    uniconta_api_url: str = "https://www.uniconta.com/api"
+    uniconta_api_url: str = "https://api.uniconta.com"
     uniconta_username: str = ""
     uniconta_password: str = ""
     uniconta_company_id: str = ""
     uniconta_api_key: str = ""
+    # Purchase-line VAT codes used when the AFG purchase is transferred to
+    # Uniconta. They are public accounting identifiers, not credentials.
+    uniconta_purchase_vat_code_25: str = "Købsmoms"
+    uniconta_purchase_vat_code_0: str = "KøbBrugtmoms"
     # Otomatik fatura gönderim toggle'ları — UI ayarlanır, .env'e yazılır.
     uniconta_send_email_on_finalize: bool = False
     uniconta_send_xml_on_finalize: bool = False
@@ -99,24 +123,26 @@ class Settings(BaseSettings):
     pos_reference_start: int = 9600
     pos_reference_scan_window: int = 5000
 
-    media_root_dir: str = str(ROOT_DIR / "data" / "uploads")
-    document_root_dir: str = str(ROOT_DIR / "data" / "documents")
-    office_provider_default: str = "collabora"
-    office_provider_afg: str = "onlyoffice"
-    office_provider_depolama: str = "onlyoffice"
-    office_provider_log: str = "onlyoffice"
+    media_root_dir: str = str(APP_DATA_DIR / "uploads")
+    document_root_dir: str = str(APP_DATA_DIR / "documents")
+    office_provider_default: str = "embedded"
+    office_provider_afg: str = "embedded"
+    office_provider_depolama: str = "embedded"
+    office_provider_log: str = "embedded"
     office_runtime_url: str = "http://127.0.0.1:9980"
     office_wopi_base_url: str = "http://127.0.0.1:8100"
-    onlyoffice_runtime_url: str = "http://127.0.0.1"
+    onlyoffice_runtime_url: str = "http://127.0.0.1:8082"
+    # Kept for legacy config compatibility; embedded office is the desktop
+    # default and these values must never point at a Docker host by default.
     onlyoffice_callback_base_url: str = "http://127.0.0.1:8100"
-    onlyoffice_jwt_secret: str = "seroguld-onlyoffice-secret"
+    onlyoffice_jwt_secret: str = ""
     office_session_ttl_seconds: int = 3600
     photo_max_size_mb: int = 15
 
-    backup_root_dir: str = str(ROOT_DIR / "data" / "backups")
-    backup_restore_drill_dir: str = str(ROOT_DIR / "data" / "restore-drill")
+    backup_root_dir: str = str(APP_DATA_DIR / "backups")
+    backup_restore_drill_dir: str = str(APP_DATA_DIR / "restore-drill")
 
-    log_dir: str = str(ROOT_DIR / "data" / "logs")
+    log_dir: str = str(APP_DATA_DIR / "logs")
     log_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     log_backup_count: int = 5  # 10 MB × 5 backup = 50 MB ceiling
     backup_offsite_enabled: bool = False
@@ -125,6 +151,10 @@ class Settings(BaseSettings):
     backup_offsite_max_age_minutes: int = 1440
     backup_restore_drill_max_age_hours: int = 168
 
+    # Tek kanonik piyasa modu.  Eski GOLD_PRICE_LIVE_ENABLED alanı yalnızca
+    # geriye dönük yapılandırma uyumluluğu için tutulur; UI ve çalışma profili
+    # MARKET_RATES_LIVE_ENABLED üzerinden aynı durumu okumalıdır.
+    market_rates_live_enabled: bool = False
     gold_price_live_enabled: bool = True
     gold_price_timeout_seconds: float = 6.0
     gold_price_cache_seconds: int = 20
@@ -134,14 +164,35 @@ class Settings(BaseSettings):
     inventory_market_platinum_dkk: Decimal = Decimal("280")
     inventory_market_palladium_dkk: Decimal = Decimal("335")
 
-    initial_admin_email: str = "admin@seroguld.dk"
-    initial_admin_password: str = "Admin123!"
-    initial_admin_name: str = "Recai Admin"
+    initial_admin_email: str = "info@seroguld.dk"
+    initial_admin_password: str = "admin"
+    initial_admin_name: str = "Recai"
+    initial_admin_force_password_change: bool = True
 
     def is_production(self) -> bool:
         return self.env.strip().lower() in {"production", "prod"}
 
     def validate_runtime_configuration(self) -> None:
+        if self.initial_admin_auto_seed and not self.initial_admin_password.strip():
+            raise RuntimeError("INITIAL_ADMIN_PASSWORD boş olamaz; ilk admin hesabı oluşturulamaz.")
+
+        if self.env.strip().lower() == "desktop":
+            failures: list[str] = []
+
+            def _check_desktop_secret(name: str, value: str, *, blocked: set[str]) -> None:
+                candidate = value.strip()
+                if not candidate or candidate in blocked or len(candidate) < 32:
+                    failures.append(f"{name} güvenli bir desktop değeri olmalı.")
+
+            _check_desktop_secret("JWT_ACCESS_SECRET", self.jwt_access_secret, blocked={"change-me-access-secret"})
+            _check_desktop_secret("JWT_REFRESH_SECRET", self.jwt_refresh_secret, blocked={"change-me-refresh-secret"})
+            if not _is_usable_field_encryption_key(self.field_encryption_key):
+                failures.append("FIELD_ENCRYPTION_KEY güvenli bir desktop değeri olmalı (legacy anahtarlar için en az 16 karakter).")
+            if failures:
+                rendered = "\n".join(f"- {item}" for item in failures)
+                raise RuntimeError(f"Desktop runtime config geçersiz:\n{rendered}")
+            return
+
         if not self.is_production():
             return
 
@@ -170,23 +221,30 @@ class Settings(BaseSettings):
             blocked={"change-me-32-byte-base64-key"},
             min_length=32,
         )
-        _check_secret(
-            "ONLYOFFICE_JWT_SECRET",
-            self.onlyoffice_jwt_secret,
-            blocked={"seroguld-onlyoffice-secret"},
-            min_length=24,
-        )
-        _check_secret(
-            "INITIAL_ADMIN_PASSWORD",
-            self.initial_admin_password,
-            blocked={"Admin123!"},
-            min_length=12,
-        )
+        if any(
+            provider.strip().lower() == "onlyoffice"
+            for provider in (
+                self.office_provider_default,
+                self.office_provider_afg,
+                self.office_provider_depolama,
+                self.office_provider_log,
+            )
+        ):
+            _check_secret("ONLYOFFICE_JWT_SECRET", self.onlyoffice_jwt_secret, blocked={"seroguld-onlyoffice-secret"}, min_length=24)
+        if not self.initial_admin_force_password_change:
+            _check_secret(
+                "INITIAL_ADMIN_PASSWORD",
+                self.initial_admin_password,
+                blocked={"admin", "Admin123!"},
+                min_length=12,
+            )
 
         if self.database_auto_create:
             failures.append("DATABASE_AUTO_CREATE production ortamında kapalı olmalı.")
-        if self.initial_admin_auto_seed:
-            failures.append("INITIAL_ADMIN_AUTO_SEED production ortamında kapalı olmalı.")
+        if self.initial_admin_auto_seed and not self.initial_admin_force_password_change:
+            failures.append(
+                "INITIAL_ADMIN_AUTO_SEED production ortamında yalnız zorunlu ilk şifre değişimiyle kullanılmalı."
+            )
 
         if failures:
             rendered = "\n".join(f"- {item}" for item in failures)
@@ -240,9 +298,32 @@ class Settings(BaseSettings):
         return (ROOT_DIR / raw).resolve()
 
     def should_auto_seed_initial_admin(self) -> bool:
-        return bool(self.initial_admin_auto_seed and not self.is_production())
+        return bool(self.initial_admin_auto_seed)
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def resolve_desktop_onlyoffice_jwt_secret(configured_secret: str) -> str:
+    runtime_dir = os.environ.get("SEROGULD_OFFICE_RUNTIME_DIR", "").strip()
+    if not runtime_dir:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            runtime_dir = str(Path(local_app_data) / "SeroGuldCRM" / "office-runtime")
+    if not runtime_dir:
+        return configured_secret
+
+    env_path = Path(runtime_dir) / "onlyoffice.env"
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return configured_secret
+
+    for line in lines:
+        key, separator, value = line.partition("=")
+        candidate = value.strip()
+        if key.strip() == "ONLYOFFICE_JWT_SECRET" and separator and len(candidate) >= 32:
+            return candidate
+    return configured_secret

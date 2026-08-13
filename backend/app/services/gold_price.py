@@ -35,7 +35,7 @@ class GoldPriceService:
         settings = get_settings()
         self.timeout_seconds = max(2.0, float(settings.gold_price_timeout_seconds))
         self.cache_seconds = max(3, int(settings.gold_price_cache_seconds))
-        self.live_enabled = bool(settings.gold_price_live_enabled)
+        self.live_enabled = bool(settings.market_rates_live_enabled)
 
     @classmethod
     def _now(cls) -> datetime:

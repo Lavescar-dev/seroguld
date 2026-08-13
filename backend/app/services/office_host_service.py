@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 import httpx
 from jose import jwt
 
-from app.config import get_settings
+from app.config import get_settings, resolve_desktop_onlyoffice_jwt_secret
 from app.schemas.document_artifact import DocumentArtifactPreviewOut, OfficeRuntimeStatusOut
 from app.utils.helpers import utc_now
 
@@ -100,6 +100,45 @@ class OfficeProviderForceSaveResult:
     state: str
     detail: str | None = None
     save_id: int | None = None
+
+
+class EmbeddedOfficeProvider:
+    """Desktop-local provider used when no Docker office service is present.
+
+    The actual workbook surface is the controlled grid/Excel bridge exposed by
+    ``/api/v2/document-artifacts`` and ``/api/v2/excel-sessions``.  Keeping a
+    provider object here preserves the legacy office status/session contract
+    for callers that still probe ``/office-runtime`` while making the
+    Dockerless path deterministic and network-free.
+    """
+
+    provider = "embedded"
+    provider_label = "Sero Guld Embedded Workbook"
+    provider_branding_level = "native-local"
+
+    async def build_launch(self, *, entry: OfficeSessionEntry) -> OfficeProviderLaunch:
+        return OfficeProviderLaunch(
+            launch_mode="embedded-grid",
+            office_available=True,
+            office_reason=None,
+        )
+
+    async def is_available(self) -> bool:
+        return True
+
+    async def runtime_status(self) -> OfficeProviderRuntime:
+        now = utc_now()
+        return OfficeProviderRuntime(
+            provider=self.provider,
+            provider_label=self.provider_label,
+            provider_branding_level=self.provider_branding_level,
+            runtime_available=True,
+            discovery_cached=True,
+            last_discovery_checked_at=now,
+            runtime_url="embedded://local",
+            wopi_base_url="embedded://local",
+            callback_base_url=None,
+        )
 
 
 class CollaboraOfficeProvider:
@@ -264,7 +303,11 @@ class OnlyOfficeProvider:
                 },
             },
         }
-        token = jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
+        token = jwt.encode(
+            config,
+            resolve_desktop_onlyoffice_jwt_secret(settings.onlyoffice_jwt_secret),
+            algorithm="HS256",
+        )
         config["token"] = token
         return OfficeProviderLaunch(
             launch_mode="onlyoffice-docs-api",
@@ -316,7 +359,11 @@ class OnlyOfficeProvider:
             "key": self._document_key(entry),
             "userdata": f"{entry.kind}:{entry.key}:{requested_save_id}",
         }
-        token = jwt.encode(payload, settings.onlyoffice_jwt_secret, algorithm="HS256")
+        token = jwt.encode(
+            payload,
+            resolve_desktop_onlyoffice_jwt_secret(settings.onlyoffice_jwt_secret),
+            algorithm="HS256",
+        )
         command_url = f"{settings.onlyoffice_runtime_url.rstrip('/')}/coauthoring/CommandService.ashx"
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
@@ -381,6 +428,7 @@ class OfficeHostService:
 
     def _build_providers(self) -> dict[str, OfficeProvider]:
         return {
+            "embedded": EmbeddedOfficeProvider(),
             "collabora": CollaboraOfficeProvider(),
             "onlyoffice": OnlyOfficeProvider(),
         }

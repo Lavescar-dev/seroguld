@@ -12,6 +12,9 @@ from app.schemas.inventory import InventoryMarketPricesUpdate, InventoryWorkspac
 from app.schemas.product import ProductUpdate
 
 
+INVENTORY_SHEET = "Lager"
+
+
 def _core():
     from app.services import document_artifact_service as core
 
@@ -61,6 +64,49 @@ def _inventory_editable_refs(mappings: Iterable) -> list[str]:
             ]
         )
     return refs
+
+
+def _inventory_editable_cell_map(workspace: InventoryWorkspaceOut) -> dict[str, dict[str, str]]:
+    """Return the server-owned allowlist advertised by the live workbook.
+
+    The preview and the cell-patch endpoint must derive their input surface
+    from the same mapping.  Formula/identity columns (product number, totals,
+    has-metal and spot values) are deliberately absent; only market prices
+    and the mapped product fields may be written back.
+    """
+
+    mappings = _inventory_sync_mappings(workspace)
+    result: dict[str, dict[str, str]] = {}
+    for ref in _inventory_editable_refs(mappings):
+        if ref in {"K4", "K5", "K6", "K7"}:
+            result[f"{INVENTORY_SHEET}!{ref}"] = {
+                "sheet": INVENTORY_SHEET,
+                "cell_ref": ref,
+                "label": f"Piyasa {ref[-1]}",
+                "input_kind": "decimal",
+            }
+            continue
+
+        column = "".join(character for character in ref if character.isalpha())
+        labels = {
+            "B": ("Lager tarihi", "date"),
+            "C": ("Ürün açıklaması", "text"),
+            "D": ("Birim gram", "decimal"),
+            "E": ("Adet", "integer"),
+            "H": ("Alış fiyatı", "decimal"),
+            "N": ("Uzunluk", "text"),
+            "O": ("Genişlik", "decimal"),
+            "P": ("Kalınlık", "decimal"),
+            "Q": ("Üretici", "text"),
+        }
+        label, input_kind = labels[column]
+        result[f"{INVENTORY_SHEET}!{ref}"] = {
+            "sheet": INVENTORY_SHEET,
+            "cell_ref": ref,
+            "label": label,
+            "input_kind": input_kind,
+        }
+    return result
 
 
 def _inventory_raw_row_payload(sheet, row_idx: int) -> tuple[datetime | None, dict[str, str]]:

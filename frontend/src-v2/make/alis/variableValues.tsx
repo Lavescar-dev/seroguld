@@ -1,6 +1,7 @@
 import { type Dispatch, type SetStateAction } from 'react';
 
 import type { PosWorkspaceCalculators, PosWorkspaceMarketRates } from '@/types';
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 import {
   GOLD_MATRIX_ROWS,
@@ -203,12 +204,10 @@ export function VariableValuesSheetEditor({
             </label>
             <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
               <span className="mb-1 block text-[10px] font-black uppercase tracking-widest text-brand-500">EUR / DKK FX</span>
-              <input
-                type="text"
+              <CommittedNumericInput
                 value={marketRates.eur_dkk_fx}
-                onChange={(event) =>
-                  setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: normalizeTextInput(event.target.value) }))
-                }
+                rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+                onCommit={(_, canonical) => setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: canonical }))}
                 className="mono h-8 w-full border border-brand-300 bg-white px-2.5 text-sm text-brand-900 outline-none focus:border-brand-700"
               />
             </label>
@@ -256,18 +255,18 @@ export function VariableValuesSheetEditor({
                     <tr key={row.row_key} className="border-b border-brand-100 last:border-b-0">
                       <td className="mono px-2 py-1.5 font-black text-brand-700">{index + 1}</td>
                       <td className="px-1 py-1.5">
-                        <input
-                          type="text"
+                        <CommittedNumericInput
                           value={row.unit_weight}
-                          onChange={(event) => updateCalculatorRow('gold_rows', row.row_key, 'unit_weight', event.target.value)}
+                          rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                          onCommit={(_, canonical) => updateCalculatorRow('gold_rows', row.row_key, 'unit_weight', canonical)}
                           className="mono h-7 w-full min-w-[3.5rem] border border-brand-300 bg-white px-1.5 text-right text-[11px] text-brand-900 outline-none focus:border-brand-700"
                         />
                       </td>
                       <td className="px-1 py-1.5">
-                        <input
-                          type="text"
+                        <CommittedNumericInput
                           value={row.count}
-                          onChange={(event) => updateCalculatorRow('gold_rows', row.row_key, 'count', event.target.value)}
+                          rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                          onCommit={(_, canonical) => updateCalculatorRow('gold_rows', row.row_key, 'count', canonical)}
                           className="mono h-7 w-full min-w-[3.5rem] border border-brand-300 bg-white px-1.5 text-right text-[11px] text-brand-900 outline-none focus:border-brand-700"
                         />
                       </td>
@@ -324,18 +323,18 @@ export function VariableValuesSheetEditor({
                     <tr key={row.row_key} className="border-b border-brand-100 last:border-b-0">
                       <td className="mono px-2 py-1.5 font-black text-brand-700">{index + 1}</td>
                       <td className="px-1 py-1.5">
-                        <input
-                          type="text"
+                        <CommittedNumericInput
                           value={row.unit_weight}
-                          onChange={(event) => updateCalculatorRow('silver_rows', row.row_key, 'unit_weight', event.target.value)}
+                          rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                          onCommit={(_, canonical) => updateCalculatorRow('silver_rows', row.row_key, 'unit_weight', canonical)}
                           className="mono h-7 w-full min-w-[3.5rem] border border-brand-300 bg-white px-1.5 text-right text-[11px] text-brand-900 outline-none focus:border-brand-700"
                         />
                       </td>
                       <td className="px-1 py-1.5">
-                        <input
-                          type="text"
+                        <CommittedNumericInput
                           value={row.count}
-                          onChange={(event) => updateCalculatorRow('silver_rows', row.row_key, 'count', event.target.value)}
+                          rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                          onCommit={(_, canonical) => updateCalculatorRow('silver_rows', row.row_key, 'count', canonical)}
                           className="mono h-7 w-full min-w-[3.5rem] border border-brand-300 bg-white px-1.5 text-right text-[11px] text-brand-900 outline-none focus:border-brand-700"
                         />
                       </td>
@@ -415,12 +414,10 @@ export function VariableValuesSheetEditor({
             <div className="mt-3 space-y-3">
               <label className="block">
                 <span className="mb-1 block text-[10px] font-black uppercase tracking-widest text-brand-500">EUR / DKK FX</span>
-                <input
-                  type="text"
+                <CommittedNumericInput
                   value={marketRates.eur_dkk_fx}
-                  onChange={(event) =>
-                    setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: normalizeTextInput(event.target.value) }))
-                  }
+                  rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+                  onCommit={(_, canonical) => setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: canonical }))}
                   className="mono w-full border border-brand-300 bg-white px-3 py-2 text-sm text-brand-900 outline-none focus:border-brand-700"
                 />
               </label>
@@ -473,10 +470,10 @@ export function VariableValuesSheetEditor({
                     <td className="mono border border-brand-200 px-3 py-2 font-black text-brand-900">{row.label}</td>
                     <td className="mono border border-brand-200 px-3 py-2 text-brand-700">{row.lodighed}</td>
                     <td className="border border-amber-200 bg-amber-50 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.eur_per_gram}
-                        onChange={(event) => updateGoldRate(row.key, event.target.value)}
+                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 4 }}
+                        onCommit={(_, canonical) => updateGoldRate(row.key, canonical)}
                         className="mono w-full border border-amber-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-amber-500"
                       />
                     </td>
@@ -511,10 +508,10 @@ export function VariableValuesSheetEditor({
                     <td className="border border-brand-200 px-3 py-2 font-semibold text-brand-900">{row.label}</td>
                     <td className="mono border border-brand-200 px-3 py-2 text-brand-700">{row.lodighed}</td>
                     <td className="border border-sky-200 bg-sky-50 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.eur_per_gram}
-                        onChange={(event) => updateSilverRate(row.key, event.target.value)}
+                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 4 }}
+                        onCommit={(_, canonical) => updateSilverRate(row.key, canonical)}
                         className="mono w-full border border-sky-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-sky-500"
                       />
                     </td>
@@ -552,18 +549,18 @@ export function VariableValuesSheetEditor({
                   <tr key={row.row_key}>
                     <td className="mono border border-brand-200 px-3 py-2 font-black text-brand-700">{index + 1}</td>
                     <td className="border border-brand-200 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.unit_weight}
-                        onChange={(event) => updateCalculatorRow('gold_rows', row.row_key, 'unit_weight', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                        onCommit={(_, canonical) => updateCalculatorRow('gold_rows', row.row_key, 'unit_weight', canonical)}
                         className="mono w-full border border-brand-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
                       />
                     </td>
                     <td className="border border-brand-200 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.count}
-                        onChange={(event) => updateCalculatorRow('gold_rows', row.row_key, 'count', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                        onCommit={(_, canonical) => updateCalculatorRow('gold_rows', row.row_key, 'count', canonical)}
                         className="mono w-full border border-brand-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
                       />
                     </td>
@@ -623,18 +620,18 @@ export function VariableValuesSheetEditor({
                   <tr key={row.row_key}>
                     <td className="mono border border-brand-200 px-3 py-2 font-black text-brand-700">{index + 1}</td>
                     <td className="border border-brand-200 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.unit_weight}
-                        onChange={(event) => updateCalculatorRow('silver_rows', row.row_key, 'unit_weight', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                        onCommit={(_, canonical) => updateCalculatorRow('silver_rows', row.row_key, 'unit_weight', canonical)}
                         className="mono w-full border border-brand-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
                       />
                     </td>
                     <td className="border border-brand-200 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.count}
-                        onChange={(event) => updateCalculatorRow('silver_rows', row.row_key, 'count', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                        onCommit={(_, canonical) => updateCalculatorRow('silver_rows', row.row_key, 'count', canonical)}
                         className="mono w-full border border-brand-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
                       />
                     </td>

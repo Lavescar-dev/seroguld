@@ -25,17 +25,17 @@ const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 const sansStyle = { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" } as const;
 
 function fmtKr(value: number) {
-  return `${value.toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK`;
+  return `${value.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK`;
 }
 
 function fmtGram(value: number) {
-  return `${value.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} g`;
+  return `${value.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} g`;
 }
 
 function fmtDato(value: string) {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return new Date(value).toLocaleDateString(document.documentElement.lang, { day: '2-digit', month: '2-digit', year: 'numeric' });
   } catch {
     return value;
   }
@@ -242,7 +242,7 @@ export function MakeDashboardPage({
             {isRefreshing ? 'Canli yenileniyor' : 'Canli bagli'}
           </span>
           <p className="hidden text-xs text-brand-500 sm:block" style={monoStyle}>
-            Son guncelleme: {lastRefresh.toLocaleTimeString('tr-TR')}
+            Son guncelleme: {lastRefresh.toLocaleTimeString(document.documentElement.lang)}
           </p>
           <button
             onClick={onRefresh}
@@ -275,7 +275,7 @@ export function MakeDashboardPage({
                 <div>
                   <p className="text-xs font-bold text-brand-400">{market.label}</p>
                   <p className={`font-black ${market.color}`} style={monoStyle}>
-                    {market.price.toLocaleString('da-DK')} DKK
+                    {market.price.toLocaleString(document.documentElement.lang)} DKK
                   </p>
                 </div>
               </div>
@@ -663,7 +663,7 @@ export function MakeDashboardPage({
             <span className="text-xs font-black uppercase tracking-wider text-brand-500">Sero Guld · Kuyumcu Yönetim Sistemi</span>
           </div>
           <span className="text-xs text-brand-400" style={monoStyle}>
-            {new Date().toLocaleDateString('da-DK')} — v{data.alisSayisi + data.depoToplamItem + data.musteriSayisi} kayıt
+            {new Date().toLocaleDateString(document.documentElement.lang)} — v{data.alisSayisi + data.depoToplamItem + data.musteriSayisi} kayıt
           </span>
         </div>
       </div>

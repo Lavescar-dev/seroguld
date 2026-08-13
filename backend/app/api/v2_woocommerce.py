@@ -36,10 +36,148 @@ from app.schemas.product import (
     ProductPublishResponse,
     WooSyncLogOut,
 )
-from app.schemas.woocommerce import WooWorkspaceOut
+from app.schemas.woocommerce import (
+    WooCatalogItemOut,
+    WooCatalogLinkIn,
+    WooCatalogListOut,
+    WooCatalogStatusOut,
+    WooCatalogSyncIn,
+    WooCatalogSyncOut,
+    WooCatalogSyncPreviewOut,
+    WooWorkspaceOut,
+)
+from app.config import get_settings
+from app.services.woocommerce import WooCommerceService
+from app.services.woocommerce_catalog_service import (
+    apply_catalog_sync,
+    get_catalog_counts,
+    get_catalog_state,
+    link_catalog_item,
+    list_catalog,
+    preview_catalog_sync,
+    unlink_catalog_item,
+)
+from app.utils.helpers import utc_now
 from app.services.product_service import get_product_or_404, to_product_out
 
 router = APIRouter()
+
+
+@router.get("/woocommerce/status", response_model=WooCatalogStatusOut)
+async def get_woocommerce_status_v2(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> WooCatalogStatusOut:
+    settings = get_settings()
+    configured = bool(
+        settings.woocommerce_base_url.strip()
+        and settings.woocommerce_consumer_key.strip()
+        and settings.woocommerce_consumer_secret.strip()
+    )
+    state_row = await get_catalog_state(db)
+    local_active, local_inactive = await get_catalog_counts(db)
+    checked_at = utc_now()
+    if not configured:
+        return WooCatalogStatusOut(
+            configured=False,
+            reachable=False,
+            remote_published_count=None,
+            local_active_count=local_active,
+            local_inactive_count=local_inactive,
+            catalog_revision=int(state_row.revision),
+            last_synced_at=state_row.last_synced_at,
+            checked_at=checked_at,
+            message="WooCommerce bağlantı ayarları eksik.",
+        )
+    try:
+        remote_published_count = await WooCommerceService().fetch_published_product_count()
+    except Exception:
+        return WooCatalogStatusOut(
+            configured=True,
+            reachable=False,
+            remote_published_count=None,
+            local_active_count=local_active,
+            local_inactive_count=local_inactive,
+            catalog_revision=int(state_row.revision),
+            last_synced_at=state_row.last_synced_at,
+            checked_at=checked_at,
+            message="WooCommerce bağlantısı kurulamadı.",
+        )
+    return WooCatalogStatusOut(
+        configured=True,
+        reachable=True,
+        remote_published_count=remote_published_count,
+        local_active_count=local_active,
+        local_inactive_count=local_inactive,
+        catalog_revision=int(state_row.revision),
+        last_synced_at=state_row.last_synced_at,
+        checked_at=checked_at,
+        message="WooCommerce bağlantısı sağlıklı.",
+    )
+
+
+@router.get("/woocommerce/catalog", response_model=WooCatalogListOut)
+async def get_woocommerce_catalog_v2(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    q: str | None = Query(default=None, max_length=160),
+    active: bool | None = Query(default=True),
+    linked: bool | None = Query(default=None),
+    manual_review_required: bool | None = Query(default=None),
+    photo_missing: bool | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> WooCatalogListOut:
+    return await list_catalog(
+        db,
+        page=page,
+        page_size=page_size,
+        q=q,
+        active=active,
+        linked=linked,
+        manual_review_required=manual_review_required,
+        photo_missing=photo_missing,
+    )
+
+
+@router.post("/woocommerce/catalog/sync/preview", response_model=WooCatalogSyncPreviewOut)
+async def post_woocommerce_catalog_sync_preview_v2(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> WooCatalogSyncPreviewOut:
+    return await preview_catalog_sync(db, owner_user_id=admin.id)
+
+
+@router.post("/woocommerce/catalog/sync", response_model=WooCatalogSyncOut)
+async def post_woocommerce_catalog_sync_v2(
+    payload: WooCatalogSyncIn,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> WooCatalogSyncOut:
+    return await apply_catalog_sync(
+        db,
+        preview_revision=payload.preview_revision,
+        owner_user_id=admin.id,
+    )
+
+
+@router.post("/woocommerce/catalog/{catalog_item_id}/link", response_model=WooCatalogItemOut)
+async def post_woocommerce_catalog_link_v2(
+    catalog_item_id: UUID,
+    payload: WooCatalogLinkIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> WooCatalogItemOut:
+    return await link_catalog_item(db, catalog_item_id=catalog_item_id, product_id=payload.product_id)
+
+
+@router.delete("/woocommerce/catalog/{catalog_item_id}/link", response_model=WooCatalogItemOut)
+async def delete_woocommerce_catalog_link_v2(
+    catalog_item_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> WooCatalogItemOut:
+    return await unlink_catalog_item(db, catalog_item_id=catalog_item_id)
 
 
 @router.get("/woocommerce/workspace", response_model=WooWorkspaceOut)

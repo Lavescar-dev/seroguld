@@ -4,6 +4,7 @@ export type SortKey = 'fakturanummer' | 'fakturadato' | 'total' | 'kunde' | 'kon
 export type SortDir = 'asc' | 'desc';
 export type MailFiltre = 'tümü' | 'gonderildi' | 'gonderilmedi';
 export type TarihFiltre = 'tümü' | 'bu_ay' | 'son_3ay' | 'bu_yil';
+export type AmountDirection = 'income' | 'expense' | 'neutral';
 
 export interface UnicontaKimlik {
   companyId: string;
@@ -127,6 +128,8 @@ export interface Fatura {
   subtotal: number;
   momsTotal: number;
   total: number;
+  signedTotalAmount: number;
+  amountDirection: AmountDirection;
   valuta: 'DKK' | 'EUR' | 'USD';
   note?: string;
   wooOrderId?: string;

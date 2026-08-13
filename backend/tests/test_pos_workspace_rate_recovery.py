@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
+from app.config import Settings
 from app.models.enums import (
     MetalTypeEnum,
     PosRateSourceEnum,
@@ -22,11 +23,22 @@ from app.models.pos_session_line import PosSessionLine
 from app.models.user import User
 from app.schemas.pos import PosWorkspaceGoldRowInput, PosWorkspaceSectionsUpdate
 from app.services.gold_price import GoldPriceService
+from app.services import market_rate_profile
 from app.services.pos_service import build_purchase_workspace
 from app.services.pos_workspace_mutations import replace_purchase_workspace_sections
 
 
 def test_zero_priced_draft_is_rendered_read_only_then_repaired_by_revisioned_put(monkeypatch) -> None:
+    # This scenario exercises the live-rate repair path explicitly.  The
+    # application default is manual mode, so the test must opt in instead of
+    # depending on a legacy GOLD_PRICE_LIVE_ENABLED value from repo .env.
+    live_settings = Settings(
+        _env_file=None,
+        database_url="sqlite+aiosqlite:///test.db",
+        market_rates_live_enabled=True,
+    )
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: live_settings)
+
     def fake_cached_rates(cls) -> dict[str, Decimal]:
         return {
             "gold": Decimal("615.50"),

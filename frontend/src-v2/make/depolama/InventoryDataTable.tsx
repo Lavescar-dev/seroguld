@@ -53,7 +53,7 @@ function saflikLabel(saflik: number, kat: MainCategory) {
 }
 
 function shortDate(value: string) {
-  return new Date(value).toLocaleDateString('da-DK');
+  return new Date(value).toLocaleDateString(document.documentElement.lang);
 }
 
 interface ColumnDef {

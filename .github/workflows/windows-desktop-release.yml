@@ -2,15 +2,6 @@ name: windows-desktop-release
 
 on:
   workflow_dispatch:
-    inputs:
-      api_base_url:
-        description: "Windows app API base URL"
-        required: true
-        default: "http://192.168.1.105:8100"
-      ws_base_url:
-        description: "Windows app WebSocket base URL"
-        required: true
-        default: "http://192.168.1.105:8100"
   push:
     tags:
       - "seroguld-desktop-v*"
@@ -31,6 +22,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Frontend install
         working-directory: frontend
         run: npm ci
@@ -39,33 +34,110 @@ jobs:
         working-directory: frontend
         run: npm run typecheck
 
-      - name: Frontend build
-        working-directory: frontend
-        env:
-          VITE_API_BASE_URL: ${{ github.event.inputs.api_base_url || 'http://192.168.1.105:8100' }}
-          VITE_WS_BASE_URL: ${{ github.event.inputs.ws_base_url || 'http://192.168.1.105:8100' }}
-        run: npm run build
-
       - name: Desktop install
         working-directory: desktop
         run: npm ci
 
-      - name: Tauri NSIS build
-        working-directory: desktop
+      - name: Isolated installer migration and ACL smoke
+        shell: powershell
+        run: ./scripts/windows-installer-smoke.ps1
+
+      - name: Seed recoverable finalization fixture
+        shell: powershell
+        run: |
+          $downloads = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
+          New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+          $legacy = Join-Path $downloads "SERO-GULD-CRM-FULL-SETUP.exe"
+          Set-Content -LiteralPath $legacy -Value "ci-replaced-installer-fixture" -Encoding ASCII
+          $hash = (Get-FileHash -LiteralPath $legacy -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$legacy.sha256" -Value "$hash  SERO-GULD-CRM-FULL-SETUP.exe" -Encoding ASCII
+          [ordered]@{ installer_sha256 = $hash; fixture = $true } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $downloads "SERO-GULD-CRM-FULL-SETUP.manifest.json") -Encoding UTF8
+
+      - name: Provision customer integration seed input
+        shell: powershell
+        env:
+          SEROGULD_CUSTOMER_RUNTIME_ENV_B64: ${{ secrets.SEROGULD_CUSTOMER_RUNTIME_ENV_B64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SEROGULD_CUSTOMER_RUNTIME_ENV_B64)) {
+            throw "Required customer runtime environment secret is not configured"
+          }
+          try {
+            $bytes = [Convert]::FromBase64String($env:SEROGULD_CUSTOMER_RUNTIME_ENV_B64)
+          } catch {
+            throw "Customer runtime environment secret is not valid base64"
+          }
+          [System.IO.File]::WriteAllBytes((Join-Path $PWD ".env"), $bytes)
+
+      - name: Build and verify Dockerless Windows release
         env:
           CI: "true"
-        run: npm run tauri build
+          VITE_API_BASE_URL: "http://127.0.0.1:8100"
+          VITE_WS_BASE_URL: "http://127.0.0.1:8100"
+        shell: powershell
+        run: >-
+          ./scripts/release-windows-native.ps1
+          -OutputDirectory .run/windows-native-release
+          -Finalize
+          -RunDefenderScan
+
+      - name: Remove customer integration seed input
+        if: always()
+        shell: powershell
+        run: |
+          Remove-Item -LiteralPath ".env" -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath "backend/runtime-seed.env" -Force -ErrorAction SilentlyContinue
+
+      - name: Verify finalized Downloads delivery and archive rollback contract
+        shell: powershell
+        run: |
+          $downloads = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
+          $release = ".run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe"
+          $final = Join-Path $downloads "SERO-GULD-CRM-FULL-SETUP.exe"
+          $releaseHash = (Get-FileHash -LiteralPath $release -Algorithm SHA256).Hash.ToLowerInvariant()
+          $finalHash = (Get-FileHash -LiteralPath $final -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($releaseHash -ne $finalHash) { throw "Final Downloads installer hash mismatch" }
+          $manifest = Get-Content -LiteralPath (Join-Path $downloads "SERO-GULD-CRM-FULL-SETUP.manifest.json") -Raw | ConvertFrom-Json
+          if (-not $manifest.final_copy_performed -or $manifest.final_destination_sha256 -ne $finalHash) {
+            throw "Final Downloads manifest coherence failed"
+          }
+          $archive = Join-Path $downloads "SeroGuldCRM-archive"
+          $archived = @(Get-ChildItem -LiteralPath $archive -Filter "*-replaced-SERO-GULD-CRM-FULL-SETUP.exe" -File)
+          if ($archived.Count -ne 1) { throw "Replaced installer fixture was not archived exactly once" }
+          foreach ($suffix in @('.sha256', '.archive.json')) {
+            if (-not (Test-Path -LiteralPath "$($archived[0].FullName)$suffix" -PathType Leaf)) {
+              throw "Archive integrity sidecar missing: $suffix"
+            }
+          }
+          $originalSidecars = @(Get-ChildItem -LiteralPath $archive -Filter "$($archived[0].Name).sidecar-*" -File)
+          if ($originalSidecars.Count -ne 2) { throw "Original installer sidecars were not preserved" }
+
+      - name: Install verified NSIS on ephemeral runner
+        shell: powershell
+        run: |
+          $process = Start-Process -FilePath ".run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe" -ArgumentList "/S" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "NSIS silent install failed: $($process.ExitCode)" }
+
+      - name: Installed desktop acceptance
+        shell: powershell
+        run: ./scripts/windows-desktop-acceptance.ps1 -ForceCloseAfterChecks
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: SERO_GULD_CRM_windows
-          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          path: |
+            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe
+            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sha256
+            .run/windows-native-release/release-manifest.json
           if-no-files-found: error
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/seroguld-desktop-v')
         uses: softprops/action-gh-release@v2
         with:
-          files: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          files: |
+            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe
+            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sha256
+            .run/windows-native-release/release-manifest.json
           generate_release_notes: true

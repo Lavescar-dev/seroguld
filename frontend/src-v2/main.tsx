@@ -4,8 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { App } from '@/app';
 import { ConfirmProvider } from '@/components/ConfirmDialog';
+import { DesktopLifecycle } from '@/components/DesktopLifecycle';
 import { ToastProvider } from '@/lib/toast';
 import { UiVariantProvider, uiVariantTransitionRegistry } from '@/ui-variants';
+import { AppLocaleProvider } from '@/i18n';
 import '@/styles/tokens.css';
 import '@/styles.css';
 
@@ -28,18 +30,22 @@ function displayRouteVariant() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <ConfirmProvider>
-          <UiVariantProvider
-            registry={uiVariantTransitionRegistry}
-            initialVariant={displayRouteVariant()}
-            frontendMode={__SERO_FRONTEND_MODE__}
-            frontendBuiltAt={__SERO_FRONTEND_BUILT_AT__}
-          >
-            <App />
-          </UiVariantProvider>
-        </ConfirmProvider>
-      </ToastProvider>
+      <AppLocaleProvider>
+        <ToastProvider>
+          <ConfirmProvider>
+            <UiVariantProvider
+              registry={uiVariantTransitionRegistry}
+              initialVariant={displayRouteVariant()}
+              frontendMode={__SERO_FRONTEND_MODE__}
+              frontendBuiltAt={__SERO_FRONTEND_BUILT_AT__}
+            >
+              <DesktopLifecycle>
+                <App />
+              </DesktopLifecycle>
+            </UiVariantProvider>
+          </ConfirmProvider>
+        </ToastProvider>
+      </AppLocaleProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 );

@@ -267,9 +267,9 @@ export function ModernKeyValueList({
   return (
     <dl className={cn('grid gap-3', columns === 1 ? 'grid-cols-1' : columns === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3')}>
       {items.map((item) => (
-        <div key={item.label} className="rounded-sg-md border border-sg-border bg-sg-surface px-4 py-3">
-          <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{item.label}</dt>
-          <dd className={cn('mt-2 text-sm font-medium text-sg-text-soft', item.accent && 'text-sg-text')}>{item.value}</dd>
+        <div key={item.label} className="rounded-sg-md border border-sg-border-soft bg-sg-surface-soft/55 px-4 py-3.5">
+          <dt className="text-[10px] font-medium uppercase tracking-[0.2em] text-sg-text-soft/80">{item.label}</dt>
+          <dd className={cn('mt-2 text-[15px] font-normal leading-5 text-sg-text', item.accent && 'font-semibold text-sg-accent-dark')}>{item.value}</dd>
         </div>
       ))}
     </dl>

@@ -31,6 +31,7 @@ from app.services.document_artifact_service import (
     _record_out,
     _stringify,
 )
+from app.services.document_artifact_inventory import _inventory_editable_cell_map
 from app.utils.helpers import utc_now
 
 
@@ -151,7 +152,10 @@ def build_afg_workspace_preview(workspace: PosWorkspaceOut, artifact: DocumentAr
         download_path=f"/api/v2/alis/workspace/{workspace.session.id}/artifact",
         module_route="/",
         import_supported=True,
-        external_edit_supported=False,
+        # The embedded desktop grid is the supported edit surface for a live
+        # draft.  ``external`` here means the frontend's controlled artifact
+        # editor contract; completed AFG previews below remain read-only.
+        external_edit_supported=True,
         editable_cells=[_editable_cell_out(cell) for cell in AFG_EDITABLE_CELLS],
         workspace_revision=workspace.workspace_revision,
         sheets=[
@@ -186,6 +190,7 @@ def build_afg_document_preview(detail: PosDocumentDetailOut, artifact: DocumentA
 
 
 def build_inventory_preview(workspace: InventoryWorkspaceOut, artifact: DocumentArtifact | None = None) -> DocumentArtifactPreviewOut:
+    editable_cells = list(_inventory_editable_cell_map(workspace).values())
     return DocumentArtifactPreviewOut(
         title="Depolama.xlsx",
         subtitle=f"Canlı envanter · {_fmt_date(utc_now())}",
@@ -195,7 +200,7 @@ def build_inventory_preview(workspace: InventoryWorkspaceOut, artifact: Document
         module_route="/depolama",
         import_supported=True,
         external_edit_supported=True,
-        editable_cells=[],
+        editable_cells=[_editable_cell_out(cell) for cell in editable_cells],
         sheets=[_inventory_preview_sheet(workspace)],
     )
 
@@ -208,8 +213,8 @@ def build_log_preview(workspace: AfgLogWorkspaceOut, *, year: int, artifact: Doc
         artifact=(_record_out(artifact) if artifact is not None else None),
         download_path=f"/api/v2/log/workbook?year={year}",
         module_route="/log",
-        import_supported=True,
-        external_edit_supported=True,
+        import_supported=False,
+        external_edit_supported=False,
         editable_cells=[],
         sheets=[_log_documents_preview_sheet(workspace)],
     )

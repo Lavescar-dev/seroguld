@@ -3,8 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW_FILE="windows-desktop-release.yml"
-DEFAULT_API_BASE_URL="${SEROGULD_WINDOWS_API_BASE_URL:-http://192.168.1.105:8100}"
-DEFAULT_WS_BASE_URL="${SEROGULD_WINDOWS_WS_BASE_URL:-${DEFAULT_API_BASE_URL}}"
 
 version_from_tauri() {
   sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "${ROOT_DIR}/desktop/src-tauri/tauri.conf.json" | head -n 1
@@ -34,10 +32,11 @@ head_sha="$(git rev-parse HEAD)"
 echo "[windows-release] branch: ${branch}"
 echo "[windows-release] HEAD: ${head_sha}"
 echo "[windows-release] tag: ${tag}"
-echo "[windows-release] API: ${DEFAULT_API_BASE_URL}"
-
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "[windows-release] Not: takipli ama commitlenmemis dosyalar var; tag sadece HEAD'i icerir."
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "[windows-release] HATA: commitlenmemis veya untracked release girdileri var." >&2
+  echo "[windows-release] Tag yalnizca temiz ve tamamen commitlenmis kaynakta olusturulur." >&2
+  git status --short >&2
+  exit 1
 fi
 
 git push origin "${branch}"

@@ -28,8 +28,10 @@ const DEFAULT_SQLITE_PATH = path.join(DATA_DIR, 'desktop.db').replace(/\\/g, '/'
 const DESKTOP_DATABASE_URL =
   process.env.DESKTOP_DATABASE_URL || `sqlite+aiosqlite:///${DEFAULT_SQLITE_PATH}`;
 
-const BACKEND_PYTHON =
-  process.env.BACKEND_PYTHON || path.join(BACKEND_DIR, '.venv', 'bin', 'python');
+const DEFAULT_BACKEND_PYTHON = process.platform === 'win32'
+  ? path.join(BACKEND_DIR, '.venv', 'Scripts', 'python.exe')
+  : path.join(BACKEND_DIR, '.venv', 'bin', 'python');
+const BACKEND_PYTHON = process.env.BACKEND_PYTHON || DEFAULT_BACKEND_PYTHON;
 
 const childProcesses = [];
 let shuttingDown = false;
@@ -148,7 +150,10 @@ function addExitHooks() {
 }
 
 function spawnService(name, cmd, args, cwd, env = {}) {
-  const child = spawn(cmd, args, {
+  const useWindowsCommandShell = process.platform === 'win32' && cmd === 'npm';
+  const executable = useWindowsCommandShell ? process.env.ComSpec || 'cmd.exe' : cmd;
+  const childArgs = useWindowsCommandShell ? ['/d', '/s', '/c', 'npm.cmd', ...args] : args;
+  const child = spawn(executable, childArgs, {
     cwd,
     env: { ...process.env, ...env },
     stdio: 'inherit',

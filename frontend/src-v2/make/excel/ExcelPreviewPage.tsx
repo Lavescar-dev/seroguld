@@ -52,7 +52,7 @@ function formatDateTime(value?: string | null) {
   if (!value) return '—';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString('tr-TR');
+  return parsed.toLocaleString(document.documentElement.lang);
 }
 
 function formatVersionKind(value?: string | null) {

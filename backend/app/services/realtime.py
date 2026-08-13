@@ -35,8 +35,14 @@ class RealtimeHub:
         if not connections:
             self._display_connections.pop(display_token, None)
 
-    async def connect_clerk(self, session_id: uuid.UUID, websocket: WebSocket) -> None:
-        await websocket.accept()
+    async def connect_clerk(
+        self,
+        session_id: uuid.UUID,
+        websocket: WebSocket,
+        *,
+        subprotocol: str | None = None,
+    ) -> None:
+        await websocket.accept(subprotocol=subprotocol)
         self._clerk_connections[str(session_id)].add(websocket)
 
     async def disconnect_clerk(self, session_id: uuid.UUID, websocket: WebSocket) -> None:

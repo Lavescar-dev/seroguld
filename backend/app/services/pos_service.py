@@ -145,7 +145,7 @@ SILVER_WORKSPACE_ROWS: tuple[dict[str, str | Decimal], ...] = (
     {"row_key": "silver:5", "type_code": "5", "label": "Sølv", "lodighed": "800", "purity_percentage": Decimal("80.00")},
 )
 
-INVOICE_GOLD_ROW_COUNT = 13
+INVOICE_GOLD_ROW_COUNT = 12
 INVOICE_MISC_ROW_COUNT = 15
 COMPANION_MODE_AUTO = "auto"
 COMPANION_MODE_MANUAL = "manual"
@@ -1321,6 +1321,15 @@ async def build_purchase_workspace(
         if invoice_misc_mode == COMPANION_MODE_AUTO
         else _invoice_misc_rows_from_note(note_payload)
     )
+    purchase_vat_enabled = bool(note_payload.get("purchase_vat_enabled", True))
+    purchase_vat_rate = (
+        quantize_2(to_decimal(note_payload.get("purchase_vat_rate_percent") or Decimal("25.00")))
+        if purchase_vat_enabled
+        else Decimal("0.00")
+    )
+    net_amount = quantize_2(total_amount)
+    vat_amount = quantize_2(net_amount * purchase_vat_rate / Decimal("100"))
+    gross_amount = quantize_2(net_amount + vat_amount)
 
     return PosWorkspaceOut(
         workspace_revision=int(note_payload.get("workspace_revision") or 1),
@@ -1333,6 +1342,8 @@ async def build_purchase_workspace(
         payment_method=_workspace_payment_method_from_session(pos_session),
         market_rates=market_rates,
         afg_note=extract_purchase_freeform_note(pos_session.notes),
+        purchase_vat_enabled=purchase_vat_enabled,
+        purchase_vat_rate_percent=purchase_vat_rate,
         calculators=calculators,
         numbering_preview=numbering_preview,
         invoice_gold_mode=invoice_gold_mode,
@@ -1349,6 +1360,10 @@ async def build_purchase_workspace(
             gold_weight_grams=quantize_2(gold_weight),
             silver_weight_grams=quantize_2(silver_weight),
             total_amount_dkk=quantize_2(total_amount),
+            net_amount_dkk=net_amount,
+            vat_rate_percent=purchase_vat_rate,
+            vat_amount_dkk=vat_amount,
+            gross_amount_dkk=gross_amount,
         ),
     )
 
@@ -1871,6 +1886,14 @@ async def confirm_session(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Kur ve teklif alanları eksik")
 
     if trade_side == PosTradeSideEnum.SELL_TO_CUSTOMER:
+        if not get_settings().invoice_sale_tax_policy_configured:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "sales_tax_policy_required",
+                    "message": "Satış faturası için KDV/vergi politikası Ayarlar'dan onaylanmadan satış kesinleştirilemez.",
+                },
+            )
         sale_price = (
             to_decimal(payload.sale_price_dkk)
             if payload.sale_price_dkk is not None

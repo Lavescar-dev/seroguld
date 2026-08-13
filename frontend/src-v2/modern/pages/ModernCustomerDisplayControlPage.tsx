@@ -64,7 +64,7 @@ export function ModernCustomerDisplayControlPage({
         />
 
         <ModernSection>
-          <ModernSectionHeader title="Runtime görünürlüğü" description="Çift monitör, heartbeat ve preview yüzeyi için temel kontroller." />
+          <ModernSectionHeader title="Çalışma zamanı görünürlüğü" description="Çift monitör, bağlantı sinyali ve önizleme yüzeyi için temel kontroller." />
           <div className="mt-4">
             <StatusGrid items={runtime} />
           </div>

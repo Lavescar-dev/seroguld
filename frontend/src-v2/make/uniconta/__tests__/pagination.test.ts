@@ -19,6 +19,8 @@ function invoice(id: string) {
     subtotal: 10,
     momsTotal: 0,
     total: 10,
+    signedTotalAmount: 10,
+    amountDirection: 'income' as const,
     valuta: 'DKK' as const,
   };
 }

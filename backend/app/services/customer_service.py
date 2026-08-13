@@ -279,7 +279,7 @@ async def customer_identity_match(
             CustomerMatchItemOut(
                 id=str(user.id),
                 name=user.name,
-                cpr_number_masked=(f"******{user.cpr_last4}" if user.cpr_last4 else None),
+                cpr_number_masked=mask_cpr(decrypt_field(user.cpr_number_encrypted)),
                 identity_doc_number_masked=mask_last4(
                     decrypt_field(document.identity_doc_number_encrypted) if document else None
                 ),

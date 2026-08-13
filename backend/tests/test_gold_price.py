@@ -22,6 +22,7 @@ def test_convert_usd_ounce_to_dkk_gram():
 @pytest.mark.asyncio
 async def test_get_rates_falls_back_when_live_unavailable(monkeypatch):
     service = GoldPriceService()
+    service.live_enabled = True
 
     async def fake_fetch_live_rates(_self):
         return None
@@ -38,6 +39,7 @@ async def test_get_rates_falls_back_when_live_unavailable(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_rates_prefers_live(monkeypatch):
     service = GoldPriceService()
+    service.live_enabled = True
 
     async def fake_fetch_live_rates(_self):
         return {

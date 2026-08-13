@@ -1,7 +1,7 @@
 # Sero Guld CRM — Dokümantasyon İndeksi
 
-> **Son güncellenme:** 2026-07-27
-> **Sürüm:** v0.2.0 · **Migration head:** `0019_log_module_audit`
+> **Son güncellenme:** 2026-08-13
+> **Sürüm:** v0.3.4 · **Migration head:** `0034_market_rate_confirmation`
 
 Bu klasör Sero Guld CRM projesinin tüm dokümantasyonunu içerir. Aşağıda **hangi dokümana ne zaman bakmanız gerektiği** özetlenmiştir.
 
@@ -55,6 +55,8 @@ Bu klasör Sero Guld CRM projesinin tüm dokümantasyonunu içerir. Aşağıda *
 
 ### Production ve operasyon
 - **[`PRODUCTION_DESKTOP_RUNBOOK_TR.md`](PRODUCTION_DESKTOP_RUNBOOK_TR.md)** — Production deploy adımları, güvenlik checklist, release build
+- **[`WINDOWS_RELEASE_RUNBOOK_TR.md`](WINDOWS_RELEASE_RUNBOOK_TR.md)** — Docker'sız Windows installer'ı yeniden üretme, doğrulama ve teslim
+- **[`RELEASE_0.3.4_TR.md`](RELEASE_0.3.4_TR.md)** — 0.3.4 installer hash'i, test sonuçları ve teslim raporu
 
 ---
 
@@ -96,7 +98,9 @@ Aşağıdaki dökümanlar proje gelişim sürecindeki belirli bir aşamayı yans
 | API endpoint aramak | `HANDOVER.md` §11 veya Swagger UI (`/docs`) |
 | `.env` değişkeni anlamak | `HANDOVER.md` §13 |
 | Eksiklikleri / riskleri görmek | `PROJECT_HEALTH_AUDIT.md` |
-| Production deploy yapmak | `PRODUCTION_DESKTOP_RUNBOOK_TR.md` |
+| Docker'sız Windows installer üretmek | `WINDOWS_RELEASE_RUNBOOK_TR.md` |
+| 0.3.4 teslim kanıtlarını görmek | `RELEASE_0.3.4_TR.md` |
+| Eski/web production notları | `PRODUCTION_DESKTOP_RUNBOOK_TR.md` |
 | Desktop smoke test yapmak | `DESKTOP_SMOKE_PREREQUISITES_TR.md` |
 | GDPR akışı test etmek | `GDPR_TAURI_SMOKE_TR.md` |
 | WP'ye GDPR linkleri eklemek | `WORDPRESS_GDPR_BRIDGE_TR.md` |

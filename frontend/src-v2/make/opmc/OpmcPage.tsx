@@ -14,13 +14,14 @@ import {
 
 import type { AntiFraudOrdersResponse } from '@/types';
 import { formatOrderStatus, monoStyle, normalizeRiskLevel, riskTone, type RiskFilter } from '@/components/OpmcShared';
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 function dateTimeLabel(value?: string | null) {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date
-    .toLocaleString('tr-TR', {
+    .toLocaleString(document.documentElement.lang, {
       hour12: false,
       day: '2-digit',
       month: '2-digit',
@@ -143,7 +144,7 @@ export function MakeOpmcPage({
             <div>
               <h2 className="text-xl font-black uppercase tracking-widest text-brand-900">OPMC İzleme Modülü</h2>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <p className="text-xs tracking-wide text-brand-500">WooCommerce siparislerinden cekilen risk sinyalleri</p>
+                <p className="text-xs tracking-wide text-brand-500">WooCommerce siparişlerinden çekilen risk sinyalleri</p>
                 <span className="border border-brand-300 bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-brand-600">
                   {sourceLabel}
                 </span>
@@ -174,10 +175,10 @@ export function MakeOpmcPage({
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center border border-brand-300 bg-white">
               <span className="border-r border-brand-200 bg-brand-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-brand-500">GÜN</span>
-              <input
-                type="number"
+              <CommittedNumericInput
                 value={days}
-                onChange={(event) => onDaysChange(Number(event.target.value) || 30)}
+                rules={{ kind: 'integer', required: true, allowNegative: false, min: 1 }}
+                onCommit={(value) => { if (value !== null) onDaysChange(value); }}
                 className="w-12 py-1.5 text-center text-xs font-black text-brand-900 outline-none"
                 style={monoStyle}
               />
@@ -321,7 +322,7 @@ export function MakeOpmcPage({
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right align-middle">
-                          <span className="font-black text-brand-900" style={monoStyle}>{item.total ? `${Number(item.total).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}</span>
+                          <span className="font-black text-brand-900" style={monoStyle}>{item.total ? `${Number(item.total).toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}</span>
                         </td>
                         <td className="px-4 py-3 align-middle">
                           <div className="flex flex-col items-start gap-1">
@@ -409,10 +410,10 @@ export function MakeOpmcPage({
               <div className="border border-brand-200 bg-white p-4 text-center text-xs font-bold text-brand-500">
                 {errorKind === 'transport'
                   ? 'Yerel backend baglantisi su an kurulamadigi icin inceleme listesi acilamadi.'
-                  : 'Manuel inceleme listesi su an yenilenemedi.'}
+                  : 'Manuel inceleme listesi şu an yenilenemedi.'}
               </div>
             ) : quickReviewOrders.length === 0 ? (
-              <div className="p-4 text-center text-xs font-bold text-brand-400">Inceleme bekleyen siparis yok.</div>
+              <div className="p-4 text-center text-xs font-bold text-brand-400">İnceleme bekleyen sipariş yok.</div>
             ) : (
               quickReviewOrders.map((item) => {
                 const tone = riskTone(item.risk_level);
@@ -424,7 +425,7 @@ export function MakeOpmcPage({
                     </div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="mr-2 truncate font-bold text-brand-600" style={monoStyle}>
-                        {item.total ? `${Number(item.total).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}
+                        {item.total ? `${Number(item.total).toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}
                       </span>
                       <span className="font-bold text-brand-400">Skor:<span className="ml-1 font-black text-brand-800" style={monoStyle}>{item.risk_score ?? '—'}</span></span>
                     </div>

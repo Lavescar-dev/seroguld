@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Activity, Building2, CheckCircle2, Download, FileCheck2, Loader2, RefreshCw, RotateCcw, Search, Send, Settings, TriangleAlert, X } from 'lucide-react';
+import { Activity, Building2, CheckCircle2, Download, FileCheck2, Loader2, ReceiptText, RefreshCw, RotateCcw, Search, Send, Settings, X } from 'lucide-react';
 
 import { PdfViewerModal } from '@/components/PdfViewerModal';
 import { fetchAuthedPdfBlob } from '@/lib/api';
+import type { Fatura } from '@/make/uniconta/types';
 
 import {
   ModernBadge,
   ModernButton,
+  ModernCard,
   ModernDataTable,
+  ModernDrawer,
   ModernPage,
   ModernSection,
   ModernSectionHeader,
@@ -22,7 +25,7 @@ type UnicontaTab = 'reconciliation' | 'outbox' | 'delivery' | 'connection';
 const INVOICE_PAGE_SIZE = 50;
 
 const tabLabels: Array<{ id: UnicontaTab; label: string }> = [
-  { id: 'reconciliation', label: 'Mutabakat' },
+  { id: 'reconciliation', label: 'Faturalar' },
   { id: 'outbox', label: 'Outbox' },
   { id: 'delivery', label: 'Belge Teslimi' },
   { id: 'connection', label: 'Bağlantı' },
@@ -44,6 +47,164 @@ function connectionLabel(value: string): string {
 
 function stateBadge(value: string, tone: ModernTone = toneForText(value)) {
   return <ModernBadge tone={tone}>{value}</ModernBadge>;
+}
+
+function amountDirectionLabel(invoice: Fatura) {
+  if (invoice.amountDirection === 'income') return 'Gelir';
+  if (invoice.amountDirection === 'expense') return 'Gider';
+  return 'Nötr';
+}
+
+function amountDirectionTone(invoice: Fatura): ModernTone {
+  if (invoice.amountDirection === 'income') return 'success';
+  if (invoice.amountDirection === 'expense') return 'danger';
+  return 'neutral';
+}
+
+function amountTextClass(invoice: Fatura) {
+  if (invoice.amountDirection === 'income') return 'text-sg-green-strong';
+  if (invoice.amountDirection === 'expense') return 'text-sg-red';
+  return 'text-sg-text-soft';
+}
+
+function formatSignedInvoiceAmount(invoice: Fatura) {
+  const formatted = new Intl.NumberFormat(document.documentElement.lang || 'tr', {
+    style: 'currency',
+    currency: invoice.valuta,
+    maximumFractionDigits: 2,
+  }).format(invoice.signedTotalAmount);
+  return invoice.signedTotalAmount > 0 ? `+${formatted}` : formatted;
+}
+
+function formatInvoiceDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(document.documentElement.lang || 'tr', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
+}
+
+function InvoiceDetailDrawer({
+  invoice,
+  pdfLoading,
+  pdfError,
+  onClose,
+  onOpenPdf,
+}: {
+  invoice: Fatura | null;
+  pdfLoading: boolean;
+  pdfError: string | null;
+  onClose: () => void;
+  onOpenPdf: (invoice: Fatura) => void;
+}) {
+  if (!invoice) return null;
+
+  return (
+    <ModernDrawer
+      open
+      onClose={onClose}
+      title={`Uniconta fatura #${invoice.fakturanummer}`}
+      description={`${invoice.kunde.navn} · ${formatDate(invoice.fakturadato)}`}
+      footer={
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <ModernButton tone="ghost" onClick={onClose}>Kapat</ModernButton>
+          <ModernButton tone="primary" icon={pdfLoading ? Loader2 : Download} disabled={pdfLoading} onClick={() => onOpenPdf(invoice)}>
+            {pdfLoading ? 'PDF yükleniyor…' : 'Fatura PDF’ini aç'}
+          </ModernButton>
+        </div>
+      }
+    >
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <ModernCard className="bg-sg-surface">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Toplam</p>
+            <p className={`mt-2 text-lg font-semibold ${amountTextClass(invoice)}`}>{formatSignedInvoiceAmount(invoice)}</p>
+            <p className="mt-1 text-xs text-sg-text-soft">{invoice.valuta}</p>
+            <div className="mt-2">{stateBadge(amountDirectionLabel(invoice), amountDirectionTone(invoice))}</div>
+          </ModernCard>
+          <ModernCard className="bg-sg-surface">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Fatura türü</p>
+            <div className="mt-2">{stateBadge(invoice.type, invoice.type === 'Kreditnota' ? 'warning' : 'info')}</div>
+          </ModernCard>
+          <ModernCard className="bg-sg-surface">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Hesap</p>
+            <p className="mt-2 font-mono text-sm font-semibold text-sg-text">{invoice.konto}</p>
+          </ModernCard>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ModernCard className="bg-sg-surface">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Müşteri</p>
+            <p className="mt-2 text-base font-semibold text-sg-text">{invoice.kunde.navn}</p>
+            <dl className="mt-3 space-y-2 text-sm text-sg-text-soft">
+              {invoice.kunde.email ? <div><dt className="inline font-medium text-sg-text">E-posta: </dt><dd className="inline">{invoice.kunde.email}</dd></div> : null}
+              {invoice.kunde.telefon ? <div><dt className="inline font-medium text-sg-text">Telefon: </dt><dd className="inline">{invoice.kunde.telefon}</dd></div> : null}
+              {invoice.kunde.adresse ? <div><dt className="inline font-medium text-sg-text">Adres: </dt><dd className="inline">{invoice.kunde.adresse}</dd></div> : null}
+              {invoice.kunde.postnr ? <div><dt className="inline font-medium text-sg-text">Posta kodu: </dt><dd className="inline">{invoice.kunde.postnr}</dd></div> : null}
+              {invoice.kunde.cvr ? <div><dt className="inline font-medium text-sg-text">CVR: </dt><dd className="inline">{invoice.kunde.cvr}</dd></div> : null}
+            </dl>
+          </ModernCard>
+          <ModernCard className="bg-sg-surface">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Fatura bilgileri</p>
+            <dl className="mt-3 space-y-2 text-sm text-sg-text-soft">
+              <div><dt className="inline font-medium text-sg-text">Tarih: </dt><dd className="inline">{formatDate(invoice.fakturadato)}</dd></div>
+              <div><dt className="inline font-medium text-sg-text">Fatura no: </dt><dd className="inline">#{invoice.fakturanummer}</dd></div>
+              {invoice.ordrenummer ? <div><dt className="inline font-medium text-sg-text">Sipariş no: </dt><dd className="inline">{invoice.ordrenummer}</dd></div> : null}
+              {invoice.unicontaRef ? <div><dt className="inline font-medium text-sg-text">Uniconta ref: </dt><dd className="inline">{invoice.unicontaRef}</dd></div> : null}
+              {invoice.wooOrderId ? <div><dt className="inline font-medium text-sg-text">Woo ref: </dt><dd className="inline">{invoice.wooOrderId}</dd></div> : null}
+            </dl>
+          </ModernCard>
+        </div>
+
+        <ModernCard className="overflow-hidden bg-sg-surface p-0">
+          <div className="flex items-center gap-2 border-b border-sg-border-soft px-4 py-3">
+            <ReceiptText className="h-4 w-4 text-sg-accent" />
+            <h4 className="text-sm font-semibold text-sg-text">Fatura kalemleri</h4>
+            <ModernBadge tone="neutral" className="ml-auto">{invoice.kalemler.length} kalem</ModernBadge>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-[620px] w-full text-sm">
+              <thead className="bg-sg-surface-soft text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">
+                <tr><th className="px-4 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-right">Adet</th><th className="px-3 py-2 text-right">Birim</th><th className="px-3 py-2 text-right">İndirim</th><th className="px-3 py-2 text-right">KDV</th><th className="px-4 py-2 text-right">Toplam</th></tr>
+              </thead>
+              <tbody>
+                {invoice.kalemler.map((line) => (
+                  <tr key={line.id} className="border-t border-sg-border-soft">
+                    <td className="px-4 py-3 font-medium text-sg-text">{line.beskrivelse}</td>
+                    <td className="px-3 py-3 text-right text-sg-text-soft">{line.antal}</td>
+                    <td className="px-3 py-3 text-right text-sg-text-soft">{formatMoney(line.enhedspris)}</td>
+                    <td className="px-3 py-3 text-right text-sg-text-soft">{line.rabat > 0 ? `${line.rabat}%` : '—'}</td>
+                    <td className="px-3 py-3 text-right text-sg-text-soft">{line.moms > 0 ? `${line.moms}%` : '—'}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-sg-text">{formatMoney(line.liniepris)}</td>
+                  </tr>
+                ))}
+                {invoice.kalemler.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-sg-text-soft">Fatura kalemi bulunmuyor.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+          <div className="ml-auto w-full border-t border-sg-border-soft bg-sg-surface-soft sm:w-72">
+            <div className="flex justify-between px-4 py-2 text-sm text-sg-text-soft"><span>Ara toplam</span><span>{formatMoney(invoice.subtotal)}</span></div>
+            {invoice.momsTotal > 0 ? <div className="flex justify-between border-t border-sg-border-soft px-4 py-2 text-sm text-sg-text-soft"><span>KDV</span><span>{formatMoney(invoice.momsTotal)}</span></div> : null}
+            <div className="flex justify-between border-t border-sg-border px-4 py-3 text-sm font-semibold text-sg-text"><span>Toplam</span><span className={amountTextClass(invoice)}>{formatSignedInvoiceAmount(invoice)}</span></div>
+          </div>
+        </ModernCard>
+
+        {invoice.note ? <ModernCard className="border-sg-amber/25 bg-sg-amber-soft"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-amber">Not</p><p className="mt-2 text-sm text-sg-text">{invoice.note}</p></ModernCard> : null}
+
+        <ModernCard className="bg-sg-surface">
+          <p className="text-sm font-semibold text-sg-text">Belge teslimi</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="flex items-center justify-between rounded-sg-md border border-sg-border-soft px-3 py-2"><span className="text-xs text-sg-text-soft">E-posta</span>{stateBadge(invoice.mailSendt ? 'Gönderildi' : 'Bekliyor', invoice.mailSendt ? 'success' : 'warning')}</div>
+            <div className="flex items-center justify-between rounded-sg-md border border-sg-border-soft px-3 py-2"><span className="text-xs text-sg-text-soft">E-fatura</span>{stateBadge(invoice.eFakturaSendt ? 'Gönderildi' : 'Bekliyor', invoice.eFakturaSendt ? 'success' : 'warning')}</div>
+          </div>
+        </ModernCard>
+
+        {pdfError ? <p className="rounded-sg-md border border-sg-red/30 bg-sg-red-soft px-4 py-3 text-sm text-sg-red">{pdfError}</p> : null}
+      </div>
+    </ModernDrawer>
+  );
 }
 
 export function ModernUnicontaPage({
@@ -88,6 +249,7 @@ export function ModernUnicontaPage({
 }: ModernUnicontaPageProps) {
   const [activeTab, setActiveTab] = useState<UnicontaTab>('reconciliation');
   const [invoicePage, setInvoicePage] = useState(0);
+  const [detailInvoice, setDetailInvoice] = useState<Fatura | null>(null);
   const [connectionDraftLocal, setConnectionDraftLocal] = useState(connectionDraft);
   const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>({
     url: null,
@@ -164,8 +326,8 @@ export function ModernUnicontaPage({
       <ModernSection className="bg-sg-surface-soft">
         <ModernSectionHeader
           eyebrow="Finans ve entegrasyon"
-          title="Uniconta Mutabakatı"
-          description="Yerel AFG ve uzak fatura görünürlüğünü, outbox idempotency ve teslim kanıtıyla aynı çalışma alanında tutar."
+          title="Uniconta"
+          description="Uniconta faturalarını tarih ve işaretli toplam tutarıyla doğrudan gösterir."
           action={
             <div className="flex flex-wrap gap-2">
               <ModernButton tone="ghost" icon={Settings} onClick={onOpenConnectionSettings} disabled={!onOpenConnectionSettings || loading}>Ayarlar</ModernButton>
@@ -181,11 +343,11 @@ export function ModernUnicontaPage({
             </div>
           }
         />
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <ModernStat
             label="Mutabık belge"
             value={invoiceCount}
-            meta={stats ? `${stats.toplamKredit} kredi notu` : 'Gerçek fatura listesi'}
+            meta={stats ? `Net toplam ${formatMoney(stats.toplamKredit)}` : 'Gerçek fatura listesi'}
             icon={FileCheck2}
             tone="success"
           />
@@ -201,13 +363,6 @@ export function ModernUnicontaPage({
             value={deliveredCount}
             meta={stats ? `${stats.mailGonderildi} e-posta kaydı` : 'Gerçek teslim alanı'}
             icon={Send}
-            tone="info"
-          />
-          <ModernStat
-            label="Finansal fark"
-            value={<ModernBadge tone="info">DISCOVERY</ModernBadge>}
-            meta="Parity payloadı mevcut DTO'da expose edilmiyor"
-            icon={TriangleAlert}
             tone="info"
           />
         </div>
@@ -287,20 +442,20 @@ export function ModernUnicontaPage({
         <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
           <ModernSection className="min-w-0">
             <ModernSectionHeader
-              title="Yerel ↔ Uzak mutabakat"
-              description="AFG/fatura kimliği, business key ve teslim alanları gerçek fatura DTO'sundan okunur."
-              action={<ModernBadge tone="info">B1 + B2 görünürlüğü</ModernBadge>}
+              title="Uniconta faturaları"
+              description="Tarih ve işaretli toplam, Uniconta fatura kaydından doğrudan okunur."
+              action={<ModernBadge tone="info">Canlı ERP verisi</ModernBadge>}
             />
             <div className="mt-4">
               <ModernDataTable
                 items={visibleInvoices}
                 getRowKey={(item) => item.id}
-                emptyTitle="Mutabakat satırı bulunmuyor"
-                emptyDescription="Uniconta fatura endpoint'i gerçek satır döndürdüğünde çalışma listesi burada açılır."
+                emptyTitle="Fatura bulunmuyor"
+                emptyDescription="Uniconta fatura endpoint'i satır döndürdüğünde liste burada açılır."
                 columns={[
                   {
                     key: 'document',
-                    header: 'AFG / remote',
+                    header: 'Fatura',
                     cell: (item) => (
                       <div>
                         <p className="font-semibold text-sg-text">{item.fakturanummer}</p>
@@ -308,20 +463,33 @@ export function ModernUnicontaPage({
                       </div>
                     ),
                   },
-                  { key: 'local', header: 'Yerel', cell: (item) => formatMoney(item.total) },
-                  { key: 'remote', header: 'Uniconta', cell: (item) => item.unicontaRef || '—' },
-                  { key: 'difference', header: 'Fark', cell: () => stateBadge('DISCOVERY', 'info') },
                   {
-                    key: 'status',
-                    header: 'Durum',
-                    cell: (item) => stateBadge(item.unicontaRef ? 'Mutabık' : 'İnceleme', item.unicontaRef ? 'success' : 'warning'),
+                    key: 'customer',
+                    header: 'Müşteri',
+                    cell: (item) => item.kunde.navn || '—',
+                  },
+                  {
+                    key: 'date',
+                    header: 'Tarih',
+                    cell: (item) => <span className="whitespace-nowrap">{formatInvoiceDate(item.fakturadato)}</span>,
+                  },
+                  {
+                    key: 'amount',
+                    header: 'Tutar',
+                    align: 'right',
+                    cell: (item) => (
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={`whitespace-nowrap font-semibold ${amountTextClass(item)}`}>{formatSignedInvoiceAmount(item)}</span>
+                        {stateBadge(amountDirectionLabel(item), amountDirectionTone(item))}
+                      </div>
+                    ),
                   },
                   {
                     key: 'detail',
                     header: 'Detay',
                     align: 'right',
                     cell: (item) => onSelectInvoice ? (
-                      <ModernButton tone="ghost" size="sm" onClick={() => onSelectInvoice(item)}>Aç</ModernButton>
+                      <ModernButton tone="ghost" size="sm" onClick={() => { onSelectInvoice(item); setDetailInvoice(item); }}>Aç</ModernButton>
                     ) : <ModernBadge tone="neutral">Read-only</ModernBadge>,
                   },
                 ]}
@@ -343,13 +511,13 @@ export function ModernUnicontaPage({
 
           <div className="space-y-5">
             <DetailGrid
-              title={selected ? `AFG · ${selected.fakturanummer}` : 'Fatura detayı'}
+              title={selected ? `Fatura · ${selected.fakturanummer}` : 'Fatura detayı'}
               description="Satır seçimi aynı route içinde detay çalışma alanını günceller."
               items={selected ? [
                 { label: 'Müşteri', value: selected.kunde.navn, accent: true },
-                { label: 'Tarih', value: formatDate(selected.fakturadato) },
-                { label: 'Yerel net', value: formatMoney(selected.subtotal) },
-                { label: 'Toplam', value: formatMoney(selected.total), accent: true },
+                { label: 'Tarih', value: formatInvoiceDate(selected.fakturadato) },
+                { label: 'Net tutar', value: formatMoney(selected.subtotal) },
+                { label: 'Toplam', value: formatSignedInvoiceAmount(selected), accent: true },
                 { label: 'Business key', value: selected.ordrenummer || selected.id },
                 { label: 'Belge teslimi', value: selected.eFakturaSendt || selected.mailSendt || 'Bekliyor' },
               ] : [{ label: 'Durum', value: 'Fatura seçimi bekleniyor', accent: true }]}
@@ -368,23 +536,6 @@ export function ModernUnicontaPage({
                 {pdfState.error ? <p className="mt-3 text-xs text-red-600">{pdfState.error}</p> : null}
               </ModernSection>
             ) : null}
-            <ModernSection>
-              <ModernSectionHeader title="Contract health" description="Backend DTO'sunda olmayan başarılar otomatik PASS gösterilmez." />
-              <div className="mt-4 grid gap-3">
-                <div className="flex items-center justify-between rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
-                  <div><p className="text-sm font-semibold text-sg-text">B1 · Local net parity</p><p className="mt-1 text-xs text-sg-text-soft">İki taraflı net toplam alanı bekleniyor.</p></div>
-                  {stateBadge('DISCOVERY', 'info')}
-                </div>
-                <div className="flex items-center justify-between rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
-                  <div><p className="text-sm font-semibold text-sg-text">B2 · Outbox idempotency</p><p className="mt-1 text-xs text-sg-text-soft">Stable business key kanıtı bu yüzeyde yok.</p></div>
-                  {stateBadge('DISCOVERY', 'info')}
-                </div>
-                <div className="flex items-center justify-between rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
-                  <div><p className="text-sm font-semibold text-sg-text">Correction / credit</p><p className="mt-1 text-xs text-sg-text-soft">İş kuralı onayı olmadan aksiyon açılmaz.</p></div>
-                  {stateBadge('DISCOVERY', 'warning')}
-                </div>
-              </div>
-            </ModernSection>
           </div>
         </div>
       ) : null}
@@ -444,7 +595,7 @@ export function ModernUnicontaPage({
               ))}
             </div>
           </ModernSection>
-          <TimelineList items={auditItems} title="Son audit" description="Health ve sync olayları mevcut hook çıktısından okunur." />
+          <TimelineList items={auditItems} title="Son denetim" description="Durum denetimi ve eşitleme olayları mevcut işlem çıktısından okunur." />
         </div>
       ) : null}
 
@@ -461,7 +612,7 @@ export function ModernUnicontaPage({
             ]}
           />
           <DetailGrid
-            title="Token ve health"
+            title="Token ve durum denetimi"
             items={health ? [
               { label: 'Configured', value: health.configured ? 'Evet' : 'Hayır', accent: true },
               { label: 'Token', value: health.has_token ? 'Mevcut' : 'Yok' },
@@ -514,11 +665,11 @@ export function ModernUnicontaPage({
                 </div>
                 <label className="flex items-start gap-3 text-sm text-sg-text">
                   <input type="checkbox" checked={Boolean(connectionDraftLocal.sendEmailOnFinalize)} onChange={(event) => updateConnectionDraft('sendEmailOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
-                  <span><strong>E-posta finalize</strong><span className="mt-1 block text-xs text-sg-text-soft">Finalize sonrası Uniconta PDF’ini müşteriye gönder.</span></span>
+                  <span><strong>Kesinleştirme sonrası e-posta</strong><span className="mt-1 block text-xs text-sg-text-soft">Kesinleştirme sonrasında Uniconta PDF'sini müşteriye gönder.</span></span>
                 </label>
                 <label className="flex items-start gap-3 text-sm text-sg-text">
                   <input type="checkbox" checked={Boolean(connectionDraftLocal.sendXmlOnFinalize)} onChange={(event) => updateConnectionDraft('sendXmlOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
-                  <span><strong>OIOUBL/XML finalize</strong><span className="mt-1 block text-xs text-sg-text-soft">Finalize sonrası e-fatura XML akışını kullan.</span></span>
+                  <span><strong>Kesinleştirme sonrası OIOUBL/XML</strong><span className="mt-1 block text-xs text-sg-text-soft">Kesinleştirme sonrasında e-fatura XML akışını kullan.</span></span>
                 </label>
                 {config?.message ? <p className={connectionStatus === 'hata' ? 'text-sm text-red-600' : 'text-sm text-sg-text-soft'}>{config.message}</p> : null}
               </div>
@@ -533,6 +684,16 @@ export function ModernUnicontaPage({
         </div>
       ) : null}
 
+      <InvoiceDetailDrawer
+        invoice={detailInvoice}
+        pdfLoading={pdfState.loading}
+        pdfError={pdfState.error}
+        onClose={() => setDetailInvoice(null)}
+        onOpenPdf={(invoice) => {
+          setDetailInvoice(null);
+          void handlePdfRequest(invoice);
+        }}
+      />
       <PdfViewerModal open={Boolean(pdfState.url)} pdfUrl={pdfState.url} filename={pdfState.filename} title="Uniconta Fatura PDF" onClose={closePdf} />
     </ModernPage>
   );

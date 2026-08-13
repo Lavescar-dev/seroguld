@@ -1,9 +1,69 @@
-import { Check, Eye, Plus, Search } from 'lucide-react';
+import { Check, Eye, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 import type { ModernCustomersViewModel } from '@/modern/adapters/customers';
 import { formatDate, formatMoney, formatRelativeTime } from '@/lib/format';
+import type { CustomerDraft } from '@/make/customers/types';
+import { CustomerWorkspacePanel } from '@/components/CustomerWorkspacePanel';
 
 import { EmptyState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+
+const customerInputClass = 'mt-1 w-full rounded-sg-md border border-sg-amber/20 bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
+const customerIconActionClass = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sg-md border border-sg-border bg-sg-surface text-sg-text-soft transition hover:border-sg-accent/35 hover:bg-sg-surface-accent hover:text-sg-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sg-accent/30';
+
+function CustomerDraftForm({
+  idPrefix,
+  title,
+  draft,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  idPrefix: string;
+  title: string;
+  draft: CustomerDraft;
+  onChange: (field: keyof CustomerDraft, value: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const field = (key: keyof CustomerDraft, label: string, type = 'text') => {
+    const id = `${idPrefix}-${key}`;
+    return (
+      <label htmlFor={id} className="text-xs font-semibold text-sg-amber">
+        {label}
+        <input id={id} name={key} type={type} value={draft[key]} onChange={(event) => onChange(key, event.target.value)} className={customerInputClass} />
+      </label>
+    );
+  };
+  return (
+    <form
+      className="mt-4 grid gap-3 rounded-sg-xl border border-sg-amber/20 bg-sg-amber-soft p-4 sm:grid-cols-2"
+      onSubmit={(event) => { event.preventDefault(); onSave(); }}
+    >
+      <div className="sm:col-span-2"><p className="text-sm font-semibold text-sg-text">{title}</p></div>
+      {field('name', 'Ad soyad')}
+      {field('phone', 'Telefon', 'tel')}
+      {field('email', 'E-posta', 'email')}
+      {field('address', 'Adres')}
+      {field('postal_code', 'Posta kodu')}
+      {field('cpr_number', 'CPR')}
+      <label htmlFor={`${idPrefix}-identity_doc_type`} className="text-xs font-semibold text-sg-amber">
+        Kimlik belge türü
+        <select id={`${idPrefix}-identity_doc_type`} name="identity_doc_type" value={draft.identity_doc_type} onChange={(event) => onChange('identity_doc_type', event.target.value)} className={customerInputClass}>
+          <option value="">Seçilmedi</option>
+          <option value="driver_license">Sürücü belgesi</option>
+          <option value="passport">Pasaport</option>
+          <option value="id_card">Kimlik kartı</option>
+        </select>
+      </label>
+      {field('identity_doc_number', 'Belge numarası')}
+      {field('identity_doc_country', 'Belge ülkesi')}
+      <div className="flex items-end justify-end gap-2 sm:col-span-2">
+        <button type="button" onClick={onCancel} className={shellButtonClass('secondary')}><X className="h-4 w-4" />Vazgeç</button>
+        <button type="submit" className={shellButtonClass('primary')}><Check className="h-4 w-4" />Kaydet</button>
+      </div>
+    </form>
+  );
+}
 
 export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomersViewModel }) {
   const { state } = viewModel;
@@ -27,9 +87,9 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
         <EmptyState title="Müşteri Yok" message="Henüz müşteri kaydı bulunmuyor. Yeni müşteri formunu açıp ilk kaydı ekleyebilirsiniz." />
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <ModernSection title="Liste" subtitle="Mobilde etiketli kart, masaüstünde tablo düzeni kullanılır.">
-          <div className="flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,0.85fr)]">
+        <ModernSection title="Müşteri listesi" subtitle="Kayıtları arayın, seçin veya müşteri bilgilerini yönetin.">
+          <div className="flex min-h-11 items-center gap-3 rounded-sg-md border border-sg-border bg-sg-surface px-3.5 shadow-sm transition focus-within:border-sg-accent focus-within:ring-2 focus-within:ring-sg-accent/10">
             <Search className="h-4 w-4 text-sg-text-soft" />
             <input
               value={state.search}
@@ -39,51 +99,41 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
             />
           </div>
 
-          {state.showNewRow ? (
-            <div className="mt-4 grid gap-3 rounded-sg-xl border border-sg-amber/20 bg-sg-amber-soft p-4 sm:grid-cols-2">
-              <label className="text-xs font-semibold text-sg-amber">Ad
-                <input value={state.newDraft.name} onChange={(event) => state.onNewDraftChange('name', event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-amber/20 bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
-              </label>
-              <label className="text-xs font-semibold text-sg-amber">Telefon
-                <input value={state.newDraft.phone} onChange={(event) => state.onNewDraftChange('phone', event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-amber/20 bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
-              </label>
-              <label className="text-xs font-semibold text-sg-amber">CPR
-                <input value={state.newDraft.cpr_number} onChange={(event) => state.onNewDraftChange('cpr_number', event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-amber/20 bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
-              </label>
-              <div className="flex items-end justify-end gap-2 sm:col-span-2">
-                <button type="button" onClick={state.onToggleNewRow} className={shellButtonClass('secondary')}>Vazgeç</button>
-                <button type="button" onClick={state.onSaveNew} className={shellButtonClass('primary')}>
-                  <Check className="h-4 w-4" />
-                  Kaydet
-                </button>
-              </div>
-            </div>
-          ) : null}
+          {state.showNewRow ? <CustomerDraftForm idPrefix="new-customer" title="Yeni müşteri" draft={state.newDraft} onChange={state.onNewDraftChange} onSave={state.onSaveNew} onCancel={state.onToggleNewRow} /> : null}
+          {state.editingId ? <CustomerDraftForm idPrefix={`edit-customer-${state.editingId}`} title="Müşteriyi düzenle" draft={state.editDraft} onChange={state.onEditDraftChange} onSave={() => state.onSaveEdit(state.editingId!)} onCancel={state.onCancelEdit} /> : null}
 
-          <div className="mt-4 hidden overflow-x-auto md:block">
-            <table className="min-w-full text-sm">
+          <div className="mt-4 hidden overflow-hidden rounded-sg-lg border border-sg-border lg:block">
+            <table className="w-full table-fixed text-sm">
+              <colgroup>
+                <col className="w-[20%]" />
+                <col className="w-[17%]" />
+                <col className="w-[19%]" />
+                <col className="w-[26%]" />
+                <col className="w-[18%]" />
+              </colgroup>
               <thead>
-                <tr className="border-b border-sg-border text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
-                  <th className="px-3 py-2">Ad</th>
-                  <th className="px-3 py-2">CPR</th>
-                  <th className="px-3 py-2">Telefon</th>
-                  <th className="px-3 py-2">Email</th>
-                  <th className="px-3 py-2">Aksiyon</th>
+                <tr className="border-b border-sg-border bg-sg-surface-soft text-left text-[10px] font-semibold uppercase tracking-[0.18em] text-sg-text-soft">
+                  <th className="px-4 py-3">Müşteri</th>
+                  <th className="px-3 py-3">CPR</th>
+                  <th className="px-3 py-3">Telefon</th>
+                  <th className="px-3 py-3">E-posta</th>
+                  <th className="px-3 py-3 text-right">İşlemler</th>
                 </tr>
               </thead>
               <tbody>
                 {state.customers.map((customer) => {
                   const isSelected = customer.id === state.selectedId;
                   return (
-                    <tr key={customer.id} className={`border-b border-sg-border-soft ${isSelected ? 'bg-sg-surface-accent' : ''}`}>
-                      <td className="px-3 py-3 font-medium text-sg-text">{customer.name || '—'}</td>
-                      <td className="px-3 py-3 text-sg-text-soft">{customer.cpr_number_masked || (customer.cpr_number ? 'Kayıtlı · gizli' : '—')}</td>
-                      <td className="px-3 py-3 text-sg-text-soft">{customer.phone || '—'}</td>
-                      <td className="px-3 py-3 text-sg-text-soft">{customer.email || '—'}</td>
-                      <td className="px-3 py-3">
-                        <div className="flex gap-2">
-                          <button type="button" onClick={() => state.onSelectCustomer(customer.id)} className={shellButtonClass('ghost')}>Seç</button>
-                          <button type="button" onClick={() => state.onStartEdit(customer)} className={shellButtonClass('ghost')}>Düzenle</button>
+                    <tr key={customer.id} className={`border-b border-sg-border-soft transition last:border-b-0 hover:bg-sg-surface-soft ${isSelected ? 'bg-sg-surface-accent shadow-[inset_3px_0_0_var(--sg-accent)]' : ''}`}>
+                      <td className="px-4 py-3.5 font-semibold text-sg-text"><span className="block truncate" title={customer.name || undefined}>{customer.name || '—'}</span></td>
+                      <td className="px-3 py-3.5 font-mono text-xs tabular-nums text-sg-text">{customer.cpr_number || customer.cpr_number_masked || '—'}</td>
+                      <td className="whitespace-nowrap px-3 py-3.5 text-sg-text-soft">{customer.phone || '—'}</td>
+                      <td className="px-3 py-3.5 text-sg-text-soft"><span className="block truncate" title={customer.email || undefined}>{customer.email || '—'}</span></td>
+                      <td className="px-3 py-3.5">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" onClick={() => state.onSelectCustomer(customer.id)} className={shellButtonClass(isSelected ? 'secondary' : 'ghost')}>{isSelected ? 'Seçili' : 'Seç'}</button>
+                          <button type="button" title="Düzenle" aria-label={`${customer.name || 'Müşteri'} düzenle`} onClick={() => state.onStartEdit(customer)} className={customerIconActionClass}><Pencil className="h-3.5 w-3.5" /></button>
+                          <button type="button" title="Pasife al" aria-label={`${customer.name || 'Müşteri'} pasife al`} onClick={() => { if (window.confirm(`${customer.name || 'Bu müşteri'} pasife alınsın mı?`)) state.onDelete(customer); }} className={customerIconActionClass}><Trash2 className="h-3.5 w-3.5" /></button>
                         </div>
                       </td>
                     </tr>
@@ -93,17 +143,30 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
             </table>
           </div>
 
-          <div className="mt-4 grid gap-3 md:hidden">
-            {state.customers.map((customer) => (
-              <button key={customer.id} type="button" onClick={() => state.onSelectCustomer(customer.id)} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4 text-left">
-                <p className="text-sm font-semibold text-sg-text">{customer.name || '—'}</p>
-                <dl className="mt-3 grid gap-2 text-sm">
-                  <MobileRow label="CPR" value={customer.cpr_number_masked || (customer.cpr_number ? 'Kayıtlı · gizli' : '—')} />
-                  <MobileRow label="Telefon" value={customer.phone || '—'} />
-                  <MobileRow label="Email" value={customer.email || '—'} />
-                </dl>
-              </button>
-            ))}
+          <div className="mt-4 grid gap-3 lg:hidden">
+            {state.customers.map((customer) => {
+              const isSelected = customer.id === state.selectedId;
+              return (
+                <article key={customer.id} className={`rounded-sg-lg border bg-sg-surface p-4 shadow-sm ${isSelected ? 'border-sg-accent/45 ring-2 ring-sg-accent/10' : 'border-sg-border'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-sg-text">{customer.name || '—'}</p>
+                      <p className="mt-1 font-mono text-xs tabular-nums text-sg-text-soft">{customer.cpr_number || customer.cpr_number_masked || 'CPR yok'}</p>
+                    </div>
+                    {isSelected ? <span className="rounded-full bg-sg-surface-accent px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-accent-dark">Seçili</span> : null}
+                  </div>
+                  <dl className="mt-4 grid gap-2 border-t border-sg-border-soft pt-3 text-sm sm:grid-cols-2">
+                    <MobileRow label="Telefon" value={customer.phone || '—'} />
+                    <MobileRow label="E-posta" value={customer.email || '—'} />
+                  </dl>
+                  <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-sg-border-soft pt-3">
+                    <button type="button" onClick={() => state.onSelectCustomer(customer.id)} className={shellButtonClass(isSelected ? 'secondary' : 'primary')}>{isSelected ? 'Seçili müşteri' : 'Müşteriyi seç'}</button>
+                    <button type="button" aria-label={`${customer.name || 'Müşteri'} düzenle`} onClick={() => state.onStartEdit(customer)} className={customerIconActionClass}><Pencil className="h-3.5 w-3.5" /></button>
+                    <button type="button" aria-label={`${customer.name || 'Müşteri'} pasife al`} onClick={() => { if (window.confirm(`${customer.name || 'Bu müşteri'} pasife alınsın mı?`)) state.onDelete(customer); }} className={customerIconActionClass}><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
 
           {!state.search && state.customerTotalPages > 1 ? (
@@ -134,7 +197,7 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
           ) : null}
         </ModernSection>
 
-        <ModernSection title="Seçili Müşteri" subtitle="AFG geçmişi ve preview aksiyonları bu panelde tutulur.">
+        <ModernSection title="Seçili Müşteri" subtitle="AFG geçmişi ve önizleme işlemleri bu panelde tutulur.">
           {!selected ? (
             <EmptyState title="Müşteri Seçilmedi" message="Listeden bir müşteri seçildiğinde geçmiş belgeler ve detay özetleri burada görünür." />
           ) : (
@@ -153,7 +216,7 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">CPR / Belge</p>
-                    <p className="mt-1 text-sm text-sg-text">{selected.cpr_number_masked || (selected.cpr_number ? 'Kayıtlı · gizli' : '—')}</p>
+                    <p className="mt-1 font-mono text-sm tabular-nums text-sg-text">{selected.cpr_number || selected.cpr_number_masked || '—'}</p>
                     <p className="mt-1 text-xs text-sg-text-soft">{selected.identity_doc_number_masked || (selected.identity_doc_number ? 'Kayıtlı · gizli' : '—')}</p>
                   </div>
                   <div className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
@@ -163,6 +226,8 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                   </div>
                 </div>
               </div>
+
+              <CustomerWorkspacePanel customerId={selected.id} customerName={selected.name || 'Müşteri'} />
 
               <div className="mt-4 grid gap-3">
                 {state.historyItems.map((item) => (

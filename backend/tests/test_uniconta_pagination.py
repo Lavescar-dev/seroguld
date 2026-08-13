@@ -4,7 +4,7 @@ import pytest
 
 from app.api import v2
 from app.schemas.desktop_views import UnicontaConfigOut
-from app.services.uniconta_service import UnicontaClient
+from app.services.uniconta_service import UnicontaClient, map_uniconta_invoice_to_dto
 
 
 @pytest.mark.asyncio
@@ -43,6 +43,40 @@ def test_uniconta_config_contract_does_not_return_raw_secrets() -> None:
     assert "password" not in UnicontaConfigOut.model_fields
     assert "apiKey" not in UnicontaConfigOut.model_fields
     assert "passwordConfigured" in UnicontaConfigOut.model_fields
+
+
+@pytest.mark.parametrize(
+    ("total_amount", "expected_direction", "expected_type"),
+    [
+        (1250.0, "income", "Salgsfaktura"),
+        (-1000.0, "expense", "Kreditnota"),
+        (0.0, "neutral", "Salgsfaktura"),
+    ],
+)
+def test_remote_invoice_mapping_preserves_signed_total_amount_and_date(
+    total_amount: float,
+    expected_direction: str,
+    expected_type: str,
+) -> None:
+    mapped = map_uniconta_invoice_to_dto(
+        {
+            "PrimaryKeyId": 41,
+            "InvoiceNumber": 8803,
+            "Date": "2026-08-13T00:00:00Z",
+            "Account": "CRM-1",
+            "Name": "Test",
+            "NetAmount": 1000.0,
+            "VatAmount": 250.0,
+            "TotalAmount": total_amount,
+            "Currency": "DKK",
+        }
+    )
+
+    assert mapped["fakturadato"] == "2026-08-13"
+    assert mapped["total"] == total_amount
+    assert mapped["signedTotalAmount"] == total_amount
+    assert mapped["amountDirection"] == expected_direction
+    assert mapped["type"] == expected_type
 
 
 @pytest.mark.asyncio

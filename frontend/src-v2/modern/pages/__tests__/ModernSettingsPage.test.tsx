@@ -24,10 +24,13 @@ const baseProps: ModernSettingsPageProps = {
     uniconta_password: '',
     uniconta_company_id: '123',
     uniconta_api_key: '',
+    uniconta_purchase_vat_code_25: 'Købsmoms',
+    uniconta_purchase_vat_code_0: 'KøbBrugtmoms',
     market_gold: '610',
     market_silver: '7',
     market_platin: '220',
     market_palladyum: '180',
+    market_rates_live_enabled: false,
     firma_adi: 'Sero Guld',
     firma_cvr: '12345678',
     firma_telefon: '+45 00 00 00 00',
@@ -62,5 +65,14 @@ describe('ModernSettingsPage', () => {
     });
 
     expect(onFieldChange).toHaveBeenCalledWith('firma_adi', 'Sero Guld CRM');
+  });
+
+  it('shows editable Uniconta purchase VAT code settings', () => {
+    render(<ModernSettingsPage {...baseProps} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Entegrasyonlar' }));
+
+    expect(screen.getByDisplayValue('Købsmoms')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('KøbBrugtmoms')).toBeInTheDocument();
   });
 });

@@ -392,13 +392,13 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
       const av =
         sortKey === 'fakturanummer' ? a.fakturanummer :
         sortKey === 'fakturadato' ? a.fakturadato :
-        sortKey === 'total' ? a.total :
+        sortKey === 'total' ? a.signedTotalAmount :
         sortKey === 'kunde' ? a.kunde.navn :
         a.konto;
       const bv =
         sortKey === 'fakturanummer' ? b.fakturanummer :
         sortKey === 'fakturadato' ? b.fakturadato :
-        sortKey === 'total' ? b.total :
+        sortKey === 'total' ? b.signedTotalAmount :
         sortKey === 'kunde' ? b.kunde.navn :
         b.konto;
       return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -409,7 +409,7 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
 
   const stats = useMemo(() => {
     const toplam = faturalar.length;
-    const toplamKredit = faturalar.reduce((sum, fatura) => sum + fatura.total, 0);
+    const toplamKredit = faturalar.reduce((sum, fatura) => sum + fatura.signedTotalAmount, 0);
     const mailGonderildi = faturalar.filter((fatura) => Boolean(fatura.mailSendt)).length;
     const eFakturaGonderildi = faturalar.filter((fatura) => Boolean(fatura.eFakturaSendt)).length;
     return { toplam, toplamKredit, mailGonderildi, eFakturaGonderildi };

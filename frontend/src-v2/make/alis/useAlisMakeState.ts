@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
+import { requestCriticalBackup } from '@/lib/backup';
 import {
   ApiError,
   TransportError,
@@ -38,7 +39,6 @@ import type {
   PosWorkspaceMarketRates,
   PosWorkspaceNumbering,
   PosWorkspaceSilverRow,
-  OfficeRuntimeStatus,
 } from '@/types';
 
 import type { AlisPageProps } from './AlisPage';
@@ -194,6 +194,7 @@ function workspaceRowsPayload(
   bankInfo: PosWorkspaceBankInfo,
   marketRates: PosWorkspaceMarketRates,
   afgNote: string,
+  purchaseVatEnabled: boolean,
   calculators: PosWorkspaceCalculators,
   _paymentMethod: PaymentMethod,
   numbering: EditableWorkspaceNumbering,
@@ -230,6 +231,8 @@ function workspaceRowsPayload(
       ),
     },
     afg_note: afgNote.trim() || null,
+    purchase_vat_enabled: purchaseVatEnabled,
+    purchase_vat_rate_percent: 25,
     calculators: {
       gold_rows: calculators.gold_rows.map((row) => ({
         row_key: row.row_key,
@@ -610,19 +613,13 @@ export function useAlisMakeState(): AlisPageProps {
     ),
   );
   const [afgNote, setAfgNote] = useState('');
+  const [purchaseVatEnabled, setPurchaseVatEnabled] = useState(true);
   const [calculators, setCalculators] = useState<PosWorkspaceCalculators>({ gold_rows: [], silver_rows: [] });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank');
   const [priceOpen, setPriceOpen] = useState(false);
   const goldRowsRef = useRef<EditableGoldRow[]>([]);
   const silverRowsRef = useRef<EditableSilverRow[]>([]);
 
-  useEffect(() => {
-    void queryClient.prefetchQuery({
-      queryKey: ['office-runtime-status', 'alis-workspace'],
-      queryFn: () => apiRequest<OfficeRuntimeStatus>('/api/v2/office-runtime/status?kind=alis-workspace'),
-      staleTime: 30_000,
-    });
-  }, [queryClient]);
   const autosaveKeyRef = useRef('');
   const customerAutosaveKeyRef = useRef('');
   const initializedSessionRef = useRef<string | null>(null);
@@ -750,6 +747,7 @@ export function useAlisMakeState(): AlisPageProps {
         bankInfo,
         marketRates,
         afgNote,
+        purchaseVatEnabled,
         calculators,
         paymentMethod,
         numbering,
@@ -792,6 +790,7 @@ export function useAlisMakeState(): AlisPageProps {
     setBankInfo(resolvedBankInfo);
     setMarketRates(normalizeMarketRatesInput(data.market_rates));
     setAfgNote(data.afg_note || '');
+    setPurchaseVatEnabled(data.purchase_vat_enabled !== false);
     setCalculators(data.calculators);
     const resolvedPaymentMethod: PaymentMethod = 'bank';
     setPaymentMethod(resolvedPaymentMethod);
@@ -802,6 +801,7 @@ export function useAlisMakeState(): AlisPageProps {
       resolvedBankInfo,
       normalizeMarketRatesInput(data.market_rates),
       data.afg_note || '',
+      data.purchase_vat_enabled !== false,
       data.calculators,
       resolvedPaymentMethod,
       toEditableNumbering(data.numbering_preview),
@@ -1087,6 +1087,7 @@ export function useAlisMakeState(): AlisPageProps {
         bankInfo,
         marketRates,
         afgNote,
+        purchaseVatEnabled,
         calculators,
         paymentMethod,
         numbering,
@@ -1117,6 +1118,7 @@ export function useAlisMakeState(): AlisPageProps {
       });
       setMarketRates(normalizeMarketRatesInput(data.market_rates));
       setAfgNote(data.afg_note || '');
+      setPurchaseVatEnabled(data.purchase_vat_enabled !== false);
       setCalculators(data.calculators);
       setPaymentMethod('bank');
       autosaveKeyRef.current = JSON.stringify(payload);
@@ -1329,8 +1331,10 @@ export function useAlisMakeState(): AlisPageProps {
             account_number: bankInfo.account_number || '',
           },
           payment_method: 'bank',
+          purchase_vat_enabled: purchaseVatEnabled,
+          purchase_vat_rate_percent: 25,
         }),
-      }),
+    }),
     onSuccess: async (response) => {
       const closedSessionId = workspace?.session.id || null;
       setWorkspace(null);
@@ -1358,6 +1362,7 @@ export function useAlisMakeState(): AlisPageProps {
         queryClient.invalidateQueries({ queryKey: ['pos', 'documents'] }),
         queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
       ]);
+      requestCriticalBackup();
       const docNumber = response?.document_number ? `#${response.document_number}` : 'Belge';
       const ucStatus = (response as PosWorkspaceFinalizeResponse & { uniconta_sync_status?: string | null })?.uniconta_sync_status;
       if (ucStatus === 'failed') {
@@ -1549,6 +1554,7 @@ export function useAlisMakeState(): AlisPageProps {
       bankInfo,
       marketRates,
       afgNote,
+      purchaseVatEnabled,
       calculators,
       paymentMethod,
       numbering,
@@ -1581,6 +1587,7 @@ export function useAlisMakeState(): AlisPageProps {
     invoiceMiscMode,
     invoiceMiscRows,
     afgNote,
+    purchaseVatEnabled,
     calculators,
     // updateSectionsMutation referansı her render'da yeni — dep'ten çıkarıldı,
     // queueSectionsSave closure üzerinden günceli okur.
@@ -1694,7 +1701,8 @@ export function useAlisMakeState(): AlisPageProps {
     const connect = () => {
       if (!mounted) return;
       const socket = new WebSocket(
-        `${buildWsUrl(`/api/pos/sessions/${workspace.session.id}/ws`)}?token=${encodeURIComponent(token)}`,
+        buildWsUrl(`/api/pos/sessions/${workspace.session.id}/ws`),
+        ['seroguld-auth', token],
       );
       clerkPreviewSocketRef.current = socket;
 
@@ -1883,7 +1891,7 @@ export function useAlisMakeState(): AlisPageProps {
     markLocalWorkspaceEdit();
     setNumbering((current) => ({
       ...current,
-      [field]: value.trim(),
+      [field]: value,
     }));
   }
 
@@ -1995,6 +2003,7 @@ export function useAlisMakeState(): AlisPageProps {
       bankInfo,
       marketRates,
       afgNote,
+      purchaseVatEnabled,
       calculators,
       paymentMethod,
       numbering,
@@ -2104,6 +2113,7 @@ export function useAlisMakeState(): AlisPageProps {
       bankInfo,
       marketRates,
       afgNote,
+      purchaseVatEnabled,
       calculators,
       paymentMethod,
       numbering,
@@ -2144,6 +2154,7 @@ export function useAlisMakeState(): AlisPageProps {
       bankInfo,
       marketRates,
       afgNote,
+      purchaseVatEnabled,
       calculators,
       paymentMethod,
       numbering,
@@ -2170,6 +2181,7 @@ export function useAlisMakeState(): AlisPageProps {
       bankInfo,
       marketRates,
       afgNote,
+      purchaseVatEnabled,
       calculators,
       paymentMethod,
       numbering,
@@ -2237,6 +2249,7 @@ export function useAlisMakeState(): AlisPageProps {
         setMarketRates(normalizeMarketRatesInput(sections.market_rates as PosWorkspaceMarketRates));
       }
       if (typeof sections.afg_note === 'string' || sections.afg_note === null) setAfgNote(String(sections.afg_note || ''));
+      if (typeof sections.purchase_vat_enabled === 'boolean') setPurchaseVatEnabled(sections.purchase_vat_enabled);
       if (sections.bank_info && typeof sections.bank_info === 'object') {
         const bank = sections.bank_info as { reg_number?: unknown; account_number?: unknown };
         setBankInfo({ reg_number: String(bank.reg_number || ''), account_number: String(bank.account_number || '') });
@@ -2299,6 +2312,10 @@ export function useAlisMakeState(): AlisPageProps {
   const setAfgNoteFromUi = (next: SetStateAction<string>) => {
     markLocalWorkspaceEdit();
     setAfgNote(next);
+  };
+  const setPurchaseVatEnabledFromUi = (next: SetStateAction<boolean>) => {
+    markLocalWorkspaceEdit();
+    setPurchaseVatEnabled(next);
   };
   const setCalculatorsFromUi = (next: SetStateAction<PosWorkspaceCalculators>) => {
     markLocalWorkspaceEdit();
@@ -2421,6 +2438,8 @@ export function useAlisMakeState(): AlisPageProps {
     setMarketRates: setMarketRatesFromUi,
     afgNote,
     setAfgNote: setAfgNoteFromUi,
+    purchaseVatEnabled,
+    setPurchaseVatEnabled: setPurchaseVatEnabledFromUi,
     calculators,
     setCalculators: setCalculatorsFromUi,
     paymentMethod,

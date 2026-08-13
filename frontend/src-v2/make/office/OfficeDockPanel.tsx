@@ -1,7 +1,6 @@
 import type { OfficeDockDescriptor } from '@/lib/officeDock';
 
-import { MakeOfficeDocumentPage } from './OfficeDocumentPage';
-import { useOfficeDocumentState } from './useOfficeDocumentState';
+import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
 
 type OfficeDockPanelProps = {
   document: OfficeDockDescriptor;
@@ -9,11 +8,9 @@ type OfficeDockPanelProps = {
 };
 
 export function OfficeDockPanel({ document, onClose }: OfficeDockPanelProps) {
-  const state = useOfficeDocumentState({
-    kind: document.kind,
-    artifactKey: document.key,
-    disableReopen: true,
-  });
-
-  return <MakeOfficeDocumentPage {...state} layoutMode="dock" onClose={onClose} />;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <EmbeddedWorkbookPanel kind={document.kind} artifactKey={document.key} layoutMode="dock" onClose={onClose} />
+    </div>
+  );
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 
@@ -33,5 +34,15 @@ def upsert_env_values(path: Path, updates: dict[str, str]) -> None:
             lines.append(rendered)
 
     content = "\n".join(lines).rstrip() + "\n"
-    path.write_text(content, encoding="utf-8")
-
+    # Runtime configuration is a single-file store.  Publish a complete
+    # replacement atomically so a concurrent settings read never sees a
+    # truncated or half-updated credential/configuration file.
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    try:
+        with temporary.open("r+b") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)

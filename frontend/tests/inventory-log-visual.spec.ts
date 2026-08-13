@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
-const evidenceDir = '/mnt/SSD/Clients/Recai_Demir/reports/full-erp-smoke-20260810/inventory-log';
+const evidenceDir = process.env.PLAYWRIGHT_EVIDENCE_DIR || 'test-results/inventory-log';
 
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/#/login');
   await expect(page.getByRole('heading', { name: /Desktop Sign In/i })).toBeVisible();
-  await page.getByLabel('Şifre').fill('Admin123!');
+  await page.locator('input[type="password"]').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
   await expect(page).toHaveURL(/#\/$/, { timeout: 30_000 });
   await page.goto('/#/', { waitUntil: 'domcontentloaded' });
@@ -32,7 +32,7 @@ test('inventory and log user-path evidence smoke', async ({ page }) => {
   });
 
   await login(page);
-  await page.evaluate(() => window.localStorage.setItem('seroguld.ui.variant.v1', 'modern'));
+  await page.evaluate(() => window.localStorage.setItem('seroguld.ui.variant.v3', 'modern'));
   await page.reload({ waitUntil: 'networkidle' });
 
   await page.goto('/#/depolama', { waitUntil: 'networkidle' });
@@ -45,12 +45,12 @@ test('inventory and log user-path evidence smoke', async ({ page }) => {
   await page.screenshot({ path: `${evidenceDir}/02-depolama-filter-empty.png`, fullPage: true });
   await textFilter.fill('');
 
-  // Regression guard: modern “Yeni Ürün” must expose the existing validated form.
+  // Regression guard: modern “Yeni Ürün” must remain in the modern form surface.
   await page.getByRole('button', { name: 'Yeni Ürün', exact: true }).click();
-  await expect(page.getByText('Yeni Ürün Ekle')).toBeVisible();
-  await expect(page.locator('input[placeholder="Umicore 100g"]')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Yeni ürün' })).toBeVisible();
+  await expect(page.locator('#inventory-name')).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/03-depolama-new-product-form.png`, fullPage: true });
-  await page.getByRole('button', { name: 'İptal' }).click();
+  await page.getByRole('button', { name: 'Vazgeç', exact: true }).click();
 
   await page.getByRole('button', { name: 'Office', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Depolama workbook' })).toBeVisible();

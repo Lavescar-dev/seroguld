@@ -5,6 +5,7 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronRight,
+  Cloud,
   CloudUpload,
   Database,
   Eye,
@@ -29,6 +30,7 @@ import {
 } from 'lucide-react';
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { WooCatalogPanel } from './WooCatalogPanel';
 
 import {
   buildDraftFromStock,
@@ -826,10 +828,54 @@ export function MakeWooCommercePage({
   uploadPhotos,
   deletePhoto,
   createProductFromDraft,
+  ...catalogState
 }: WooMakeState) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [yeniPanelAcik, setYeniPanelAcik] = useState(false);
   const [seoGoster, setSeoGoster] = useState(false);
+  const [surface, setSurface] = useState<'catalog' | 'local'>('catalog');
+
+  const fullState = {
+    filter,
+    setFilter,
+    urunler,
+    secilenId,
+    setSecilenId,
+    secilen,
+    detail,
+    history,
+    syncLog,
+    rawData,
+    rawOpen,
+    setRawOpen,
+    publishPrice,
+    setPublishPrice,
+    aiDraft,
+    setAiDraft,
+    stokList,
+    bootstrap,
+    loadingWorkspace,
+    loadingDetail,
+    isGeneratingAi,
+    isSavingAi,
+    isApprovingReview,
+    isPublishing,
+    isUnpublishing,
+    isSyncing,
+    isUploadingPhotos,
+    isDeletingPhoto,
+    isCreatingProduct,
+    generateAi,
+    saveAi,
+    approveManualReview,
+    publish,
+    unpublish,
+    syncSale,
+    uploadPhotos,
+    deletePhoto,
+    createProductFromDraft,
+    ...catalogState,
+  } as WooMakeState;
 
   useEffect(() => {
     setSeoGoster(false);
@@ -855,13 +901,21 @@ export function MakeWooCommercePage({
     event.target.value = '';
   }
 
+  if (surface === 'catalog') {
+    return (
+      <div className="min-h-full bg-white p-5" style={sansStyle}>
+        <WooCatalogPanel state={fullState} mode="classic" onOpenLocalProducts={() => setSurface('local')} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-full flex-col bg-white" style={sansStyle}>
       <div className="border-b-2 border-brand-300 bg-brand-50 px-6 py-4">
         <div className="flex flex-wrap items-center gap-3">
           <ShoppingCart className="h-5 w-5 text-brand-600" />
           <div>
-            <h2 className="text-lg font-black uppercase tracking-wider text-brand-900">WooCommerce Ürün Export</h2>
+            <h2 className="text-lg font-black uppercase tracking-wider text-brand-900">WooCommerce ürün dışa aktarımı</h2>
             <p className="mt-0.5 text-xs text-brand-500">Depo ürünlerinin AI Danca SEO açıklaması üretimi ve WooCommerce&apos;e yayını</p>
           </div>
 
@@ -880,6 +934,15 @@ export function MakeWooCommercePage({
                 </div>
               ))}
             </div>
+
+            <button
+              type="button"
+              onClick={() => setSurface('catalog')}
+              className="flex items-center gap-2 border border-brand-300 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-wider text-brand-700 transition-colors hover:bg-brand-100"
+            >
+              <Cloud className="h-4 w-4" />
+              Woo Kataloğu
+            </button>
 
             <button
               type="button"
@@ -912,13 +975,13 @@ export function MakeWooCommercePage({
           <div className="flex-1 overflow-auto">
             {loadingWorkspace ? (
               <div className="px-4 py-10 text-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Workspace</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Çalışma alanı</p>
                 <p className="mt-2 text-sm text-brand-600">Woo urun listesi hazirlaniyor.</p>
               </div>
             ) : urunler.length === 0 ? (
               <div className="px-4 py-10 text-center">
                 <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Filtre</p>
-                <p className="mt-2 text-sm text-brand-400">{FILTER_LABELS[filter]} icin urun bulunamadi.</p>
+                <p className="mt-2 text-sm text-brand-400">{FILTER_LABELS[filter]} için ürün bulunamadı.</p>
               </div>
             ) : (
               urunler.map((item) => {
@@ -994,7 +1057,7 @@ export function MakeWooCommercePage({
             <div className="mx-auto max-w-4xl p-5">
               <div className="border-2 border-brand-300 bg-white px-5 py-8 text-center">
                 <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Detay</p>
-                <p className="mt-2 text-sm text-brand-600">Urun detay workspace hazirlaniyor.</p>
+                <p className="mt-2 text-sm text-brand-600">Ürün detay çalışma alanı hazırlanıyor.</p>
               </div>
             </div>
           ) : (
@@ -1124,7 +1187,7 @@ export function MakeWooCommercePage({
                       className="flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-bold text-brand-700 hover:bg-brand-100 disabled:opacity-60"
                     >
                       {isApprovingReview ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Info className="h-3.5 w-3.5" />}
-                      Manuel Review Onayı
+                      Manuel inceleme onayı
                     </button>
 
                     {lastSyncAt ? (
@@ -1359,7 +1422,7 @@ export function MakeWooCommercePage({
                   <div>
                     <div className="mb-2 flex items-center gap-2">
                       <History className="h-3.5 w-3.5 text-brand-500" />
-                      <p className="text-xs font-black uppercase tracking-wider text-brand-500">History</p>
+                      <p className="text-xs font-black uppercase tracking-wider text-brand-500">Geçmiş</p>
                     </div>
                     <div className="space-y-2">
                       {history.slice(0, 5).map((entry) => (

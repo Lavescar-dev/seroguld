@@ -55,7 +55,10 @@ def ensure_value(key: str, *, blocked: set[str], factory, min_length: int | None
 updates = {
     "ENV": "production",
     "DATABASE_AUTO_CREATE": "false",
-    "INITIAL_ADMIN_AUTO_SEED": "false",
+    "INITIAL_ADMIN_AUTO_SEED": "true",
+    "INITIAL_ADMIN_FORCE_PASSWORD_CHANGE": "true",
+    "INITIAL_ADMIN_EMAIL": "info@seroguld.dk",
+    "INITIAL_ADMIN_NAME": "Recai",
     "JWT_ACCESS_SECRET": ensure_value(
         "JWT_ACCESS_SECRET",
         blocked={"change-me-access-secret"},
@@ -80,18 +83,13 @@ updates = {
         factory=lambda: secrets.token_urlsafe(36),
         min_length=24,
     ),
-    "INITIAL_ADMIN_PASSWORD": ensure_value(
-        "INITIAL_ADMIN_PASSWORD",
-        blocked={"Admin123!"},
-        factory=lambda: secrets.token_urlsafe(18),
-        min_length=12,
-    ),
+    "INITIAL_ADMIN_PASSWORD": "admin",
 }
 
 upsert_env_values(env_path, updates)
 
 print(f"[prod-bootstrap] production env hazırlandı: {env_path}")
-print("[prod-bootstrap] zorlanan anahtarlar: ENV, DATABASE_AUTO_CREATE=false, INITIAL_ADMIN_AUTO_SEED=false")
+print("[prod-bootstrap] ilk admin: info@seroguld.dk / geçici parola; ilk girişte değişiklik zorunlu")
 if generated:
     print("[prod-bootstrap] güvenli değer üretilen anahtarlar:")
     for key in sorted(generated):
@@ -99,10 +97,6 @@ if generated:
             print(f"  - {key}=<generated>")
         else:
             print(f"  - {key}")
-    if "INITIAL_ADMIN_PASSWORD" in generated:
-        print("[prod-bootstrap] ilk admin parolası:")
-        print(f"  email={current.get('INITIAL_ADMIN_EMAIL', 'admin@seroguld.dk')}")
-        print(f"  password={generated['INITIAL_ADMIN_PASSWORD']}")
 else:
     print("[prod-bootstrap] mevcut güvenli değerler korundu, yeni secret üretilmedi.")
 print("[prod-bootstrap] sonraki adımlar: alembic upgrade head && make bootstrap-admin && make readiness-smoke")

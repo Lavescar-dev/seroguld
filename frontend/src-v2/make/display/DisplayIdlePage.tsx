@@ -1,4 +1,5 @@
 import { CustomerDisplayIdleView } from '@/components/CustomerDisplayCanvas';
+import { CustomerDisplayEmergencyClose } from '@/components/CustomerDisplayEmergencyClose';
 
 type DisplayIdlePageProps = {
   embedded?: boolean;
@@ -10,5 +11,10 @@ export function MakeDisplayIdlePage({ embedded = false, now }: DisplayIdlePagePr
     return <CustomerDisplayIdleView embedded now={now} />;
   }
 
-  return <CustomerDisplayIdleView now={now} />;
+  return (
+    <>
+      <CustomerDisplayIdleView now={now} />
+      <CustomerDisplayEmergencyClose />
+    </>
+  );
 }

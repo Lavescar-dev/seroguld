@@ -1,6 +1,6 @@
 {
   "name": "seroguld-crm-frontend",
-  "version": "0.2.0",
+  "version": "0.3.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,8 @@
     "typecheck": "tsc -b --noEmit",
     "smoke": "playwright test",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "i18n:check": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "@react-pdf-viewer/core": "^3.12.0",
@@ -18,10 +19,12 @@
     "@tanstack/react-query": "^5.80.6",
     "@tauri-apps/api": "^2.8.0",
     "clsx": "^2.1.1",
+    "i18next": "^25.4.1",
     "lucide-react": "^0.511.0",
     "pdfjs-dist": "^3.11.174",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "react-i18next": "^15.6.1",
     "react-router-dom": "^6.30.1",
     "recharts": "^2.15.4",
     "xlsx": "^0.18.5"

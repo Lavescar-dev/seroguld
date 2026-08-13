@@ -17,13 +17,17 @@ export interface ApiConfig {
   uniconta_password: string;
   uniconta_company_id: string;
   uniconta_api_key: string;
+  uniconta_purchase_vat_code_25: string;
+  uniconta_purchase_vat_code_0: string;
   market_gold: string;
   market_silver: string;
   market_platin: string;
   market_palladyum: string;
+  market_rates_live_enabled: boolean;
   firma_adi: string;
   firma_cvr: string;
   firma_telefon: string;
   firma_email: string;
   firma_adres: string;
+  secret_fields_configured?: string[];
 }

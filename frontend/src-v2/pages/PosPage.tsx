@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { PdfViewerModal } from '@/components/PdfViewerModal';
 import {
+  closeCustomerDisplayWindow,
   ensureCustomerDisplayWindow,
   getDesktopMonitorSetup,
   isDesktopDisplayRouteMatch,
+  openCustomerDisplayWindow,
   type DesktopDisplayWindowState,
   setCustomerDisplayIdle,
 } from '@/lib/desktop';
@@ -13,10 +15,13 @@ import { useAlisMakeState } from '@/make/alis/useAlisMakeState';
 import { createModernAlisViewModel } from '@/modern/adapters';
 import { ModernAlisModule } from '@/modern/modules';
 import { uiVariantTransitionRegistry, useUiVariant } from '@/ui-variants';
+import { useAppLocale, withDisplayLocale } from '@/i18n';
+import { DockableCustomerNotesPanel } from '@/components/DockableCustomerNotesPanel';
 
 export function PosPage() {
   const alisState = useAlisMakeState();
   const { variant } = useUiVariant();
+  const { displayLocale } = useAppLocale();
   const modernViewModel = createModernAlisViewModel(alisState);
 
   useEffect(() => uiVariantTransitionRegistry.register({
@@ -36,8 +41,10 @@ export function PosPage() {
   }), [alisState.flushPendingWorkspaceSync, alisState.hasPendingWorkspaceSync, modernViewModel.blocker]);
   const [desktopDisplayState, setDesktopDisplayState] = useState<DesktopDisplayWindowState | null>(null);
   const expectedDisplayRoute = useMemo(
-    () => (alisState.workspace?.session.display_token ? `/display/${alisState.workspace.session.display_token}?ui=${variant}` : null),
-    [alisState.workspace?.session.display_token, variant],
+    () => withDisplayLocale(alisState.workspace?.session.display_token
+      ? `/display/${alisState.workspace.session.display_token}?ui=${variant}`
+      : `/display/idle?ui=${variant}`, displayLocale),
+    [alisState.workspace?.session.display_token, displayLocale, variant],
   );
 
   const refreshDesktopDisplayState = useCallback(async () => {
@@ -52,22 +59,26 @@ export function PosPage() {
   const openCustomerDisplay = useCallback(async () => {
     if (!expectedDisplayRoute) return;
     try {
-      const state = await ensureCustomerDisplayWindow(expectedDisplayRoute);
+      const state = await openCustomerDisplayWindow(expectedDisplayRoute);
       setDesktopDisplayState(state);
     } catch {
       // Best-effort desktop status only.
     }
   }, [expectedDisplayRoute]);
 
+  const closeCustomerDisplay = useCallback(async () => {
+    try {
+      const state = await closeCustomerDisplayWindow(variant);
+      setDesktopDisplayState(state);
+    } catch {
+      // Best-effort desktop status only.
+    }
+  }, [variant]);
+
   useEffect(() => {
     async function syncCustomerDisplay() {
       try {
-        if (alisState.workspace?.session.display_token) {
-          const state = await ensureCustomerDisplayWindow(`/display/${alisState.workspace.session.display_token}?ui=${variant}`);
-          setDesktopDisplayState(state);
-          return;
-        }
-        const state = await setCustomerDisplayIdle(variant);
+        const state = await ensureCustomerDisplayWindow(expectedDisplayRoute);
         setDesktopDisplayState(state);
       } catch {
         // Customer display is best-effort outside the core purchase workflow.
@@ -75,7 +86,11 @@ export function PosPage() {
     }
 
     void syncCustomerDisplay();
-  }, [alisState.workspace?.session.display_token, variant]);
+  }, [expectedDisplayRoute]);
+
+  useEffect(() => () => {
+    void setCustomerDisplayIdle(variant, displayLocale);
+  }, [displayLocale, variant]);
 
   useEffect(() => {
     void refreshDesktopDisplayState();
@@ -88,6 +103,7 @@ export function PosPage() {
 
   return (
     <>
+      {alisState.workspace?.customer.customer_id ? <DockableCustomerNotesPanel key={alisState.workspace.customer.customer_id} customerId={alisState.workspace.customer.customer_id} customerName={alisState.workspace.customer.name} /> : null}
       {variant === 'modern' ? (
         <ModernAlisModule
           viewModel={modernViewModel}
@@ -96,6 +112,7 @@ export function PosPage() {
             expectedDisplayRoute,
             routeMatches: isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute),
             onOpenCustomerDisplay: openCustomerDisplay,
+            onCloseCustomerDisplay: closeCustomerDisplay,
           }}
         />
       ) : (
@@ -105,6 +122,7 @@ export function PosPage() {
           expectedDisplayRoute={expectedDisplayRoute}
           routeMatches={isDesktopDisplayRouteMatch(desktopDisplayState, expectedDisplayRoute)}
           onOpenCustomerDisplay={openCustomerDisplay}
+          onCloseCustomerDisplay={closeCustomerDisplay}
         />
       )}
       <PdfViewerModal

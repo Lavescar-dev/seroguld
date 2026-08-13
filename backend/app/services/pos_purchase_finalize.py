@@ -43,20 +43,20 @@ async def finalize_purchase_workspace(
         # SQLite with_for_update yok sayar — kabul edilir (single connection).
         locked = pos_session
     if locked is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace bulunamadi")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Çalışma alanı bulunamadı")
     if locked.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Workspace zaten finalize edilmiş veya iptal edilmiş.",
+            detail="Çalışma alanı zaten kesinleştirilmiş veya iptal edilmiş.",
         )
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak alış workspace finalize edilebilir")
 
     trade_side = core._resolved_trade_side(pos_session)
     if trade_side != PosTradeSideEnum.BUY_FROM_CUSTOMER:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Workspace finalize sadece alış akışı içindir")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Çalışma alanı kesinleştirme işlemi yalnız alış akışı içindir.")
     if pos_session.customer_id is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Finalize etmeden önce müşteri seçin")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Kesinleştirmeden önce müşteri seçin.")
 
     # A linked master customer may have a session-local workspace snapshot.
     # Finalizing must carry that snapshot into the document; otherwise the
@@ -72,7 +72,7 @@ async def finalize_purchase_workspace(
         )
     ).all()
     if not pos_lines:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Finalize için en az bir satır gerekli")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Kesinleştirme için en az bir satır gerekli.")
 
     await core._sync_buy_session_summary_from_lines(session, pos_session=pos_session)
     target_total = core.quantize_2(
@@ -82,6 +82,12 @@ async def finalize_purchase_workspace(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Toplam teklif tutarı geçersiz")
 
     workspace_note = core._parse_workspace_note_payload(pos_session.notes)
+    if payload.purchase_vat_enabled is not None:
+        workspace_note["purchase_vat_enabled"] = bool(payload.purchase_vat_enabled)
+    if payload.purchase_vat_rate_percent is not None:
+        workspace_note["purchase_vat_rate_percent"] = str(
+            core.quantize_2(core.to_decimal(payload.purchase_vat_rate_percent))
+        )
     if payload.bank_info is not None:
         workspace_note["bank_info"] = {
             "reg_number": payload.bank_info.reg_number or "",
@@ -103,6 +109,14 @@ async def finalize_purchase_workspace(
     finalized_notes = "\n".join(note_parts) or None
     workspace_note["freeform_note"] = payload.notes.strip() if payload.notes and payload.notes.strip() else None
     structured_notes = core._serialize_workspace_note_payload(workspace_note)
+    vat_enabled = bool(workspace_note.get("purchase_vat_enabled", True))
+    vat_rate = (
+        core.quantize_2(core.to_decimal(workspace_note.get("purchase_vat_rate_percent") or Decimal("25.00")))
+        if vat_enabled
+        else Decimal("0.00")
+    )
+    vat_amount = core.quantize_2(target_total * vat_rate / Decimal("100"))
+    gross_total = core.quantize_2(target_total + vat_amount)
     edit_source_session_id, edit_source_sequence_no = core._workspace_edit_source(pos_session.notes)
 
     first_line = pos_lines[0]
@@ -111,7 +125,7 @@ async def finalize_purchase_workspace(
     pos_session.weight_grams = core.quantize_2(core.to_decimal(first_line.weight_grams))
     pos_session.purity_karat = first_line.purity_karat
     pos_session.purity_percentage = core.quantize_2(core.to_decimal(first_line.purity_percentage))
-    pos_session.final_offer_dkk = target_total
+    pos_session.final_offer_dkk = gross_total
     pos_session.status = PosSessionStatusEnum.CONFIRMED
     pos_session.confirmed_at = core.utc_now()
     pos_session.notes = structured_notes
@@ -141,14 +155,14 @@ async def finalize_purchase_workspace(
         source_session.weight_grams = core.quantize_2(core.to_decimal(first_line.weight_grams))
         source_session.purity_karat = first_line.purity_karat
         source_session.purity_percentage = core.quantize_2(core.to_decimal(first_line.purity_percentage))
-        source_session.final_offer_dkk = target_total
+        source_session.final_offer_dkk = gross_total
         source_session.notes = structured_notes
         source_session.status = PosSessionStatusEnum.CONFIRMED
 
-        source_document.gross_amount_dkk = target_total
+        source_document.gross_amount_dkk = gross_total
         source_document.net_amount_dkk = target_total
-        source_document.vat_rate_percent = Decimal("0.00")
-        source_document.vat_amount_dkk = Decimal("0.00")
+        source_document.vat_rate_percent = vat_rate
+        source_document.vat_amount_dkk = vat_amount
         source_document.customer_name = effective_customer.name or None
         source_document.customer_phone = effective_customer.phone
         source_document.customer_email = effective_customer.email
@@ -170,10 +184,10 @@ async def finalize_purchase_workspace(
         else:
             source_transaction.status = "confirmed"
             source_transaction.customer_id = source_session.customer_id
-            source_transaction.gross_amount_dkk = target_total
+            source_transaction.gross_amount_dkk = gross_total
             source_transaction.net_amount_dkk = target_total
-            source_transaction.vat_rate_percent = Decimal("0.00")
-            source_transaction.vat_amount_dkk = Decimal("0.00")
+            source_transaction.vat_rate_percent = vat_rate
+            source_transaction.vat_amount_dkk = vat_amount
             source_transaction.notes = finalized_notes
             source_transaction.pos_document_sequence_no = source_document.sequence_no
             await core._replace_purchase_transaction_lines(
@@ -231,6 +245,10 @@ async def finalize_purchase_workspace(
     pos_document.customer_address = effective_customer.address
     pos_document.customer_postal_code = effective_customer.postal_code
     pos_document.customer_city = effective_customer.city
+    pos_document.gross_amount_dkk = gross_total
+    pos_document.net_amount_dkk = target_total
+    pos_document.vat_rate_percent = vat_rate
+    pos_document.vat_amount_dkk = vat_amount
     transaction, _ = await core._ensure_pos_transaction(
         session,
         pos_session=pos_session,

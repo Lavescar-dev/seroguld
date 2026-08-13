@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +29,11 @@ class _FakeUnicontaClient:
         self.events.append(("query", entity, filters, top))
         if entity == "DebtorInvoiceClient":
             return list(self.invoice_rows)
+        if entity == "GLVatClient":
+            return [
+                {"Vat": "Købsmoms", "Rate": 25, "TypeBuy": "k1", "Blocked": False},
+                {"Vat": "KøbBrugtmoms", "Rate": 0, "TypeBuy": "k1", "Blocked": False},
+            ]
         return []
 
     async def generate_debtor_invoice(self, **kwargs: object) -> dict[str, object]:
@@ -66,6 +72,7 @@ def _pos_document(sequence_no: int) -> SimpleNamespace:
         customer_address=None,
         notes="AFG Satin Alma",
         gross_amount_dkk=Decimal("125.00"),
+        net_amount_dkk=Decimal("100.00"),
     )
 
 
@@ -173,6 +180,40 @@ async def test_retry_after_remote_create_local_state_loss_is_idempotent(
     assert len(client.generated) == 1
     assert [event[0] for event in client.events] == [
         "query",
+        "query",
         "generate",
         "query",
     ]
+
+
+@pytest.mark.asyncio
+async def test_purchase_invoice_uses_explicit_zero_vat_code_and_remark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeUnicontaClient()
+    monkeypatch.setattr(service, "get_uniconta_client", lambda: client)
+    monkeypatch.setattr(service, "get_settings", _settings)
+    monkeypatch.setattr(service, "ensure_debtor_for_customer", _ensure_debtor)
+    session = _pos_session()
+    session.notes = json.dumps(
+        {
+            "purchase_vat_enabled": False,
+            "purchase_vat_rate_percent": "0.00",
+            "freeform_note": "Müşteri alış notu",
+        },
+        ensure_ascii=False,
+    )
+
+    result = await service.sync_pos_document_to_uniconta(
+        None,
+        _pos_document(405),
+        pos_session=session,
+        pos_lines=[],
+    )
+
+    assert result["ok"] is True
+    payload = client.generated[0]
+    assert payload["order"]["PricesInclVat"] is False  # type: ignore[index]
+    assert payload["order"]["Remark"] == "Müşteri alış notu"  # type: ignore[index]
+    assert payload["lines"][0]["Price"] == 100.0  # type: ignore[index]
+    assert payload["lines"][0]["Vat"] == "KøbBrugtmoms"  # type: ignore[index]

@@ -1,4 +1,5 @@
 import { resolveApiBaseUrl } from '@/lib/api';
+import { getActiveLocale } from '@/i18n';
 
 export type FrontendRuntimeInfo = {
   frontend_mode: string;
@@ -33,5 +34,6 @@ export function formatRuntimeDateTime(value?: string | number | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return String(value);
   }
-  return parsed.toLocaleString('tr-TR');
+  const locale = getActiveLocale();
+  return parsed.toLocaleString(locale === 'en' ? 'en-GB' : locale === 'da' ? 'da-DK' : 'tr-TR');
 }

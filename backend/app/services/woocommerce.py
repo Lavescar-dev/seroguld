@@ -220,6 +220,22 @@ class WooCommerceService:
         json_payload: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any] | list[Any]:
+        response = await self._wc_response(
+            method,
+            path,
+            json_payload=json_payload,
+            params=params,
+        )
+        return response.json()
+
+    async def _wc_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> httpx.Response:
         self._ensure_wc_config()
         url = f"{self.wc_base_url}/{path.lstrip('/')}"
         try:
@@ -260,7 +276,7 @@ class WooCommerceService:
                 detail=f"WooCommerce hata ({response.status_code}): {upstream_message}",
             )
 
-        return response.json()
+        return response
 
     async def _ensure_category(self, name: str) -> int:
         existing = await self._wc_request("GET", "/products/categories", params={"search": name, "per_page": 100})
@@ -454,6 +470,53 @@ class WooCommerceService:
         if not isinstance(payload, list):
             return []
         return [item for item in payload[:target] if isinstance(item, dict)]
+
+    async def fetch_published_products_page(self, *, page: int, per_page: int = 100) -> list[dict[str, Any]]:
+        """Return one read-only page of the published remote catalog.
+
+        Catalog synchronization intentionally uses an explicit page API so it
+        does not silently truncate stores with more than 100 products.
+        """
+
+        payload = await self._wc_request(
+            "GET",
+            "/products",
+            params={
+                "status": "publish",
+                "per_page": max(1, min(int(per_page or 0), 100)),
+                "page": max(1, int(page or 0)),
+                "orderby": "id",
+                "order": "asc",
+            },
+        )
+        if not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, dict)]
+
+    async def fetch_published_product_count(self) -> int:
+        """Read the published count with a one-row Woo request.
+
+        WooCommerce exposes the total in ``X-WP-Total``.  The status endpoint
+        must not download and normalize the complete catalog merely to render
+        a connection badge.
+        """
+
+        response = await self._wc_response(
+            "GET",
+            "/products",
+            params={
+                "status": "publish",
+                "per_page": 1,
+                "page": 1,
+                "orderby": "id",
+                "order": "asc",
+            },
+        )
+        total_header = str(response.headers.get("X-WP-Total") or "").strip()
+        if total_header.isdigit():
+            return int(total_header)
+        payload = response.json()
+        return len(payload) if isinstance(payload, list) else 0
 
     async def fetch_product(self, *, wc_product_id: int) -> dict[str, Any]:
         payload = await self._wc_request("GET", f"/products/{int(wc_product_id)}")

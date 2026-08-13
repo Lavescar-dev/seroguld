@@ -58,6 +58,38 @@ class DocumentArtifactCellEditIn(AppBaseModel):
     value: str | None = None
 
 
+class DocumentArtifactCellChangeIn(AppBaseModel):
+    sheet: str = Field(min_length=1, max_length=120)
+    cell_ref: str = Field(min_length=2, max_length=16)
+    value: str | None = None
+
+
+class DocumentArtifactCellErrorOut(AppBaseModel):
+    sheet: str
+    cell_ref: str
+    message: str
+
+
+class DocumentArtifactAppliedCellOut(AppBaseModel):
+    sheet: str
+    cell_ref: str
+    value: str
+
+
+class DocumentArtifactCellsPatchIn(AppBaseModel):
+    base_revision: int = Field(ge=0)
+    source: str = "embedded"
+    changes: list[DocumentArtifactCellChangeIn] = Field(default_factory=list, max_length=100)
+
+
+class DocumentArtifactCellsPatchOut(AppBaseModel):
+    revision: int
+    status: str
+    applied_changes: list[DocumentArtifactAppliedCellOut] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    cell_errors: list[DocumentArtifactCellErrorOut] = Field(default_factory=list)
+
+
 class DocumentArtifactCellEditsIn(AppBaseModel):
     edits: list[DocumentArtifactCellEditIn] = Field(default_factory=list)
 
@@ -100,6 +132,42 @@ class DocumentArtifactPreviewOut(AppBaseModel):
     workspace_revision: int | None = None
 
 
+class ExcelSessionCreateIn(AppBaseModel):
+    kind: str
+    key: str
+
+
+class ExcelSessionOut(AppBaseModel):
+    session_id: str
+    kind: str
+    key: str
+    bearer_token: str | None = None
+    status: str = "active"
+    can_write: bool = False
+    revision: int = 0
+    file_name: str
+    working_file_name: str
+    created_at: datetime
+    last_synced_at: datetime | None = None
+    last_modified_at: datetime | None = None
+    message: str | None = None
+    blocking_errors: list[str] = Field(default_factory=list)
+
+
+class ExcelSessionSyncOut(AppBaseModel):
+    session_id: str
+    status: str
+    revision: int
+    message: str
+    last_modified_at: datetime | None = None
+    blocking_errors: list[str] = Field(default_factory=list)
+
+
+class ExcelSessionCloseOut(AppBaseModel):
+    session_id: str
+    status: str = "closed"
+
+
 class OfficeDocumentLaunchOut(AppBaseModel):
     kind: str
     key: str
@@ -114,6 +182,7 @@ class OfficeDocumentLaunchOut(AppBaseModel):
     fallback_route: str
     download_path: str
     artifact: DocumentArtifactRecordOut | None = None
+    revision: int = 0
     can_write: bool = False
     import_supported: bool = False
     sheets: list[DocumentArtifactSheetPreviewOut] = Field(default_factory=list)
@@ -135,6 +204,7 @@ class OfficeDocumentStatusOut(AppBaseModel):
     provider_branding_level: str = "vendor-dev-branding"
     contract_version: str = "1"
     artifact: DocumentArtifactRecordOut | None = None
+    revision: int = 0
     can_write: bool = False
     import_supported: bool = False
     office_available: bool = False

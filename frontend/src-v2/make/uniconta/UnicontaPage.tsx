@@ -54,13 +54,36 @@ const TIP_STYLE: Record<FaturaTipi, { bg: string; text: string; border: string }
 function fmtMoney(value: number, valuta = 'DKK') {
   const abs = Math.abs(value);
   const prefix = value < 0 ? '-' : '';
-  if (valuta === 'EUR') return `${prefix}€${abs.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  if (valuta === 'USD') return `${prefix}$${abs.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return `${prefix}${abs.toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK`;
+  if (valuta === 'EUR') return `${prefix}€${abs.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (valuta === 'USD') return `${prefix}$${abs.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${prefix}${abs.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK`;
+}
+
+function fmtSignedMoney(value: number, valuta = 'DKK') {
+  const formatted = fmtMoney(value, valuta);
+  return value > 0 ? `+${formatted}` : formatted;
+}
+
+function amountDirectionLabel(fatura: Fatura) {
+  if (fatura.amountDirection === 'income') return 'Gelir';
+  if (fatura.amountDirection === 'expense') return 'Gider';
+  return 'Nötr';
+}
+
+function amountTextClass(fatura: Fatura) {
+  if (fatura.amountDirection === 'income') return 'text-emerald-700';
+  if (fatura.amountDirection === 'expense') return 'text-red-700';
+  return 'text-slate-600';
+}
+
+function amountBadgeClass(fatura: Fatura) {
+  if (fatura.amountDirection === 'income') return 'border-emerald-300 bg-emerald-50 text-emerald-700';
+  if (fatura.amountDirection === 'expense') return 'border-red-300 bg-red-50 text-red-700';
+  return 'border-slate-300 bg-slate-50 text-slate-600';
 }
 
 function fmtDate(value: string) {
-  return new Date(value).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return new Date(value).toLocaleDateString(document.documentElement.lang, { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 function copyText(text: string) {
@@ -85,7 +108,7 @@ function BaglantiPanel({
   const [kopyalandi, setKopyalandi] = useState(false);
 
   const exampleCode = `// Uniconta API Proxy (Sunucu tarafı)
-const res = await fetch("https://www.uniconta.com/api/query", {
+const res = await fetch("https://api.uniconta.com/Query/Get/DebtorInvoiceClient", {
   method: "POST",
   headers: {
     "Authorization": \`Basic \${Buffer.from(\`\${USERNAME}:\${PASSWORD}\`).toString("base64")}\`,
@@ -342,10 +365,13 @@ function FaturaDetay({
         <div className="flex-1 space-y-4 overflow-auto p-5">
           <div className="grid grid-cols-3 gap-3">
             <div className="border border-brand-200 bg-brand-50 px-3 py-2.5">
-              <p className="text-xs font-black uppercase tracking-wider text-brand-500">Kredit</p>
-              <p className="mt-0.5 font-black text-brand-900" style={monoStyle}>
-                {fmtMoney(fatura.total, fatura.valuta)}
+              <p className="text-xs font-black uppercase tracking-wider text-brand-500">Tutar</p>
+              <p className={`mt-0.5 font-black ${amountTextClass(fatura)}`} style={monoStyle}>
+                {fmtSignedMoney(fatura.signedTotalAmount, fatura.valuta)}
               </p>
+              <span className={`mt-1 inline-flex border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${amountBadgeClass(fatura)}`}>
+                {amountDirectionLabel(fatura)}
+              </span>
             </div>
             <div className={`border px-3 py-2.5 ${ts.border} ${ts.bg}`}>
               <p className={`text-xs font-black uppercase tracking-wider ${ts.text}`}>Fatura Türü</p>
@@ -428,9 +454,9 @@ function FaturaDetay({
                 </div>
               ) : null}
               <div className="flex justify-between px-3 py-2.5">
-                <span className="text-sm font-black uppercase tracking-wider text-brand-700">Kredit</span>
-                <span className="text-sm font-black text-brand-900" style={monoStyle}>
-                  {fmtMoney(fatura.total, fatura.valuta)}
+                <span className="text-sm font-black uppercase tracking-wider text-brand-700">Toplam</span>
+                <span className={`text-sm font-black ${amountTextClass(fatura)}`} style={monoStyle}>
+                  {fmtSignedMoney(fatura.signedTotalAmount, fatura.valuta)}
                 </span>
               </div>
             </div>
@@ -453,7 +479,7 @@ function FaturaDetay({
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                 <span className="flex-1 text-brand-800">Fatura oluşturuldu</span>
                 <span className="text-brand-500" style={monoStyle}>
-                  {new Date(fatura.fakturadato).toLocaleDateString('da-DK')}
+                  {new Date(fatura.fakturadato).toLocaleDateString(document.documentElement.lang)}
                 </span>
               </li>
               {fatura.mailSendt ? (
@@ -492,7 +518,7 @@ function FaturaDetay({
   );
 }
 
-function UnicontaPageView({
+export function UnicontaPageView({
   kimlik,
   setKimlik,
   ayarlarAcik,
@@ -619,7 +645,7 @@ function UnicontaPageView({
           <div className="flex items-center gap-2">
             {sonYenileme ? (
               <span className="text-xs text-brand-400" style={monoStyle}>
-                Son: {sonYenileme.toLocaleTimeString('tr-TR', { hour12: false })}
+                Son: {sonYenileme.toLocaleTimeString(document.documentElement.lang, { hour12: false })}
               </span>
             ) : null}
             <button
@@ -707,7 +733,7 @@ function UnicontaPageView({
             {syncSummary.last_synced_at ? (
               <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-brand-500" style={monoStyle}>
                 <Clock className="h-3 w-3" />
-                Son: {new Date(syncSummary.last_synced_at).toLocaleString('tr-TR', { hour12: false })}
+                Son: {new Date(syncSummary.last_synced_at).toLocaleString(document.documentElement.lang, { hour12: false })}
               </span>
             ) : null}
 
@@ -762,7 +788,7 @@ function UnicontaPageView({
                           {row.document_number || `#${row.sequence_no}`}
                         </td>
                         <td className="px-2 py-1.5 text-brand-600" style={monoStyle}>
-                          {row.issued_at ? new Date(row.issued_at).toLocaleDateString('da-DK') : '—'}
+                          {row.issued_at ? new Date(row.issued_at).toLocaleDateString(document.documentElement.lang) : '—'}
                         </td>
                         <td className="px-2 py-1.5 text-brand-700">{row.customer_name || '—'}</td>
                         <td className="px-2 py-1.5 text-right text-brand-800" style={monoStyle}>
@@ -814,7 +840,7 @@ function UnicontaPageView({
       <div className="flex flex-wrap items-center gap-4 overflow-x-auto border-b border-brand-200 bg-white px-6 py-3">
         {[
           { label: 'Toplam Fatura', value: String(stats.toplam), icon: <FileText className="h-4 w-4 text-brand-500" />, color: 'text-brand-900' },
-          { label: 'Toplam Kredit', value: fmtMoney(stats.toplamKredit), icon: <ReceiptText className="h-4 w-4 text-brand-500" />, color: 'text-brand-900' },
+          { label: 'Net Toplam', value: fmtSignedMoney(stats.toplamKredit), icon: <ReceiptText className="h-4 w-4 text-brand-500" />, color: stats.toplamKredit > 0 ? 'text-emerald-700' : stats.toplamKredit < 0 ? 'text-red-700' : 'text-slate-600' },
         ].map((item) => (
           <div key={item.label} className="flex flex-shrink-0 items-center gap-2 border-r border-brand-200 pr-4 last:border-r-0 last:pr-0">
             {item.icon}
@@ -959,7 +985,7 @@ function UnicontaPageView({
               <th className={thCls} onClick={() => sort('kunde')}>Kontonavn {sortIcon('kunde')}</th>
               <th className={thCls} onClick={() => sort('fakturadato')}>Dato {sortIcon('fakturadato')}</th>
               <th className={thCls} onClick={() => sort('fakturanummer')}>Faktura No {sortIcon('fakturanummer')}</th>
-              <th className={`${thCls} text-right`} onClick={() => sort('total')}>Kredit {sortIcon('total')}</th>
+              <th className={`${thCls} text-right`} onClick={() => sort('total')}>Tutar {sortIcon('total')}</th>
             </tr>
           </thead>
           <tbody>
@@ -998,8 +1024,11 @@ function UnicontaPageView({
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-right">
-                    <span className={`text-sm font-black ${fatura.total < 0 ? 'text-purple-700' : 'text-brand-900'}`} style={monoStyle}>
-                      {fmtMoney(fatura.total, fatura.valuta)}
+                    <span className={`text-sm font-black ${amountTextClass(fatura)}`} style={monoStyle}>
+                      {fmtSignedMoney(fatura.signedTotalAmount, fatura.valuta)}
+                    </span>
+                    <span className={`ml-2 inline-flex border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${amountBadgeClass(fatura)}`}>
+                      {amountDirectionLabel(fatura)}
                     </span>
                     {fatura.valuta !== 'DKK' ? <span className="block text-xs text-brand-400">{fatura.valuta}</span> : null}
                   </td>
@@ -1010,12 +1039,12 @@ function UnicontaPageView({
           {filtrelenmis.length > 0 ? (
             <tfoot>
               <tr className="sticky bottom-0 border-t-2 border-brand-300 bg-brand-100">
-                <td colSpan={6} className="px-3 py-2">
+                <td colSpan={4} className="px-3 py-2">
                   <span className="text-xs font-black uppercase tracking-wider text-brand-600">{filtrelenmis.length} Fatura</span>
                 </td>
                 <td className="px-3 py-2 text-right">
                   <span className="text-sm font-black text-brand-900" style={monoStyle}>
-                    {fmtMoney(filtrelenmis.reduce((sum, item) => sum + item.total, 0))}
+                    {fmtSignedMoney(filtrelenmis.reduce((sum, item) => sum + item.signedTotalAmount, 0))}
                   </span>
                 </td>
               </tr>

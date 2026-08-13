@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 
 import type { ApiConfig } from '@/make/settings/types';
-import type { DashboardData } from '@/make/dashboard/useDashboardMakeState';
 import type {
   GdprJob,
   GdprOverview,
@@ -101,9 +100,12 @@ export interface ModernActionItem {
 export interface ModernLoginFormModel {
   email: string;
   password: string;
+  remember?: boolean;
   isSubmitting: boolean;
   errorMessage?: string | null;
+  credentialWarning?: string | null;
   onPasswordChange: (value: string) => void;
+  onRememberChange?: (value: boolean) => void;
   onSubmit: () => void;
 }
 
@@ -112,23 +114,14 @@ export interface ModernLoginPageProps {
   form: ModernLoginFormModel;
 }
 
-export interface ModernDashboardPageProps {
-  summary: DashboardData;
-  workInbox: ModernInboxItem[];
-  relationHealth: ModernHealthRelation[];
-  timeline?: ModernTimelineItem[];
-  onNavigate?: (path: string) => void;
-  refreshLabel?: string;
-  onRefresh?: () => void;
-  isRefreshing?: boolean;
-}
-
 export interface ModernSettingsPageProps {
   config: ApiConfig;
   runtime: ModernStatusItem[];
   secretFieldKeys?: Array<keyof ApiConfig>;
   uiVariantSlot?: ReactNode;
-  onFieldChange?: (key: keyof ApiConfig, value: string) => void;
+  languageSettingsSlot?: ReactNode;
+  customerDisplayMonitorSlot?: ReactNode;
+  onFieldChange?: (key: keyof ApiConfig, value: string | boolean) => void;
   onSave?: () => void;
   onImport?: () => void;
   onExport?: () => void;

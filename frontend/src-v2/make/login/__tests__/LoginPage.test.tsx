@@ -57,7 +57,7 @@ describe('login surfaces', () => {
     const props = modernProps();
     render(<ModernLoginPage {...props} />);
 
-    expect(screen.getByRole('heading', { name: 'Operasyon paneline giriş' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Masaüstü girişi' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('info@seroguld.dk')).toHaveAttribute('readonly');
     expect(screen.getByText(/Frontend: vite-dev/)).toBeInTheDocument();
     expect(screen.queryByText('V1 başlangıç çerçevesi')).not.toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('login surfaces', () => {
     const password = screen.getByLabelText('Şifre');
     fireEvent.click(screen.getByRole('button', { name: 'Şifreyi göster' }));
     expect(password).toHaveAttribute('type', 'text');
-    fireEvent.submit(screen.getByRole('button', { name: /Güvenli giriş yap/ }).closest('form')!);
+    fireEvent.submit(screen.getByRole('button', { name: /Giriş Yap/ }).closest('form')!);
     expect(props.form.onSubmit).toHaveBeenCalledTimes(1);
   });
 
@@ -82,6 +82,6 @@ describe('login surfaces', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('Şifre geçersiz.');
     expect(screen.getByLabelText('Şifre')).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByRole('button', { name: /Oturum açılıyor/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Giriş yapılıyor/ })).toBeDisabled();
   });
 });

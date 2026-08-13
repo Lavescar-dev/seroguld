@@ -1,5 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronRight, LayoutGrid, Menu, UserCircle2 } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ChevronRight, LayoutGrid, Menu } from 'lucide-react';
 
 import {
   ModernDrawer,
@@ -26,6 +26,8 @@ export interface ModernShellStatusPill {
   label: string;
   value?: string;
   tone?: 'neutral' | 'primary' | 'success' | 'warning' | 'danger' | 'info';
+  onSelect?: () => void;
+  ariaLabel?: string;
 }
 
 export interface ModernShellRuntimeRow {
@@ -41,10 +43,6 @@ export interface ModernRootShellProps {
   navGroups: ModernShellNavGroup[];
   statusPills?: ModernShellStatusPill[];
   runtimeRows?: ModernShellRuntimeRow[];
-  user: {
-    name: string;
-    email?: string;
-  };
   variantSlot?: ReactNode;
   inboxSlot?: ReactNode;
   aside?: ReactNode;
@@ -64,18 +62,9 @@ const runtimeToneDotClasses: Record<ModernTone, string> = toneDotClasses;
 
 function BrandBlock() {
   return (
-    <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="flex h-8 w-[136px] shrink-0 items-center justify-center rounded-sg-md bg-sg-surface px-1 ring-1 ring-sg-border">
-          <img
-            src="/seroguld-logo.png"
-            alt="Sero Guld"
-            className="h-full w-full object-contain object-center"
-          />
-        </span>
-        <span className="shrink-0 rounded-sg-sm bg-sg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold leading-none text-sg-accent-dark">V1</span>
-      </div>
-      <span className="mt-1 block truncate text-xs text-sg-text-soft">Kuyumcu Operasyon ERP&apos;si</span>
+    <div className="flex w-full flex-col items-center justify-center gap-1.5">
+      <img src="/seroguld-logo.png" alt="Sero Guld" className="h-9 w-auto object-contain" />
+      <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-sg-text-soft">CRM</span>
     </div>
   );
 }
@@ -148,13 +137,17 @@ function RuntimeBlock({ rows }: { rows: ModernShellRuntimeRow[] }) {
 }
 
 function StatusChip({ pill }: { pill: ModernShellStatusPill }) {
-  return (
-    <span className="inline-flex min-h-9 items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 text-xs">
+  const content = (
+    <>
       <span className={cn('h-1.5 w-1.5 rounded-full', toneDotClasses[pill.tone ?? 'neutral'])} />
       <span className="text-sg-text-soft">{pill.label}</span>
       {pill.value ? <span className="font-semibold text-sg-text">{pill.value}</span> : null}
-    </span>
+    </>
   );
+  if (pill.onSelect) {
+    return <button type="button" onClick={pill.onSelect} aria-label={pill.ariaLabel || `${pill.label} düzenle`} className="inline-flex min-h-8 items-center gap-2 rounded-sg-sm border-0 bg-transparent px-2.5 text-xs transition hover:bg-sg-surface-soft">{content}</button>;
+  }
+  return <span className="inline-flex min-h-8 items-center gap-2 rounded-sg-sm border-0 bg-transparent px-2.5 text-xs">{content}</span>;
 }
 
 export function ModernRootShell({
@@ -164,29 +157,18 @@ export function ModernRootShell({
   navGroups,
   statusPills = [],
   runtimeRows = [],
-  user,
   variantSlot,
   inboxSlot,
   aside,
   children,
 }: ModernRootShellProps) {
   const [navOpen, setNavOpen] = useState(false);
-  const userInitials = useMemo(
-    () =>
-      user.name
-        .split(/\s+/)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase() ?? '')
-        .join(''),
-    [user.name],
-  );
-
   return (
     <div data-ui-variant="modern" className="h-dvh min-h-0 overflow-hidden bg-sg-bg font-sg text-sg-text">
       <div className="flex h-full min-h-0">
         {/* Sol sabit gezinme (V15 sidebar: 256-272px) */}
         <aside className="hidden h-dvh min-h-0 w-[264px] shrink-0 flex-col border-r border-sg-border bg-sg-surface lg:flex">
-          <div className="flex h-[72px] shrink-0 items-center border-b border-sg-border-soft px-5">
+          <div className="flex h-[72px] shrink-0 items-center border-b-2 border-sg-accent/15 bg-sg-surface px-5">
             <BrandBlock />
           </div>
           <NavItems navGroups={navGroups} />
@@ -194,8 +176,8 @@ export function ModernRootShell({
         </aside>
 
         <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
-          {/* Üst bar (V15 topbar: 72px, gerçek durum çipleri) */}
-          <header className="sticky top-0 z-30 flex h-[72px] shrink-0 items-center gap-3 border-b border-sg-border bg-sg-surface/95 px-4 backdrop-blur sm:px-5">
+          {/* Üst bar: rota kimliği, operasyon durumu ve oturum araçları */}
+          <header className="sticky top-0 z-30 flex h-[76px] shrink-0 items-center gap-3 border-b border-sg-border bg-sg-surface/95 px-4 shadow-[0_1px_0_rgba(15,23,42,0.02)] backdrop-blur sm:px-5">
             <button
               type="button"
               onClick={() => setNavOpen(true)}
@@ -204,26 +186,22 @@ export function ModernRootShell({
             >
               <Menu className="h-4 w-4" />
             </button>
-            <div className="min-w-0">
-              {eyebrow ? <p className="truncate text-[11px] font-medium text-sg-text-soft">{eyebrow}</p> : null}
-              <p className="truncate text-sm font-semibold text-sg-text">{title}</p>
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-sg-lg border border-sg-accent/15 bg-sg-accent-soft text-sg-accent sm:flex">
+                <LayoutGrid className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                {eyebrow ? <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-sg-accent">{eyebrow}</p> : null}
+                <p className="mt-0.5 truncate text-[15px] font-bold tracking-[-0.01em] text-sg-text">{title}</p>
+              </div>
             </div>
             <div className="ml-auto flex items-center gap-2">
-              <div className="hidden items-center gap-2 md:flex">
+              <div className="hidden h-10 items-center gap-1 rounded-sg-md border border-sg-border bg-sg-surface px-1 shadow-sm md:flex">
                 {statusPills.map((pill) => (
                   <StatusChip key={`${pill.label}-${pill.value ?? ''}`} pill={pill} />
                 ))}
               </div>
               {variantSlot}
-              <div className="flex items-center gap-2.5 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-1.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sg-accent-soft text-xs font-semibold text-sg-accent-dark">
-                  {userInitials || <UserCircle2 className="h-4 w-4" />}
-                </span>
-                <span className="hidden min-w-0 sm:block">
-                  <span className="block truncate text-sm font-medium leading-5 text-sg-text">{user.name}</span>
-                  {user.email ? <span className="block truncate text-xs leading-4 text-sg-text-soft">{user.email}</span> : null}
-                </span>
-              </div>
             </div>
           </header>
 

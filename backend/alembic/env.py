@@ -13,7 +13,9 @@ config = context.config
 settings = get_settings()
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Alembic's default disables application loggers, which hides runtime and
+    # migration diagnostics in the packaged desktop process.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 def _normalize_sync_database_url(value: str) -> str:
     if value.startswith("sqlite+aiosqlite:///"):

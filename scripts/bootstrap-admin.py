@@ -41,11 +41,18 @@ async def bootstrap_admin() -> int:
 
     async with AsyncSessionLocal() as session:
         existing = await session.scalar(select(User).where(User.email == settings.initial_admin_email))
+        if not existing:
+            existing = await session.scalar(
+                select(User).where(User.role == RoleEnum.ADMIN).order_by(User.created_at.asc())
+            )
         if existing:
+            existing.email = settings.initial_admin_email
             existing.name = settings.initial_admin_name
             existing.password_hash = get_password_hash(settings.initial_admin_password)
             existing.role = RoleEnum.ADMIN
             existing.is_active = True
+            existing.must_change_password = settings.initial_admin_force_password_change
+            existing.password_changed_at = None
             action = "updated"
         else:
             session.add(
@@ -55,6 +62,7 @@ async def bootstrap_admin() -> int:
                     role=RoleEnum.ADMIN,
                     password_hash=get_password_hash(settings.initial_admin_password),
                     is_active=True,
+                    must_change_password=settings.initial_admin_force_password_change,
                 )
             )
             action = "created"
@@ -66,15 +74,27 @@ async def bootstrap_admin() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create or update the initial admin user from .env.")
+    parser = argparse.ArgumentParser(
+        description="Create or recover the initial admin user and require a password change."
+    )
     parser.add_argument(
         "--env-file",
         default=str(ROOT_DIR / ".env"),
         help="Env file to load before importing backend settings.",
     )
+    parser.add_argument("--email", help="Override INITIAL_ADMIN_EMAIL for this recovery run.")
+    parser.add_argument("--password", help="Override INITIAL_ADMIN_PASSWORD for this recovery run.")
+    parser.add_argument("--name", help="Override INITIAL_ADMIN_NAME for this recovery run.")
     args = parser.parse_args()
 
     load_env_file(Path(args.env_file))
+    if args.email:
+        os.environ["INITIAL_ADMIN_EMAIL"] = args.email
+    if args.password:
+        os.environ["INITIAL_ADMIN_PASSWORD"] = args.password
+    if args.name:
+        os.environ["INITIAL_ADMIN_NAME"] = args.name
+    os.environ["INITIAL_ADMIN_FORCE_PASSWORD_CHANGE"] = "true"
     sys.path.insert(0, str(BACKEND_DIR))
     return asyncio.run(bootstrap_admin())
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { apiRequest } from '@/lib/api';
 import type { CustomerDetailOut, CustomerOut, LogWorkspace, PaginatedResponse, PosDocumentDetail, PosDocumentListItem } from '@/types';
@@ -23,10 +23,12 @@ function cleanDraft(draft: CustomerDraft) {
 
 export function useCustomersMakeState(): CustomersPageProps {
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { customerId: routeCustomerId } = useParams<{ customerId?: string }>();
   const [search, setSearch] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
-  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('customer'));
+  const [selectedId, setSelectedId] = useState<string | null>(routeCustomerId || searchParams.get('customer'));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedSequenceNo, setExpandedSequenceNo] = useState<number | null>(null);
   const [previewSequenceNo, setPreviewSequenceNo] = useState<number | null>(null);
@@ -35,20 +37,18 @@ export function useCustomersMakeState(): CustomersPageProps {
   const [editDraft, setEditDraft] = useState<CustomerDraft>(EMPTY_DRAFT);
 
   useEffect(() => {
-    const customerId = searchParams.get('customer');
+    const customerId = routeCustomerId || searchParams.get('customer');
     if (customerId === selectedId) return;
     setSelectedId(customerId);
-  }, [searchParams, selectedId]);
+  }, [routeCustomerId, searchParams, selectedId]);
 
   function setSelectedCustomerId(customerId: string | null) {
     setSelectedId(customerId);
-    const nextParams = new URLSearchParams(searchParams);
     if (customerId) {
-      nextParams.set('customer', customerId);
+      navigate(`/musteriler/${customerId}`);
     } else {
-      nextParams.delete('customer');
+      navigate('/musteriler');
     }
-    setSearchParams(nextParams, { replace: true });
   }
 
   const customersQuery = useQuery({

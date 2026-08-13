@@ -11,11 +11,15 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
 
 from app.config import get_settings
 
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt-sha256 prehashes UTF-8 input before bcrypt, so newly chosen desktop
+# passwords are not subject to bcrypt's 72-byte limit.  Plain bcrypt remains
+# accepted for databases created by older Sero Guld releases.
+pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 
 
 class TokenError(Exception):
@@ -23,7 +27,12 @@ class TokenError(Exception):
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except (UnknownHashError, TypeError, ValueError):
+        # A malformed/unsupported legacy row is an authentication failure,
+        # never an unhandled 500 that masquerades as a backend outage.
+        return False
 
 
 def get_password_hash(password: str) -> str:

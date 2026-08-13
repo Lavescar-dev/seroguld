@@ -1,7 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
 import { buildUiVariantRootFingerprint, getCurrentHash, normalizeHashRoute } from './fingerprint';
-import { createUiVariantStorage, type UiVariantStorageAdapter } from './storage';
+import { type UiVariantStorageAdapter } from './storage';
+import { openRuntimeDiagnostics } from '@/lib/desktop';
 import {
   type ModernUiDiagnosticAdapter,
   type ModernUiFailureDiagnostic,
@@ -13,7 +14,6 @@ type ModernUiErrorBoundaryProps = {
   children: ReactNode;
   storage?: UiVariantStorageAdapter;
   diagnosticAdapter?: ModernUiDiagnosticAdapter;
-  autoReturnDelayMs?: number;
   onReturnToClassic: (event: ModernUiFallbackEvent) => void;
   rootFingerprint: string;
 };
@@ -52,8 +52,6 @@ export class ModernUiErrorBoundary extends Component<
     diagnostic: null,
     supportPath: null,
   };
-
-  private autoReturnTimer: number | null = null;
 
   static getDerivedStateFromError(error: unknown) {
     const hash = getCurrentHash();
@@ -98,21 +96,17 @@ export class ModernUiErrorBoundary extends Component<
       componentStack: sanitizeStack(info.componentStack),
     };
 
-    (this.props.storage ?? createUiVariantStorage()).writeVariant('classic');
     void captureFailure(this.props.diagnosticAdapter, diagnostic).then((supportPath) => {
       this.setState({ diagnostic, supportPath });
-      if (this.props.autoReturnDelayMs && this.props.autoReturnDelayMs > 0) {
-        this.autoReturnTimer = window.setTimeout(() => {
-          this.props.onReturnToClassic({ diagnostic, supportPath, hash });
-        }, this.props.autoReturnDelayMs);
-      }
     });
   }
 
-  componentWillUnmount() {
-    if (this.autoReturnTimer) {
-      window.clearTimeout(this.autoReturnTimer);
-    }
+  private retry = () => {
+    this.setState({ diagnostic: null, supportPath: null });
+  };
+
+  private openDiagnostics = () => {
+    void openRuntimeDiagnostics();
   }
 
   render() {
@@ -122,19 +116,19 @@ export class ModernUiErrorBoundary extends Component<
     }
 
     return (
-      <section className="flex min-h-[45vh] items-center justify-center bg-rose-50 px-6 py-10 text-rose-950">
-        <div className="w-full max-w-2xl border border-rose-300 bg-white px-6 py-6 shadow-sm">
-          <p className="text-[11px] font-black uppercase tracking-[0.28em] text-rose-700">
+      <section className="flex min-h-[60vh] items-center justify-center bg-sg-bg px-5 py-10 font-sg text-sg-text">
+        <div className="w-full max-w-2xl rounded-sg-lg border border-sg-border bg-sg-surface px-6 py-7 shadow-sg-md">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sg-accent">
+            Modern çalışma alanı
+          </p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-sg-text">
             Yeni arayüz yüklenemedi
-          </p>
-          <h2 className="mt-2 text-xl font-black text-rose-950">
-            Modern görünüm güvenli biçimde kapatıldı
           </h2>
-          <p className="mt-3 text-sm leading-6 text-rose-900">
-            Yeni arayüz başlatılırken bir render veya bootstrap hatası oluştu. Bu cihaz için tercih klasik
-            arayüze geri alındı.
+          <p className="mt-3 text-sm leading-6 text-sg-text-soft">
+            Modern görünüm beklenmeyen bir hatayla karşılaştı. Tercihiniz korunuyor; tekrar deneyebilir,
+            tanı bilgilerini açabilir veya klasik arayüze kendiniz geçebilirsiniz.
           </p>
-          <div className="mt-4 space-y-2 border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+          <div className="mt-5 space-y-2 rounded-sg-md border border-sg-border-soft bg-sg-surface-soft px-4 py-3 text-sm text-sg-text">
             <p>
               <strong>Hata:</strong> {diagnostic.error.message}
             </p>
@@ -147,7 +141,21 @@ export class ModernUiErrorBoundary extends Component<
               </p>
             ) : null}
           </div>
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-6 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={this.retry}
+              className="rounded-sg-sm bg-sg-accent px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sg-accent-dark"
+            >
+              Tekrar dene
+            </button>
+            <button
+              type="button"
+              onClick={this.openDiagnostics}
+              className="rounded-sg-sm border border-sg-border bg-sg-surface px-4 py-2.5 text-sm font-semibold text-sg-text transition hover:bg-sg-surface-soft"
+            >
+              Tanı bilgilerini aç
+            </button>
             <button
               type="button"
               onClick={() =>
@@ -157,15 +165,10 @@ export class ModernUiErrorBoundary extends Component<
                   hash: diagnostic.hash,
                 })
               }
-              className="border border-rose-700 bg-rose-700 px-4 py-2 text-xs font-black uppercase tracking-[0.24em] text-white transition hover:bg-rose-800"
+              className="rounded-sg-sm border border-sg-red/30 bg-sg-red-soft px-4 py-2.5 text-sm font-semibold text-sg-red transition hover:bg-sg-red/10"
             >
               Klasik arayüze dön
             </button>
-            {this.props.autoReturnDelayMs && this.props.autoReturnDelayMs > 0 ? (
-              <p className="self-center text-xs font-semibold text-rose-700">
-                Klasik arayüze otomatik dönüş hazırlanıyor.
-              </p>
-            ) : null}
           </div>
         </div>
       </section>
@@ -176,11 +179,12 @@ export class ModernUiErrorBoundary extends Component<
 export function UiVariantBoundary({
   children,
   diagnosticAdapter,
-  autoReturnDelayMs = 2500,
+  autoReturnDelayMs: _autoReturnDelayMs,
   storage,
 }: {
   children: ReactNode;
   diagnosticAdapter?: ModernUiDiagnosticAdapter;
+  /** Retained for source compatibility; modern failures are never automatic. */
   autoReturnDelayMs?: number;
   storage?: UiVariantStorageAdapter;
 }) {
@@ -192,8 +196,7 @@ export function UiVariantBoundary({
         <ModernUiErrorBoundary
           storage={storage}
           diagnosticAdapter={diagnosticAdapter}
-          autoReturnDelayMs={autoReturnDelayMs}
-          onReturnToClassic={reportModernBootstrapFailure}
+          onReturnToClassic={(event) => reportModernBootstrapFailure({ ...event, explicitClassic: true })}
           rootFingerprint={rootFingerprint}
         >
           {children}

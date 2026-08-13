@@ -20,11 +20,11 @@ import {
   X,
 } from 'lucide-react';
 
-import { formatMoney, formatNumber, formatRelativeTime } from '@/lib/format';
+import { formatMoney, formatNumber, formatRelativeTime, labelProductType } from '@/lib/format';
 import { validateCpr } from '@/lib/cpr';
-import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, normalizeTextInput, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
+import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
-import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
+import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import { normalizePostalCode, useAddressAutocomplete } from '@/make/alis/addressAutocomplete';
 import { useCustomerMatch } from '@/make/alis/customerMatch';
 import { type IdentityFieldName, useIdentityScan } from '@/make/alis/identityScan';
@@ -32,9 +32,11 @@ import type { PosDocumentDetail, PosSavedPurchaseListItem } from '@/types';
 import type { EditableCustomer } from '@/make/alis/types';
 import type { ModernAlisViewModel } from '@/modern/adapters/alis';
 import type { UnsupportedControlDescriptor } from '@/modern/adapters/types';
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, shellButtonClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
+import { HistoricalAfgImportDrawer } from './alis/HistoricalAfgImportDrawer';
 import { useAlisLayoutMode, type AlisLayoutMode } from './alis/useAlisLayoutMode';
 
 const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?: 'text' | 'email' }> = [
@@ -50,7 +52,7 @@ const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?:
   { key: 'postal_code', label: 'Posta kodu' },
 ];
 
-type ModernAlisDisplayBridge = Pick<AlisPageProps, 'desktopDisplayState' | 'expectedDisplayRoute' | 'routeMatches' | 'onOpenCustomerDisplay'>;
+type ModernAlisDisplayBridge = Pick<AlisPageProps, 'desktopDisplayState' | 'expectedDisplayRoute' | 'routeMatches' | 'onOpenCustomerDisplay' | 'onCloseCustomerDisplay'>;
 
 type ModernAlisListFilters = {
   query: string;
@@ -94,6 +96,7 @@ export function ModernAlisModule({
   const layoutMode = useAlisLayoutMode(layoutRef);
   const [pane, setPane] = useState<ModernAlisPane>('workspace');
   const [tool, setTool] = useState<ModernAlisTool>(null);
+  const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<'gold' | 'silver'>>(() => new Set(['gold']));
   const [listFilters, setListFilters] = useState<ModernAlisListFilters>({
     query: state.purchaseSearchTerm,
@@ -124,7 +127,7 @@ export function ModernAlisModule({
       let comparison = 0;
       if (listFilters.sort === 'sequence') comparison = left.sequence_no - right.sequence_no;
       if (listFilters.sort === 'purchaseDate') comparison = left.issued_at.localeCompare(right.issued_at);
-      if (listFilters.sort === 'customer') comparison = String(left.customer_name || '').localeCompare(String(right.customer_name || ''), 'tr-TR');
+      if (listFilters.sort === 'customer') comparison = String(left.customer_name || '').localeCompare(String(right.customer_name || ''), document.documentElement.lang);
       if (listFilters.sort === 'amount') comparison = parseDecimalValue(left.gross_amount_dkk) - parseDecimalValue(right.gross_amount_dkk);
       return listFilters.direction === 'asc' ? comparison : -comparison;
     });
@@ -189,22 +192,28 @@ export function ModernAlisModule({
       unsupportedControls={[]}
       badges={
         <>
-          <DataPill label="Yüzey" value={state.activeWorkspaceView === 'excel' ? 'Excel' : 'System'} tone={state.activeWorkspaceView === 'excel' ? 'warning' : 'neutral'} />
-          <DataPill label="Draft" value={state.draftWorkspace ? state.draftWorkspace.session.session_code : 'Yok'} tone={state.draftWorkspace ? 'warning' : 'neutral'} />
+          <DataPill label="Yüzey" value={state.activeWorkspaceView === 'excel' ? 'Excel' : 'Sistem'} tone={state.activeWorkspaceView === 'excel' ? 'warning' : 'neutral'} />
+          <DataPill label="Taslak" value={state.draftWorkspace ? state.draftWorkspace.session.session_code : 'Yok'} tone={state.draftWorkspace ? 'warning' : 'neutral'} />
           <DataPill label="Müşteri" value={hasWorkspace ? (hasSelectedCustomer ? 'Seçili' : 'Bekliyor') : '—'} tone={hasSelectedCustomer ? 'success' : 'warning'} />
         </>
       }
       actions={
-        <button
-          type="button"
-          onClick={startBlankWorkspace}
-          disabled={state.startPending || Boolean(workspace)}
-          title={workspace ? 'Önce açık Alış taslağını tamamlayın veya iptal edin' : undefined}
-          className={shellButtonClass('primary')}
-        >
-          <Plus className="h-4 w-4" />
-          {state.startPending ? 'Hazırlanıyor' : 'Yeni Alış'}
-        </button>
+        <>
+          <button type="button" onClick={() => setHistoricalImportOpen(true)} className={shellButtonClass('secondary')}>
+            <FileSpreadsheet className="h-4 w-4" />
+            Tarihsel AFG içe aktar
+          </button>
+          <button
+            type="button"
+            onClick={startBlankWorkspace}
+            disabled={state.startPending || Boolean(workspace)}
+            title={workspace ? 'Önce açık Alış taslağını tamamlayın veya iptal edin' : undefined}
+            className={shellButtonClass('primary')}
+          >
+            <Plus className="h-4 w-4" />
+            {state.startPending ? 'Hazırlanıyor' : 'Yeni Alış'}
+          </button>
+        </>
       }
     >
       <div ref={layoutRef} className="min-w-0">
@@ -289,6 +298,11 @@ export function ModernAlisModule({
           </>
         )}
       </div>
+      <HistoricalAfgImportDrawer
+        open={historicalImportOpen}
+        onClose={() => setHistoricalImportOpen(false)}
+        onImported={() => { void state.onRetryDocuments?.(); setPane('history'); }}
+      />
     </ModernModuleShell>
   );
 }
@@ -300,13 +314,11 @@ function ModernAlisOfficeSurface({
   workspaceId: string;
   onClose: () => void | Promise<void>;
 }) {
-  const officeState = useOfficeDocumentState({
-    kind: 'alis-workspace',
-    artifactKey: workspaceId,
-    disableReopen: true,
-  });
-
-  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={onClose} />;
+  return (
+    <div className="flex min-h-0 h-full flex-1 flex-col overflow-hidden rounded-sg-xl border border-sg-border bg-sg-surface shadow-sg-md">
+      <EmbeddedWorkbookPanel kind="alis-workspace" artifactKey={workspaceId} layoutMode="workspace" onClose={onClose} variant="modern" />
+    </div>
+  );
 }
 
 function AlisModeTabs({ pane, hasWorkspace, documentCount, onChange }: { pane: ModernAlisPane; hasWorkspace: boolean; documentCount: number; onChange: (pane: ModernAlisPane) => void }) {
@@ -329,7 +341,7 @@ function AlisStartPanel({ state, onStart, onResume, onOpenHistory }: { state: Mo
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">Operasyon başlangıcı</p>
           <h2 className="mt-2 text-2xl font-bold tracking-tight text-sg-text">Yeni AFG alışını başlatın</h2>
-          <p className="mt-2 max-w-xl text-sm text-sg-text-soft">Müşteri, metal satırları ve ödeme bilgileri gerçek workspace state’i ile kaydedilir.</p>
+          <p className="mt-2 max-w-xl text-sm text-sg-text-soft">Müşteri, metal satırları ve ödeme bilgileri gerçek çalışma alanı durumu ile kaydedilir.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onStart} disabled={state.startPending} className={shellButtonClass('primary')}><Plus className="h-4 w-4" />Yeni alış</button>
@@ -347,10 +359,12 @@ function AlisStartPanel({ state, onStart, onResume, onOpenHistory }: { state: Mo
 }
 
 function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, displayLabel, layoutMode, expandedGroups, onToggleGroup, onOpenTool, onCancel }: { state: ModernAlisState; workspace: NonNullable<ModernAlisState['workspace']>; hasSelectedCustomer: boolean; displayBridge?: ModernAlisDisplayBridge; displayLabel: string; layoutMode: AlisLayoutMode; expandedGroups: Set<'gold' | 'silver'>; onToggleGroup: (group: 'gold' | 'silver') => void; onOpenTool: (tool: Exclude<ModernAlisTool, null>) => void; onCancel: () => void }) {
-  const goldRows: ModernAlisRow[] = state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Gold', type: 'Gold', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
-  const silverRows: ModernAlisRow[] = state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Silver', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const goldRows: ModernAlisRow[] = state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Altın', type: 'Altın', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const silverRows: ModernAlisRow[] = state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Gümüş', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
   const totalGram = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
   const totalOffer = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.total), 0);
+  const vatAmount = state.purchaseVatEnabled ? Math.round(totalOffer * 0.25 * 100) / 100 : 0;
+  const grossOffer = totalOffer + vatAmount;
   const isWide = layoutMode === 'wide' || layoutMode === 'ultrawide';
   return (
     <div className="space-y-4">
@@ -374,8 +388,8 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
           <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => state.onUpdateGoldRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdateGoldRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
           <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => state.onUpdateSilverRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdateSilverRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
           <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border bg-sg-surface/95 px-4 py-3 backdrop-blur">
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm"><span><span className="text-sg-text-soft">Gram </span><strong className="text-sg-text">{formatNumber(totalGram, ' g')}</strong></span><span><span className="text-sg-text-soft">Teklif </span><strong className="text-sg-text">{formatMoney(String(totalOffer))}</strong></span></div>
-            <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Finalize için önce müşteri seçin veya oluşturun' : undefined} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm"><span><span className="text-sg-text-soft">Gram </span><strong className="text-sg-text">{formatNumber(totalGram, ' g')}</strong></span><span><span className="text-sg-text-soft">Net </span><strong className="text-sg-text">{formatMoney(String(totalOffer))}</strong></span><label className="inline-flex cursor-pointer items-center gap-2 rounded-sg-sm border border-sg-border px-2.5 py-1.5 font-semibold text-sg-text"><input aria-label="Yüzde 25 alış KDV'si ekle" type="checkbox" checked={state.purchaseVatEnabled} onChange={(event) => state.setPurchaseVatEnabled(event.target.checked)} className="h-4 w-4 accent-sg-accent" /><span>%25 KDV</span></label><span><span className="text-sg-text-soft">KDV </span><strong className="text-sg-text">{formatMoney(String(vatAmount))}</strong></span><span><span className="text-sg-text-soft">Ödenecek </span><strong className="text-sg-accent">{formatMoney(String(grossOffer))}</strong></span></div>
+            <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Kesinleştirmek için önce müşteri seçin veya oluşturun' : undefined} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
           </div>
         </main>
 
@@ -390,9 +404,13 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
 function AlisInspector({ state, workspace, hasSelectedCustomer, displayBridge, displayLabel, onOpenTool }: { state: ModernAlisState; workspace: NonNullable<ModernAlisState['workspace']>; hasSelectedCustomer: boolean; displayBridge?: ModernAlisDisplayBridge; displayLabel: string; onOpenTool: (tool: Exclude<ModernAlisTool, null>) => void }) {
   return (
     <div className="border border-sg-border bg-sg-surface">
-      <div className="border-b border-sg-border px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><div className="mt-2 flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-semibold text-sg-text">{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p><p className="mt-1 text-xs text-sg-text-soft">{hasSelectedCustomer ? state.customerForm.phone || 'Telefon yok' : 'Finalize öncesi gerekli'}</p></div><DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" /></div><button type="button" onClick={() => onOpenTool('customer')} className={`${shellButtonClass('secondary')} mt-3 w-full justify-center`}>{hasSelectedCustomer ? 'Müşteriyi düzenle' : 'Müşteri seç'}</button></div>
+      <div className="border-b border-sg-border px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><div className="mt-2 flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-semibold text-sg-text">{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p><p className="mt-1 text-xs text-sg-text-soft">{hasSelectedCustomer ? state.customerForm.phone || 'Telefon yok' : 'Kesinleştirme öncesi gerekli'}</p></div><DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" /></div><button type="button" onClick={() => onOpenTool('customer')} className={`${shellButtonClass('secondary')} mt-3 w-full justify-center`}>{hasSelectedCustomer ? 'Müşteriyi düzenle' : 'Müşteri seç'}</button></div>
       <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Piyasa oranları</p><p className="mt-1 text-sm font-semibold text-sg-text">Au {formatDecimalFixed(state.marketRates.gold_24k_dkk)} DKK/g</p><p className="mt-0.5 text-xs text-sg-text-soft">FX {formatDecimalFixed(state.marketRates.eur_dkk_fx)} · satır fiyatlarına otomatik uygulanır</p></div><button type="button" onClick={() => onOpenTool('rates')} className={shellButtonClass('ghost')}><SlidersHorizontal className="h-4 w-4" />Düzenle</button></div></div>
-      <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri ekranı</p><p className="mt-1 text-sm text-sg-text">{displayLabel}</p></div>{displayBridge?.onOpenCustomerDisplay ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Aç</button> : null}</div></div>
+      <div className="border-b border-sg-border px-4 py-4">
+        <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-sg-text"><input aria-label="Yüzde 25 alış KDV'si ekle" type="checkbox" checked={state.purchaseVatEnabled} onChange={(event) => state.setPurchaseVatEnabled(event.target.checked)} className="h-4 w-4 accent-sg-accent" />%25 alış KDV'si</label>
+        <label className="mt-3 block text-[11px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">AFG notu<textarea value={state.afgNote} onChange={(event) => state.setAfgNote(event.target.value)} rows={3} maxLength={1000} placeholder="İşlem ve fatura notu" className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal normal-case tracking-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
+      </div>
+      <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri ekranı</p><p className="mt-1 text-sm text-sg-text">{displayLabel}</p></div><div className="flex items-center gap-2">{displayBridge?.desktopDisplayState?.window_open && displayBridge.onCloseCustomerDisplay ? <button type="button" onClick={() => void displayBridge.onCloseCustomerDisplay?.()} className={shellButtonClass('ghost')}>Kapat</button> : null}{displayBridge?.onOpenCustomerDisplay ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Aç</button> : null}</div></div></div>
       <div className="px-4 py-4"><button type="button" onClick={() => onOpenTool('roadmap')} className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-sg-text transition hover:text-sg-accent"><span>Hazır olmayan entegrasyonlar</span><ChevronDown className="h-4 w-4" /></button></div>
     </div>
   );
@@ -408,7 +426,7 @@ function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAva
   return (
     <section className="border-b border-sg-border last:border-b-0">
       <button type="button" onClick={onToggle} aria-expanded={expanded} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-sg-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sg-accent/50"><span className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${tone === 'gold' ? 'bg-sg-amber' : 'bg-slate-400'}`} /><span className="text-sm font-semibold text-sg-text">{title}</span><span className="text-xs text-sg-text-soft">{activeRows} aktif · {formatNumber(totalGram, ' g')}</span></span><ChevronDown className={`h-4 w-4 text-sg-text-soft transition ${expanded ? 'rotate-180' : ''}`} /></button>
-      {expanded ? <div className="px-4 pb-3"><div className="flex flex-wrap items-center justify-between gap-2 border-y border-sg-border-soft py-2"><div className={`min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Avance</span><span>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span>Toplam</span> : null}</div>{hiddenRows.length > 0 ? <label className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft"><span className="sr-only">Satır ekle</span><select aria-label={`${title} satırı ekle`} value="" onChange={(event) => { const key = event.target.value; if (!key) return; setRevealedRows((current) => new Set(current).add(key)); }} className="rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-xs font-semibold normal-case tracking-normal text-sg-text"><option value="">+ Satır ekle</option>{hiddenRows.map((row) => <option key={row.key} value={row.key}>{row.name}</option>)}</select></label> : null}</div><div className="divide-y divide-sg-border-soft">{visibleRows.length > 0 ? visibleRows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} />) : <p className="py-4 text-sm text-sg-text-soft">Aktif satır yok. Yukarıdan bir satır ekleyin.</p>}</div></div> : null}
+      {expanded ? <div className="px-4 pb-3"><div className="flex flex-wrap items-center justify-between gap-2 border-y border-sg-border-soft py-2"><div className={`min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Avance</span><span className={wide ? 'text-right' : undefined}>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span className="text-right">Toplam</span> : null}</div>{hiddenRows.length > 0 ? <label className="w-36 shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft"><span className="sr-only">Satır ekle</span><select aria-label={`${title} satırı ekle`} value="" onChange={(event) => { const key = event.target.value; if (!key) return; setRevealedRows((current) => new Set(current).add(key)); }} className="w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-xs font-semibold normal-case tracking-normal text-sg-text"><option value="">+ Satır ekle</option>{hiddenRows.map((row) => <option key={row.key} value={row.key}>{row.name}</option>)}</select></label> : wide ? <span className="w-36 shrink-0" aria-hidden="true" /> : null}</div><div className="divide-y divide-sg-border-soft">{visibleRows.length > 0 ? visibleRows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} />) : <p className="py-4 text-sm text-sg-text-soft">Aktif satır yok. Yukarıdan bir satır ekleyin.</p>}</div></div> : null}
     </section>
   );
 }
@@ -416,14 +434,14 @@ function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAva
 function AlisLedgerRow({ row, wide, onGramChange, onAvanceChange }: { row: ModernAlisRow; wide: boolean; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void }) {
   const inputClass = 'w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2.5 py-2 text-sm text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
   if (!wide) {
-    return <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_100px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p><p className="mt-2 text-xs text-sg-text-soft">Birim {formatMoney(row.unitPrice)}</p></div><div className="text-right"><p className="text-sm font-semibold text-sg-text">{formatMoney(row.total)}</p><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Gram<input inputMode="decimal" value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className={inputClass} /></label><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Avance<input inputMode="decimal" value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className={inputClass} /></label></div></div>;
+    return <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_100px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p><p className="mt-2 text-xs text-sg-text-soft">Birim {formatMoney(row.unitPrice)}</p></div><div className="text-right"><p className="text-sm font-semibold text-sg-text">{formatMoney(row.total)}</p><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Gram<CommittedNumericInput value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className={inputClass} /></label><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Avance<CommittedNumericInput value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className={inputClass} /></label></div></div>;
   }
-  return <div className="grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] items-center gap-3 py-2.5"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 truncate text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><input aria-label={`${row.name} gram`} inputMode="decimal" value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className={inputClass} /><input aria-label={`${row.name} avance`} inputMode="decimal" value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className={inputClass} /><span className="text-right text-sm text-sg-text-soft">{formatMoney(row.unitPrice)}</span><span className="text-right text-sm font-semibold text-sg-text">{formatMoney(row.total)}</span></div>;
+  return <div className="grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] items-center gap-3 py-2.5 pr-[152px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 truncate text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><CommittedNumericInput aria-label={`${row.name} gram`} value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className={inputClass} /><CommittedNumericInput aria-label={`${row.name} avance`} value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className={inputClass} /><span className="text-right text-sm text-sg-text-soft">{formatMoney(row.unitPrice)}</span><span className="text-right text-sm font-semibold text-sg-text">{formatMoney(row.total)}</span></div>;
 }
 
 function AlisHistory({ state, documents, filters, onChange, onReset }: { state: ModernAlisState; documents: PosSavedPurchaseListItem[]; filters: ModernAlisListFilters; onChange: (next: Partial<ModernAlisListFilters>) => void; onReset: () => void }) {
   const total = documents.reduce((sum, document) => sum + parseDecimalValue(document.gross_amount_dkk), 0);
-  return <section className="border-y border-sg-border py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Belge geçmişi</p><h2 className="mt-1 text-xl font-bold text-sg-text">Alış kayıtları</h2></div><div className="flex gap-4 text-sm text-sg-text-soft"><span>{documents.length} belge</span><span>{formatMoney(String(total))}</span></div></div><div className="mt-4"><PurchaseFilters state={state} filters={filters} onChange={onChange} onReset={onReset} /></div><DocumentList state={state} documents={documents} /></section>;
+  return <section className="border-y border-sg-border py-4"><div className="flex flex-wrap items-center justify-between gap-4 rounded-sg-lg border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Belge geçmişi</p><h2 className="mt-1 text-xl font-bold text-sg-text">Alış kayıtları</h2></div><dl className="flex overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface shadow-sm"><div className="min-w-24 px-4 py-2"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Kayıt</dt><dd className="mt-1 text-sm font-bold text-sg-text">{documents.length} belge</dd></div><div className="min-w-36 border-l border-sg-border px-4 py-2 text-right"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Toplam</dt><dd className="mt-1 whitespace-nowrap text-sm font-bold text-sg-text">{formatMoney(String(total))}</dd></div></dl></div><div className="mt-4"><PurchaseFilters state={state} filters={filters} onChange={onChange} onReset={onReset} /></div><DocumentList state={state} documents={documents} /></section>;
 }
 
 function AlisToolSheet({ tool, state, hasSelectedCustomer, filters, onFilterChange, onFilterReset, unsupportedControls, onClose }: { tool: Exclude<ModernAlisTool, null>; state: ModernAlisState; hasSelectedCustomer: boolean; filters: ModernAlisListFilters; onFilterChange: (next: Partial<ModernAlisListFilters>) => void; onFilterReset: () => void; unsupportedControls: UnsupportedControlDescriptor[]; onClose: () => void }) {
@@ -449,7 +467,7 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri bağlantısı</p>
-            <p className="mt-1 text-sm text-sg-text">Finalize öncesinde gerçek bir müşteri seçin veya oluşturun.</p>
+            <p className="mt-1 text-sm text-sg-text">Kesinleştirmeden önce gerçek bir müşteri seçin veya oluşturun.</p>
           </div>
           {hasSelectedCustomer ? <DataPill label="Durum" value="Seçili" tone="success" /> : <DataPill label="Durum" value="Gerekli" tone="warning" />}
         </div>
@@ -462,7 +480,7 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
           <button type="button" onClick={() => state.setCustomerMode('new')} className="rounded-sg-lg border border-sg-border bg-sg-surface p-4 text-left transition hover:border-sg-accent hover:bg-sg-accent-soft">
             <UserPlus className="h-5 w-5 text-sg-accent" />
             <p className="mt-3 text-sm font-semibold text-sg-text">Yeni müşteri oluştur</p>
-            <p className="mt-1 text-xs text-sg-text-soft">Müşteri kartını doldurup workspace'e bağla.</p>
+            <p className="mt-1 text-xs text-sg-text-soft">Müşteri kartını doldurup çalışma alanına bağlayın.</p>
           </button>
         </div>
       </div>
@@ -623,30 +641,34 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">İşlem ayarları</p>
-          <p className="mt-1 text-sm text-sg-text">AFG numarası, tam oran matrisi ve hesaplayıcılar gerçek workspace state'ine bağlıdır.</p>
+          <p className="mt-1 text-sm text-sg-text">AFG numarası, tam oran matrisi ve hesaplayıcılar gerçek çalışma alanı durumuna bağlıdır.</p>
         </div>
         <div className="inline-flex rounded-sg-md border border-sg-border bg-sg-surface p-1">
           {(['system', 'excel'] as const).map((view) => (
             <button key={view} type="button" onClick={() => void state.setActiveWorkspaceView(view)} className={`rounded-sg-sm px-3 py-1.5 text-xs font-semibold transition ${state.activeWorkspaceView === view ? 'bg-sg-accent text-white' : 'text-sg-text-soft hover:bg-sg-surface-soft'}`}>
-              {view === 'system' ? 'System' : 'Excel'}
+              {view === 'system' ? 'Sistem' : 'Excel'}
             </button>
           ))}
         </div>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <WorkspaceInput label="AFG no" value={state.numbering.afregnings_number_next} onChange={(value) => state.onUpdateNumbering('afregnings_number_next', value)} />
-        <WorkspaceInput label="Invoice no" value={state.numbering.invoice_number_next} onChange={(value) => state.onUpdateNumbering('invoice_number_next', value)} />
-        <WorkspaceInput label="Reg.nr." value={state.bankInfo.reg_number || ''} onChange={(value) => state.setBankInfo((current) => ({ ...current, reg_number: value }))} />
-        <WorkspaceInput label="Kontonr." value={state.bankInfo.account_number || ''} onChange={(value) => state.setBankInfo((current) => ({ ...current, account_number: value }))} />
+        <WorkspaceInput label="AFG numarası" value={state.numbering.afregnings_number_next} onCommit={(value) => state.onUpdateNumbering('afregnings_number_next', value)} />
+        <WorkspaceInput label="Fatura numarası" value={state.numbering.invoice_number_next} onCommit={(value) => state.onUpdateNumbering('invoice_number_next', value)} />
+        <WorkspaceInput label="Şube no." value={state.bankInfo.reg_number || ''} onCommit={(value) => state.setBankInfo((current) => ({ ...current, reg_number: value }))} />
+        <WorkspaceInput label="Hesap no." value={state.bankInfo.account_number || ''} onCommit={(value) => state.setBankInfo((current) => ({ ...current, account_number: value }))} />
         <div className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-xs text-sg-text-soft">
           <span className="block font-semibold uppercase tracking-[0.14em]">Ödeme</span>
           <span className="mt-1 block text-sm font-semibold text-sg-text">Bankoverførsel</span>
         </div>
+        <label className="flex cursor-pointer items-center gap-3 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-semibold text-sg-text">
+          <input aria-label="Yüzde 25 alış KDV'si ekle" type="checkbox" checked={state.purchaseVatEnabled} onChange={(event) => state.setPurchaseVatEnabled(event.target.checked)} className="h-4 w-4 accent-sg-accent" />
+          <span><span className="block">%25 alış KDV'si ekle</span><span className="mt-0.5 block text-[11px] font-normal text-sg-text-soft">İşaret kapalıysa Uniconta %0 alış kodu kullanılır.</span></span>
+        </label>
       </div>
       <ModernRatesPanel state={state} />
       <div className="mt-4 grid gap-3 xl:grid-cols-2">
         <ModernCalculatorPanel
-          title="Gold hesaplayıcı"
+          title="Altın hesaplayıcı"
           kind="gold_rows"
           rows={state.calculators.gold_rows}
           targets={GOLD_MATRIX_ROWS.map((row) => ({ value: `gold:${row.key}`, label: row.label }))}
@@ -654,7 +676,7 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
           onApply={(rowKey, total) => state.onUpdateGoldRow(rowKey, 'gram', total)}
         />
         <ModernCalculatorPanel
-          title="Silver hesaplayıcı"
+          title="Gümüş hesaplayıcı"
           kind="silver_rows"
           rows={state.calculators.silver_rows}
           targets={SILVER_MATRIX_ROWS.map((row) => ({ value: `silver:${row.key}`, label: row.label }))}
@@ -676,7 +698,7 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Piyasa oranları</p>
-          <p className="mt-1 text-xs text-sg-text-soft">EUR truth → FX → DKK. Gold ve Silver alanları matrisle birlikte güncellenir.</p>
+          <p className="mt-1 text-xs text-sg-text-soft">EUR fiyatı → kur → DKK. Altın ve gümüş alanları matrisle birlikte güncellenir.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <DataPill label="Au 24K" value={`${formatDecimalFixed(state.marketRates.gold_24k_dkk)} DKK/g`} tone="warning" />
@@ -685,7 +707,7 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
       </div>
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <div className="rounded-sg-md border border-sg-border-soft bg-sg-surface-soft p-3">
-          <p className="text-xs font-semibold text-sg-text">Gold EUR / gram</p>
+          <p className="text-xs font-semibold text-sg-text">Altın EUR / gram</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {GOLD_MATRIX_ROWS.map((row) => (
               <RateInput
@@ -693,13 +715,13 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
                 label={`${row.label} · ${row.lodighed}`}
                 value={state.marketRates.gold_rates_eur?.[row.key] || ''}
                 dkk={formatDecimalFixed(parseDecimalValue(state.marketRates.gold_rates_eur?.[row.key]) * (parseDecimalValue(state.marketRates.eur_dkk_fx) || 1))}
-                onChange={(value) => state.setMarketRates((current) => syncMarketRateState(current, { gold_rates_eur: { ...current.gold_rates_eur, [row.key]: normalizeTextInput(value) } }))}
+                onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { gold_rates_eur: { ...current.gold_rates_eur, [row.key]: value === null ? '' : String(value) } }))}
               />
             ))}
           </div>
         </div>
         <div className="rounded-sg-md border border-sg-border-soft bg-sg-surface-soft p-3">
-          <p className="text-xs font-semibold text-sg-text">Silver EUR / gram</p>
+          <p className="text-xs font-semibold text-sg-text">Gümüş EUR / gram</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {SILVER_MATRIX_ROWS.map((row) => (
               <RateInput
@@ -707,30 +729,35 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
                 label={`${row.label} · ${row.lodighed}`}
                 value={state.marketRates.silver_rates_eur?.[row.key] || ''}
                 dkk={formatDecimalFixed(parseDecimalValue(state.marketRates.silver_rates_eur?.[row.key]) * (parseDecimalValue(state.marketRates.eur_dkk_fx) || 1))}
-                onChange={(value) => state.setMarketRates((current) => syncMarketRateState(current, { silver_rates_eur: { ...current.silver_rates_eur, [row.key]: normalizeTextInput(value) } }))}
+                onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { silver_rates_eur: { ...current.silver_rates_eur, [row.key]: value === null ? '' : String(value) } }))}
               />
             ))}
           </div>
         </div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <WorkspaceInput label="EUR / DKK FX" value={state.marketRates.eur_dkk_fx} onChange={(value) => state.setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: normalizeTextInput(value) }))} />
+        <WorkspaceInput label="EUR / DKK kuru" value={state.marketRates.eur_dkk_fx} onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: value }))} />
         <CommittedRateInput
           label="Au 24K DKK/g · tüm karatlara uygula"
           value={state.marketRates.gold_24k_dkk}
           onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { gold_24k_dkk: value }))}
         />
-        <ReadOnlyMetric label="Silver DKK" value={state.marketRates.silver_dkk} />
+        <ReadOnlyMetric label="Gümüş DKK" value={state.marketRates.silver_dkk} />
       </div>
     </div>
   );
 }
 
-function RateInput({ label, value, dkk, onChange }: { label: string; value: string; dkk: string; onChange: (value: string) => void }) {
+function RateInput({ label, value, dkk, onCommit }: { label: string; value: string; dkk: string; onCommit: (value: string) => void }) {
   return (
     <label className="rounded-sg-md border border-sg-border bg-sg-surface p-2 text-[11px] font-semibold text-sg-text-soft">
       <span className="flex items-center justify-between gap-2"><span>{label}</span><span className="font-normal text-sg-text-soft">{dkk} DKK</span></span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} inputMode="decimal" className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface-soft px-2 py-1.5 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" />
+      <CommittedNumericInput
+        value={value}
+        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 4 }}
+        onCommit={(_, canonical) => onCommit(canonical)}
+        className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface-soft px-2 py-1.5 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
+      />
     </label>
   );
 }
@@ -740,35 +767,27 @@ function ReadOnlyMetric({ label, value }: { label: string; value: string }) {
 }
 
 function CommittedRateInput({ label, value, onCommit }: { label: string; value: string; onCommit: (value: string) => void }) {
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  const commit = () => {
-    const normalized = normalizeTextInput(draft);
-    if (parseDecimalValue(normalized) <= 0) {
-      setDraft(value);
-      return;
-    }
-    onCommit(normalized);
-  };
-
   return (
     <label className="block text-xs font-semibold text-sg-text-soft">
       {label}
-      <input
-        value={draft}
-        onChange={(event) => setDraft(normalizeTextInput(event.target.value))}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur();
-        }}
-        inputMode="decimal"
+      <CommittedNumericInput
+        value={value}
+        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+        onCommit={(_, canonical) => onCommit(canonical)}
         className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
       />
     </label>
+  );
+}
+
+function CalculatorNumericInput({ value, onCommit, className }: { value: string; onCommit: (value: string) => void; className: string }) {
+  return (
+    <CommittedNumericInput
+      value={value}
+      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+      onCommit={(_, canonical) => onCommit(canonical)}
+      className={className}
+    />
   );
 }
 
@@ -795,8 +814,8 @@ function ModernCalculatorPanel({
           const total = formatDecimalFixed(parseDecimalValue(row.unit_weight) * parseDecimalValue(row.count));
           return (
             <div key={row.row_key} className="grid gap-2 rounded-sg-md border border-sg-border-soft bg-sg-surface-soft p-3 sm:grid-cols-[1fr_0.8fr_0.8fr_1.2fr_auto] sm:items-end">
-              <label className="text-[11px] font-semibold text-sg-text-soft">Birim gram<input value={row.unit_weight} onChange={(event) => { const unitWeight = normalizeTextInput(event.target.value); const nextTotal = formatDecimalFixed(parseDecimalValue(unitWeight) * parseDecimalValue(row.count)); setCalculators((current) => ({ ...current, [kind]: current[kind].map((item) => item.row_key === row.row_key ? { ...item, unit_weight: unitWeight, total_weight: nextTotal } : item) })); }} className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-sm text-sg-text outline-none focus:border-sg-accent" /></label>
-              <label className="text-[11px] font-semibold text-sg-text-soft">Adet<input value={row.count} onChange={(event) => { const count = normalizeTextInput(event.target.value); const nextTotal = formatDecimalFixed(parseDecimalValue(row.unit_weight) * parseDecimalValue(count)); setCalculators((current) => ({ ...current, [kind]: current[kind].map((item) => item.row_key === row.row_key ? { ...item, count, total_weight: nextTotal } : item) })); }} className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-sm text-sg-text outline-none focus:border-sg-accent" /></label>
+              <label className="text-[11px] font-semibold text-sg-text-soft">Birim gram<CalculatorNumericInput value={row.unit_weight} onCommit={(unitWeight) => { const nextTotal = formatDecimalFixed(parseDecimalValue(unitWeight) * parseDecimalValue(row.count)); setCalculators((current) => ({ ...current, [kind]: current[kind].map((item) => item.row_key === row.row_key ? { ...item, unit_weight: unitWeight, total_weight: nextTotal } : item) })); }} className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-sm text-sg-text outline-none focus:border-sg-accent" /></label>
+              <label className="text-[11px] font-semibold text-sg-text-soft">Adet<CalculatorNumericInput value={row.count} onCommit={(count) => { const nextTotal = formatDecimalFixed(parseDecimalValue(row.unit_weight) * parseDecimalValue(count)); setCalculators((current) => ({ ...current, [kind]: current[kind].map((item) => item.row_key === row.row_key ? { ...item, count, total_weight: nextTotal } : item) })); }} className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-sm text-sg-text outline-none focus:border-sg-accent" /></label>
               <div><span className="block text-[11px] font-semibold text-sg-text-soft">Toplam</span><span className="mt-1 block rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-sm font-semibold text-sg-text">{total} g</span></div>
               <label className="text-[11px] font-semibold text-sg-text-soft">Hedef satır<select value={row.target_row_key || ''} onChange={(event) => setCalculators((current) => ({ ...current, [kind]: current[kind].map((item) => item.row_key === row.row_key ? { ...item, target_row_key: event.target.value } : item) }))} className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-sm text-sg-text outline-none focus:border-sg-accent"><option value="">Seçin</option>{targets.map((target) => <option key={target.value} value={target.value}>{target.label}</option>)}</select></label>
               <button type="button" onClick={() => row.target_row_key ? onApply(row.target_row_key, total) : undefined} disabled={!row.target_row_key} className={shellButtonClass('secondary')}>Aktar</button>
@@ -808,11 +827,16 @@ function ModernCalculatorPanel({
   );
 }
 
-function WorkspaceInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function WorkspaceInput({ label, value, onCommit }: { label: string; value: string; onCommit: (value: string) => void }) {
   return (
     <label className="text-xs font-semibold text-sg-text-soft">
       {label}
-      <input value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" />
+      <CommittedNumericInput
+        value={value}
+        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+        onCommit={(_, canonical) => onCommit(canonical)}
+        className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
+      />
     </label>
   );
 }
@@ -865,14 +889,15 @@ function PurchaseFilters({
 function DocumentList({ state, documents }: { state: ModernAlisViewModel['state']; documents: PosSavedPurchaseListItem[] }) {
   return (
     <>
-      <div className="mt-4 hidden overflow-x-auto xl:block">
-        <table className="min-w-full text-sm">
-          <thead>
+      <div className="mt-4 hidden rounded-sg-lg border border-sg-border bg-sg-surface xl:block">
+        <table className="w-full table-fixed text-sm">
+          <colgroup><col className="w-[86px]" /><col className="w-[150px]" /><col className="w-[76px]" /><col className="w-[76px]" /><col className="w-[88px]" /><col className="w-[118px]" /><col className="w-[104px]" /><col className="w-[112px]" /><col className="w-[246px]" /></colgroup>
+          <thead className="bg-sg-surface-soft">
             <tr className="border-b border-sg-border text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
               <th className="px-3 py-2">Belge</th>
               <th className="px-3 py-2">Müşteri</th>
-              <th className="px-3 py-2">Gold</th>
-              <th className="px-3 py-2">Silver</th>
+              <th className="px-3 py-2">Altın</th>
+              <th className="px-3 py-2">Gümüş</th>
               <th className="px-3 py-2">Gram</th>
               <th className="px-3 py-2">DKK</th>
               <th className="px-3 py-2">Durum</th>
@@ -884,14 +909,14 @@ function DocumentList({ state, documents }: { state: ModernAlisViewModel['state'
             {documents.length === 0 ? (
               <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-sg-text-soft">Filtreye uyan alış bulunamadı.</td></tr>
             ) : documents.map((document) => (
-              <tr key={document.sequence_no} className="border-b border-sg-border-soft align-top transition-colors hover:bg-sg-accent-soft/40">
-                <td className="px-3 py-3 font-medium text-sg-text"><PreviewPopover label={document.document_number}><p className="font-semibold">AFG {document.document_number}</p><p className="mt-1 text-xs text-sg-text-soft">{document.line_count} satır · {formatRelativeTime(document.issued_at)}</p></PreviewPopover></td>
-                <td className="px-3 py-3 text-sg-text-soft"><PreviewPopover label={document.customer_name || 'Müşteri yok'}><p className="font-semibold">{document.customer_name || 'Müşteri yok'}</p><p className="mt-1 text-xs">{document.customer_phone || 'Telefon yok'}</p><p className="text-xs">{document.customer_email || 'E-posta yok'}</p></PreviewPopover></td>
+              <tr key={document.sequence_no} className="border-b border-sg-border-soft align-middle transition-colors last:border-b-0 hover:bg-sg-accent-soft/40">
+                <td className="px-3 py-4 font-medium text-sg-text"><PreviewPopover label={document.document_number}><p className="font-semibold">AFG {document.document_number}</p><p className="mt-1 text-xs text-sg-text-soft">{document.line_count} satır · {formatRelativeTime(document.issued_at)}</p></PreviewPopover></td>
+                <td className="px-3 py-4 font-semibold text-sg-text"><PreviewPopover label={document.customer_name || 'Müşteri yok'}><p className="font-semibold">{document.customer_name || 'Müşteri yok'}</p><p className="mt-1 text-xs text-sg-text-soft">{document.customer_phone || 'Telefon yok'}</p><p className="text-xs text-sg-text-soft">{document.customer_email || 'E-posta yok'}</p></PreviewPopover></td>
                 <td className="px-3 py-3 text-sg-text-soft"><PreviewPopover label={`${document.gold_preview_items?.length || 0} satır`}><PreviewRows rows={document.gold_preview_items} /></PreviewPopover></td>
                 <td className="px-3 py-3 text-sg-text-soft"><PreviewPopover label={`${document.silver_preview_items?.length || 0} satır`}><PreviewRows rows={document.silver_preview_items} /></PreviewPopover></td>
-                <td className="px-3 py-3 text-sg-text-soft">{formatNumber(document.total_weight_grams, ' g')}</td>
-                <td className="px-3 py-3 text-sg-text-soft">{formatMoney(document.gross_amount_dkk)}</td>
-                <td className="px-3 py-3 text-xs text-sg-text-soft"><PreviewPopover label={document.uniconta_sync_status || '—'}>{document.uniconta_sync_error ? <p className="text-sg-red">{document.uniconta_sync_error}</p> : <p>Invoice: {document.uniconta_invoice_number || '—'}</p>}</PreviewPopover></td>
+                <td className="whitespace-nowrap px-3 py-4 font-medium text-sg-text">{formatNumber(document.total_weight_grams, ' g')}</td>
+                <td className="whitespace-nowrap px-3 py-4 font-semibold text-sg-text">{formatMoney(document.gross_amount_dkk)}</td>
+                <td className="px-3 py-4 text-xs"><PreviewPopover label={document.uniconta_sync_status || '—'}><span className="inline-flex rounded-full bg-sg-surface-soft px-2 py-1 font-semibold text-sg-text-soft">{document.uniconta_sync_status || '—'}</span>{document.uniconta_sync_error ? <p className="mt-2 text-sg-red">{document.uniconta_sync_error}</p> : <p className="mt-2 text-sg-text-soft">Invoice: {document.uniconta_invoice_number || '—'}</p>}</PreviewPopover></td>
                 <td className="whitespace-nowrap px-3 py-3 text-sg-text-soft">{formatRelativeTime(document.issued_at)}</td>
                 <td className="px-3 py-3"><DocumentActions state={state} document={document} /></td>
               </tr>
@@ -906,7 +931,7 @@ function DocumentList({ state, documents }: { state: ModernAlisViewModel['state'
               <div><p className="text-sm font-semibold text-sg-text">{document.document_number}</p><p className="mt-1 text-xs text-sg-text-soft">{document.customer_name || 'Müşteri yok'}</p></div>
               <span className="text-xs text-sg-text-soft">{formatRelativeTime(document.issued_at)}</span>
             </div>
-            <dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Gold" value={`${document.gold_preview_items?.length || 0} satır`} /><MobileRow label="Silver" value={`${document.silver_preview_items?.length || 0} satır`} /><MobileRow label="Gram" value={formatNumber(document.total_weight_grams, ' g')} /><MobileRow label="DKK" value={formatMoney(document.gross_amount_dkk)} /><MobileRow label="Durum" value={document.uniconta_sync_status || '—'} /></dl>
+            <dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Altın" value={`${document.gold_preview_items?.length || 0} satır`} /><MobileRow label="Gümüş" value={`${document.silver_preview_items?.length || 0} satır`} /><MobileRow label="Gram" value={formatNumber(document.total_weight_grams, ' g')} /><MobileRow label="DKK" value={formatMoney(document.gross_amount_dkk)} /><MobileRow label="Durum" value={document.uniconta_sync_status || '—'} /></dl>
             <div className="mt-3"><DocumentActions state={state} document={document} /></div>
           </div>
         ))}
@@ -927,25 +952,32 @@ function PreviewPopover({ label, children }: { label: string; children: ReactNod
 
 function PreviewRows({ rows }: { rows: PosSavedPurchaseListItem['gold_preview_items'] }) {
   if (!rows?.length) return <p className="text-sg-text-soft">Satır yok.</p>;
-  return <div className="space-y-1">{rows.map((row) => <div key={`${row.line_no}-${row.type_label}`} className="flex items-center justify-between gap-3"><span>{row.type_label}</span><span className="font-semibold">{formatNumber(row.weight_grams, ' g')} · {formatMoney(row.line_total_dkk)}</span></div>)}</div>;
+  return <div className="space-y-1">{rows.map((row) => <div key={`${row.line_no}-${row.type_label}`} className="flex items-center justify-between gap-3"><span>{labelProductType(String(row.type_label || '').toLowerCase())}</span><span className="font-semibold">{formatNumber(row.weight_grams, ' g')} · {formatMoney(row.line_total_dkk)}</span></div>)}</div>;
 }
 
 function DocumentActions({ state, document }: { state: ModernAlisViewModel['state']; document: PosSavedPurchaseListItem }) {
   const busy = state.actionPendingSequenceNo === document.sequence_no;
   const canRetry = document.uniconta_sync_status === 'failed' || document.uniconta_sync_status === 'skipped';
   const canCancelInvoice = document.uniconta_sync_status === 'synced' && Boolean(document.uniconta_invoice_number);
+  const menuButton = 'flex w-full items-center gap-2 rounded-sg-sm px-3 py-2 text-left text-sm font-medium text-sg-text transition hover:bg-sg-surface-soft disabled:cursor-not-allowed disabled:opacity-40';
+  const closeMenu = (element: HTMLElement) => element.closest('details')?.removeAttribute('open');
   return (
-    <div className="flex min-w-[220px] flex-wrap gap-1.5">
-      <button type="button" onClick={() => state.onViewDocument(document)} className={shellButtonClass('ghost')}>Detay</button>
+    <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+      <button type="button" onClick={() => state.onViewDocument(document)} className={shellButtonClass('secondary')}>Detay</button>
       <button type="button" onClick={() => state.onOpenDocumentExcelPreview(document)} className={shellButtonClass('ghost')}><FileSpreadsheet className="h-3.5 w-3.5" />Office</button>
-      <button type="button" onClick={() => state.onExportDocument(document)} disabled={busy} className={shellButtonClass('ghost')}><Download className="h-3.5 w-3.5" />Dışa aktar</button>
-      <button type="button" onClick={() => state.onPrintDocument(document)} disabled={busy} className={shellButtonClass('ghost')}><Printer className="h-3.5 w-3.5" />Yazdır</button>
-      <button type="button" onClick={() => state.onOpenCustomer(document)} disabled={busy || !document.customer_id} title={!document.customer_id ? 'Bu belgede müşteri bağlantısı yok' : undefined} className={shellButtonClass('ghost')}>Müşteri</button>
-      <button type="button" onClick={() => state.onStartFromCustomer(document)} disabled={busy || !document.customer_id} title={!document.customer_id ? 'Yeni alış için müşteri bağlantısı gerekli' : undefined} className={shellButtonClass('ghost')}><Plus className="h-3.5 w-3.5" />Yeni</button>
-      <button type="button" onClick={() => state.onEditDocument(document)} disabled={busy || !document.can_edit} title={!document.can_edit ? 'Bu belge düzenlenebilir değil' : undefined} className={shellButtonClass('ghost')}><Pencil className="h-3.5 w-3.5" />Düzenle</button>
-      <button type="button" onClick={() => state.onDeleteDocument(document)} disabled={busy || !document.can_delete} title={!document.can_delete ? 'Bu belge silinebilir değil' : undefined} className={shellButtonClass('ghost')}><Trash2 className="h-3.5 w-3.5" />Sil</button>
-      {canRetry ? <button type="button" onClick={() => state.onRetryUnicontaSync(document)} disabled={state.retryPendingSequenceNo === document.sequence_no} className={shellButtonClass('ghost')}>Uniconta tekrar</button> : null}
-      {canCancelInvoice ? <button type="button" disabled title="Uniconta fatura iptal servisi hazır değil" className={shellButtonClass('ghost')}>Fatura iptal · hazır değil</button> : null}
+      <details className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open'); }}>
+        <summary className={`${shellButtonClass('ghost')} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}><Ellipsis className="h-4 w-4" />İşlemler</summary>
+        <div className="absolute right-0 top-full z-40 mt-2 w-52 rounded-sg-md border border-sg-border bg-sg-surface p-1.5 shadow-xl">
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onExportDocument(document); }} disabled={busy} className={menuButton}><Download className="h-4 w-4" />Dışa aktar</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onPrintDocument(document); }} disabled={busy} className={menuButton}><Printer className="h-4 w-4" />Yazdır</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onOpenCustomer(document); }} disabled={busy || !document.customer_id} title={!document.customer_id ? 'Bu belgede müşteri bağlantısı yok' : undefined} className={menuButton}><Users className="h-4 w-4" />Müşteriyi aç</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onStartFromCustomer(document); }} disabled={busy || !document.customer_id} title={!document.customer_id ? 'Yeni alış için müşteri bağlantısı gerekli' : undefined} className={menuButton}><Plus className="h-4 w-4" />Yeni alış başlat</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onEditDocument(document); }} disabled={busy || !document.can_edit} title={!document.can_edit ? 'Bu belge düzenlenebilir değil' : undefined} className={menuButton}><Pencil className="h-4 w-4" />Düzenle</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onDeleteDocument(document); }} disabled={busy || !document.can_delete} title={!document.can_delete ? 'Bu belge silinebilir değil' : undefined} className={`${menuButton} text-sg-red`}><Trash2 className="h-4 w-4" />Sil</button>
+          {canRetry ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onRetryUnicontaSync(document); }} disabled={state.retryPendingSequenceNo === document.sequence_no} className={menuButton}><RefreshCcw className="h-4 w-4" />Uniconta tekrar</button> : null}
+          {canCancelInvoice ? <button type="button" disabled title="Uniconta fatura iptal servisi hazır değil" className={menuButton}>Fatura iptal · hazır değil</button> : null}
+        </div>
+      </details>
     </div>
   );
 }
@@ -959,8 +991,8 @@ function EditableRowsCard({ title, rows, onGramChange, onAvanceChange }: { title
           <div key={row.key} className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold text-sg-text">{row.name}</p><p className="text-xs text-sg-text-soft">Tip {row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><p className="text-sm font-semibold text-sg-text-soft">{formatMoney(row.total)}</p></div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-[11px] font-semibold text-sg-text-soft">Gram<input value={row.gram} onChange={(event) => onGramChange(row.key, event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
-              <label className="text-[11px] font-semibold text-sg-text-soft">Avance %<input value={row.avance} onChange={(event) => onAvanceChange(row.key, event.target.value)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
+              <label className="text-[11px] font-semibold text-sg-text-soft">Gram<CommittedNumericInput value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
+              <label className="text-[11px] font-semibold text-sg-text-soft">Avance %<CommittedNumericInput value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
               <div className="text-[11px] font-semibold text-sg-text-soft">Birim fiyat<span className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2 text-sm text-sg-text">{formatMoney(row.unitPrice)}</span></div>
               <div className="text-[11px] font-semibold text-sg-text-soft">Toplam<span className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2 text-sm text-sg-text">{formatMoney(row.total)}</span></div>
             </div>
@@ -988,7 +1020,7 @@ function ModernDetailModal({ source, detail, loading, error, onClose, onEdit, on
           <div className="space-y-5 p-5">
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Ad" value={detail.customer_name || '—'} /><MobileRow label="CPR" value={cpr} /><MobileRow label="Telefon" value={detail.customer_phone || '—'} /><MobileRow label="E-posta" value={detail.customer_email || '—'} /><MobileRow label="Kimlik" value={identity} /><MobileRow label="Adres" value={address || '—'} /></dl></div>
-              <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Ödeme ve işlem</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Toplam" value={formatMoney(detail.gross_amount_dkk)} /><MobileRow label="Ödeme" value={detail.payment_method || 'bank'} /><MobileRow label="Reg.nr." value={detail.bank_reg_number || '—'} /><MobileRow label="Kontonr." value={detail.bank_account_number || '—'} /><MobileRow label="Tarih" value={new Date(detail.issued_at).toLocaleString('tr-TR')} /></dl></div>
+              <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Ödeme ve işlem</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Net alış" value={formatMoney(detail.net_amount_dkk)} /><MobileRow label={`KDV (%${detail.vat_rate_percent})`} value={formatMoney(detail.vat_amount_dkk)} /><MobileRow label="Ödenecek toplam" value={formatMoney(detail.gross_amount_dkk)} /><MobileRow label="Ödeme" value={detail.payment_method || 'bank'} /><MobileRow label="Reg.nr." value={detail.bank_reg_number || '—'} /><MobileRow label="Kontonr." value={detail.bank_account_number || '—'} /><MobileRow label="Tarih" value={new Date(detail.issued_at).toLocaleString(document.documentElement.lang)} /></dl></div>
             </div>
             <div className="overflow-x-auto rounded-sg-lg border border-sg-border"><table className="min-w-full text-sm"><thead className="bg-sg-surface-soft"><tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft"><th className="px-3 py-2">Tür</th><th className="px-3 py-2">Saflık</th><th className="px-3 py-2">Avance</th><th className="px-3 py-2">Gram</th><th className="px-3 py-2">Tutar</th></tr></thead><tbody>{detail.lines.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-sg-text-soft">Ürün satırı yok.</td></tr> : detail.lines.map((line) => <tr key={line.id} className="border-t border-sg-border-soft"><td className="px-3 py-3 font-semibold text-sg-text">{line.metal_type || line.product_type || '—'}</td><td className="px-3 py-3 text-sg-text-soft">{line.purity_karat || line.purity_percentage || '—'}</td><td className="px-3 py-3 text-sg-text-soft">{line.margin_percent || '0'}%</td><td className="px-3 py-3 text-sg-text-soft">{formatNumber(line.weight_grams, ' g')}</td><td className="px-3 py-3 text-sg-text-soft">{formatMoney(line.line_total_dkk)}</td></tr>)}</tbody></table></div>
             <div className="flex flex-wrap justify-end gap-2 border-t border-sg-border-soft pt-4"><button type="button" onClick={onPreview} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button><button type="button" onClick={onExport} className={shellButtonClass('secondary')}><Download className="h-4 w-4" />Dışa aktar</button><button type="button" onClick={onPrint} className={shellButtonClass('secondary')}><Printer className="h-4 w-4" />Yazdır</button><button type="button" onClick={onDelete} disabled={!detail.can_delete || actionPending} className={shellButtonClass('danger')}><Trash2 className="h-4 w-4" />Sil</button><button type="button" onClick={onEdit} disabled={!detail.can_edit || actionPending} className={shellButtonClass('primary')}><Pencil className="h-4 w-4" />Düzenle</button></div>

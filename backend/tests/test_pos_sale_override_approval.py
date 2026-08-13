@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -24,11 +25,14 @@ from app.models.product_history import ProductHistory
 from app.models.user import User
 from app.schemas.pos import PosConfirmRequest
 from app.services.pos_service import confirm_session
+import app.services.pos_service as pos_service
 from app.utils.helpers import utc_now
 
 
 def test_confirm_session_sell_inventory_requires_override_approval_and_reason():
     async def run() -> None:
+        original_settings = pos_service.get_settings
+        pos_service.get_settings = lambda: SimpleNamespace(invoice_sale_tax_policy_configured=True)
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -136,12 +140,15 @@ def test_confirm_session_sell_inventory_requires_override_approval_and_reason():
             assert refreshed.status == ProductStatusEnum.FOR_SALE
 
         await engine.dispose()
+        pos_service.get_settings = original_settings
 
     asyncio.run(run())
 
 
 def test_confirm_session_sell_inventory_allows_override_with_explicit_approval():
     async def run() -> None:
+        original_settings = pos_service.get_settings
+        pos_service.get_settings = lambda: SimpleNamespace(invoice_sale_tax_policy_configured=True)
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -242,5 +249,6 @@ def test_confirm_session_sell_inventory_allows_override_with_explicit_approval()
             assert "pazarlığı" in str(sale_override.get("reason", ""))
 
         await engine.dispose()
+        pos_service.get_settings = original_settings
 
     asyncio.run(run())

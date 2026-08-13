@@ -5,21 +5,22 @@ import {
   Database,
   FileText,
   LayoutDashboard,
-  Monitor,
   Package,
   Settings,
-  HeartPulse,
   ShieldAlert,
   ShieldCheck,
   ShoppingCart,
   Users,
 } from 'lucide-react';
 
-import { getCurrentUser } from '@/lib/auth';
 import { formatRuntimeLabel } from '@/lib/runtimeInfo';
 import { ModernRootShell, type ModernShellNavGroup, type ModernShellRuntimeRow } from '@/modern/shell';
 import { ModernOfficeDockPanel } from '@/modern/modules/office';
 import { ModernReturnAction, uiVariantTransitionRegistry } from '@/ui-variants';
+import { GlobalMarketRatesDrawer, toTopbarValue, useGlobalMarketRates } from './GlobalMarketRatesDrawer';
+import { LanguageSelector } from '@/i18n';
+import { useAppTranslation } from '@/i18n';
+import { SessionLogoutControl } from '@/components/SessionLogoutControl';
 
 import type { ReturnTypeOfRootMakeState } from './modernShellTypes';
 
@@ -30,12 +31,10 @@ const routeMeta: Record<string, { eyebrow: string; title: string; description: s
   '/log': { eyebrow: 'AFG Defteri', title: 'Log ve melt akışı', description: 'AFG satırlarını Depolama, Kararsız ve Eritme hedeflerine yönetin.' },
   '/musteriler': { eyebrow: 'Kundedatabase', title: 'Müşteriler', description: 'Müşteri kayıtları, belge geçmişi ve hassas veri kontrolleri.' },
   '/gdpr': { eyebrow: 'Privacy', title: 'GDPR Merkezi', description: 'Talepler, retention, processor ve audit görünümü.' },
-  '/opmc': { eyebrow: 'Risk', title: 'OPMC / Risk', description: 'Risk kuyruğu ve inceleme detayları.' },
+  '/opmc': { eyebrow: 'Risk', title: 'OPMC / Risk', description: 'İncelemeye açık risk çalışma alanı; kurallar ve karar akışları geliştirilmektedir.' },
   '/woocommerce': { eyebrow: 'Commerce', title: 'WooCommerce', description: 'Ürün, sipariş ve webhook operasyonları.' },
   '/uniconta': { eyebrow: 'ERP', title: 'Uniconta', description: 'Yerel kayıtlar, outbox ve uzak ERP farkları.' },
-  '/musteri-ekran': { eyebrow: 'İkinci Ekran', title: 'Müşteri Ekranı', description: 'Public DTO, pencere ve canlı teklif durumu.' },
   '/settings': { eyebrow: 'Sistem', title: 'Ayarlar', description: 'Platform, entegrasyon, güvenlik ve görünüm tercihleri.' },
-  '/reports': { eyebrow: 'Health', title: 'Raporlar ve Sağlık', description: 'Modül kapsamı, kontrat durumu ve doğrulama görünümü.' },
 };
 
 export function resolveRouteMeta(pathname: string) {
@@ -55,8 +54,15 @@ function activePath(pathname: string, path: string) {
 export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = getCurrentUser();
   const meta = resolveRouteMeta(location.pathname);
+  const marketRates = useGlobalMarketRates();
+  const { t } = useAppTranslation();
+
+  useEffect(() => {
+    const openMarketRates = () => marketRates.open();
+    window.addEventListener('seroguld:open-market-rates', openMarketRates);
+    return () => window.removeEventListener('seroguld:open-market-rates', openMarketRates);
+  }, [marketRates.open]);
 
   useEffect(() => {
     if (!state.officeDock.document) return;
@@ -81,34 +87,32 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
     });
     return [
       {
-        label: 'Operasyon',
+        label: t('navigation.operations'),
         items: [
-          item('/dashboard', 'Genel Bakış', 'İş kutusu', LayoutDashboard),
-          item('/', 'Alış / AFG', 'AFG workspace', Package, state.stats.alisList),
-          item('/musteriler', 'Müşteriler', 'Kundedatabase', Users, state.stats.customerCount),
-          item('/depolama', 'Depolama', 'Lager / ürün', Database, state.stats.depoCount),
+          item('/dashboard', t('navigation.dashboard'), 'İş kutusu', LayoutDashboard),
+          item('/', t('navigation.purchase'), 'AFG workspace', Package, state.stats.alisList),
+          item('/musteriler', t('navigation.customers'), 'Kundedatabase', Users, state.stats.customerCount),
+          item('/depolama', t('navigation.inventory'), 'Lager / ürün', Database, state.stats.depoCount),
           item('/log', 'Log / AFG Defteri', 'AFG → melt', FileText, state.stats.logCount),
         ],
       },
       {
-        label: 'Belge ve Entegrasyon',
+        label: t('navigation.documents'),
         items: [
           item('/uniconta', 'Uniconta', 'ERP mutabakatı', Building2),
           item('/woocommerce', 'WooCommerce', 'Web operasyonları', ShoppingCart),
-          item('/opmc', 'OPMC / Risk', 'Risk izleme', ShieldAlert),
+          item('/opmc', 'OPMC / Risk', 'Yapım aşamasında', ShieldAlert),
         ],
       },
       {
-        label: 'Uyum ve Sistem',
+        label: t('navigation.compliance'),
         items: [
           item('/gdpr', 'GDPR Merkezi', 'Privacy merkezi', ShieldCheck),
-          item('/musteri-ekran', 'Müşteri Ekranı', 'İkinci pencere', Monitor),
-          item('/reports', 'Raporlar ve Sağlık', 'Export ve sağlık', HeartPulse),
-          item('/settings', 'Ayarlar', 'Platform ve görünüm', Settings),
+          item('/settings', t('navigation.settings'), 'Platform ve görünüm', Settings),
         ],
       },
     ];
-  }, [location.pathname, navigate, state.stats]);
+  }, [location.pathname, navigate, state.stats, t]);
 
   const runtimeRows = useMemo<ModernShellRuntimeRow[]>(() => {
     const rows: ModernShellRuntimeRow[] = [];
@@ -146,16 +150,13 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
       description={meta.description}
       navGroups={navGroups}
       statusPills={[
-        { label: 'Au', value: `${state.stats.goldPrice} DKK/g`, tone: 'warning' },
+        { label: 'Au / Ag', value: `24K ${toTopbarValue(marketRates.profile.gold_24k_dkk)} · 999 ${toTopbarValue(marketRates.profile.silver_dkk)} DKK/g`, tone: 'warning', onSelect: marketRates.open, ariaLabel: 'Altın ve gümüş piyasa oranlarını düzenle' },
         { label: 'Backend', value: state.runtime.backend ? 'Bağlı' : 'Kontrol ediliyor', tone: state.runtime.backend ? 'success' : 'info' },
       ]}
       runtimeRows={runtimeRows}
-      user={{
-        name: user?.name || user?.email || 'Sero Guld Operasyon',
-        email: user?.name ? user?.email : undefined,
-      }}
-      variantSlot={<ModernReturnAction className="min-h-9 rounded-sg-md border border-sg-accent/20 bg-sg-accent-soft px-3 text-xs font-semibold text-sg-accent-dark transition hover:bg-sg-accent-soft/70" />}
+      variantSlot={<div className="flex h-10 items-center rounded-sg-md border border-sg-border bg-sg-surface px-1 shadow-sm"><LanguageSelector className="text-sg-text [&_select]:!min-h-8 [&_select]:!rounded-sg-sm [&_select]:!border-0 [&_select]:!bg-transparent [&_select]:!px-2.5 [&_select]:focus:!bg-sg-surface-soft" /><span className="mx-1 h-5 w-px bg-sg-border" aria-hidden="true" /><ModernReturnAction className="min-h-8 rounded-sg-sm border-0 bg-transparent px-2.5 text-xs font-semibold text-sg-accent-dark transition hover:bg-sg-accent-soft" /><SessionLogoutControl variant="modern" /></div>}
     >
+      <GlobalMarketRatesDrawer controller={marketRates} variant="modern" />
       {office}
       <Outlet />
     </ModernRootShell>

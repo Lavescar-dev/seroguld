@@ -1,14 +1,14 @@
-import { type ReactNode, useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   Building2,
   Database,
+  DatabaseZap,
   FileText,
   Keyboard,
   LayoutDashboard,
   Menu,
   MessageSquare,
-  Monitor,
   Moon,
   Package,
   Settings,
@@ -23,6 +23,10 @@ import {
 import { closeOfficeDock } from '@/lib/officeDock';
 import { formatRuntimeDateTime, formatRuntimeLabel } from '@/lib/runtimeInfo';
 import { OfficeDockPanel } from '@/make/office/OfficeDockPanel';
+import { GlobalMarketRatesDrawer, toTopbarValue, useGlobalMarketRates } from '@/components/GlobalMarketRatesDrawer';
+import { LanguageSelector } from '@/i18n';
+import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
+import { SessionLogoutControl } from '@/components/SessionLogoutControl';
 
 import type { OfficeDockState, RuntimeDiagnosticsState, SidebarStats } from './useRootMakeState';
 
@@ -74,6 +78,8 @@ export function MakeRoot({
   onResizeOfficeDock,
 }: MakeRootProps) {
   const location = useLocation();
+  const [migrationOpen, setMigrationOpen] = useState(false);
+  const globalMarketRates = useGlobalMarketRates();
   const isResizingDockRef = useRef(false);
   const hasOfficeDock = Boolean(officeDock.document) && location.pathname === '/';
 
@@ -249,26 +255,26 @@ export function MakeRoot({
         </button>
       </div>
 
-      <div className="flex divide-x divide-brand-200 border-b border-brand-200 bg-[#fbfaf6] text-xs">
+      <button type="button" onClick={globalMarketRates.open} className="flex w-full divide-x divide-brand-200 border-b border-brand-200 bg-[#fbfaf6] text-xs transition hover:bg-white" aria-label="Global piyasa oranlarını düzenle">
         <div className="flex flex-1 flex-col items-center justify-center px-2 py-1.5">
           <span className="mb-0.5 text-[10px] font-bold text-amber-500">Au</span>
           <span className="font-black text-brand-900" style={monoStyle}>
-            {stats.goldPrice}
+            {toTopbarValue(globalMarketRates.profile.gold_24k_dkk)}
           </span>
         </div>
         <div className="flex flex-1 flex-col items-center justify-center px-2 py-1.5">
           <span className="mb-0.5 text-[10px] font-bold text-slate-400">Ag</span>
           <span className="font-black text-brand-900" style={monoStyle}>
-            {stats.silverPrice}
+            {toTopbarValue(globalMarketRates.profile.silver_dkk)}
           </span>
         </div>
         <div className="flex flex-1 flex-col items-center justify-center px-2 py-1.5">
           <span className="mb-0.5 text-[10px] font-bold text-zinc-400">Pt</span>
           <span className="font-black text-brand-900" style={monoStyle}>
-            {stats.platinPrice}
+            {toTopbarValue(globalMarketRates.profile.platinum_dkk)}
           </span>
         </div>
-      </div>
+      </button>
 
       <nav className="custom-scrollbar flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         <div className="px-3 pb-1 pt-3">
@@ -288,7 +294,7 @@ export function MakeRoot({
             Entegrasyonlar
           </p>
         </div>
-        {navItem('/opmc', <ShieldAlert className="h-4 w-4" />, 'OPMC Izleme', 'Dolandiricilik Sinyalleri')}
+        {navItem('/opmc', <ShieldAlert className="h-4 w-4" />, 'OPMC Izleme', 'Yapim asamasinda', 'YAPIM', 'border-amber-300 bg-amber-100 text-amber-800')}
         {navItem('/woocommerce', <ShoppingCart className="h-4 w-4" />, 'WooCommerce', 'Urun Export & SEO')}
         {navItem('/uniconta', <Building2 className="h-4 w-4" />, 'Uniconta', 'Fatura & ERP')}
 
@@ -297,7 +303,6 @@ export function MakeRoot({
             Harici & Sistem
           </p>
         </div>
-        {navItem('/musteri-ekran', <Monitor className="h-4 w-4" />, 'Musteri Ekrani', 'POS / Vitrin gorunumu')}
         {navItem('/settings', <Settings className="h-4 w-4" />, 'Ayarlar', 'API & Sistem Ayarlari')}
 
         <div className="mt-auto space-y-3 px-3 pb-2 pt-6">
@@ -412,6 +417,7 @@ export function MakeRoot({
       <div className="flex items-center justify-between border-t border-brand-200 bg-white px-3 py-2">
         <div className="flex items-center gap-2">
           <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Sero Guld</p>
+          <LanguageSelector className="text-brand-600" />
           <button
             onClick={openFeedback}
             className="p-1 text-brand-500 transition-colors hover:text-emerald-700"
@@ -419,6 +425,7 @@ export function MakeRoot({
           >
             <MessageSquare className="h-3.5 w-3.5" />
           </button>
+          <SessionLogoutControl variant="classic" />
           <button
             onClick={onToggleDarkMode}
             className="p-1 text-brand-500 transition-colors hover:text-amber-700"
@@ -437,7 +444,7 @@ export function MakeRoot({
             KB
           </span>
           <p className="text-[10px] text-brand-500" style={monoStyle}>
-            {new Date().toLocaleDateString('da-DK', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+            {new Date().toLocaleDateString(document.documentElement.lang, { year: 'numeric', month: '2-digit', day: '2-digit' })}
           </p>
         </div>
       </div>
@@ -471,15 +478,24 @@ export function MakeRoot({
               ERP SYSTEM
             </span>
           </div>
-          <div className="flex items-center gap-2 text-[10px]" style={monoStyle}>
+          <button type="button" onClick={globalMarketRates.open} className="flex items-center gap-2 text-[10px]" style={monoStyle} aria-label="Global piyasa oranlarını düzenle">
             <span className="font-black text-amber-500">Au</span>
-            <span className="font-black text-brand-800">{stats.goldPrice}</span>
-          </div>
+            <span className="font-black text-brand-800">{toTopbarValue(globalMarketRates.profile.gold_24k_dkk)}</span>
+            <span className="font-black text-slate-500">Ag {toTopbarValue(globalMarketRates.profile.silver_dkk)}</span>
+          </button>
         </div>
 
         <div className="min-h-0 flex flex-1 overflow-hidden">
           <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f4efe7]">
             <Outlet />
+            {location.pathname === '/depolama' || location.pathname === '/log' ? (
+              <>
+                <button type="button" onClick={() => setMigrationOpen(true)} className="fixed bottom-5 right-5 z-40 flex items-center gap-2 border border-amber-700 bg-brand-950 px-4 py-3 text-xs font-black uppercase tracking-wider text-white shadow-xl hover:bg-brand-800">
+                  <DatabaseZap className="h-4 w-4" /> Eski sistemi taşı
+                </button>
+                <LegacyMigrationCenter open={migrationOpen} onClose={() => setMigrationOpen(false)} initialPhase={location.pathname === '/log' ? 'log' : 'inventory'} />
+              </>
+            ) : null}
           </main>
           {hasOfficeDock && officeDock.document ? (
             <aside
@@ -499,8 +515,9 @@ export function MakeRoot({
               <OfficeDockPanel document={officeDock.document} onClose={onCloseOfficeDock} />
             </aside>
           ) : null}
-        </div>
       </div>
+      <GlobalMarketRatesDrawer controller={globalMarketRates} variant="classic" />
+    </div>
 
       {hasOfficeDock && officeDock.document ? (
         <div className="fixed inset-0 z-[70] bg-black/45 lg:hidden">

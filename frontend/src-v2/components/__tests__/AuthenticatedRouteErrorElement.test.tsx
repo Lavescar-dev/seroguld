@@ -79,24 +79,13 @@ describe('authenticated route error recovery', () => {
     expect(writeUiDiagnostic).not.toHaveBeenCalled();
   });
 
-  it('captures modern route failures and records the classic fallback', async () => {
-    let resolveDiagnostic: ((value: null) => void) | undefined;
-    writeUiDiagnostic.mockImplementationOnce(
-      () => new Promise<null>((resolve) => {
-        resolveDiagnostic = resolve;
-      }),
-    );
-
+  it('shows modern route recovery without silently switching to classic', async () => {
     const storage = new MemoryStorage();
     renderBrokenRoute('modern', storage, true);
 
     expect(await screen.findByRole('heading', { name: 'Bu ekran yüklenemedi' })).toBeInTheDocument();
-    expect(writeUiDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ errorCode: 'MODERN_ROUTE_RENDER_FAILURE' }));
-
-    resolveDiagnostic?.(null);
-    await waitFor(() => {
-      expect(storage.getItem('seroguld.ui.variant.v1')).toBe('classic');
-    });
-    expect(await screen.findByTestId('route-recovered')).toBeInTheDocument();
+    expect(writeUiDiagnostic).not.toHaveBeenCalled();
+    expect(storage.getItem('seroguld.ui.variant.v3')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Klasik arayüze dön' })).toBeInTheDocument();
   });
 });

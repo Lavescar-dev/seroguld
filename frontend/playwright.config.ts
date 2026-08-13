@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const useSystemChrome = process.env.PLAYWRIGHT_USE_SYSTEM_CHROME === '1';
+const useSystemEdge = process.env.PLAYWRIGHT_USE_SYSTEM_EDGE === '1';
 
 export default defineConfig({
   testDir: './tests',
@@ -23,7 +24,7 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        ...(useSystemChrome ? { channel: 'chrome' } : {}),
+        ...(useSystemEdge ? { channel: 'msedge' } : useSystemChrome ? { channel: 'chrome' } : {}),
       },
     },
   ],

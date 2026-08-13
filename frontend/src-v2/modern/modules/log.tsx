@@ -1,34 +1,39 @@
-import { CheckCircle2, FileSpreadsheet, History, Loader2, Search } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FileSpreadsheet, History, Loader2, Search, Upload } from 'lucide-react';
+import { type ChangeEvent, useRef, useState } from 'react';
 
 import type { ModernLogViewModel } from '@/modern/adapters/log';
+import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
-import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
+import { apiRequest } from '@/lib/api';
+import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }) {
   const { state } = viewModel;
+  const [migrationOpen, setMigrationOpen] = useState(false);
   const bucket = state.activeTab === 'silver' ? state.workspace?.silver : state.workspace?.gold;
 
   return (
     <ModernModuleShell
       eyebrow="Log / AFG Defteri"
       title="Route ve Melt Yönetimi"
-      subtitle="Altın ve gümüş bucket'ları, draft route review ve melt lot lifecycle akışlarını mevcut hook sonucu ile kullanan modern shell."
+      subtitle="Altın ve gümüş havuzları, taslak yönlendirme inceleme ve eritme lotu yaşam döngüsü akışlarını mevcut işlem sonucu ile kullanan modern arayüz."
       blocker={viewModel.blocker}
       unsupportedControls={state.activeView === 'excel' ? [] : viewModel.unsupportedControls}
       badges={
         <>
           <DataPill label="Bucket" value={state.activeTab.toUpperCase()} tone={state.activeTab === 'gold' ? 'warning' : 'neutral'} />
-          <DataPill label="View" value={state.activeView === 'excel' ? 'Office' : 'System'} tone={state.activeView === 'excel' ? 'warning' : 'neutral'} />
+          <DataPill label="Görünüm" value={state.activeView === 'excel' ? 'Office' : 'Sistem'} tone={state.activeView === 'excel' ? 'warning' : 'neutral'} />
           <DataPill label="Review" value={state.pendingRouteCount > 0 ? `${state.pendingRouteCount} bekliyor` : 'Temiz'} tone={state.pendingRouteCount > 0 ? 'warning' : 'success'} />
         </>
       }
       actions={
         <>
-          <button type="button" onClick={() => state.onActiveTabChange('gold')} className={shellButtonClass(state.activeTab === 'gold' ? 'primary' : 'secondary')}>Gold</button>
-          <button type="button" onClick={() => state.onActiveTabChange('silver')} className={shellButtonClass(state.activeTab === 'silver' ? 'primary' : 'secondary')}>Silver</button>
+          <button type="button" onClick={() => setMigrationOpen(true)} className={shellButtonClass('secondary')}>Eski sistemi taşı</button>
+          <button type="button" onClick={() => state.onActiveTabChange('gold')} className={shellButtonClass(state.activeTab === 'gold' ? 'primary' : 'secondary')}>Altın</button>
+          <button type="button" onClick={() => state.onActiveTabChange('silver')} className={shellButtonClass(state.activeTab === 'silver' ? 'primary' : 'secondary')}>Gümüş</button>
           <button type="button" onClick={() => state.onActiveViewChange('excel')} className={shellButtonClass('secondary')}>
             <FileSpreadsheet className="h-4 w-4" />
             Office
@@ -42,8 +47,11 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
         <>
       <ModernStatGrid items={viewModel.stats} />
 
+      <LegacyMigrationCenter open={migrationOpen} onClose={() => setMigrationOpen(false)} initialPhase="log" />
+      <ModernLogWorkbookImport year={state.selectedYear} onImported={state.onRetryWorkspace} />
+
       {viewModel.phase === 'loading' ? <LoadingState label="Log workspace yükleniyor" /> : null}
-      {viewModel.phase === 'error' ? <EmptyState title="Workspace Hatası" message="Log workspace alınamadı. Mevcut retry callback route wrapper tarafından tekrar çağrılmalı." action={<button type="button" onClick={state.onRetryWorkspace} className={shellButtonClass('primary')}>Tekrar Dene</button>} /> : null}
+      {viewModel.phase === 'error' ? <EmptyState title="Çalışma Alanı Hatası" message="Log çalışma alanı yüklenemedi. Lütfen tekrar deneyin." action={<button type="button" onClick={state.onRetryWorkspace} className={shellButtonClass('primary')}>Tekrar Dene</button>} /> : null}
       {viewModel.phase === 'empty' ? <EmptyState title="Belge Yok" message="Seçili bucket için route edilecek veya melt'e gidecek belge bulunmuyor." /> : null}
 
       {bucket ? (
@@ -86,7 +94,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                     <MobileRow label="DKK" value={formatMoney(document.net_amount_dkk)} />
                   </dl>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {document.lines.slice(0, 3).map((line) => (
+                    {document.lines.map((line) => (
                       <div key={line.id} className="flex flex-wrap gap-2 rounded-full border border-sg-border bg-sg-surface px-3 py-1.5 text-[11px] font-semibold text-sg-text-soft">
                         <span>L{line.line_no}</span>
                         <button type="button" onClick={() => state.onRoute(line, 'inventory')} className="text-sg-green">Depo</button>
@@ -102,7 +110,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
 
           <ModernSection
             title="Melt Lotları"
-            subtitle="Finalize, history ve line inceleme callback'leri korunur."
+            subtitle="Kesinleştirme, geçmiş ve satır inceleme işlemleri korunur."
             actions={<button type="button" onClick={state.onCreateMeltLot} disabled={state.createMeltBusy} className={shellButtonClass('primary')}>Yeni Lot</button>}
           >
             <div className="grid gap-3">
@@ -130,7 +138,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button type="button" onClick={() => state.onSaveLot(lot.id)} disabled={state.meltBusy} className={shellButtonClass('secondary')}>Kaydet</button>
                         <button type="button" onClick={() => state.onFinalizeLot(lot.id, isFinalized)} disabled={state.finalizeBusy} className={shellButtonClass(isFinalized ? 'secondary' : 'primary')}>
-                          {isFinalized ? 'Reopen' : 'Finalize'}
+                          {isFinalized ? 'Yeniden aç' : 'Kesinleştir'}
                         </button>
                         <button type="button" onClick={() => state.onOpenLotHistory(lot.id)} className={shellButtonClass('ghost')}>
                           <History className="h-4 w-4" />
@@ -158,9 +166,115 @@ function ModernLogOfficeSurface({
   year: number;
   onClose: () => void | Promise<void>;
 }) {
-  const officeState = useOfficeDocumentState({ kind: 'log', artifactKey: String(year), disableReopen: true });
+  return (
+    <div className="flex min-h-0 h-full flex-1 flex-col overflow-hidden rounded-sg-xl border border-sg-border bg-sg-surface shadow-sg-md">
+      <EmbeddedWorkbookPanel kind="log" artifactKey={String(year)} layoutMode="workspace" onClose={onClose} variant="modern" />
+    </div>
+  );
+}
 
-  return <ModernOfficeSurface state={officeState} mode="workspace" onClose={onClose} />;
+function ModernLogWorkbookImport({
+  year,
+  onImported,
+}: {
+  year: number;
+  onImported: () => void | Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onFileSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+
+    const extension = file.name.toLowerCase().split('.').pop();
+    if (extension !== 'xlsx' && extension !== 'xlsm') {
+      setStatus({ tone: 'error', message: 'Yalnızca .xlsx veya .xlsm Log çalışma kitabı içe aktarılabilir.' });
+      return;
+    }
+
+    const accepted = window.confirm(
+      `${file.name} dosyası ${year} Log çalışma alanına uygulanacak. Bu işlem rota ve lot kayıtlarını değiştirebilir. Devam edilsin mi?`,
+    );
+    if (!accepted) return;
+
+    setBusy(true);
+    setStatus(null);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', file);
+      await apiRequest(`/api/v2/log/workbook/import?year=${encodeURIComponent(String(year))}`, {
+        method: 'POST',
+        body: formData,
+      });
+      await onImported();
+      setStatus({ tone: 'success', message: `${file.name} içe aktarıldı. Log çalışma alanı yenilendi.` });
+    } catch (error) {
+      setStatus({ tone: 'error', message: readImportError(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <ModernSection
+      title="Tarihsel Log Excel içe aktar"
+      subtitle="Yalnızca seçili yılın mevcut Log çalışma kitabını kullanın. İçe aktarma yerel rota ve melt verisini değiştirir; Uniconta veya başka bir dış sisteme istek göndermez."
+      actions={
+        <>
+          <input
+            ref={inputRef}
+            className="sr-only"
+            type="file"
+            accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
+            onChange={onFileSelected}
+            aria-label="Log Excel dosyası seç"
+          />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            className={shellButtonClass('secondary')}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {busy ? 'İçe aktarılıyor' : 'Excel seç ve içe aktar'}
+          </button>
+        </>
+      }
+    >
+      {status ? (
+        <div
+          role={status.tone === 'error' ? 'alert' : 'status'}
+          className={`flex items-start gap-2 rounded-sg-md border px-3 py-2 text-sm ${
+            status.tone === 'error'
+              ? 'border-sg-red/30 bg-sg-red-soft text-sg-red'
+              : 'border-sg-green/30 bg-sg-green-soft text-sg-green'
+          }`}
+        >
+          {status.tone === 'error' ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
+          <p>{status.message}</p>
+        </div>
+      ) : (
+        <p className="text-sm text-sg-text-soft">Dosya seçildiğinde önce açık onay istenir; onay olmadan hiçbir kayıt güncellenmez.</p>
+      )}
+    </ModernSection>
+  );
+}
+
+function readImportError(error: unknown): string {
+  if (!(error instanceof Error) || !error.message) return 'Log Excel içe aktarma tamamlanamadı.';
+  try {
+    const parsed = JSON.parse(error.message) as { detail?: unknown };
+    if (typeof parsed.detail === 'string') return parsed.detail;
+    if (parsed.detail && typeof parsed.detail === 'object' && 'message' in parsed.detail) {
+      return String(parsed.detail.message);
+    }
+  } catch {
+    // apiRequest hata metni zaten kullanıcıya gösterilebilir olabilir.
+  }
+  return error.message;
 }
 
 function MobileRow({ label, value }: { label: string; value: string }) {

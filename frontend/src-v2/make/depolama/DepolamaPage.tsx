@@ -21,10 +21,11 @@ import {
 import type { ProductHistoryEntry, ProductOut, ProductSourceAfg } from '@/types';
 
 import { useConfirm } from '@/components/ConfirmDialog';
-import { MakeOfficeDocumentPage } from '../office/OfficeDocumentPage';
-import { useOfficeDocumentState } from '../office/useOfficeDocumentState';
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
+import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
 import { InventoryDataTable } from './InventoryDataTable';
 import { InventoryFilters } from './InventoryFilters';
+import { InventoryWorkbookImport } from './InventoryWorkbookImport';
 import type {
   CategoryTotals,
   InventoryFilterState,
@@ -263,12 +264,10 @@ function StokForm({
 
         <div>
           <label className={labelCls}>Birim Gram</label>
-          <input
-            type="number"
-            step="0.001"
-            min="0"
-            value={editing.birimGram || ''}
-            onChange={(event) => upd('birimGram', Math.max(0, Number(event.target.value) || 0))}
+          <CommittedNumericInput
+            value={editing.birimGram}
+            rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 3 }}
+            onCommit={(value) => { if (value !== null) upd('birimGram', value); }}
             className={cellIn}
             style={monoStyle}
             placeholder="0.000"
@@ -277,11 +276,10 @@ function StokForm({
 
         <div>
           <label className={labelCls}>Adet / Antal</label>
-          <input
-            type="number"
-            min="1"
+          <CommittedNumericInput
             value={editing.adet}
-            onChange={(event) => upd('adet', Math.max(1, Number.parseInt(event.target.value, 10) || 1))}
+            rules={{ kind: 'integer', required: true, allowNegative: false, min: 1 }}
+            onCommit={(value) => { if (value !== null) upd('adet', value); }}
             className={cellIn}
             style={monoStyle}
           />
@@ -289,12 +287,10 @@ function StokForm({
 
         <div>
           <label className={labelCls}>Alış Fiyatı (DKK)</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={editing.alisFiyati || ''}
-            onChange={(event) => upd('alisFiyati', Math.max(0, Number(event.target.value) || 0))}
+          <CommittedNumericInput
+            value={editing.alisFiyati}
+            rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+            onCommit={(value) => { if (value !== null) upd('alisFiyati', value); }}
             className={cellIn}
             style={monoStyle}
             placeholder="0.00"
@@ -327,12 +323,10 @@ function StokForm({
           <>
             <div>
               <label className={labelCls}>Shop Fiyatı (DKK)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={editing.shopFiyati || ''}
-                onChange={(event) => upd('shopFiyati', Number(event.target.value) || undefined)}
+              <CommittedNumericInput
+                value={editing.shopFiyati}
+                rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                onCommit={(value) => upd('shopFiyati', value ?? undefined)}
                 className={cellIn}
                 style={monoStyle}
                 placeholder="0.00"
@@ -364,24 +358,20 @@ function StokForm({
             </div>
             <div>
               <label className={labelCls}>Genişlik (mm)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={editing.olcuGenislik || ''}
-                onChange={(event) => upd('olcuGenislik', Number(event.target.value) || undefined)}
+              <CommittedNumericInput
+                value={editing.olcuGenislik}
+                rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                onCommit={(value) => upd('olcuGenislik', value ?? undefined)}
                 className={cellIn}
                 style={monoStyle}
               />
             </div>
             <div>
               <label className={labelCls}>Kalınlık (mm)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={editing.olcuKalinlik || ''}
-                onChange={(event) => upd('olcuKalinlik', Number(event.target.value) || undefined)}
+              <CommittedNumericInput
+                value={editing.olcuKalinlik}
+                rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                onCommit={(value) => upd('olcuKalinlik', value ?? undefined)}
                 className={cellIn}
                 style={monoStyle}
               />
@@ -508,6 +498,7 @@ function InventorySurfaceTabs({
             </button>
           );
         })}
+        <InventoryWorkbookImport variant="classic" />
         <div className="ml-auto flex min-w-0 items-center gap-2 border border-emerald-200 bg-white px-3 py-2">
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Depolama.xlsx</p>
@@ -520,16 +511,10 @@ function InventorySurfaceTabs({
 }
 
 function InventoryExcelSurface() {
-  const officeState = useOfficeDocumentState({
-    kind: 'depolama',
-    artifactKey: 'live',
-    disableReopen: true,
-  });
-
   return (
     <div className="flex-1 min-h-0 border-b-2 border-brand-300 bg-stone-100">
       <div className="h-[calc(100vh-16rem)] min-h-[760px]">
-        <MakeOfficeDocumentPage {...officeState} layoutMode="workspace" />
+        <EmbeddedWorkbookPanel kind="depolama" artifactKey="live" layoutMode="workspace" />
       </div>
     </div>
   );
@@ -626,7 +611,7 @@ function ProductHistoryPanel({
               {HISTORY_ACTION_LABEL[entry.action] || entry.action}
             </span>
             <span className="mono text-[10px] text-brand-400">
-              {new Date(entry.created_at).toLocaleString('da-DK')}
+              {new Date(entry.created_at).toLocaleString(document.documentElement.lang)}
             </span>
           </div>
           {entry.performed_by_email ? (
@@ -750,7 +735,7 @@ function ProductSourceAfgPanel({
             ) : null}
           </div>
           <p className="mt-0.5 text-xs text-amber-700" style={monoStyle}>
-            {data.issued_at ? new Date(data.issued_at).toLocaleDateString('da-DK') : '—'}
+            {data.issued_at ? new Date(data.issued_at).toLocaleDateString(document.documentElement.lang) : '—'}
           </p>
         </div>
         {data.customer_name ? (
@@ -1577,17 +1562,10 @@ export function DepolamaPage({
                   ).map(({ key, label }) => (
                     <label key={key} className="flex items-center gap-2">
                       <span className="text-xs font-black text-brand-600 w-24 uppercase tracking-wider">{label}</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                      <CommittedNumericInput
                         value={prices[key]}
-                        onChange={(event) =>
-                          setPrices((current) => ({
-                            ...current,
-                            [key]: Math.max(0, Number.parseFloat(event.target.value) || 0),
-                          }))
-                        }
+                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+                        onCommit={(value) => { if (value !== null) setPrices((current) => ({ ...current, [key]: value })); }}
                         className={`${cellIn} w-28`}
                         style={monoStyle}
                       />

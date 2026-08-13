@@ -63,10 +63,13 @@ def build_afg_workbook_bytes_from_workspace(workspace: "PosWorkspaceOut", *, syn
     core._apply_afg_calculator_cells(sheet, workspace.calculators)
     core._apply_afg_summary_cells(
         sheet,
-        total_amount_dkk=core.quantize_2(core.to_decimal(workspace.summary.total_amount_dkk)),
+        net_amount_dkk=core.quantize_2(core.to_decimal(workspace.summary.net_amount_dkk)),
+        vat_amount_dkk=core.quantize_2(core.to_decimal(workspace.summary.vat_amount_dkk)),
+        gross_amount_dkk=core.quantize_2(core.to_decimal(workspace.summary.gross_amount_dkk)),
         payment_method=workspace.payment_method,
         reg_number=workspace.bank_info.reg_number,
         account_number=workspace.bank_info.account_number,
+        note=workspace.afg_note,
     )
     core._apply_afg_factura_gold_sheet(
         factura_gold_sheet,
@@ -75,12 +78,16 @@ def build_afg_workbook_bytes_from_workspace(workspace: "PosWorkspaceOut", *, syn
         invoice_number=invoice_number,
         rows=workspace.invoice_gold.rows,
         footer_lines=workspace.invoice_gold.footer_lines,
+        vat_enabled=workspace.purchase_vat_enabled,
+        note=workspace.afg_note,
     )
     core._apply_afg_factura_misc_sheet(
         factura_misc_sheet,
         issued_at=issued_at,
         invoice_number=invoice_number,
         rows=workspace.invoice_misc.rows,
+        vat_enabled=workspace.purchase_vat_enabled,
+        note=workspace.afg_note,
     )
     core._write_sync_sheet(workbook, context=sync_context)
     return core._save_workbook_bytes(workbook)
@@ -116,10 +123,13 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
     core._apply_afg_detail_rows(sheet, core._aggregate_detail_gold_rows(detail), core._aggregate_detail_silver_rows(detail))
     core._apply_afg_summary_cells(
         sheet,
-        total_amount_dkk=core.quantize_2(core.to_decimal(detail.net_amount_dkk)),
+        net_amount_dkk=core.quantize_2(core.to_decimal(detail.net_amount_dkk)),
+        vat_amount_dkk=core.quantize_2(core.to_decimal(detail.vat_amount_dkk)),
+        gross_amount_dkk=core.quantize_2(core.to_decimal(detail.gross_amount_dkk)),
         payment_method=(detail.payment_method or "bank") if hasattr(detail, "payment_method") else "bank",
         reg_number=detail.bank_reg_number,
         account_number=detail.bank_account_number,
+        note=detail.notes,
     )
     core._apply_afg_factura_gold_sheet(
         factura_gold_sheet,
@@ -128,12 +138,16 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
         invoice_number=detail.numbering_preview.invoice_number_next or "—",
         rows=detail.invoice_gold.rows,
         footer_lines=detail.invoice_gold.footer_lines,
+        vat_enabled=core.to_decimal(detail.vat_amount_dkk) > 0,
+        note=detail.notes,
     )
     core._apply_afg_factura_misc_sheet(
         factura_misc_sheet,
         issued_at=issued_at,
         invoice_number=detail.numbering_preview.invoice_number_next or "—",
         rows=detail.invoice_misc.rows,
+        vat_enabled=core.to_decimal(detail.vat_amount_dkk) > 0,
+        note=detail.notes,
     )
     core._write_sync_sheet(workbook, context=sync_context)
     return core._save_workbook_bytes(workbook)
@@ -152,6 +166,8 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
         f"{core.AFG_PRIMARY_SHEET}!C40": "Kontant" if workspace.payment_method == "cash" else "Overførsel",
         f"{core.AFG_PRIMARY_SHEET}!D41": "—" if workspace.payment_method == "cash" else (workspace.bank_info.reg_number or "—"),
         f"{core.AFG_PRIMARY_SHEET}!D42": "—" if workspace.payment_method == "cash" else (workspace.bank_info.account_number or "—"),
+        f"{core.AFG_PRIMARY_SHEET}!A42": "1" if workspace.purchase_vat_enabled else "0",
+        f"{core.AFG_PRIMARY_SHEET}!D44": workspace.afg_note or "—",
         f"{core.AFG_VARIABLES_SHEET}!C10": core._fmt_decimal(workspace.market_rates.eur_dkk_fx),
         f"{core.AFG_VARIABLES_SHEET}!C4": core._fmt_decimal(workspace.market_rates.gold_24k_dkk),
         f"{core.AFG_VARIABLES_SHEET}!C5": core._fmt_decimal(workspace.market_rates.silver_dkk),
@@ -213,12 +229,41 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
 def parse_afg_workspace_inputs_from_workbook(content: bytes):
     core = _core()
     workbook = load_workbook(io.BytesIO(content), keep_vba=True, data_only=False)
+    calculated_workbook = load_workbook(io.BytesIO(content), keep_vba=True, data_only=True)
     if core.AFG_PRIMARY_SHEET not in workbook.sheetnames:
         raise ValueError("Afregningsbilag sheet bulunamadı.")
     sheet = workbook[core.AFG_PRIMARY_SHEET]
+    calculated_sheet = calculated_workbook[core.AFG_PRIMARY_SHEET]
     factura_gold_sheet = workbook[core.AFG_FACTURA_GOLD_SHEET] if core.AFG_FACTURA_GOLD_SHEET in workbook.sheetnames else None
+    calculated_factura_gold_sheet = (
+        calculated_workbook[core.AFG_FACTURA_GOLD_SHEET]
+        if core.AFG_FACTURA_GOLD_SHEET in calculated_workbook.sheetnames
+        else None
+    )
     factura_misc_sheet = workbook[core.AFG_FACTURA_MISC_SHEET] if core.AFG_FACTURA_MISC_SHEET in workbook.sheetnames else None
+    calculated_factura_misc_sheet = (
+        calculated_workbook[core.AFG_FACTURA_MISC_SHEET]
+        if core.AFG_FACTURA_MISC_SHEET in calculated_workbook.sheetnames
+        else None
+    )
     vars_sheet = workbook[core.AFG_VARIABLES_SHEET] if core.AFG_VARIABLES_SHEET in workbook.sheetnames else None
+    calculated_vars_sheet = (
+        calculated_workbook[core.AFG_VARIABLES_SHEET]
+        if core.AFG_VARIABLES_SHEET in calculated_workbook.sheetnames
+        else None
+    )
+
+    def numeric_cell_value(source_sheet, calculated_sheet, cell_ref: str):
+        source_cell = source_sheet[cell_ref]
+        if source_cell.data_type != "f":
+            return source_cell.value
+        calculated_value = calculated_sheet[cell_ref].value if calculated_sheet is not None else None
+        if calculated_value is None or calculated_value == "":
+            raise ValueError(
+                f"{source_sheet.title}!{cell_ref} formülünün kaydedilmiş sonucu yok. "
+                "Dosyayı Excel'de açıp yeniden hesaplayarak kaydedin."
+            )
+        return calculated_value
 
     address, city = core._split_afg_address_line(sheet["C17"].value)
     customer = PosWorkspaceCustomerUpdate(
@@ -235,20 +280,22 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
     payment_method = core._payment_method_from_excel(sheet["C40"].value)
     reg_number = core._clean_text(sheet["D41"].value)
     account_number = core._clean_text(sheet["D42"].value)
+    purchase_vat_enabled = core._boolean_from_excel(sheet["A42"].value)
+    afg_note = core._clean_text(sheet["D44"].value)
 
     gold_rows = [
         PosWorkspaceGoldRowInput(
             karat=Decimal(row_key.split(":", 1)[1]),
-            gram=core._decimal_from_excel(sheet[f"F{idx}"].value),
-            avance_percent=core._percent_from_excel(sheet[f"B{idx}"].value),
+            gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
+            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
         )
         for idx, row_key in enumerate(core.AFG_GOLD_ROW_KEYS, start=core.AFG_GOLD_ROW_START)
     ]
     silver_rows = [
         PosWorkspaceSilverRowInput(
             type_code=row_key.split(":", 1)[1],
-            gram=core._decimal_from_excel(sheet[f"F{idx}"].value),
-            avance_percent=core._percent_from_excel(sheet[f"B{idx}"].value),
+            gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
+            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
         )
         for idx, row_key in enumerate(core.AFG_SILVER_ROW_KEYS, start=core.AFG_SILVER_ROW_START)
     ]
@@ -256,31 +303,35 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
     market_rates = None
     numbering = None
     if vars_sheet is not None:
-        fx = core._decimal_from_excel(vars_sheet["C10"].value) if core._clean_text(vars_sheet["C10"].value) is not None else Decimal("7.45")
+        fx = (
+            core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C10"))
+            if core._clean_text(vars_sheet["C10"].value) is not None
+            else Decimal("7.45")
+        )
         gold_rate_cells = {
-            "8": core._decimal4_from_excel(vars_sheet["I4"].value),
-            "14": core._decimal4_from_excel(vars_sheet["I5"].value),
-            "18": core._decimal4_from_excel(vars_sheet["I6"].value),
-            "21": core._decimal4_from_excel(vars_sheet["I7"].value),
-            "21.6": core._decimal4_from_excel(vars_sheet["I8"].value),
-            "22": core._decimal4_from_excel(vars_sheet["I9"].value),
-            "24": core._decimal4_from_excel(vars_sheet["I10"].value),
+            "8": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I4")),
+            "14": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I5")),
+            "18": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I6")),
+            "21": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I7")),
+            "21.6": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I8")),
+            "22": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I9")),
+            "24": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I10")),
         }
         silver_rate_cells = {
-            "999": core._decimal4_from_excel(vars_sheet["I11"].value),
-            "925": core._decimal4_from_excel(vars_sheet["I12"].value),
-            "830": core._decimal4_from_excel(vars_sheet["I13"].value),
-            "800": core._decimal4_from_excel(vars_sheet["I14"].value),
+            "999": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I11")),
+            "925": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I12")),
+            "830": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I13")),
+            "800": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I14")),
         }
         has_matrix_values = any(value > 0 for value in [*gold_rate_cells.values(), *silver_rate_cells.values()])
         if has_matrix_values:
             gold_24k_dkk = (
-                core._decimal_from_excel(vars_sheet["C4"].value)
+                core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C4"))
                 if core._clean_text(vars_sheet["C4"].value) is not None
                 else core.quantize_2(gold_rate_cells["24"] * fx)
             )
             silver_dkk = (
-                core._decimal_from_excel(vars_sheet["C5"].value)
+                core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C5"))
                 if core._clean_text(vars_sheet["C5"].value) is not None
                 else core.quantize_2(silver_rate_cells["999"] * fx)
             )
@@ -302,8 +353,8 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                         eur_dkk_fx=fx,
                         gold_rates_eur={},
                         silver_rates_eur={},
-                        gold_24k_dkk=core._decimal_from_excel(vars_sheet["C4"].value),
-                        silver_dkk=core._decimal_from_excel(vars_sheet["C5"].value),
+                        gold_24k_dkk=core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C4")),
+                        silver_dkk=core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C5")),
                     )
                 )
         numbering = PosWorkspaceNumberingUpdate(
@@ -321,7 +372,9 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                     "row_key": f"invoice_gold:{index}",
                     "code": core._clean_text(factura_gold_sheet[f"A{row_idx}"].value),
                     "fineness": core._clean_text(factura_gold_sheet[f"C{row_idx}"].value),
-                    "gram": core._decimal_from_excel(factura_gold_sheet[f"E{row_idx}"].value),
+                    "gram": core._decimal_from_excel(
+                        numeric_cell_value(factura_gold_sheet, calculated_factura_gold_sheet, f"E{row_idx}")
+                    ),
                 }
             )
         invoice_gold_footer_lines = [
@@ -337,11 +390,15 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                     "row_key": f"invoice_misc:{index}",
                     "text": core._clean_text(factura_misc_sheet[f"C{row_idx}"].value),
                     "quantity": (
-                        core._decimal_from_excel(factura_misc_sheet[f"E{row_idx}"].value)
+                        core._decimal_from_excel(
+                            numeric_cell_value(factura_misc_sheet, calculated_factura_misc_sheet, f"E{row_idx}")
+                        )
                         if core._clean_text(factura_misc_sheet[f"E{row_idx}"].value) is not None
                         else None
                     ),
-                    "unit_price_dkk": core._decimal_from_excel(factura_misc_sheet[f"F{row_idx}"].value),
+                    "unit_price_dkk": core._decimal_from_excel(
+                        numeric_cell_value(factura_misc_sheet, calculated_factura_misc_sheet, f"F{row_idx}")
+                    ),
                 }
             )
 
@@ -352,12 +409,22 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         core.AFG_FACTURA_GOLD_SHEET: factura_gold_sheet,
         core.AFG_FACTURA_MISC_SHEET: factura_misc_sheet,
     }
+    calculated_sheet_lookup = {
+        core.AFG_PRIMARY_SHEET: calculated_sheet,
+        core.AFG_VARIABLES_SHEET: calculated_vars_sheet,
+        core.AFG_FACTURA_GOLD_SHEET: calculated_factura_gold_sheet,
+        core.AFG_FACTURA_MISC_SHEET: calculated_factura_misc_sheet,
+    }
     for cell in core.AFG_EDITABLE_CELLS:
-        cell_sheet = sheet_lookup.get(cell.get("sheet", core.AFG_PRIMARY_SHEET))
+        sheet_name = cell.get("sheet", core.AFG_PRIMARY_SHEET)
+        cell_sheet = sheet_lookup.get(sheet_name)
         if cell_sheet is None:
             continue
+        value = cell_sheet[cell["cell_ref"]].value
+        if cell["input_kind"] in {"decimal", "percent"}:
+            value = numeric_cell_value(cell_sheet, calculated_sheet_lookup.get(sheet_name), cell["cell_ref"])
         normalized_values[core._afg_editable_cell_key(cell)] = core._normalized_cell_value(
-            cell_sheet[cell["cell_ref"]].value,
+            value,
             input_kind=cell["input_kind"],
         )
 
@@ -380,6 +447,9 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                 "account_number": account_number,
             },
             payment_method=payment_method,
+            afg_note=afg_note,
+            purchase_vat_enabled=purchase_vat_enabled,
+            purchase_vat_rate_percent=Decimal("25.00") if purchase_vat_enabled else Decimal("0.00"),
             market_rates=market_rates,
             calculators=calculators,
             numbering=numbering,

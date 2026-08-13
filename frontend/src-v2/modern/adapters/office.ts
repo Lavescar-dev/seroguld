@@ -29,7 +29,7 @@ export function createOfficeTransitionBlocker(
 ): TransitionBlockerDescriptor | null {
   const reasons: string[] = [];
   if (options?.isDirty || state.isLivePreviewDirty) reasons.push('Workbook içinde kaydedilmemiş değişiklik var');
-  if (state.isLivePreviewSyncing || state.isSessionRefreshing) reasons.push('Senkron veya session refresh devam ediyor');
+  if (state.isLivePreviewSyncing || state.isSessionRefreshing || state.isLoading) reasons.push('Senkron veya session refresh devam ediyor');
   if (options?.hasConflict || state.hasExternalUpdate || Boolean(state.importReconcilePreview?.blocking_errors?.length)) reasons.push('Conflict veya reconcile uyarısı çözülmedi');
   if (options?.hasDirtyImport || state.isImporting || state.isPreviewingImport) reasons.push('Import/reconcile akışı henüz tamamlanmadı');
   if (reasons.length === 0) return null;
@@ -83,7 +83,7 @@ export function createModernOfficeViewModel(
       { id: 'checksum', label: 'Checksum', value: options?.checksum || 'Sağlanmadı', tone: options?.checksum ? 'success' : 'warning' },
     ],
     syncBadges: [
-      { id: 'provider', label: 'Provider', value: state.runtimeStatus?.provider_label || state.launch?.provider_label || 'Unknown', tone: state.runtimeStatus?.runtime_available === false ? 'danger' : 'neutral' },
+      { id: 'surface', label: 'Çalışma sayfası', value: state.status?.artifact ? 'Hazır' : 'Yükleniyor', tone: state.status?.artifact ? 'success' : 'warning' },
       { id: 'autosave', label: 'Autosave', value: state.isLivePreviewSyncing ? 'Syncing' : state.isLivePreviewDirty || options?.isDirty ? 'Pending' : 'Stable', tone: state.isLivePreviewSyncing ? 'warning' : state.isLivePreviewDirty || options?.isDirty ? 'warning' : 'success' },
       { id: 'callback', label: 'Son Callback', value: state.status?.last_callback_at ? formatDate(state.status.last_callback_at) : 'Yok', tone: state.status?.last_callback_at ? 'neutral' : 'warning' },
       { id: 'conflict', label: 'Conflict', value: conflict ? 'Var' : 'Yok', tone: conflict ? 'danger' : 'success' },

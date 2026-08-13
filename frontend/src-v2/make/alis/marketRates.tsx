@@ -23,7 +23,7 @@ export const SILVER_MATRIX_ROWS = [
 
 const GOLD_RATE_ORDER = ['8', '14', '18', '21', '21.6', '22', '24'] as const;
 const SILVER_RATE_ORDER = ['999', '925', '830', '800'] as const;
-type MatrixRateDrafts = { gold: Record<string, string>; silver: Record<string, string> };
+type MatrixRateDrafts = { fx: string; gold: Record<string, string>; silver: Record<string, string> };
 
 export function normalizeTextInput(value: string): string {
   // Virgül -> nokta + işaret (minus) karakterini kaldır.
@@ -55,6 +55,7 @@ function formatRatePlaceholder(value: string | number | null | undefined) {
 
 function buildEmptyMatrixRateDrafts(): MatrixRateDrafts {
   return {
+    fx: '',
     gold: Object.fromEntries(GOLD_RATE_ORDER.map((key) => [key, ''])) as Record<string, string>,
     silver: Object.fromEntries(SILVER_RATE_ORDER.map((key) => [key, ''])) as Record<string, string>,
   };
@@ -201,41 +202,49 @@ export function MarketRatesEditor({
       : 'flex flex-wrap items-center justify-between gap-3 border-t border-brand-200 pt-3';
 
   const updateGoldRate = (rateKey: string, value: string) => {
-    const normalizedValue = normalizeTextInput(value);
     setRateDrafts((current) => ({
       ...current,
       gold: {
         ...current.gold,
-        [rateKey]: normalizedValue,
+        [rateKey]: value,
       },
     }));
-    setMarketRates((current) =>
-      syncMarketRateState(current, {
-        gold_rates_eur: {
-          ...current.gold_rates_eur,
-          [rateKey]: normalizedValue,
-        },
-      }),
-    );
   };
 
   const updateSilverRate = (rateKey: string, value: string) => {
-    const normalizedValue = normalizeTextInput(value);
     setRateDrafts((current) => ({
       ...current,
       silver: {
         ...current.silver,
-        [rateKey]: normalizedValue,
+        [rateKey]: value,
       },
     }));
-    setMarketRates((current) =>
-      syncMarketRateState(current, {
-        silver_rates_eur: {
-          ...current.silver_rates_eur,
-          [rateKey]: normalizedValue,
-        },
-      }),
-    );
+  };
+
+  const commitGoldRate = (rateKey: string, value: string) => {
+    if (parseDecimalValue(value) <= 0) return false;
+    setMarketRates((current) => syncMarketRateState(current, {
+      gold_rates_eur: { ...current.gold_rates_eur, [rateKey]: value },
+    }));
+    return true;
+  };
+
+  const commitSilverRate = (rateKey: string, value: string) => {
+    if (parseDecimalValue(value) <= 0) return false;
+    setMarketRates((current) => syncMarketRateState(current, {
+      silver_rates_eur: { ...current.silver_rates_eur, [rateKey]: value },
+    }));
+    return true;
+  };
+
+  const updateFx = (value: string) => {
+    setRateDrafts((current) => ({ ...current, fx: value }));
+  };
+
+  const commitFx = (value: string) => {
+    if (parseDecimalValue(value) <= 0) return false;
+    setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: value }));
+    return true;
   };
 
   return (
@@ -308,12 +317,15 @@ export function MarketRatesEditor({
                   <input
                     id={`${panelId}-fx`}
                     type="text"
-                    value={marketRates.eur_dkk_fx}
-                    onChange={(event) =>
-                      setMarketRates((current) =>
-                        syncMarketRateState(current, { eur_dkk_fx: normalizeTextInput(event.target.value) }),
-                      )
-                    }
+                    value={activeRateField === 'fx' ? rateDrafts.fx : marketRates.eur_dkk_fx}
+                    onFocus={() => {
+                      setActiveRateField('fx');
+                      setRateDrafts((current) => ({ ...current, fx: current.fx || marketRates.eur_dkk_fx }));
+                    }}
+                    onChange={(event) => updateFx(event.target.value)}
+                    onBlur={(event) => {
+                      if (commitFx(event.currentTarget.value)) setActiveRateField(null);
+                    }}
                     className={fieldInputClassName}
                   />
                   <span className={unitClassName}>FX</span>
@@ -345,11 +357,16 @@ export function MarketRatesEditor({
                           <input
                             id={`${panelId}-gold-${row.key}`}
                             type="text"
-                            value={rateDrafts.gold[row.key] ?? ''}
+                            value={activeRateField === `gold:${row.key}` ? rateDrafts.gold[row.key] ?? '' : marketRates.gold_rates_eur?.[row.key] ?? ''}
                             placeholder={formatRatePlaceholder(marketRates.gold_rates_eur?.[row.key])}
                             onChange={(event) => updateGoldRate(row.key, event.target.value)}
-                            onFocus={() => setActiveRateField(`gold:${row.key}`)}
-                            onBlur={() => setActiveRateField(null)}
+                            onFocus={() => {
+                              setActiveRateField(`gold:${row.key}`);
+                              setRateDrafts((current) => ({ ...current, gold: { ...current.gold, [row.key]: current.gold[row.key] || marketRates.gold_rates_eur?.[row.key] || '' } }));
+                            }}
+                            onBlur={(event) => {
+                              if (commitGoldRate(row.key, event.currentTarget.value)) setActiveRateField(null);
+                            }}
                             className={fieldInputClassName}
                             aria-label={`${row.label} Gold EUR / G`}
                           />
@@ -384,11 +401,16 @@ export function MarketRatesEditor({
                           <input
                             id={`${panelId}-silver-${row.key}`}
                             type="text"
-                            value={rateDrafts.silver[row.key] ?? ''}
+                            value={activeRateField === `silver:${row.key}` ? rateDrafts.silver[row.key] ?? '' : marketRates.silver_rates_eur?.[row.key] ?? ''}
                             placeholder={formatRatePlaceholder(marketRates.silver_rates_eur?.[row.key])}
                             onChange={(event) => updateSilverRate(row.key, event.target.value)}
-                            onFocus={() => setActiveRateField(`silver:${row.key}`)}
-                            onBlur={() => setActiveRateField(null)}
+                            onFocus={() => {
+                              setActiveRateField(`silver:${row.key}`);
+                              setRateDrafts((current) => ({ ...current, silver: { ...current.silver, [row.key]: current.silver[row.key] || marketRates.silver_rates_eur?.[row.key] || '' } }));
+                            }}
+                            onBlur={(event) => {
+                              if (commitSilverRate(row.key, event.currentTarget.value)) setActiveRateField(null);
+                            }}
                             className={fieldInputClassName}
                             aria-label={`${row.label} EUR / G`}
                           />

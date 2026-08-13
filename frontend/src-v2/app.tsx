@@ -8,8 +8,9 @@ import {
 } from 'react-router-dom';
 
 import { AppShell } from '@/components/AppShell';
+import { DesktopBackupLifecycle } from '@/components/DesktopBackupLifecycle';
 import { AuthenticatedRouteErrorElement } from '@/components/AuthenticatedRouteErrorElement';
-import { getAccessToken } from '@/lib/auth';
+import { getAccessToken, getCurrentUser } from '@/lib/auth';
 import { writeUiDiagnostic } from '@/lib/desktop';
 import {
   UiVariantBoundary,
@@ -106,6 +107,7 @@ function renderDisplayPage(element: ReactNode) {
 }
 
 const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage');
+const PasswordChangePage = lazyPage(() => import('@/pages/PasswordChangePage'), 'PasswordChangePage');
 const DisplayIdlePage = lazyPage(() => import('@/pages/DisplayIdlePage'), 'DisplayIdlePage');
 const DisplayPage = lazyPage(() => import('@/pages/DisplayPage'), 'DisplayPage');
 const GdprPublicPrivacyPage = lazyPage(() => import('@/pages/GdprPublicPrivacyPage'), 'GdprPublicPrivacyPage');
@@ -139,6 +141,10 @@ function RequireAuth() {
 
   if (!getAccessToken()) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (getCurrentUser()?.must_change_password && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   return <Outlet />;
@@ -279,6 +285,7 @@ const router = createHashRouter([
     element: <RequireAuth />,
     errorElement: <AuthenticatedRouteErrorElement />,
     children: [
+      { path: '/change-password', element: renderLazyPage(<PasswordChangePage />) },
       { path: '/office-document/:kind/:key', element: renderLazyPage(<OfficeDocumentPage />) },
       { path: '/excel-preview/:kind/:key', element: renderLazyPage(<ExcelPreviewPage />) },
       {
@@ -330,6 +337,7 @@ export function App() {
     >
       <UiVariantSwitchDialog />
       <UiVariantToastBridge />
+      <DesktopBackupLifecycle />
       <RouterProvider router={router} />
     </UiVariantBoundary>
   );

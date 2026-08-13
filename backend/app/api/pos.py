@@ -515,6 +515,7 @@ async def get_pos_documents(
             currency_code=document.currency_code,
             gross_amount_dkk=document.gross_amount_dkk,
             net_amount_dkk=document.net_amount_dkk,
+            vat_rate_percent=document.vat_rate_percent,
             vat_amount_dkk=document.vat_amount_dkk,
             line_count=int(line_count or 0),
             total_weight_grams=Decimal(related_products.get(document.sequence_no, {}).get("total_weight_grams", 0) or 0),
@@ -682,6 +683,7 @@ async def get_pos_document_detail(
         currency_code=document.currency_code,
         gross_amount_dkk=document.gross_amount_dkk,
         net_amount_dkk=document.net_amount_dkk,
+        vat_rate_percent=document.vat_rate_percent,
         vat_amount_dkk=document.vat_amount_dkk,
         line_count=len(line_items),
         total_weight_grams=total_weight,
@@ -823,6 +825,21 @@ async def _authenticate_admin_ws(token: str | None) -> User | None:
         return user
 
 
+def _clerk_websocket_token(websocket: WebSocket) -> tuple[str | None, str | None]:
+    """Read the clerk token without putting it in the request URL.
+
+    Browsers cannot set arbitrary WebSocket headers.  They can, however,
+    offer subprotocols.  The client offers a fixed protocol followed by the
+    JWT; the server authenticates the JWT and echoes only the fixed protocol,
+    so access logs and the negotiated response never contain the secret.
+    """
+
+    protocols = list(websocket.scope.get("subprotocols") or [])
+    if len(protocols) >= 2 and protocols[0] == "seroguld-auth":
+        return str(protocols[1] or "").strip() or None, "seroguld-auth"
+    return None, None
+
+
 @router.websocket("/display/{display_token}/ws")
 async def display_socket(websocket: WebSocket, display_token: str):
     async with AsyncSessionLocal() as session:
@@ -847,7 +864,7 @@ async def display_socket(websocket: WebSocket, display_token: str):
 
 @router.websocket("/sessions/{session_id}/ws")
 async def clerk_socket(websocket: WebSocket, session_id: UUID):
-    token = websocket.query_params.get("token")
+    token, accepted_subprotocol = _clerk_websocket_token(websocket)
     user = await _authenticate_admin_ws(token)
     if user is None:
         await websocket.close(code=4401)
@@ -860,7 +877,11 @@ async def clerk_socket(websocket: WebSocket, session_id: UUID):
             await websocket.close(code=4404)
             return
 
-    await realtime_hub.connect_clerk(session_id, websocket)
+    await realtime_hub.connect_clerk(
+        session_id,
+        websocket,
+        subprotocol=accepted_subprotocol,
+    )
     try:
         async with AsyncSessionLocal() as session:
             pos_session = await get_pos_session_or_404(session, session_id)

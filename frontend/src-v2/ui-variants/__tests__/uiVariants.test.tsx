@@ -108,16 +108,23 @@ function ManualReturnProbe() {
 }
 
 describe('ui variants', () => {
-  it('falls back to classic for missing or invalid stored values and persists explicit choices', () => {
+  it('defaults to modern when v3 is missing and ignores v1/v2 classic preferences', () => {
     const storage = new MemoryStorage();
-    expect(readStoredUiVariant(storage)).toBe('classic');
+    expect(readStoredUiVariant(storage)).toBe('modern');
 
-    storage.setItem('seroguld.ui.variant.v1', 'invalid');
-    expect(readStoredUiVariant(storage)).toBe('classic');
+    storage.setItem('seroguld.ui.variant.v1', 'classic');
+    storage.setItem('seroguld.ui.variant.v2', 'classic');
+    expect(readStoredUiVariant(storage)).toBe('modern');
 
     const adapter = createStorageAdapter(storage);
     adapter.writeVariant('modern');
     expect(readStoredUiVariant(storage)).toBe('modern');
+    expect(storage.getItem('seroguld.ui.variant.v3')).toBe('modern');
+    expect(storage.getItem('seroguld.ui.variant.v2')).toBe('classic');
+
+    adapter.writeVariant('classic');
+    expect(readStoredUiVariant(storage)).toBe('classic');
+    expect(storage.getItem('seroguld.ui.variant.v3')).toBe('classic');
 
     expect(adapter.isModernBannerDismissed()).toBe(false);
     adapter.dismissModernBanner();
@@ -129,7 +136,7 @@ describe('ui variants', () => {
 
     render(
       <ConfirmProvider>
-        <UiVariantProvider storage={createStorageAdapter(storage)}>
+        <UiVariantProvider initialVariant="classic" storage={createStorageAdapter(storage)}>
           <UiVariantSwitchDialog />
           <RequestModernButton />
           <VariantStatus />
@@ -155,14 +162,14 @@ describe('ui variants', () => {
     await waitFor(() => {
       expect(screen.getByTestId('variant')).toHaveTextContent('modern');
     });
-    expect(storage.getItem('seroguld.ui.variant.v1')).toBe('modern');
+    expect(storage.getItem('seroguld.ui.variant.v3')).toBe('modern');
   });
 
   it('keeps the classic banner dismissed across provider remounts', async () => {
     const storage = new MemoryStorage();
     const adapter = createStorageAdapter(storage);
     const { unmount } = render(
-      <UiVariantProvider storage={adapter}>
+      <UiVariantProvider initialVariant="classic" storage={adapter}>
         <ClassicDiscoveryBanner />
       </UiVariantProvider>,
     );
@@ -176,7 +183,7 @@ describe('ui variants', () => {
     unmount();
 
     render(
-      <UiVariantProvider storage={adapter}>
+      <UiVariantProvider initialVariant="classic" storage={adapter}>
         <ClassicDiscoveryBanner />
       </UiVariantProvider>,
     );
@@ -201,7 +208,7 @@ describe('ui variants', () => {
     });
 
     render(
-      <UiVariantProvider storage={createStorageAdapter(storage)} registry={registry}>
+      <UiVariantProvider initialVariant="classic" storage={createStorageAdapter(storage)} registry={registry}>
         <ConfirmModernDirectly />
         <VariantStatus />
       </UiVariantProvider>,
@@ -229,7 +236,7 @@ describe('ui variants', () => {
     });
 
     render(
-      <UiVariantProvider storage={createStorageAdapter(storage)} registry={registry}>
+      <UiVariantProvider initialVariant="classic" storage={createStorageAdapter(storage)} registry={registry}>
         <ConfirmModernDirectly />
         <VariantStatus />
       </UiVariantProvider>,
@@ -240,9 +247,7 @@ describe('ui variants', () => {
     });
 
     expect(screen.getByTestId('variant')).toHaveTextContent('classic');
-    expect(screen.getByTestId('notice')).toHaveTextContent(
-      'Arayüz değişikliği şu anda tamamlanamadı.',
-    );
+    expect(screen.getByTestId('notice')).toHaveTextContent('Arayüz değişikliği şu anda tamamlanamadı.');
     expect(screen.getByTestId('notice-description')).toHaveTextContent(
       'Devam eden finalize işlemi tamamlanmadan geçiş yapılamaz.',
     );
@@ -280,7 +285,7 @@ describe('ui variants', () => {
     expect(root?.getAttribute('data-ui-fingerprint')).toContain('variant:classic');
   });
 
-  it('captures a sanitized modern boundary diagnostic, preserves hash, and returns to classic with a notice', async () => {
+  it('captures a sanitized modern boundary diagnostic, preserves hash, and waits for explicit classic choice', async () => {
     const storage = new MemoryStorage();
     const adapter = createStorageAdapter(storage);
     window.location.hash = '#/log';
@@ -299,8 +304,8 @@ describe('ui variants', () => {
       </UiVariantProvider>,
     );
 
-    expect(await screen.findByText('Modern görünüm güvenli biçimde kapatıldı')).toBeInTheDocument();
-    expect(storage.getItem('seroguld.ui.variant.v1')).toBe('classic');
+    expect(await screen.findByText('Yeni arayüz yüklenemedi')).toBeInTheDocument();
+    expect(storage.getItem('seroguld.ui.variant.v3')).toBeNull();
     expect(window.location.hash).toBe('#/log');
 
     const diagnostic = capture.mock.calls[0]?.[0];
@@ -308,31 +313,26 @@ describe('ui variants', () => {
     expect(diagnostic.hash).toBe('#/log');
     expect(diagnostic.fingerprint).toContain('variant:modern');
 
-    act(() => {
-      screen.getByRole('button', { name: 'Klasik arayüze dön' }).click();
-    });
+    expect(screen.getByRole('button', { name: 'Klasik arayüze dön' })).toBeInTheDocument();
+    expect(screen.getByTestId('variant')).toHaveTextContent('modern');
+
+    act(() => screen.getByRole('button', { name: 'Klasik arayüze dön' }).click());
 
     await waitFor(() => {
       expect(screen.getByTestId('variant')).toHaveTextContent('classic');
     });
-    expect(screen.getByTestId('notice')).toHaveTextContent(
-      'Yeni arayüz başlatılamadı, klasik arayüze dönüldü.',
-    );
+    expect(screen.getByTestId('notice')).toHaveTextContent('Yeni arayüz başlatılamadı');
   });
 
-  it('supports automatic classic fallback notices after a modern failure event', async () => {
+  it('keeps modern selected after a reported failure until classic is chosen explicitly', async () => {
     render(
       <UiVariantProvider initialVariant="modern">
         <ManualReturnProbe />
       </UiVariantProvider>,
     );
 
-    await waitFor(() => {
-      expect(screen.getByTestId('probe-variant')).toHaveTextContent('classic');
-    });
-    expect(screen.getByTestId('probe-notice')).toHaveTextContent(
-      'Yeni arayüz başlatılamadı, klasik arayüze dönüldü.',
-    );
+    await waitFor(() => expect(screen.getByTestId('probe-variant')).toHaveTextContent('modern'));
+    expect(screen.getByTestId('probe-notice')).toHaveTextContent('Yeni arayüz başlatılamadı');
   });
 
   it('renders settings cards with classic and preview labels', () => {

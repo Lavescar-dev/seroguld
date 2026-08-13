@@ -44,6 +44,8 @@ def customer_party_label(document_type: PosDocumentTypeEnum) -> str:
 
 
 def format_document_number(document: PosDocument) -> str:
+    if document.legacy_document_number:
+        return document.legacy_document_number
     prefix = settings.invoice_number_prefix.strip() or "SG"
     issue_year = (document.issued_at or utc_now()).year
     return f"{prefix}-{issue_year}-{document.sequence_no:06d}"

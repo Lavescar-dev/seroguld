@@ -76,12 +76,18 @@ function resolveSwitchCopy(intent: UiVariantTransitionIntent) {
 
 export function UiVariantProvider({
   children,
-  storage = createUiVariantStorage(),
+  storage: storageProp,
   registry,
   initialVariant,
   frontendMode,
   frontendBuiltAt,
 }: UiVariantProviderProps) {
+  // The default adapter must survive provider rerenders. Creating it in the
+  // parameter default gives every render a new identity, which in turn makes
+  // callbacks such as reportModernBootstrapFailure unstable and can replay a
+  // failure-reporting effect indefinitely.
+  const defaultStorageRef = useRef<UiVariantStorageAdapter | null>(null);
+  const storage = storageProp ?? (defaultStorageRef.current ??= createUiVariantStorage());
   const internalRegistryRef = useRef<UiVariantTransitionRegistry | null>(null);
   if (!internalRegistryRef.current) {
     internalRegistryRef.current = registry ?? new UiVariantTransitionRegistry();
@@ -201,7 +207,15 @@ export function UiVariantProvider({
 
   const reportModernBootstrapFailure = useCallback(
     (event: ModernUiFallbackEvent) => {
-      applyVariant('classic', {
+      if (event.explicitClassic) {
+        applyVariant('classic', {
+          tone: 'error',
+          message: UI_VARIANT_MODERN_BOOTSTRAP_FAILED_NOTICE,
+          description: event.supportPath ? `Destek paketi: ${event.supportPath}` : undefined,
+        });
+        return;
+      }
+      enqueueNotice({
         tone: 'error',
         message: UI_VARIANT_MODERN_BOOTSTRAP_FAILED_NOTICE,
         description: event.supportPath
@@ -209,7 +223,7 @@ export function UiVariantProvider({
           : undefined,
       });
     },
-    [applyVariant],
+    [applyVariant, enqueueNotice],
   );
 
   const rootFingerprint = useMemo(

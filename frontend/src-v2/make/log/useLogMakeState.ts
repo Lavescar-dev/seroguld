@@ -12,7 +12,6 @@ import type {
   LogMeltLotLine,
   LogRouteBatchApplyResponse,
   LogWorkspace,
-  OfficeRuntimeStatus,
 } from '@/types';
 
 import type { LogPageProps } from './LogPage';
@@ -106,14 +105,6 @@ export function useLogMakeState(): LogPageProps {
   const [linesLotId, setLinesLotId] = useState<string | null>(null);
 
   const visible = useDocumentVisible();
-
-  useEffect(() => {
-    void queryClient.prefetchQuery({
-      queryKey: ['office-runtime-status', 'log'],
-      queryFn: () => apiRequest<OfficeRuntimeStatus>('/api/v2/office-runtime/status?kind=log'),
-      staleTime: 30_000,
-    });
-  }, [queryClient]);
 
   const workspaceQueryString = useMemo(() => {
     const params = new URLSearchParams();

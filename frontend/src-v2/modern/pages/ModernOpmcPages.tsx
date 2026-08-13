@@ -5,6 +5,7 @@ import {
   ModernBadge,
   ModernButton,
   ModernCard,
+  ModernNotice,
   ModernPage,
   ModernSection,
   ModernSectionHeader,
@@ -28,6 +29,17 @@ function riskAverage(items: ModernOpmcListPageProps['items']): number | string {
   return scores.length > 0 ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : '—';
 }
 
+function OpmcConstructionNotice() {
+  return (
+    <ModernNotice
+      tone="warning"
+      title="Yapım aşamasında"
+      description="Bu çalışma alanı kullanıma ve incelemeye açıktır. Risk kuralları, karar geçmişi ve otomasyon akışları geliştirildiği için sonuçları henüz nihai karar olarak kabul etmeyin."
+      icon={<AlertTriangle className="h-5 w-5" />}
+    />
+  );
+}
+
 export function ModernOpmcListPage({
   source,
   generatedAt,
@@ -48,6 +60,7 @@ export function ModernOpmcListPage({
       <ModernPage>
         <ModernSection>
           <ModernSectionHeader eyebrow="Risk ve karar" title="OPMC / Anti-fraud" description="Gerçek risk kuyruğu bekleniyor." />
+          <div className="mt-4"><OpmcConstructionNotice /></div>
           <div className="mt-5"><ModernUnavailableState title="OPMC verisi hazırlanıyor" description="Remote risk metadata gelmeden sahte case veya skor gösterilmez." detail="READ-ONLY RUNTIME" /></div>
         </ModernSection>
       </ModernPage>
@@ -63,10 +76,11 @@ export function ModernOpmcListPage({
           description="Risk sinyallerini sahiplik, kaynak ve zorunlu gerekçe ile izlenebilir karar çalışma alanına dönüştürür."
           action={onRefresh ? <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh}>Riskleri yenile</ModernButton> : undefined}
         />
+        <div className="mt-4"><OpmcConstructionNotice /></div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {source ? <ModernBadge tone="info">{source}</ModernBadge> : null}
           {generatedAt ? <ModernBadge tone="neutral">Üretildi: {formatDate(generatedAt)}</ModernBadge> : null}
-          <ModernBadge tone="warning">Manuel kararlar audit gerektirir</ModernBadge>
+          <ModernBadge tone="warning">Manuel kararlar denetim kaydı gerektirir</ModernBadge>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <ModernStat label="İnceleme kuyruğu" value={summary.total_orders} meta={`${summary.manual_review_count} manuel`} icon={ShieldAlert} tone="danger" />
@@ -143,7 +157,7 @@ export function ModernOpmcListPage({
         <ModernSection>
           <ModernSectionHeader title="Kural görünümü" description="Known customer, mismatch, chargeback, guest ve whitelist sinyalleri gerçek case metadata'sından okunur." />
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {['Known customer', 'Address mismatch', 'Chargeback', 'Guest buyer', 'Whitelist', 'Manual override'].map((rule) => <ModernCard key={rule} className="bg-sg-surface-soft"><p className="text-sm font-semibold text-sg-text">{rule}</p><p className="mt-2 text-xs text-sg-text-soft">Case metadata hook'u ile eşleşen sinyal varsa aktifleşir.</p><ModernBadge className="mt-3" tone="info">DISCOVERY</ModernBadge></ModernCard>)}
+            {['Bilinen müşteri', 'Adres uyuşmazlığı', 'Ters ibraz', 'Misafir alıcı', 'İzin listesi', 'Manuel geçersiz kılma'].map((rule) => <ModernCard key={rule} className="bg-sg-surface-soft"><p className="text-sm font-semibold text-sg-text">{rule}</p><p className="mt-2 text-xs text-sg-text-soft">Kural bilgisiyle eşleşen sinyal varsa etkinleşir. ile eşleşen sinyal varsa aktifleşir.</p><ModernBadge className="mt-3" tone="info">İnceleme</ModernBadge></ModernCard>)}
           </div>
         </ModernSection>
       ) : null}
@@ -164,13 +178,14 @@ export function ModernOpmcDetailPage({
   const canOverride = Boolean(onOverride && reason.trim() && overrideAvailability?.state === 'available');
 
   if (isLoading && !detail) {
-    return <ModernPage><ModernSection><ModernSectionHeader eyebrow="OPMC detay" title={`Sipariş ${requestedId || '—'}`} description="Gerçek vaka detayı bekleniyor." /><div className="mt-5"><ModernUnavailableState title="Vaka hazırlanıyor" description="Remote risk detayına ulaşmadan karar aksiyonu gösterilmez." detail="READ-ONLY RUNTIME" /></div></ModernSection></ModernPage>;
+    return <ModernPage><ModernSection><ModernSectionHeader eyebrow="OPMC detay" title={`Sipariş ${requestedId || '—'}`} description="Gerçek vaka detayı bekleniyor." /><div className="mt-4"><OpmcConstructionNotice /></div><div className="mt-5"><ModernUnavailableState title="Vaka hazırlanıyor" description="Remote risk detayına ulaşmadan karar aksiyonu gösterilmez." detail="READ-ONLY RUNTIME" /></div></ModernSection></ModernPage>;
   }
 
   return (
     <ModernPage>
       <ModernSection className="bg-sg-surface-soft">
-        <ModernSectionHeader eyebrow="Risk ve karar · detay" title={detail ? `#${detail.order_number || requestedId} · Aktif vaka` : `Sipariş ${requestedId || '—'}`} description="Risk nedenleri, müşteri geçmişi ve karar gerekçesi aynı audit edilebilir yüzeyde." action={onRefresh ? <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh}>Detayı yenile</ModernButton> : undefined} />
+        <ModernSectionHeader eyebrow="Risk ve karar · detay" title={detail ? `#${detail.order_number || requestedId} · Aktif vaka` : `Sipariş ${requestedId || '—'}`} description="Risk nedenleri, müşteri geçmişi ve karar gerekçesi aynı denetlenebilir yüzeyde." action={onRefresh ? <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh}>Detayı yenile</ModernButton> : undefined} />
+        <div className="mt-4"><OpmcConstructionNotice /></div>
         <div className="mt-4"><AvailabilityBanner availability={refreshAvailability} /></div>
       </ModernSection>
 

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from math import ceil
 import re
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,7 @@ from app.database import get_db
 from app.models.ai_usage_log import AIUsageLog
 from app.models.customer_activity import CustomerActivityEvent
 from app.models.customer_identity import CustomerIdentityDocument
+from app.models.customer_note import CustomerNote, CustomerNoteRevision
 from app.models.pos_document import PosDocument
 from app.models.pos_session import PosSession
 from app.models.pos_session_product_link import PosSessionProductLink
@@ -23,19 +25,28 @@ from app.models.product import Product
 from app.models.product_history import ProductHistory
 from app.models.transaction import Transaction
 from app.models.transaction_line import TransactionLine
-from app.models.enums import PosDocumentTypeEnum, ProductStatusEnum, RoleEnum
+from app.models.enums import MetalTypeEnum, PosDocumentTypeEnum, ProductStatusEnum, RoleEnum
 from app.models.user import User
 from app.schemas.customer import (
     CustomerCreate,
     CustomerDetailOut,
     CustomerListResponse,
+    CustomerNoteCreate,
+    CustomerNoteListOut,
+    CustomerNoteOut,
+    CustomerNoteRevisionOut,
+    CustomerNoteUpdate,
     CustomerOut,
+    CustomerTransactionListOut,
+    CustomerTransactionOut,
+    CustomerWorkspaceOut,
     CustomerWooImportRequest,
     CustomerWooImportResponse,
     CustomerUpdate,
 )
 from app.schemas.pos import PosDocumentListItemOut
 from app.services.customer_service import create_customer, get_customer_detail, to_customer_out, update_customer
+from app.services.customer_statement_renderer import render_customer_statement_pdf
 from app.services.pos_document_service import document_title_tr, format_document_number
 from app.services.woocommerce import WooCommerceService
 from app.utils.security import hash_cpr, hash_sensitive_value
@@ -178,13 +189,17 @@ async def get_customers(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     sort_by: Literal["created_at", "recent_activity"] = Query(default="created_at"),
+    customer_status: Literal["active", "inactive", "all"] = Query(default="active", alias="status"),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> CustomerListResponse:
-    base = select(User).where(User.role == RoleEnum.CUSTOMER, User.is_active.is_(True))
-    total = await db.scalar(
-        select(func.count(User.id)).where(User.role == RoleEnum.CUSTOMER, User.is_active.is_(True))
-    )
+    status_filters = [User.role == RoleEnum.CUSTOMER]
+    if customer_status == "active":
+        status_filters.append(User.is_active.is_(True))
+    elif customer_status == "inactive":
+        status_filters.append(User.is_active.is_(False))
+    base = select(User).where(*status_filters)
+    total = await db.scalar(select(func.count(User.id)).where(*status_filters))
 
     if sort_by == "recent_activity":
         last_activity_subquery = (
@@ -198,7 +213,7 @@ async def get_customers(
         base = (
             select(User)
             .outerjoin(last_activity_subquery, last_activity_subquery.c.customer_id == User.id)
-            .where(User.role == RoleEnum.CUSTOMER, User.is_active.is_(True))
+            .where(*status_filters)
             .order_by(last_activity_subquery.c.last_activity_at.desc().nullslast(), User.created_at.desc())
         )
     else:
@@ -232,6 +247,7 @@ async def post_customer(
 @router.get("/search", response_model=list[CustomerOut])
 async def search_customers(
     q: str = Query(min_length=2),
+    customer_status: Literal["active", "inactive", "all"] = Query(default="active", alias="status"),
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> list[CustomerOut]:
@@ -240,9 +256,13 @@ async def search_customers(
         return []
     pattern = f"%{query_text}%"
     lowered = query_text.lower()
+    status_predicates = [User.role == RoleEnum.CUSTOMER]
+    if customer_status == "active":
+        status_predicates.append(User.is_active.is_(True))
+    elif customer_status == "inactive":
+        status_predicates.append(User.is_active.is_(False))
     predicates = [
-        User.role == RoleEnum.CUSTOMER,
-        User.is_active.is_(True),
+        *status_predicates,
         or_(
             User.name.ilike(pattern),
             User.phone.ilike(pattern),
@@ -254,8 +274,7 @@ async def search_customers(
     digits = "".join(ch for ch in q if ch.isdigit())
     if digits:
         predicates = [
-            User.role == RoleEnum.CUSTOMER,
-            User.is_active.is_(True),
+            *status_predicates,
             or_(
                 User.name.ilike(pattern),
                 User.phone.ilike(pattern),
@@ -268,8 +287,7 @@ async def search_customers(
         doc_hash = hash_sensitive_value(q.strip())
         if doc_hash:
             predicates = [
-                User.role == RoleEnum.CUSTOMER,
-                User.is_active.is_(True),
+                *status_predicates,
                 or_(
                     User.name.ilike(pattern),
                     User.phone.ilike(pattern),
@@ -514,6 +532,11 @@ async def get_customer_history(
             has_locked_products=bool(related_products.get(document.sequence_no, {}).get("has_locked_products", False)),
             issued_at=document.issued_at,
             confirmed_at=(transaction.confirmed_at if transaction is not None else pos_session.confirmed_at),
+            historical_imported_at=document.historical_imported_at,
+            uniconta_sync_status=document.uniconta_sync_status,
+            uniconta_invoice_number=document.uniconta_invoice_number,
+            uniconta_account=document.uniconta_account,
+            uniconta_pdf_available=bool(document.uniconta_pdf_path),
         )
         for document, pos_session, transaction, line_count in rows
     ]
@@ -551,3 +574,182 @@ async def delete_customer(
     customer.is_active = False
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _customer_record(db: AsyncSession, customer_id: UUID) -> User:
+    customer = await db.get(User, customer_id)
+    if not customer or customer.role != RoleEnum.CUSTOMER:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    return customer
+
+
+async def _note_payloads(db: AsyncSession, notes: list[CustomerNote]) -> list[CustomerNoteOut]:
+    actor_ids = {note.author_user_id for note in notes if note.author_user_id}
+    actors = {user.id: user.name for user in (await db.scalars(select(User).where(User.id.in_(actor_ids)))).all()} if actor_ids else {}
+    return [CustomerNoteOut(
+        id=note.id,
+        customer_id=note.customer_id,
+        author_user_id=note.author_user_id,
+        author_name=actors.get(note.author_user_id, "Sistem"),
+        body=note.body,
+        version=note.version,
+        created_at=note.created_at,
+        updated_at=note.updated_at,
+        deleted_at=note.deleted_at,
+    ) for note in notes]
+
+
+@router.get("/{customer_id}/workspace", response_model=CustomerWorkspaceOut)
+async def get_customer_workspace(customer_id: UUID, db: AsyncSession = Depends(get_db), _=Depends(require_admin)) -> CustomerWorkspaceOut:
+    customer = await _customer_record(db, customer_id)
+    detail = await get_customer_detail(db, customer)
+    visible = Product.deleted_at.is_(None)
+    purchase_count, purchase_amount, gold_grams, silver_grams = (await db.execute(select(
+        func.count(Product.id),
+        func.coalesce(func.sum(Product.purchase_price_dkk), Decimal("0")),
+        func.coalesce(func.sum(case((Product.metal_type != MetalTypeEnum.SILVER, Product.weight_grams), else_=0)), Decimal("0")),
+        func.coalesce(func.sum(case((Product.metal_type == MetalTypeEnum.SILVER, Product.weight_grams), else_=0)), Decimal("0")),
+    ).where(Product.seller_customer_id == customer_id, visible))).one()
+    sale_count, sale_amount = (await db.execute(select(
+        func.count(Product.id), func.coalesce(func.sum(Product.sale_price_dkk), Decimal("0"))
+    ).where(Product.buyer_customer_id == customer_id, visible))).one()
+    document_count = await db.scalar(select(func.count(PosDocument.sequence_no)).join(PosSession, PosSession.id == PosDocument.pos_session_id).where(PosSession.customer_id == customer_id))
+    note_count = await db.scalar(select(func.count(CustomerNote.id)).where(CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)))
+    last_purchase = await db.scalar(select(func.max(Product.purchase_date)).where(Product.seller_customer_id == customer_id, visible))
+    last_sale = await db.scalar(select(func.max(Product.sale_date)).where(Product.buyer_customer_id == customer_id, visible))
+    last_transaction_at = max([value for value in (last_purchase, last_sale) if value is not None], default=None)
+    return CustomerWorkspaceOut(
+        customer=detail,
+        purchase_count=int(purchase_count or 0),
+        purchase_amount_dkk=str(purchase_amount or 0),
+        sale_count=int(sale_count or 0),
+        sale_amount_dkk=str(sale_amount or 0),
+        total_gold_grams=str(gold_grams or 0),
+        total_silver_grams=str(silver_grams or 0),
+        document_count=int(document_count or 0),
+        note_count=int(note_count or 0),
+        last_transaction_at=last_transaction_at,
+    )
+
+
+@router.get("/{customer_id}/transactions", response_model=CustomerTransactionListOut)
+async def get_customer_transactions(
+    customer_id: UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=30, ge=1, le=100),
+    side: Literal["all", "buy_from_customer", "sell_to_customer"] = Query(default="all"),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+) -> CustomerTransactionListOut:
+    await _customer_record(db, customer_id)
+    side_filter = Product.seller_customer_id == customer_id if side == "buy_from_customer" else Product.buyer_customer_id == customer_id if side == "sell_to_customer" else or_(Product.seller_customer_id == customer_id, Product.buyer_customer_id == customer_id)
+    query = select(Product).where(side_filter, Product.deleted_at.is_(None))
+    total = int(await db.scalar(select(func.count()).select_from(query.subquery())) or 0)
+    products = (await db.scalars(query.order_by(Product.updated_at.desc()).offset((page - 1) * page_size).limit(page_size))).all()
+    items = []
+    for product in products:
+        resolved_side = "buy_from_customer" if product.seller_customer_id == customer_id else "sell_to_customer"
+        amount = product.purchase_price_dkk if resolved_side == "buy_from_customer" else product.sale_price_dkk or 0
+        happened_at = product.purchase_date if resolved_side == "buy_from_customer" else product.sale_date or product.updated_at
+        items.append(CustomerTransactionOut(
+            id=product.id,
+            side=resolved_side,
+            product_number=product.product_number,
+            reference_number=product.reference_number,
+            product_type=product.product_type.value,
+            metal_type=product.metal_type.value,
+            weight_grams=str(product.weight_grams),
+            purity_karat=product.purity_karat,
+            amount_dkk=str(amount),
+            status=product.status.value,
+            transaction_at=happened_at,
+        ))
+    return CustomerTransactionListOut(items=items, page=page, page_size=page_size, total=total, total_pages=max(1, ceil(total / page_size)))
+
+
+@router.get("/{customer_id}/documents", response_model=list[PosDocumentListItemOut])
+async def get_customer_documents(customer_id: UUID, limit: int = Query(default=100, ge=1, le=300), db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)) -> list[PosDocumentListItemOut]:
+    return await get_customer_history(customer_id=customer_id, limit=limit, db=db, _=admin)
+
+
+@router.get("/{customer_id}/notes", response_model=CustomerNoteListOut)
+async def get_customer_notes(customer_id: UUID, limit: int = Query(default=100, ge=1, le=200), db: AsyncSession = Depends(get_db), _=Depends(require_admin)) -> CustomerNoteListOut:
+    await _customer_record(db, customer_id)
+    total = int(await db.scalar(select(func.count(CustomerNote.id)).where(CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None))) or 0)
+    notes = (await db.scalars(select(CustomerNote).where(CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)).order_by(CustomerNote.created_at.desc()).limit(limit))).all()
+    return CustomerNoteListOut(items=await _note_payloads(db, list(notes)), total=total)
+
+
+@router.post("/{customer_id}/notes", response_model=CustomerNoteOut, status_code=status.HTTP_201_CREATED)
+async def post_customer_note(customer_id: UUID, payload: CustomerNoteCreate, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)) -> CustomerNoteOut:
+    await _customer_record(db, customer_id)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="Not boş bırakılamaz")
+    note = CustomerNote(customer_id=customer_id, author_user_id=admin.id, body=body)
+    db.add(note)
+    await db.flush()
+    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="created", body_snapshot=body, version=1))
+    await db.commit()
+    await db.refresh(note)
+    return (await _note_payloads(db, [note]))[0]
+
+
+@router.put("/{customer_id}/notes/{note_id}", response_model=CustomerNoteOut)
+async def put_customer_note(customer_id: UUID, note_id: UUID, payload: CustomerNoteUpdate, db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)) -> CustomerNoteOut:
+    note = await db.scalar(select(CustomerNote).where(CustomerNote.id == note_id, CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)))
+    if not note:
+        raise HTTPException(status_code=404, detail="Not bulunamadı")
+    if note.version != payload.base_version:
+        raise HTTPException(status_code=409, detail="Not başka bir kullanıcı tarafından güncellendi")
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="Not boş bırakılamaz")
+    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="updated", body_snapshot=note.body, version=note.version))
+    note.body = body
+    note.author_user_id = admin.id
+    note.version += 1
+    await db.commit()
+    await db.refresh(note)
+    return (await _note_payloads(db, [note]))[0]
+
+
+@router.delete("/{customer_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_note(customer_id: UUID, note_id: UUID, base_version: int = Query(ge=1), db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)) -> Response:
+    note = await db.scalar(select(CustomerNote).where(CustomerNote.id == note_id, CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)))
+    if not note:
+        raise HTTPException(status_code=404, detail="Not bulunamadı")
+    if note.version != base_version:
+        raise HTTPException(status_code=409, detail="Not başka bir kullanıcı tarafından güncellendi")
+    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="deleted", body_snapshot=note.body, version=note.version))
+    note.deleted_at = func.now()
+    note.version += 1
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{customer_id}/notes/{note_id}/revisions", response_model=list[CustomerNoteRevisionOut])
+async def get_customer_note_revisions(customer_id: UUID, note_id: UUID, db: AsyncSession = Depends(get_db), _=Depends(require_admin)) -> list[CustomerNoteRevisionOut]:
+    revisions = (await db.scalars(select(CustomerNoteRevision).where(CustomerNoteRevision.customer_id == customer_id, CustomerNoteRevision.note_id == note_id).order_by(CustomerNoteRevision.created_at.desc()))).all()
+    actor_ids = {item.actor_user_id for item in revisions if item.actor_user_id}
+    actors = {user.id: user.name for user in (await db.scalars(select(User).where(User.id.in_(actor_ids)))).all()} if actor_ids else {}
+    return [CustomerNoteRevisionOut(id=item.id, note_id=item.note_id, action=item.action, body_snapshot=item.body_snapshot, version=item.version, actor_user_id=item.actor_user_id, actor_name=actors.get(item.actor_user_id, "Sistem"), created_at=item.created_at) for item in revisions]
+
+
+@router.get("/{customer_id}/statement.pdf")
+async def get_customer_statement_pdf(customer_id: UUID, from_date: date | None = Query(default=None, alias="from"), to_date: date | None = Query(default=None, alias="to"), db: AsyncSession = Depends(get_db), _=Depends(require_admin)) -> Response:
+    customer = await _customer_record(db, customer_id)
+    customer_out = await to_customer_out(db, customer)
+    products = (await db.scalars(select(Product).where(or_(Product.seller_customer_id == customer_id, Product.buyer_customer_id == customer_id), Product.deleted_at.is_(None)).order_by(Product.updated_at.desc()))).all()
+    rows: list[dict[str, str]] = []
+    for product in products:
+        is_purchase = product.seller_customer_id == customer_id
+        happened_at = product.purchase_date if is_purchase else product.sale_date or product.updated_at
+        if from_date and happened_at.date() < from_date:
+            continue
+        if to_date and happened_at.date() > to_date:
+            continue
+        rows.append({"date": happened_at.strftime("%d.%m.%Y"), "side": "Müşteriden alış" if is_purchase else "Müşteriye satış", "reference": product.reference_number or product.product_number, "weight": f"{product.weight_grams} g", "amount": str(product.purchase_price_dkk if is_purchase else product.sale_price_dkk or 0)})
+    period = f"{from_date.isoformat() if from_date else 'Başlangıç'} - {to_date.isoformat() if to_date else 'Bugün'}"
+    pdf = render_customer_statement_pdf(customer=customer_out, rows=rows, period=period)
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="customer-{customer_id}-statement.pdf"'})

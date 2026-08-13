@@ -1,8 +1,8 @@
 # Sero Guld Repo AGENTS.md
 
-> **Son güncellenme:** 2026-05-18
-> **Migration head:** `0019_log_module_audit`
-> **Versiyon:** v0.2.0
+> **Son güncellenme:** 2026-08-13
+> **Migration head:** `0034_market_rate_confirmation`
+> **Versiyon:** v0.3.4
 
 Bu dosya `seroguld-crm` için proje-özel çalışma kurallarını kilitler.
 
@@ -14,6 +14,9 @@ Bu dosya `seroguld-crm` için proje-özel çalışma kurallarını kilitler.
 - `make desktop-status`, `make desktop-stop`, `make desktop-restart` dışındaki ad-hoc desktop süreçleri normal workflow sayılmaz.
 - `vite`, `cargo build`, `./target/debug/seroguld_crm_desktop` gibi komutlar ancak açıkça release-benzeri doğrulama istenirse kullanılır.
 - Detaylı runtime protokolü: `docs/DEV_RUNTIME_PROTOCOL.md`
+- Docker'sız müşteri installer'ı yalnız
+  `scripts/release-windows-native.ps1 -Finalize -RunDefenderScan` ile üretilir;
+  ayrıntılar `docs/WINDOWS_RELEASE_RUNBOOK_TR.md` içindedir.
 
 ## Repo Bağlamı
 
@@ -72,7 +75,9 @@ Her madde otonom uygulandı; tüm `tsc --noEmit` + `vitest run` + `py_compile` d
 ## Operasyonel sınırlar
 
 - **Tek-worker enforce:** Uniconta + OPMC + DebtorClient cache process-singleton. `uvicorn --workers 2+` desteklenmez.
-- **`.env` credential'ları:** Şu an repo'da committed (üretim öncesi rotation şart — bkz. `docs/PROJECT_HEALTH_AUDIT.md`).
+- **`.env` credential'ları:** Git tarafından ignore edilir. Windows release allowlist
+  seed'i yerel `.env` veya GitHub'daki `SEROGULD_CUSTOMER_RUNTIME_ENV_B64`
+  secret'ından geçici üretilir; runtime payload ve seed commit edilmez.
 - **WebKitGTK Linux fallback:** Hyprland'de `dev.js` otomatik X11 fallback enjekte eder.
 - **Tauri release:** `make release-desktop` zinciri (test + typecheck + build + tauri --release).
 

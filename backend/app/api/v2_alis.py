@@ -4,10 +4,11 @@ import json
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
+from app.models.pos_document import PosDocument
 from app.models.pos_document_audit import PosDocumentAudit
 
 
@@ -23,7 +24,7 @@ async def _log_pos_audit(
     pos_session_id: UUID | None = None,
     payload: dict | None = None,
     note: str | None = None,
-    request: Request | None = None,
+    request: Request,
 ) -> None:
     entry = PosDocumentAudit(
         sequence_no=sequence_no,
@@ -61,6 +62,7 @@ from app.database import get_db
 from app.models.enums import PosTradeSideEnum
 from app.models.user import User
 from app.schemas.document_artifact import DocumentArtifactReconcilePreviewOut
+from app.schemas.historical_afg_import import HistoricalAfgImportApplyOut, HistoricalAfgImportPreviewOut
 from app.schemas.address import CustomerMatchOut, CustomerMatchRequest, KdsAddressResolveOut, KdsAddressSearchOut
 from app.schemas.pos import (
     PosDocumentDetailOut,
@@ -104,10 +106,93 @@ from app.services.pos_service import (
 )
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
 from app.services.customer_service import customer_identity_match
+from app.services.historical_afg_import import (
+    HistoricalAfgUpload,
+    apply_historical_afg_import,
+    preview_historical_afg_import,
+)
 from app.services.kds_address_service import KdsAddressError, kds_address_service
 from app.schemas.pos import PosSessionCreate
 
 router = APIRouter()
+
+_HISTORICAL_AFG_ALLOWED_EXTENSIONS = {".xlsx", ".xlsm"}
+_HISTORICAL_AFG_MAX_FILES = 100
+_HISTORICAL_AFG_MAX_FILE_BYTES = 25 * 1024 * 1024
+_HISTORICAL_AFG_MAX_TOTAL_BYTES = 250 * 1024 * 1024
+
+
+async def _read_historical_afg_uploads(files: list[UploadFile]) -> list[HistoricalAfgUpload]:
+    if not files:
+        raise HTTPException(status_code=422, detail="En az bir AFG Excel dosyası seçin.")
+    if len(files) > _HISTORICAL_AFG_MAX_FILES:
+        raise HTTPException(status_code=422, detail=f"En fazla {_HISTORICAL_AFG_MAX_FILES} dosya seçilebilir.")
+    uploads: list[HistoricalAfgUpload] = []
+    total_size = 0
+    for file in files:
+        filename = (file.filename or "afg.xlsx").strip() or "afg.xlsx"
+        if not any(filename.lower().endswith(extension) for extension in _HISTORICAL_AFG_ALLOWED_EXTENSIONS):
+            raise HTTPException(status_code=422, detail=f"{filename}: yalnız .xlsx ve .xlsm dosyaları desteklenir.")
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=422, detail=f"{filename}: dosya boş.")
+        if len(content) > _HISTORICAL_AFG_MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail=f"{filename}: dosya 25 MB sınırını aşıyor.")
+        total_size += len(content)
+        if total_size > _HISTORICAL_AFG_MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail="Seçilen dosyaların toplamı 250 MB sınırını aşıyor.")
+        uploads.append(HistoricalAfgUpload.from_content(filename=filename, content=content))
+    return uploads
+
+
+@router.post("/alis/historical-import/preview", response_model=HistoricalAfgImportPreviewOut)
+async def post_historical_afg_import_preview_v2(
+    files: list[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> HistoricalAfgImportPreviewOut:
+    uploads = await _read_historical_afg_uploads(files)
+    return await preview_historical_afg_import(db, uploads=uploads)
+
+
+@router.post("/alis/historical-import/apply", response_model=HistoricalAfgImportApplyOut)
+async def post_historical_afg_import_apply_v2(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    selected_hashes_json: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> HistoricalAfgImportApplyOut:
+    try:
+        selected_hashes = json.loads(selected_hashes_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Seçilen dosya listesi geçersiz.") from exc
+    if not isinstance(selected_hashes, list) or not all(isinstance(item, str) for item in selected_hashes):
+        raise HTTPException(status_code=422, detail="Seçilen dosya listesi geçersiz.")
+
+    result = await apply_historical_afg_import(
+        db,
+        uploads=await _read_historical_afg_uploads(files),
+        selected_hashes=selected_hashes,
+        actor=admin,
+    )
+    for item in result.items:
+        if item.status == "imported" and item.sequence_no is not None:
+            await _log_pos_audit(
+                db,
+                action="historical_afg_import",
+                actor=admin,
+                sequence_no=item.sequence_no,
+                payload={
+                    "source_hash": item.source_hash,
+                    "file_name": item.file_name,
+                    "legacy_document_number": item.legacy_document_number,
+                    "external_effects": "disabled",
+                },
+                request=request,
+            )
+    await db.commit()
+    return result
 
 
 def _address_lookup_http_error(exc: KdsAddressError) -> HTTPException:
@@ -563,6 +648,9 @@ async def post_alis_document_edit_v2(
     db: AsyncSession = Depends(get_db),
     clerk_user: User = Depends(require_admin),
 ) -> PosWorkspaceOut:
+    document = await db.get(PosDocument, sequence_no)
+    if document is not None and document.historical_import_hash:
+        raise HTTPException(status_code=409, detail="Tarihsel AFG kayıtları eski dosya izi korunarak düzenlenemez.")
     workspace = await open_purchase_document_for_edit(
         db,
         sequence_no=sequence_no,
@@ -587,6 +675,9 @@ async def delete_alis_document_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> Response:
+    document = await db.get(PosDocument, sequence_no)
+    if document is not None and document.historical_import_hash:
+        raise HTTPException(status_code=409, detail="Tarihsel AFG kayıtları silinemez.")
     await delete_purchase_document(
         db,
         sequence_no=sequence_no,

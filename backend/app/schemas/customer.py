@@ -21,7 +21,7 @@ class CustomerCreate(AppBaseModel):
     identity_doc_number: str | None = Field(default=None, max_length=50)
     identity_doc_country: str | None = Field(default=None, max_length=8)
     identity_photo_refs: list[str] = Field(default_factory=list)
-    password: str | None = Field(default=None, min_length=8)
+    password: str | None = Field(default=None, min_length=1)
 
 
 class CustomerUpdate(AppBaseModel):
@@ -114,3 +114,71 @@ class CustomerAlisSummaryOut(AppBaseModel):
     last_30d_amount_dkk: str
     last_365d_documents: int
     last_365d_amount_dkk: str
+
+
+class CustomerNoteCreate(AppBaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class CustomerNoteUpdate(AppBaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    base_version: int = Field(ge=1)
+
+
+class CustomerNoteOut(AppBaseModel):
+    id: UUID
+    customer_id: UUID
+    author_user_id: UUID | None = None
+    author_name: str
+    body: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None = None
+
+
+class CustomerNoteListOut(AppBaseModel):
+    items: list[CustomerNoteOut] = Field(default_factory=list)
+    total: int
+
+
+class CustomerNoteRevisionOut(AppBaseModel):
+    id: UUID
+    note_id: UUID
+    action: str
+    body_snapshot: str
+    version: int
+    actor_user_id: UUID | None = None
+    actor_name: str
+    created_at: datetime
+
+
+class CustomerTransactionOut(AppBaseModel):
+    id: UUID
+    side: str
+    product_number: str
+    reference_number: str | None = None
+    product_type: str
+    metal_type: str
+    weight_grams: str
+    purity_karat: str | None = None
+    amount_dkk: str
+    status: str
+    transaction_at: datetime
+
+
+class CustomerTransactionListOut(PaginatedResponse[CustomerTransactionOut]):
+    pass
+
+
+class CustomerWorkspaceOut(AppBaseModel):
+    customer: CustomerDetailOut
+    purchase_count: int
+    purchase_amount_dkk: str
+    sale_count: int
+    sale_amount_dkk: str
+    total_gold_grams: str
+    total_silver_grams: str
+    document_count: int
+    note_count: int
+    last_transaction_at: datetime | None = None

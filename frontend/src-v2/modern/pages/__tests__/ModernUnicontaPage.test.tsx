@@ -1,10 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ModernUnicontaPage } from '../ModernUnicontaPage';
 import type { ModernUnicontaPageProps } from '../types';
 
-function invoice(id: string) {
+function invoice(id: string, signedTotalAmount = 10) {
   return {
     id,
     fakturanummer: id,
@@ -16,7 +16,9 @@ function invoice(id: string) {
     kalemler: [],
     subtotal: 10,
     momsTotal: 0,
-    total: 10,
+    total: signedTotalAmount,
+    signedTotalAmount,
+    amountDirection: signedTotalAmount > 0 ? 'income' as const : signedTotalAmount < 0 ? 'expense' as const : 'neutral' as const,
     valuta: 'DKK' as const,
   };
 }
@@ -118,5 +120,24 @@ describe('ModernUnicontaPage', () => {
 
     expect(screen.getAllByRole('button', { name: /^Aç$/ })).toHaveLength(5);
     expect(screen.getByText('Faturalar 51–55 / 55')).toBeInTheDocument();
+  });
+
+  it('shows the remote date and signed TotalAmount with income, expense and neutral semantics', () => {
+    document.documentElement.lang = 'tr';
+    render(
+      <ModernUnicontaPage
+        {...baseProps}
+        invoices={[invoice('I-INCOME', 1250), invoice('I-EXPENSE', -1000), invoice('I-NEUTRAL', 0)]}
+        onSelectInvoice={() => undefined}
+      />,
+    );
+
+    expect(within(screen.getByRole('table')).getAllByText('09.08.2026')).toHaveLength(3);
+    expect(screen.getByText('Gelir')).toHaveClass('text-sg-green-strong');
+    expect(screen.getByText('Gider')).toHaveClass('text-sg-red');
+    expect(screen.getByText('Nötr')).toHaveClass('text-sg-text-soft');
+    expect(screen.queryByRole('columnheader', { name: 'Yerel' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Fark' })).not.toBeInTheDocument();
+    expect(screen.queryByText('DISCOVERY')).not.toBeInTheDocument();
   });
 });

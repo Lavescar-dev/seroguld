@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiRequest } from '@/lib/api';
+import { requestCriticalBackup } from '@/lib/backup';
 import { useToast } from '@/lib/toast';
 
 import type { ApiConfig } from './types';
@@ -20,15 +21,18 @@ const DEFAULT_CONFIG: ApiConfig = {
   wp_site_url: 'https://seroguld.dk',
   wp_username: '',
   wp_app_password: '',
-  uniconta_api_url: 'https://www.uniconta.com/api',
+  uniconta_api_url: 'https://api.uniconta.com',
   uniconta_username: '',
   uniconta_password: '',
   uniconta_company_id: '',
   uniconta_api_key: '',
+  uniconta_purchase_vat_code_25: 'Købsmoms',
+  uniconta_purchase_vat_code_0: 'KøbBrugtmoms',
   market_gold: '2850',
   market_silver: '8.5',
   market_platin: '280',
   market_palladyum: '335',
+  market_rates_live_enabled: false,
   firma_adi: 'Sero Guld',
   firma_cvr: '',
   firma_telefon: '',
@@ -36,8 +40,21 @@ const DEFAULT_CONFIG: ApiConfig = {
   firma_adres: '',
 };
 
+export function buildSettingsApiStatus(config: ApiConfig) {
+  const configuredSecrets = new Set(config.secret_fields_configured ?? []);
+  const hasSecret = (field: keyof ApiConfig) => Boolean(config[field]) || configuredSecrets.has(String(field));
+  return [
+    { name: 'OpenAI', ok: hasSecret('openai_api_key') },
+    { name: 'OPMC', ok: hasSecret('opmc_api_key') },
+    { name: 'WooCommerce', ok: hasSecret('woo_consumer_key') && hasSecret('woo_consumer_secret') },
+    { name: 'WordPress', ok: hasSecret('wp_app_password') },
+    { name: 'Uniconta', ok: Boolean(config.uniconta_username) && hasSecret('uniconta_password') },
+  ];
+}
+
 export function useSettingsMakeState() {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const settingsQuery = useQuery({
     queryKey: ['settings-v2'],
     queryFn: () => apiRequest<ApiConfig>('/api/v2/settings'),
@@ -60,8 +77,8 @@ export function useSettingsMakeState() {
     }
   }, [settingsQuery.data]);
 
-  const update = (key: keyof ApiConfig, value: string) => {
-    setConfig((current) => ({ ...current, [key]: value }));
+  const update = (key: keyof ApiConfig, value: string | boolean) => {
+    setConfig((current) => ({ ...current, [key]: value }) as ApiConfig);
     setSaved(false);
     setConfirmReset(false);
   };
@@ -75,7 +92,15 @@ export function useSettingsMakeState() {
     saveMutation.mutate(config, {
       onSuccess: (nextConfig) => {
         setConfig(nextConfig);
+        queryClient.setQueryData(['settings-v2'], nextConfig);
+        void queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
+        void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
+        void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
         markSaved();
+        requestCriticalBackup();
+      },
+      onError: (error) => {
+        toast.error('Ayarlar kaydedilemedi', error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.');
       },
     });
   };
@@ -88,8 +113,14 @@ export function useSettingsMakeState() {
     saveMutation.mutate({ ...DEFAULT_CONFIG }, {
       onSuccess: (nextConfig) => {
         setConfig(nextConfig);
+        queryClient.setQueryData(['settings-v2'], nextConfig);
+        void queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
         setConfirmReset(false);
         markSaved();
+        requestCriticalBackup();
+      },
+      onError: (error) => {
+        toast.error('Ayarlar sıfırlanamadı', error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.');
       },
     });
   };
@@ -121,6 +152,7 @@ export function useSettingsMakeState() {
             onSuccess: (nextConfig) => {
               setConfig(nextConfig);
               markSaved();
+              requestCriticalBackup();
             },
           });
         } catch {
@@ -132,13 +164,7 @@ export function useSettingsMakeState() {
     input.click();
   };
 
-  const apiStatus = [
-    { name: 'OpenAI', ok: Boolean(config.openai_api_key) },
-    { name: 'OPMC', ok: Boolean(config.opmc_api_key) },
-    { name: 'WooCommerce', ok: Boolean(config.woo_consumer_key && config.woo_consumer_secret) },
-    { name: 'WordPress', ok: Boolean(config.wp_app_password) },
-    { name: 'Uniconta', ok: Boolean(config.uniconta_api_key || (config.uniconta_username && config.uniconta_password)) },
-  ];
+  const apiStatus = buildSettingsApiStatus(config);
 
   return {
     config,

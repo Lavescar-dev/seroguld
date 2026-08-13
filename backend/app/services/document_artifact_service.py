@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from openpyxl.cell.cell import MergedCell
 from openpyxl import load_workbook
@@ -73,7 +74,7 @@ LOG_CONTRACT_VERSION = "log-v2"
 
 AFG_GOLD_ROW_START = 22
 AFG_SILVER_ROW_START = 30
-AFG_FACTURA_GOLD_ROW_START = 25
+AFG_FACTURA_GOLD_ROW_START = 26
 AFG_FACTURA_GOLD_ROW_END = 37
 AFG_FACTURA_GOLD_FOOTER_START = 38
 AFG_FACTURA_MISC_ROW_START = 25
@@ -107,10 +108,16 @@ AFG_CUSTOMER_EDITABLE_CELLS = (
     {"cell_ref": "F19", "label": "E-mail", "input_kind": "text", "field": "email"},
 )
 
+AFG_DOCUMENT_EDITABLE_CELLS = (
+    {"cell_ref": "H7", "label": "Belge tarihi", "input_kind": "date", "field": "document_date"},
+)
+
 AFG_SUMMARY_EDITABLE_CELLS = (
     {"cell_ref": "C40", "label": "Ödeme Yöntemi", "input_kind": "payment_method", "field": "payment_method"},
     {"cell_ref": "D41", "label": "Reg. Nr.", "input_kind": "text", "field": "reg_number"},
     {"cell_ref": "D42", "label": "Kontonr.", "input_kind": "text", "field": "account_number"},
+    {"cell_ref": "A42", "label": "%25 alış KDV'si", "input_kind": "boolean", "field": "purchase_vat_enabled"},
+    {"cell_ref": "D44", "label": "AFG notu", "input_kind": "text", "field": "afg_note"},
 )
 
 AFG_VARIABLE_EDITABLE_CELLS = (
@@ -228,6 +235,7 @@ def _afg_calculator_editable_cells() -> list[dict[str, str]]:
 
 AFG_EDITABLE_CELLS = (
     *AFG_CUSTOMER_EDITABLE_CELLS,
+    *AFG_DOCUMENT_EDITABLE_CELLS,
     *AFG_SUMMARY_EDITABLE_CELLS,
     *AFG_VARIABLE_EDITABLE_CELLS,
     *_afg_row_editable_cells(),
@@ -357,6 +365,15 @@ def _payment_method_from_excel(value: object) -> str:
     return "bank"
 
 
+def _boolean_from_excel(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        return bool(value)
+    text = str(value or "").strip().casefold()
+    return text in {"1", "true", "yes", "evet", "ja", "on", "aktif", "açık", "acik"}
+
+
 def _normalized_cell_value(value: object, *, input_kind: str) -> str:
     if input_kind == "percent":
         return _fmt_decimal(_percent_from_excel(value))
@@ -364,6 +381,21 @@ def _normalized_cell_value(value: object, *, input_kind: str) -> str:
         return _fmt_decimal(_decimal_from_excel(value))
     if input_kind == "payment_method":
         return "Kontant" if _payment_method_from_excel(value) == "cash" else "Overførsel"
+    if input_kind == "boolean":
+        return "1" if _boolean_from_excel(value) else "0"
+    if input_kind == "date":
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        text = _clean_text(value)
+        if text:
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    return datetime.strptime(text, fmt).date().isoformat()
+                except ValueError:
+                    continue
+        return "—"
     return _clean_text(value) or "—"
 
 
@@ -617,7 +649,13 @@ def _sync_metadata_if_present(workbook, *, expected_kind: str, expected_key: str
 
 def read_artifact_sync_metadata(content: bytes, *, expected_kind: str, expected_key: str) -> SyncSheetMetadata:
     workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=False)
-    return _require_sync_metadata(workbook, expected_kind=expected_kind, expected_key=expected_key)
+    try:
+        return _require_sync_metadata(workbook, expected_kind=expected_kind, expected_key=expected_key)
+    finally:
+        try:
+            workbook.close()
+        except Exception:
+            pass
 
 
 async def _upsert_record(
@@ -717,23 +755,28 @@ async def _store_artifact(
 ) -> WorkbookArtifactBundle:
     absolute_path = _document_root() / relative_path
     absolute_path.parent.mkdir(parents=True, exist_ok=True)
-    absolute_path.write_bytes(content)
-    record = await _upsert_record(
-        session,
-        artifact_key=artifact_key,
-        module_name=module_name,
-        document_type=document_type,
-        business_key=business_key,
-        version_kind=version_kind,
-        is_live=is_live,
-        file_name=file_name,
-        file_path=absolute_path,
-        mime_type=mime_type,
-        template_name=template_name,
-        content=content,
-        updated_at=updated_at,
-        revision=revision,
-    )
+    temporary = absolute_path.with_name(f".{absolute_path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_bytes(content)
+        record = await _upsert_record(
+            session,
+            artifact_key=artifact_key,
+            module_name=module_name,
+            document_type=document_type,
+            business_key=business_key,
+            version_kind=version_kind,
+            is_live=is_live,
+            file_name=file_name,
+            file_path=absolute_path,
+            mime_type=mime_type,
+            template_name=template_name,
+            content=content,
+            updated_at=updated_at,
+            revision=revision,
+        )
+        os.replace(temporary, absolute_path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return WorkbookArtifactBundle(artifact=record, content=content)
 
 
@@ -781,8 +824,14 @@ def _touch_calc_flags(workbook) -> None:
 
 def _save_workbook_bytes(workbook) -> bytes:
     payload = io.BytesIO()
-    workbook.save(payload)
-    return payload.getvalue()
+    try:
+        workbook.save(payload)
+        return payload.getvalue()
+    finally:
+        try:
+            workbook.close()
+        except Exception:
+            pass
 
 
 def _sheet_row(label: str, value: str) -> list[str]:
@@ -1125,16 +1174,29 @@ def _parse_afg_calculators_from_sheet(sheet) -> PosWorkspaceCalculatorsUpdate:
     return PosWorkspaceCalculatorsUpdate(gold_rows=gold_rows, silver_rows=silver_rows)
 
 
-def _apply_afg_summary_cells(sheet, *, total_amount_dkk: Decimal, payment_method: str, reg_number: str | None, account_number: str | None) -> None:
+def _apply_afg_summary_cells(
+    sheet,
+    *,
+    net_amount_dkk: Decimal,
+    vat_amount_dkk: Decimal,
+    gross_amount_dkk: Decimal,
+    payment_method: str,
+    reg_number: str | None,
+    account_number: str | None,
+    note: str | None,
+) -> None:
     payment_label = "Kontant" if payment_method == "cash" else "Overførsel"
     sheet["C40"] = payment_label
-    sheet["D40"] = total_amount_dkk
+    sheet["D40"] = gross_amount_dkk
     sheet["D41"] = "—" if payment_method == "cash" else (reg_number or "—")
     sheet["D42"] = "—" if payment_method == "cash" else (account_number or "—")
-    sheet["H38"] = total_amount_dkk
-    sheet["H40"] = total_amount_dkk
-    sheet["H42"] = Decimal("0.00")
-    sheet["H43"] = total_amount_dkk
+    sheet["H38"] = net_amount_dkk
+    sheet["H40"] = net_amount_dkk
+    sheet["A42"] = 1 if vat_amount_dkk > 0 else 0
+    sheet["H42"] = vat_amount_dkk
+    sheet["H43"] = gross_amount_dkk
+    sheet["C44"] = "Not:"
+    sheet["D44"] = note or None
 
 
 def _apply_afg_workspace_rows(sheet, gold_rows: Iterable[PosWorkspaceGoldRowOut], silver_rows: Iterable[PosWorkspaceSilverRowOut]) -> None:
@@ -1194,6 +1256,8 @@ def _apply_afg_factura_gold_sheet(
     invoice_number: str | None,
     rows,
     footer_lines: list[str],
+    vat_enabled: bool,
+    note: str | None,
 ) -> None:
     sheet["C2"] = _excel_datetime(issued_at)
     sheet["B11"] = customer_name or "—"
@@ -1203,6 +1267,8 @@ def _apply_afg_factura_gold_sheet(
         sheet[f"A{row_idx}"] = None
         sheet[f"C{row_idx}"] = None
         sheet[f"E{row_idx}"] = None
+        sheet[f"F{row_idx}"] = None
+        sheet[f"G{row_idx}"] = None
     for row in rows:
         row_index = int(str(row.row_key).split(":", 1)[1]) + AFG_FACTURA_GOLD_ROW_START - 1
         if row_index < AFG_FACTURA_GOLD_ROW_START or row_index > AFG_FACTURA_GOLD_ROW_END:
@@ -1210,8 +1276,13 @@ def _apply_afg_factura_gold_sheet(
         sheet[f"A{row_index}"] = row.code or None
         sheet[f"C{row_index}"] = row.fineness or None
         sheet[f"E{row_index}"] = quantize_2(to_decimal(row.gram)) if to_decimal(row.gram) > 0 else None
+        sheet[f"F{row_index}"] = quantize_2(to_decimal(row.unit_price_dkk)) if to_decimal(row.unit_price_dkk) > 0 else None
+        sheet[f"G{row_index}"] = quantize_2(to_decimal(row.line_total_dkk)) if to_decimal(row.line_total_dkk) > 0 else None
     for index, row_idx in enumerate(range(AFG_FACTURA_GOLD_FOOTER_START, AFG_FACTURA_GOLD_FOOTER_START + 3)):
         sheet[f"B{row_idx}"] = footer_lines[index] if index < len(footer_lines) and footer_lines[index] else None
+    sheet["A49"] = "Not:" if note else None
+    sheet["B49"] = note or None
+    sheet["A46"] = 1 if vat_enabled else 0
 
 
 def _apply_afg_factura_misc_sheet(
@@ -1220,6 +1291,8 @@ def _apply_afg_factura_misc_sheet(
     issued_at: datetime | None,
     invoice_number: str | None,
     rows,
+    vat_enabled: bool,
+    note: str | None,
 ) -> None:
     sheet["C2"] = _excel_datetime(issued_at)
     sheet["F14"] = invoice_number or "—"
@@ -1235,6 +1308,8 @@ def _apply_afg_factura_misc_sheet(
         sheet[f"C{row_index}"] = row.text or None
         sheet[f"E{row_index}"] = quantize_2(to_decimal(row.quantity)) if row.quantity is not None else None
         sheet[f"F{row_index}"] = quantize_2(to_decimal(row.unit_price_dkk)) if to_decimal(row.unit_price_dkk) > 0 else None
+    sheet["A45"] = 1 if vat_enabled else 0
+    sheet["C48"] = f"Not: {note}" if note else None
 
 
 def _apply_afg_detail_rows(sheet, gold_rows: Iterable[dict[str, Decimal | str]], silver_rows: Iterable[dict[str, Decimal | str]]) -> None:

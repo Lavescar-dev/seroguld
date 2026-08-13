@@ -33,6 +33,16 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
         artifact_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(document_artifacts)")
         }
+        catalog_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'woocommerce_catalog_%'"
+            )
+        }
+        catalog_state_rows = connection.execute("SELECT COUNT(*) FROM woocommerce_catalog_state").fetchone()[0]
+        market_confirmation_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(market_rate_confirmations)")
+        }
 
     heads = subprocess.run(
         [sys.executable, "-m", "alembic", "heads"],
@@ -46,6 +56,21 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
     assert len(heads) == 1, f"tek migration head bekleniyor: {heads}"
     assert version == (heads[0],)
     assert "revision" in artifact_columns
+    assert catalog_tables == {"woocommerce_catalog_items", "woocommerce_catalog_state"}
+    assert {
+        "business_date",
+        "business_timezone",
+        "confirmation_mode",
+        "gold_dkk",
+        "silver_dkk",
+        "platinum_dkk",
+        "palladium_dkk",
+        "confirmed_by_user_id",
+        "confirmed_at",
+    }.issubset(market_confirmation_columns)
+    # A migration seed row would make ensure_initial_admin treat a genuinely
+    # clean install as non-empty and skip creation of the bootstrap admin.
+    assert catalog_state_rows == 0
 
 
 def test_identity_guard_migration_aborts_before_writing_when_hashes_conflict(tmp_path: Path) -> None:

@@ -55,7 +55,10 @@ function removeRaw(storage: UiVariantStorageLike | null | undefined, key: string
 
 export function readStoredUiVariant(storage: UiVariantStorageLike | null = getBrowserStorage()): UiVariant {
   const value = readRaw(storage, UI_VARIANT_STORAGE_KEY);
-  return isUiVariant(value) ? value : 'classic';
+  // v1/v2 belong to older builds and are deliberately ignored. Only an
+  // explicit v3 choice can override the modern default in this build.
+  if (isUiVariant(value)) return value;
+  return 'modern';
 }
 
 export function persistUiVariant(

@@ -635,7 +635,7 @@ async def update_afg_melt_lot(
     if getattr(lot, "status", "draft") == "finalized":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Finalize edilmiş lot düzenlenemez. Önce close'u geri al.",
+            detail="Kesinleştirilmiş lot düzenlenemez. Önce lotu yeniden açın.",
         )
 
     if payload.expected_updated_at is not None and lot.updated_at is not None:
@@ -708,7 +708,7 @@ async def finalize_afg_melt_lot(
         if current_status != "finalized":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Lot zaten draft. Geri alma uygulanmadı.",
+                detail="Lot zaten taslak durumda. Geri alma uygulanmadı.",
             )
         lot.status = "draft"
         lot.finalized_at = None
@@ -718,13 +718,13 @@ async def finalize_afg_melt_lot(
         if current_status == "finalized":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Lot zaten finalize edilmiş.",
+                detail="Lot zaten kesinleştirilmiş.",
             )
         # Sale_date + payout_total + quote alanları dolu olmalı
         if lot.payout_total_dkk is None or lot.sale_date is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Finalize için payout_total_dkk ve sale_date zorunlu.",
+                detail="Kesinleştirme için ödeme toplamı ve satış tarihi zorunludur.",
             )
         lot.status = "finalized"
         lot.finalized_at = utc_now()
@@ -768,7 +768,7 @@ async def delete_afg_melt_lot(
     if getattr(lot, "status", "draft") == "finalized":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Finalize edilmiş lot silinemez. Önce reopen.",
+            detail="Kesinleştirilmiş lot silinemez. Önce lotu yeniden açın.",
         )
 
     # Bağlı satırlarda lot referansını temizle

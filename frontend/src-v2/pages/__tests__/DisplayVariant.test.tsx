@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { UiVariantProvider } from '@/ui-variants';
+import { AppLocaleProvider } from '@/i18n';
 import { DisplayIdlePage } from '@/pages/DisplayIdlePage';
 import { DisplayPage } from '@/pages/DisplayPage';
 
@@ -21,21 +22,13 @@ vi.mock('@/make/display/useDisplayIdleMakeState', () => ({
 
 describe('display route variant wiring', () => {
   it('marks the live display page with the active variant', () => {
-    render(
-      <UiVariantProvider initialVariant="modern">
-        <DisplayPage />
-      </UiVariantProvider>,
-    );
+    render(<AppLocaleProvider><UiVariantProvider initialVariant="modern"><DisplayPage /></UiVariantProvider></AppLocaleProvider>);
 
     expect(screen.getByTestId('customer-display-page')).toHaveAttribute('data-display-ui-variant', 'modern');
   });
 
   it('marks the idle display page with the active variant', () => {
-    render(
-      <UiVariantProvider initialVariant="classic">
-        <DisplayIdlePage />
-      </UiVariantProvider>,
-    );
+    render(<AppLocaleProvider><UiVariantProvider initialVariant="classic"><DisplayIdlePage /></UiVariantProvider></AppLocaleProvider>);
 
     expect(screen.getByTestId('customer-display-idle-page')).toHaveAttribute('data-display-ui-variant', 'classic');
   });

@@ -34,7 +34,7 @@ const tabs: Array<{ id: GdprTab; label: string }> = [
 const copyScopes = [
   { key: 'database', label: 'Customer master / DB', description: 'Ana müşteri kaydı ve pseudonymization', icon: Database, match: ['db', 'database', 'customer', 'pseudonym'] },
   { key: 'document', label: 'AFG / PDF snapshot', description: 'Belge, AFG ve PDF artefaktları', icon: FileKey2, match: ['afg', 'pdf', 'document', 'export'] },
-  { key: 'workbook', label: 'Workbook artefaktları', description: 'Excel / OnlyOffice kopyaları', icon: Workflow, match: ['excel', 'workbook', 'office', 'xlsx'] },
+  { key: 'workbook', label: 'Workbook artefaktları', description: 'Excel çalışma sayfası kopyaları', icon: Workflow, match: ['excel', 'workbook', 'office', 'xlsx'] },
   { key: 'media', label: 'Medya / kimlik dosyaları', description: 'Media ve identity referansları', icon: Archive, match: ['media', 'identity', 'photo', 'file'] },
   { key: 'woo', label: 'Woo / WordPress', description: 'Dış sistem pseudonymization sonucu', icon: UsersRound, match: ['woo', 'woocommerce', 'wordpress'] },
   { key: 'backup', label: 'Backup / restore tombstone', description: 'Yerel ve offsite yedek yaşam döngüsü', icon: LockKeyhole, match: ['backup', 'restore', 'tombstone'] },
@@ -97,7 +97,7 @@ export function ModernGdprCockpitPage({
         <ModernSectionHeader
           eyebrow="Uyum ve veri hakları"
           title="GDPR Merkezi"
-          description="Talep, kopya görevleri, retention, processor ve audit yükümlülüklerini tek privacy çalışma alanında yönetir."
+          description="Talep, kopya görevleri, saklama, veri işleyen ve denetim yükümlülüklerini tek gizlilik çalışma alanında yönetir."
           action={<div className="flex flex-wrap gap-2"><ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || isRefreshing}>Yenile</ModernButton><ModernButton tone="primary" disabled title="Yeni talep mutation'ı bu modern route'a expose edilmedi">Yeni talep</ModernButton></div>}
         />
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

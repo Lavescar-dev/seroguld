@@ -9,6 +9,7 @@ import {
 } from '@/modern/design-system';
 
 import type { ModernLoginPageProps, ModernStatusItem } from './types';
+import { t, useLocale } from '@/lib/locale';
 
 function BrandMark() {
   return (
@@ -23,6 +24,7 @@ function diagnosticValue(item: ModernStatusItem) {
 
 export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
   const [showPassword, setShowPassword] = useState(false);
+  const locale = useLocale();
   const diagnostics = runtime.filter((item) => ['frontend', 'build'].includes(item.label.toLocaleLowerCase('tr-TR')));
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -36,13 +38,13 @@ export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
         <ModernSection className="p-6 shadow-sg-md sm:p-8">
           <div className="border-b border-sg-border-soft pb-6">
             <BrandMark />
-            <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">Güvenli erişim</p>
-            <h1 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.03em] text-sg-text">Operasyon paneline giriş</h1>
-            <p className="mt-2 text-sm leading-6 text-sg-text-soft">Sero Guld çalışma alanına devam etmek için hesabınızı doğrulayın.</p>
+            <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent">{t('auth.login.access', locale)}</p>
+            <h1 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.03em] text-sg-text">{t('auth.login.title', locale)}</h1>
+            <p className="mt-2 text-sm leading-6 text-sg-text-soft">{t('auth.login.description', locale)}</p>
           </div>
 
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
-            <ModernField label="Hesap">
+            <ModernField label={t('auth.login.email', locale)}>
               <div className="relative">
                 <ModernTextInput
                   type="email"
@@ -58,7 +60,7 @@ export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
             </ModernField>
 
             <div className="flex flex-col gap-2">
-              <label htmlFor="modern-login-password" className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Şifre</label>
+              <label htmlFor="modern-login-password" className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{t('auth.login.password', locale)}</label>
               <div className="relative">
                 <ModernTextInput
                   id="modern-login-password"
@@ -66,7 +68,7 @@ export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
                   type={showPassword ? 'text' : 'password'}
                   value={form.password}
                   onChange={(event) => form.onPasswordChange(event.target.value)}
-                  placeholder="Şifrenizi girin"
+                  placeholder={t('auth.login.password', locale)}
                   autoComplete="current-password"
                   autoFocus
                   aria-invalid={Boolean(form.errorMessage)}
@@ -90,6 +92,22 @@ export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
               </div>
             ) : null}
 
+            <label className="flex min-h-8 items-center gap-2 text-sm font-medium text-sg-text-soft">
+              <input
+                type="checkbox"
+                checked={form.remember ?? true}
+                onChange={(event) => form.onRememberChange?.(event.target.checked)}
+                className="h-4 w-4 accent-sg-accent"
+              />
+              {t('auth.login.remember', locale)}
+            </label>
+
+            {form.credentialWarning ? (
+              <p role="status" className="border border-sg-amber/30 bg-sg-amber-soft px-4 py-3 text-xs leading-5 text-sg-text">
+                {form.credentialWarning}
+              </p>
+            ) : null}
+
             <ModernButton
               type="submit"
               tone="primary"
@@ -99,7 +117,7 @@ export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
               disabled={form.isSubmitting}
               className="min-h-11 w-full"
             >
-              {form.isSubmitting ? 'Oturum açılıyor…' : 'Güvenli giriş yap'}
+              {form.isSubmitting ? t('auth.login.pending', locale) : t('auth.login.submit', locale)}
             </ModernButton>
           </form>
         </ModernSection>

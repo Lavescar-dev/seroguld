@@ -20,18 +20,18 @@ export function createAlisTransitionBlocker(
 ): TransitionBlockerDescriptor | null {
   const reasons: string[] = [];
   if (!state.workspace) return null;
-  if (options?.hasPendingAutosave) reasons.push('Autosave kuyruğu henüz tamamlanmadı');
-  if (options?.hasDirtyWorkspace) reasons.push('Workspace değişiklikleri henüz finalize edilmedi');
+  if (options?.hasPendingAutosave) reasons.push('Otomatik kaydetme kuyruğu henüz tamamlanmadı');
+  if (options?.hasDirtyWorkspace) reasons.push('Çalışma alanı değişiklikleri henüz kesinleştirilmedi');
   if (state.customerPending) reasons.push('Müşteri kartı güncelleniyor');
   if (state.customerSelecting) reasons.push('Müşteri seçimi tamamlanıyor');
-  if (state.finalizePending) reasons.push('AFG finalize isteği çalışıyor');
-  if (state.cancelPending) reasons.push('Workspace iptal işlemi çalışıyor');
+  if (state.finalizePending) reasons.push('AFG kesinleştirme isteği sürüyor');
+  if (state.cancelPending) reasons.push('Çalışma alanı iptal işlemi sürüyor');
   if (reasons.length === 0) return null;
   return {
     id: 'alis-workspace',
     when: true,
-    title: 'Alış Workspace Koruması',
-    description: 'AFG workspace açıkken rota değişimi veya panel kapanışı öncesinde bekleyen işlerin bitmesi gerekiyor.',
+    title: 'Alış çalışma alanı koruması',
+    description: 'AFG çalışma alanı açıkken rota değişimi veya panel kapanışı öncesinde bekleyen işlerin tamamlanması gerekir.',
     severity: state.finalizePending ? 'danger' : 'warning',
     reasons,
   };
@@ -62,7 +62,7 @@ export function createModernAlisViewModel(
     documentsSummary: [
       { id: 'count', label: 'Belge', value: String(documents.length), hint: 'Son 120 kayıt' },
       { id: 'amount', label: 'Toplam DKK', value: formatMoney(totalAmount), hint: 'Liste filtresine göre' },
-      { id: 'weight', label: 'Toplam Gram', value: formatNumber(totalWeight, ' g'), hint: 'Gold + silver preview' },
+      { id: 'weight', label: 'Toplam Gram', value: formatNumber(totalWeight, ' g'), hint: 'Altın ve gümüş önizlemesi' },
       {
         id: 'latest',
         label: 'Son Belge',
@@ -75,14 +75,14 @@ export function createModernAlisViewModel(
           { id: 'line-count', label: 'Satır', value: String(workspace.summary.active_line_count), hint: workspace.session.session_code },
           { id: 'weight', label: 'Toplam Gram', value: formatNumber(workspace.summary.total_weight_grams, ' g'), hint: `Au ${formatNumber(workspace.summary.gold_weight_grams, ' g')} / Ag ${formatNumber(workspace.summary.silver_weight_grams, ' g')}` },
           { id: 'pure', label: 'Saf Metal', value: formatNumber(workspace.summary.total_pure_gold_grams, ' g'), hint: 'AFG hesap semantiği korunur' },
-          { id: 'amount', label: 'Toplam Teklif', value: formatMoney(workspace.summary.total_amount_dkk), hint: 'DKK net offer' },
+          { id: 'amount', label: 'Toplam Teklif', value: formatMoney(workspace.summary.total_amount_dkk), hint: 'DKK net teklif' },
         ]
       : [],
     blocker: createAlisTransitionBlocker(state, options),
     unsupportedControls: [
-      { id: 'bulk-import', label: 'Toplu İçe Aktarım', reason: 'Eski bulk import akışı modern route içinde güvenli reconcile callback olmadan desteklenmiyor.' },
-      { id: 'scanner', label: 'Tarayıcı', reason: 'Tarayıcı cihaz entegrasyonu bu presentational yüzeyde host edilmiyor; gerçek desktop bridge gerekli.' },
-      { id: 'physical-print', label: 'Fiziksel Yazdır', reason: 'OS printer queue kontrolü route dışı yan etki olduğu için yalnız mevcut print/export akışı destekleniyor.' },
+      { id: 'bulk-import', label: 'Toplu İçe Aktarım', reason: 'Eski toplu içe aktarma akışı modern rotada güvenli uzlaştırma işlemi olmadan desteklenmiyor.' },
+      { id: 'scanner', label: 'Tarayıcı', reason: 'Tarayıcı cihaz entegrasyonu bu görsel yüzeyde barındırılmıyor; gerçek masaüstü köprüsü gerekli.' },
+      { id: 'physical-print', label: 'Fiziksel Yazdır', reason: 'İşletim sistemi yazdırma kuyruğu denetimi rota dışı yan etki olduğu için yalnız mevcut yazdırma/dışa aktarma akışı destekleniyor.' },
     ],
   };
 }

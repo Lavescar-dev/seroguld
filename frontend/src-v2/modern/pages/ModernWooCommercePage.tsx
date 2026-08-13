@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Cloud,
   Clock3,
   Eye,
   FileText,
@@ -45,9 +46,10 @@ import {
   isPublishReady,
   missingSeoFields,
   parseAiSeoBundle,
-  YeniUrunPanel,
 } from '@/make/woocommerce/WooCommercePage';
 import type { WooFilter, WooMakeState, WooListItem } from '@/make/woocommerce/useWooMakeState';
+import { WooCatalogPanel } from '@/make/woocommerce/WooCatalogPanel';
+import { ModernWooProductWizard } from './ModernWooProductWizard';
 
 type ModernWooCommercePageProps = { state: WooMakeState };
 type DetailTab = 'overview' | 'photos' | 'ai' | 'history';
@@ -215,7 +217,7 @@ function DetailHeader({ state }: { state: WooMakeState }) {
       </div>
       <div className="flex flex-wrap gap-2">
         <ModernButton size="sm" tone="ghost" icon={RefreshCw} disabled={!detail || state.isSyncing} onClick={state.syncSale}>Satış kontrolü</ModernButton>
-        <ModernButton size="sm" tone="warning" icon={ShieldCheck} disabled={!detail?.manual_review_required || state.isApprovingReview} onClick={state.approveManualReview}>Review onayı</ModernButton>
+        <ModernButton size="sm" tone="warning" icon={ShieldCheck} disabled={!detail?.manual_review_required || state.isApprovingReview} onClick={state.approveManualReview}>Manuel inceleme onayı</ModernButton>
       </div>
     </div>
   );
@@ -262,6 +264,10 @@ function PhotosTab({ state }: { state: WooMakeState }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const detail = state.detail;
   if (!detail) return <ModernLoadingState title="Fotoğraflar hazırlanıyor" />;
+  const photos = detail.photos.filter((photo, index, all) => {
+    const identity = photo.id || photo.original_url || photo.url || `${photo.filename || 'photo'}:${index}`;
+    return all.findIndex((candidate) => (candidate.id || candidate.original_url || candidate.url || `${candidate.filename || 'photo'}:${all.indexOf(candidate)}`) === identity) === index;
+  });
   function handleFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
     if (files.length) state.uploadPhotos(files);
@@ -271,7 +277,7 @@ function PhotosTab({ state }: { state: WooMakeState }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-sg-text">Ürün fotoğrafları</h3><p className="mt-1 text-sm text-sg-text-soft">Woo medya akışı bu ürün fotoğraf kayıtlarından beslenir.</p></div><ModernButton tone="primary" icon={Upload} disabled={state.isUploadingPhotos} onClick={() => inputRef.current?.click()}>Fotoğraf yükle</ModernButton></div>
       <input ref={inputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFiles} />
-      {detail.photos.length === 0 ? <ModernEmptyState title="Fotoğraf yok" description="Yayın için en az bir fotoğraf yükleyin." action={<ModernButton tone="primary" icon={Upload} onClick={() => inputRef.current?.click()}>İlk fotoğrafı yükle</ModernButton>} /> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{detail.photos.map((photo, index) => <div key={photo.id || photo.url} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><img src={photo.avif_url || photo.url} alt={detail.display_name || 'Ürün fotoğrafı'} className="h-full w-full object-cover" />{photo.is_primary || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2">Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/35 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => window.open(photo.original_url || photo.url, '_blank', 'noopener,noreferrer')}>Aç</ModernButton>{photo.id ? <ModernButton aria-label="Fotoğrafı sil" size="sm" tone="danger" icon={Trash2} disabled={state.isDeletingPhoto} onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.deletePhoto(photo.id!); }}>Sil</ModernButton> : null}</div></div><p className="truncate px-3 py-2 text-xs text-sg-text-soft">{photo.filename || 'Fotoğraf'}</p></div>)}</div>}
+      {photos.length === 0 ? <ModernEmptyState title="Fotoğraf yok" description="Yayın için en az bir fotoğraf yükleyin." action={<ModernButton tone="primary" icon={Upload} onClick={() => inputRef.current?.click()}>İlk fotoğrafı yükle</ModernButton>} /> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{photos.map((photo, index) => <div key={`${photo.id || photo.original_url || photo.url || photo.filename || 'photo'}:${index}`} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><img src={photo.avif_url || photo.url} alt={detail.display_name || 'Ürün fotoğrafı'} className="h-full w-full object-cover" />{photo.is_primary || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2">Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/35 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => window.open(photo.original_url || photo.url, '_blank', 'noopener,noreferrer')}>Aç</ModernButton>{photo.id ? <ModernButton aria-label="Fotoğrafı sil" size="sm" tone="danger" icon={Trash2} disabled={state.isDeletingPhoto} onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.deletePhoto(photo.id!); }}>Sil</ModernButton> : null}</div></div><p className="truncate px-3 py-2 text-xs text-sg-text-soft">{photo.filename || 'Fotoğraf'}</p></div>)}</div>}
     </div>
   );
 }
@@ -349,17 +355,25 @@ function ProductWorkspace({ state }: { state: WooMakeState }) {
 
 export function ModernWooCommercePage({ state }: ModernWooCommercePageProps) {
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [surface, setSurface] = useState<'catalog' | 'local'>('catalog');
   const summary = state.workspaceSummary;
+  if (surface === 'catalog') {
+    return (
+      <ModernPage>
+        <WooCatalogPanel state={state} mode="modern" onOpenLocalProducts={() => setSurface('local')} />
+      </ModernPage>
+    );
+  }
   if (state.loadingWorkspace && state.urunler.length === 0) return <ModernPage><ModernLoadingState title="WooCommerce çalışma alanı hazırlanıyor" description="Gerçek ürün listesi ve durum özeti yükleniyor." /></ModernPage>;
   if (state.workspaceError && state.urunler.length === 0) return <ModernPage><ModernErrorState title="WooCommerce çalışma alanı açılamadı" description={state.workspaceError} onRetry={state.refreshWorkspace} /></ModernPage>;
   return (
     <ModernPage>
       <ModernToolbar
         leading={<div className="flex min-w-0 items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-sg-md bg-sg-accent-soft text-sg-accent"><Package className="h-5 w-5" /></div><div className="min-w-0"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">WooCommerce / WordPress</p><h1 className="truncate text-lg font-semibold tracking-[-0.02em] text-sg-text">Ürün yayın çalışma alanı</h1></div></div>}
-        trailing={<div className="flex flex-wrap items-center gap-2"><ModernBadge tone="neutral">{summary.total_products} ürün</ModernBadge><ModernBadge tone="success">{summary.published_products} yayında</ModernBadge><ModernBadge tone="warning">{summary.photo_pending_products} foto eksik</ModernBadge><ModernButton size="sm" tone="ghost" icon={RefreshCw} disabled={state.loadingWorkspace} onClick={state.refreshWorkspace}>Yenile</ModernButton><ModernButton size="sm" tone="primary" icon={Plus} onClick={() => setWizardOpen(true)}>Yeni ürün</ModernButton></div>}
+        trailing={<div className="flex flex-wrap items-center gap-2"><ModernBadge tone="neutral">{summary.total_products} ürün</ModernBadge><ModernBadge tone="success">{summary.published_products} yayında</ModernBadge><ModernBadge tone="warning">{summary.photo_pending_products} foto eksik</ModernBadge><ModernButton size="sm" tone="ghost" icon={Cloud} onClick={() => setSurface('catalog')}>Woo kataloğu</ModernButton><ModernButton size="sm" tone="ghost" icon={RefreshCw} disabled={state.loadingWorkspace} onClick={state.refreshWorkspace}>Yenile</ModernButton><ModernButton size="sm" tone="primary" icon={Plus} onClick={() => setWizardOpen(true)}>Yeni ürün</ModernButton></div>}
       />
       <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.9fr)]"><ProductList state={state} /><ProductWorkspace state={state} /></div>
-      {wizardOpen ? <YeniUrunPanel stokList={state.stokList} urunler={state.urunler} pending={state.isCreatingProduct} onKapat={() => setWizardOpen(false)} onKaydet={async (draft) => { await state.createProductFromDraft(draft); }} /> : null}
+      <ModernWooProductWizard open={wizardOpen} stokList={state.stokList} urunler={state.urunler} pending={state.isCreatingProduct} onClose={() => setWizardOpen(false)} onSave={state.createProductFromDraft} />
     </ModernPage>
   );
 }

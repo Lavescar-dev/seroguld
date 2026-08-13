@@ -8,7 +8,6 @@ import { useToast } from '@/lib/toast';
 import type {
   InventoryGridRow,
   InventoryWorkspace,
-  OfficeRuntimeStatus,
   ProductHistoryEntry,
   ProductOut,
   ProductSourceAfg,
@@ -123,7 +122,7 @@ function newDraftId() {
 }
 
 function todayDa() {
-  return new Date().toLocaleDateString('da-DK');
+  return new Date().toLocaleDateString(document.documentElement.lang);
 }
 
 function readUpdated() {
@@ -289,7 +288,7 @@ function sortItems(items: StokItem[], sort: InventorySortState): StokItem[] {
     const av = getKey(a);
     const bv = getKey(b);
     if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * direction;
-    return String(av).localeCompare(String(bv), 'tr') * direction;
+    return String(av).localeCompare(String(bv), document.documentElement.lang) * direction;
   });
 }
 
@@ -329,14 +328,6 @@ export function useDepolamaMakeState(): DepolamaPageProps {
   const [filters, setFilters] = useState<InventoryFilterState>(EMPTY_FILTERS);
   const [sort, setSort] = useState<InventorySortState>({ key: 'lager_dato', direction: 'desc' });
   const [retryingLabelId, setRetryingLabelId] = useState<string | null>(null);
-
-  useEffect(() => {
-    void queryClient.prefetchQuery({
-      queryKey: ['office-runtime-status', 'depolama'],
-      queryFn: () => apiRequest<OfficeRuntimeStatus>('/api/v2/office-runtime/status?kind=depolama'),
-      staleTime: 30_000,
-    });
-  }, [queryClient]);
 
   const subcategory =
     activeKat === 'gumus' ? gumusAlt : activeKat === 'platin_pd' ? platinAlt : null;

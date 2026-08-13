@@ -2,6 +2,7 @@ import { type Dispatch, type SetStateAction } from 'react';
 
 import { formatNumber } from '@/lib/format';
 import type { PosWorkspace, PosWorkspaceBankInfo, PosWorkspaceMarketRates } from '@/types';
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 import { formatDecimalFixed, parseDecimalValue } from './marketRates';
 import type {
@@ -37,7 +38,7 @@ function formatDateOnly(value?: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleDateString('tr-TR');
+  return date.toLocaleDateString(document.documentElement.lang);
 }
 
 function computeInvoiceGoldLabel(row: EditableInvoiceGoldRow) {
@@ -149,9 +150,10 @@ export function AfregningsSheetEditor({
                   </td>
                   <td className="border border-orange-300 bg-orange-50 px-1.5 py-2">
                     <div className="flex items-center">
-                      <input
+                      <CommittedNumericInput
                         value={row.avance_percent}
-                        onChange={(event) => onUpdateGoldRow(row.row_key, 'avance_percent', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        onCommit={(_, canonical) => onUpdateGoldRow(row.row_key, 'avance_percent', canonical)}
                         className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
                       />
                       <span className="ml-1 text-xs font-bold text-orange-400">%</span>
@@ -160,9 +162,10 @@ export function AfregningsSheetEditor({
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-bold text-amber-700">{row.karat}</td>
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-amber-600">{row.lodighed}</td>
                   <td className="border border-amber-300 bg-amber-50 px-1.5 py-2">
-                    <input
+                    <CommittedNumericInput
                       value={row.gram}
-                      onChange={(event) => onUpdateGoldRow(row.row_key, 'gram', event.target.value)}
+                      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                      onCommit={(_, canonical) => onUpdateGoldRow(row.row_key, 'gram', canonical)}
                       className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
                         hasGram
                           ? 'border-amber-400 bg-white text-amber-900 focus:border-amber-600'
@@ -211,9 +214,10 @@ export function AfregningsSheetEditor({
                   </td>
                   <td className="border border-orange-300 bg-orange-50 px-1.5 py-2">
                     <div className="flex items-center">
-                      <input
+                      <CommittedNumericInput
                         value={row.avance_percent}
-                        onChange={(event) => onUpdateSilverRow(row.row_key, 'avance_percent', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'avance_percent', canonical)}
                         className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
                       />
                       <span className="ml-1 text-xs font-bold text-orange-400">%</span>
@@ -222,9 +226,10 @@ export function AfregningsSheetEditor({
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-300">—</td>
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-semibold text-slate-500">{row.lodighed}</td>
                   <td className="border border-slate-300 bg-slate-50 px-1.5 py-2">
-                    <input
+                    <CommittedNumericInput
                       value={row.gram}
-                      onChange={(event) => onUpdateSilverRow(row.row_key, 'gram', event.target.value)}
+                      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                      onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'gram', canonical)}
                       className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
                         hasGram
                           ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'
@@ -522,10 +527,10 @@ export function InvoiceGoldSheetEditor({
                     </td>
                     <td className="mono border border-brand-200 px-3 py-2 text-center text-sm font-black text-brand-700">{lodighed}</td>
                     <td className="border border-amber-200 bg-amber-50 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.gram}
-                        onChange={(event) => onUpdateRow(row.row_key, 'gram', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                        onCommit={(_, canonical) => onUpdateRow(row.row_key, 'gram', canonical)}
                         className="mono w-full border border-amber-300 bg-white px-2 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-amber-500"
                       />
                     </td>
@@ -569,7 +574,7 @@ export function InvoiceGoldSheetEditor({
           <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Companion Davranışı</p>
           <div className="mt-3 space-y-2 text-sm leading-6 text-brand-700">
             <p>Bu tab ayrı bir workflow değil; aynı AFG draft’ın invoice companion yüzeyidir.</p>
-            <p>ONLYOFFICE ve export edilen workbook aynı structured state’i kullanır.</p>
+            <p>Çalışma sayfası ve dışa aktarılan workbook aynı yapılandırılmış durumu kullanır.</p>
             <p>Hızlı AFG grid’iyle çelişen özel satırlar burada yaşayabilir; totals workbook mantığıyla korunur.</p>
           </div>
         </div>
@@ -675,19 +680,19 @@ export function InvoiceMiscSheetEditor({
                       />
                     </td>
                     <td className="border border-brand-200 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.quantity}
-                        onChange={(event) => onUpdateRow(row.row_key, 'quantity', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                        onCommit={(_, canonical) => onUpdateRow(row.row_key, 'quantity', canonical)}
                         className="mono w-full border border-brand-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-brand-700"
                         placeholder="1"
                       />
                     </td>
                     <td className="border border-amber-200 bg-amber-50 px-2 py-2">
-                      <input
-                        type="text"
+                      <CommittedNumericInput
                         value={row.unit_price_dkk}
-                        onChange={(event) => onUpdateRow(row.row_key, 'unit_price_dkk', event.target.value)}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        onCommit={(_, canonical) => onUpdateRow(row.row_key, 'unit_price_dkk', canonical)}
                         className="mono w-full border border-amber-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-amber-500"
                         placeholder="0.00"
                       />

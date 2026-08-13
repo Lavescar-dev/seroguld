@@ -86,6 +86,9 @@ def _workspace_sections() -> PosWorkspaceSectionsUpdate:
             silver_dkk=Decimal("14.56"),
         ),
         payment_method="bank",
+        afg_note="KDV ve Uniconta notu",
+        purchase_vat_enabled=True,
+        purchase_vat_rate_percent=Decimal("25.00"),
         numbering=PosWorkspaceNumberingUpdate(
             afregnings_number_next="1003",
             invoice_number_next="1001",
@@ -185,6 +188,9 @@ def test_afg_workspace_workbook_round_trip_preserves_companion_sheet_inputs():
             assert parsed.sections.market_rates is not None
             assert parsed.sections.market_rates.gold_24k_dkk == Decimal("937.99")
             assert parsed.sections.market_rates.silver_dkk == Decimal("14.56")
+            assert parsed.sections.purchase_vat_enabled is True
+            assert parsed.sections.purchase_vat_rate_percent == Decimal("25.00")
+            assert parsed.sections.afg_note == "KDV ve Uniconta notu"
 
             invoice_gold_row = next(
                 row for row in parsed.sections.invoice_gold.rows if row.row_key == "invoice_gold:1"
@@ -414,6 +420,9 @@ def test_linked_customer_clear_stays_session_local_and_reaches_final_document():
             assert document.customer_name is None
             assert document.customer_phone is None
             assert document.customer_address is None
+            assert document.vat_rate_percent == Decimal("25.00")
+            assert document.vat_amount_dkk == quantize_2(document.net_amount_dkk * Decimal("0.25"))
+            assert document.gross_amount_dkk == document.net_amount_dkk + document.vat_amount_dkk
 
         await engine.dispose()
 

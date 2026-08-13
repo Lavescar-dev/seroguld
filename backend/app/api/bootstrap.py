@@ -7,7 +7,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _to_user_out
-from app.api.deps import get_current_user
+from app.api.deps import require_password_change_complete
 from app.database import get_db
 from app.models.enums import ProductStatusEnum, RoleEnum
 from app.models.pos_document import PosDocument
@@ -39,7 +39,7 @@ router = APIRouter()
 @router.get("", response_model=DesktopBootstrapOut)
 async def get_bootstrap(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_password_change_complete),
 ) -> DesktopBootstrapOut:
     settings = get_settings()
     now = utc_now()
@@ -167,11 +167,11 @@ async def get_bootstrap(
     )
 
     backup_latest_at = _find_latest_hourly_backup(settings.backup_root_path())
-    backup_age_minutes = _age_minutes(backup_latest_at, now)
+    backup_age_minutes = _age_minutes(now, backup_latest_at)
     offsite_last_sync_at = _find_last_offsite_sync(settings.backup_offsite_status_path())
-    offsite_age_minutes = _age_minutes(offsite_last_sync_at, now)
+    offsite_age_minutes = _age_minutes(now, offsite_last_sync_at)
     restore_drill_last_at = _find_latest_restore_drill(settings.backup_restore_drill_path())
-    restore_drill_age_hours = _age_hours(restore_drill_last_at, now)
+    restore_drill_age_hours = _age_hours(now, restore_drill_last_at)
 
     rates = await GoldPriceService().get_rates()
 

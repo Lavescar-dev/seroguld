@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, ExternalLink, Maximize2, Minimize2, X } from 'lucide-react';
 
 import type { OfficeDockDescriptor } from '@/lib/officeDock';
-import { useOfficeDocumentState } from '@/make/office/useOfficeDocumentState';
+import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import type { ModernOfficeViewModel } from '@/modern/adapters/office';
 
 import { DataPill, ModernModuleShell, ModernSection, shellButtonClass, toneBadgeClass } from './shared';
@@ -38,10 +38,6 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
               {viewModel.isExpanded ? 'Daralt' : 'Genişlet'}
             </button>
           ) : null}
-          <button type="button" onClick={viewModel.state.onReopenWindow} className={shellButtonClass('secondary')}>
-            <ExternalLink className="h-4 w-4" />
-            Ayrı Pencere
-          </button>
           {viewModel.onClose ? (
             <button type="button" onClick={viewModel.onClose} className={shellButtonClass('danger')}>
               <X className="h-4 w-4" />
@@ -104,6 +100,9 @@ export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewM
 }
 
 export function ModernOfficeDockPanel({ document, onClose }: { document: OfficeDockDescriptor; onClose: () => void }) {
-  const state = useOfficeDocumentState({ kind: document.kind, artifactKey: document.key });
-  return <ModernOfficeSurface state={state} mode="dock" onClose={onClose} titleOverride={document.title || undefined} />;
+  return (
+    <div className="flex min-h-0 h-full flex-1 flex-col overflow-hidden rounded-sg-xl border border-sg-border bg-sg-surface shadow-sg-md">
+      <EmbeddedWorkbookPanel kind={document.kind} artifactKey={document.key} layoutMode="dock" onClose={onClose} variant="modern" />
+    </div>
+  );
 }

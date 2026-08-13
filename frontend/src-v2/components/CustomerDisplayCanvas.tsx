@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatNumber } from '@/lib/format';
+import { useAppLocale, useAppTranslation, type Locale } from '@/i18n';
 import type { PosDisplaySnapshot, PosWorkspaceGoldRow, PosWorkspaceSilverRow } from '@/types';
 
 type CustomerDisplayIdleViewProps = {
@@ -20,16 +21,20 @@ const DISPLAY_SCENE_HEIGHT = 1080;
 const FONT_STACK_SANS = "'IBM Plex Sans', system-ui, sans-serif";
 const FONT_STACK_SERIF = "Georgia, 'Times New Roman', serif";
 
-function dateLabel(value?: string | null) {
+function localeTag(locale: Locale) {
+  return locale === 'en' ? 'en-GB' : locale === 'da' ? 'da-DK' : 'tr-TR';
+}
+
+function dateLabel(value?: string | null, locale: Locale = 'tr') {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return date.toLocaleDateString(localeTag(locale), { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-function timeLabel(value?: Date) {
+function timeLabel(value?: Date, locale: Locale = 'tr') {
   if (!value) return '—';
-  return value.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return value.toLocaleTimeString(localeTag(locale), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function decimalLabel(value?: string | number | null, suffix = '') {
@@ -208,12 +213,13 @@ type T5RowProps =
   | { kind: 'silver'; row: PosWorkspaceSilverRow };
 
 function T5Row(props: T5RowProps) {
+  const { t } = useAppTranslation();
   const { kind, row } = props;
   const purity =
     kind === 'gold'
       ? [row.karat ? `${row.karat} K` : null, row.lodighed].filter(Boolean).join(' · ')
       : row.lodighed || '—';
-  const label = kind === 'gold' ? 'Guld' : 'Sølv';
+  const label = kind === 'gold' ? t('display.gold') : t('display.silver');
 
   return (
     <div
@@ -254,6 +260,8 @@ function T5Row(props: T5RowProps) {
 }
 
 export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: CustomerDisplayIdleViewProps) {
+  const { activeLocale } = useAppLocale();
+  const { t } = useAppTranslation();
   const scene = (
     <div
       data-testid="customer-display-idle"
@@ -276,12 +284,12 @@ export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: 
             className="mb-6 text-[18px] font-semibold tracking-[0.15em]"
             style={{ color: 'var(--display-ink-muted)' }}
           >
-            AFREGNING · BELGE
+            {t('display.document')}
           </h2>
           <div className="grid grid-cols-3 gap-5">
-            <SidebarField label="NUMARA" value="—" />
-            <SidebarField label="DATO" value={dateLabel(now.toISOString())} />
-            <SidebarField label="SAAT" value={timeLabel(now)} />
+            <SidebarField label={t('display.number')} value="—" />
+            <SidebarField label={t('display.date')} value={dateLabel(now.toISOString(), activeLocale)} />
+            <SidebarField label={t('display.time')} value={timeLabel(now, activeLocale)} />
           </div>
         </div>
         <div className="flex-1 px-10 py-12">
@@ -289,13 +297,13 @@ export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: 
             className="mb-6 text-[18px] font-semibold tracking-[0.15em]"
             style={{ color: 'var(--display-ink-muted)' }}
           >
-            KUNDEOPLYSNINGER · MÜŞTERİ BİLGİLERİ
+            {t('display.customerInfo')}
           </h2>
           <p className="text-[20px]" style={{ color: 'var(--display-ink-muted)' }}>
-            Müşteri seçimi bekleniyor
+            {t('display.waitingCustomer')}
           </p>
           <p className="mt-1 text-[14px]" style={{ color: 'var(--display-ink-muted)' }}>
-            Afventer kunde
+            {t('display.customerViewReady')}
           </p>
         </div>
       </aside>
@@ -304,7 +312,7 @@ export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: 
         className="flex flex-1 flex-col items-center justify-center gap-10 px-16"
         style={{ backgroundColor: 'var(--display-surface-card)' }}
       >
-        <DisplayWaitingPanel title="Alış hazırlanıyor" subtitle="Kundevisning er klar" />
+        <DisplayWaitingPanel title={t('display.purchasePreparing')} subtitle={t('display.customerViewReady')} />
         <div className="flex items-center gap-6">
           <span
             className="h-[3px] w-28"
@@ -317,20 +325,20 @@ export function CustomerDisplayIdleView({ embedded = false, now = new Date() }: 
             className="text-[22px] uppercase tracking-[0.22em]"
             style={{ color: 'var(--display-ink-strong)', fontFamily: FONT_STACK_SERIF }}
           >
-            Aktuelle Guld og Sølvpriser
+            {t('display.prices')}
           </span>
         </div>
         <p
           className="tabular-nums text-[76px] font-bold leading-none"
           style={{ color: 'var(--display-ink-strong)' }}
         >
-          {timeLabel(now)}
+          {timeLabel(now, activeLocale)}
         </p>
         <p
           className="text-[18px] uppercase tracking-[0.25em]"
           style={{ color: 'var(--display-ink-muted)' }}
         >
-          İşlem bekleniyor · Awaiting transaction
+          {t('display.waitingTransaction')}
         </p>
       </main>
     </div>
@@ -344,6 +352,8 @@ export function CustomerDisplayLiveView({
   connection,
   embedded = false,
 }: CustomerDisplayLiveViewProps) {
+  const { activeLocale } = useAppLocale();
+  const { t } = useAppTranslation();
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const goldRows = useMemo(() => snapshot.gold_rows ?? [], [snapshot.gold_rows]);
   const silverRows = useMemo(() => snapshot.silver_rows ?? [], [snapshot.silver_rows]);
@@ -401,12 +411,12 @@ export function CustomerDisplayLiveView({
             className="mb-6 text-[18px] font-semibold tracking-[0.15em]"
             style={{ color: 'var(--display-ink-muted)' }}
           >
-            AFREGNING · BELGE
+            {t('display.document')}
           </h2>
           <div className="grid grid-cols-3 gap-5">
-            <SidebarField label="NUMARA" value={documentNumber} />
-            <SidebarField label="DATO" value={dateLabel(snapshot.updated_at)} />
-            <SidebarField label="SAAT" value={timeLabel(currentTime)} />
+            <SidebarField label={t('display.number')} value={documentNumber} />
+            <SidebarField label={t('display.date')} value={dateLabel(snapshot.updated_at, activeLocale)} />
+            <SidebarField label={t('display.time')} value={timeLabel(currentTime, activeLocale)} />
           </div>
         </div>
         <div className="flex-1 px-10 py-12">
@@ -414,17 +424,17 @@ export function CustomerDisplayLiveView({
             className="mb-6 text-[18px] font-semibold tracking-[0.15em]"
             style={{ color: 'var(--display-ink-muted)' }}
           >
-            KUNDEOPLYSNINGER · MÜŞTERİ BİLGİLERİ
+            {t('display.customerInfo')}
           </h2>
           <div className="space-y-7">
-            <SidebarField label="NAVN · AD SOYAD" value={snapshot.customer_name || '—'} bigValue />
+            <SidebarField label={t('display.name')} value={snapshot.customer_name || '—'} bigValue />
             <div className="grid grid-cols-2 gap-4">
-              <SidebarField label="TELEFON / TLF" value={snapshot.customer_phone || '—'} />
-              <SidebarField label="TARİH" value={dateLabel(snapshot.updated_at)} />
+              <SidebarField label={t('display.phone')} value={snapshot.customer_phone || '—'} />
+              <SidebarField label={t('display.date')} value={dateLabel(snapshot.updated_at, activeLocale)} />
             </div>
-            <SidebarField label="E-POSTA · E-MAIL" value={snapshot.customer_email || '—'} wrap />
+            <SidebarField label={t('display.email')} value={snapshot.customer_email || '—'} wrap />
             <div className="grid grid-cols-2 gap-4">
-              <SidebarField label="KØREKORT · PAS" value={idDocDisplay} />
+              <SidebarField label={t('display.identity')} value={idDocDisplay} />
               <SidebarField label="CPR" value={cprDisplay} />
             </div>
             <div>
@@ -432,7 +442,7 @@ export function CustomerDisplayLiveView({
                 className="mb-2 text-[14px] uppercase tracking-wider"
                 style={{ color: 'var(--display-ink-muted)' }}
               >
-                ADRES
+                {t('display.address')}
               </div>
               <p
                 className="whitespace-pre-line text-[18px] font-medium leading-relaxed"

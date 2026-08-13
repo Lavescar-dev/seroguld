@@ -1,4 +1,5 @@
 import { CustomerDisplayIdleView, CustomerDisplayLiveView } from '@/components/CustomerDisplayCanvas';
+import { CustomerDisplayEmergencyClose } from '@/components/CustomerDisplayEmergencyClose';
 import type { PosDisplaySnapshot } from '@/types';
 
 type MakeDisplayPageProps = {
@@ -7,9 +8,10 @@ type MakeDisplayPageProps = {
 };
 
 export function MakeDisplayPage({ snapshot, connection }: MakeDisplayPageProps) {
-  if (!snapshot) {
-    return <CustomerDisplayIdleView />;
-  }
-
-  return <CustomerDisplayLiveView snapshot={snapshot} connection={connection} />;
+  return (
+    <>
+      {snapshot ? <CustomerDisplayLiveView snapshot={snapshot} connection={connection} /> : <CustomerDisplayIdleView />}
+      <CustomerDisplayEmergencyClose />
+    </>
+  );
 }

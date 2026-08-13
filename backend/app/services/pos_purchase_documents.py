@@ -268,7 +268,7 @@ async def build_purchase_workspace_csv_export(
 ) -> tuple[str, str]:
     core = _core()
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Export yalnız aktif alış workspace için üretilebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dışa aktarma yalnız etkin alış çalışma alanı için hazırlanabilir.")
     workspace = await core.build_purchase_workspace(session, pos_session=pos_session)
     payment_method = core._workspace_payment_method_from_session(pos_session)
     lines = workspace_preview_lines(workspace)
@@ -314,7 +314,7 @@ async def build_purchase_workspace_xlsx_export(
 ) -> tuple[str, bytes]:
     core = _core()
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Export yalnız aktif alış workspace için üretilebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dışa aktarma yalnız etkin alış çalışma alanı için hazırlanabilir.")
     workspace = await core.build_purchase_workspace(session, pos_session=pos_session)
     document_number = workspace_preview_document_number(workspace)
     lines = workspace_preview_lines(workspace)
@@ -325,7 +325,11 @@ async def build_purchase_workspace_xlsx_export(
         payment_method=core._workspace_payment_method_from_session(pos_session),
         bank_info=workspace.bank_info,
         lines=lines,
-        total_amount_dkk=workspace.summary.total_amount_dkk,
+        net_amount_dkk=workspace.summary.net_amount_dkk,
+        vat_rate_percent=workspace.summary.vat_rate_percent,
+        vat_amount_dkk=workspace.summary.vat_amount_dkk,
+        gross_amount_dkk=workspace.summary.gross_amount_dkk,
+        note=workspace.afg_note,
     )
     return f"AFG-{document_number.replace('/', '-')}.xlsx", payload
 
@@ -338,7 +342,7 @@ async def build_purchase_workspace_print_html(
 ) -> str:
     core = _core()
     if pos_session.status != PosSessionStatusEnum.DRAFT:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yazdırma önizlemesi yalnız aktif alış workspace için üretilebilir")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yazdırma önizlemesi yalnız etkin alış çalışma alanı için hazırlanabilir.")
     workspace = await core.build_purchase_workspace(session, pos_session=pos_session)
     return render_purchase_workspace_print_html(
         workspace=workspace,

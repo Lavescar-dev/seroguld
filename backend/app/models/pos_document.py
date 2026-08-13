@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -53,6 +53,13 @@ class PosDocument(Base):
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    legacy_document_number: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True, index=True)
+    historical_import_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    historical_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    historical_imported_by: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
 
     # Uniconta sync — finalize sonrası DebtorInvoice oluşturma akışı
     uniconta_sync_status: Mapped[str | None] = mapped_column(String(20), nullable=True)

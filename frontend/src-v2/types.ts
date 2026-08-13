@@ -7,6 +7,8 @@ export interface AppUser {
   address?: string | null;
   cpr_number_masked?: string | null;
   is_active: boolean;
+  must_change_password: boolean;
+  password_changed_at?: string | null;
   created_at: string;
 }
 
@@ -106,6 +108,11 @@ export interface AuthTokenResponse {
   access_token: string;
   refresh_token: string;
   user: AppUser;
+}
+
+export interface AuthBootstrapState {
+  email: string;
+  initial_login_pending: boolean;
 }
 
 export interface CustomerOut {
@@ -327,6 +334,7 @@ export interface PosDocumentListItem {
   currency_code: string;
   gross_amount_dkk: string;
   net_amount_dkk: string;
+  vat_rate_percent: string;
   vat_amount_dkk: string;
   line_count: number;
   total_weight_grams?: string | null;
@@ -609,6 +617,7 @@ export interface InventoryGridRow {
   spot_degeri_dkk: string;
   shop_fiyati_dkk?: string | null;
   shop_sync_status?: string | null;
+  is_published_to_site: boolean;
   length_cm?: string | null;
   width_mm?: string | null;
   thickness_mm?: string | null;
@@ -673,6 +682,7 @@ export interface DocumentArtifactRecord {
   base_revision?: string | null;
   crm_revision?: string | null;
   conflict_state?: string | null;
+  revision?: number;
   updated_at: string;
 }
 
@@ -707,6 +717,20 @@ export interface DocumentArtifactCellChange {
   new_value: string;
 }
 
+export interface DocumentArtifactCellError {
+  sheet: string;
+  cell_ref: string;
+  message: string;
+}
+
+export interface DocumentArtifactCellsPatchOut {
+  revision: number;
+  status: 'applied' | 'rejected';
+  applied_changes: Array<{ sheet: string; cell_ref: string; value: string }>;
+  warnings: string[];
+  cell_errors: DocumentArtifactCellError[];
+}
+
 export interface DocumentArtifactReconcilePreview {
   editable: boolean;
   changes: DocumentArtifactCellChange[];
@@ -719,6 +743,7 @@ export interface DocumentArtifactPreview {
   subtitle?: string | null;
   contract_version?: string;
   artifact?: DocumentArtifactRecord | null;
+  revision?: number;
   download_path: string;
   module_route?: string | null;
   import_supported: boolean;
@@ -730,7 +755,7 @@ export interface DocumentArtifactPreview {
 export interface OfficeDocumentLaunch {
   kind: string;
   key: string;
-  launch_mode?: 'wopi-iframe' | 'onlyoffice-docs-api';
+  launch_mode?: 'embedded-workbook' | 'download' | string;
   provider: string;
   provider_label: string;
   provider_branding_level: string;
@@ -749,9 +774,6 @@ export interface OfficeDocumentLaunch {
   editor_url?: string | null;
   access_token?: string | null;
   access_token_ttl?: number | null;
-  onlyoffice_api_js_url?: string | null;
-  onlyoffice_document_server_url?: string | null;
-  onlyoffice_config?: Record<string, unknown> | null;
 }
 
 export interface OfficeDocumentStatus {
@@ -1016,6 +1038,10 @@ export interface PosWorkspaceSummary {
   gold_weight_grams: string;
   silver_weight_grams: string;
   total_amount_dkk: string;
+  net_amount_dkk: string;
+  vat_rate_percent: string;
+  vat_amount_dkk: string;
+  gross_amount_dkk: string;
 }
 
 export interface PosWorkspaceCalculatorRow {
@@ -1042,6 +1068,8 @@ export interface PosWorkspace {
   payment_method: 'bank';
   market_rates: PosWorkspaceMarketRates;
   afg_note?: string | null;
+  purchase_vat_enabled: boolean;
+  purchase_vat_rate_percent: string;
   calculators: PosWorkspaceCalculators;
   numbering_preview: PosWorkspaceNumbering;
   invoice_gold_mode: 'auto' | 'manual';

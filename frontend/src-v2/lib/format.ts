@@ -1,41 +1,34 @@
-const money = new Intl.NumberFormat('da-DK', {
-  style: 'currency',
-  currency: 'DKK',
-  maximumFractionDigits: 2,
-});
+import { getActiveLocale, translate } from '@/i18n';
+import { translateVisibleCopy } from '@/i18n/copy';
 
-const decimal = new Intl.NumberFormat('da-DK', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+function copy(value: string): string {
+  return translateVisibleCopy(value, getActiveLocale());
+}
 
-const shortDate = new Intl.DateTimeFormat('tr-TR', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
+function intlLocale() {
+  const locale = getActiveLocale();
+  return locale === 'en' ? 'en-GB' : locale === 'da' ? 'da-DK' : 'tr-TR';
+}
 
 export function formatMoney(value?: string | number | null): string {
   if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '-';
-  return money.format(numeric);
+  return new Intl.NumberFormat(intlLocale(), { style: 'currency', currency: 'DKK', maximumFractionDigits: 2 }).format(numeric);
 }
 
 export function formatNumber(value?: string | number | null, suffix = ''): string {
   if (value === null || value === undefined || value === '') return '-';
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '-';
-  return `${decimal.format(numeric)}${suffix}`;
+  return `${new Intl.NumberFormat(intlLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(numeric)}${suffix}`;
 }
 
 export function formatDate(value?: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return shortDate.format(date);
+  return new Intl.DateTimeFormat(intlLocale(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 export function formatRelativeTime(value?: string | null, now: Date = new Date()): string {
@@ -45,36 +38,38 @@ export function formatRelativeTime(value?: string | null, now: Date = new Date()
   const diffMs = now.getTime() - date.getTime();
   const future = diffMs < 0;
   const absSec = Math.abs(Math.floor(diffMs / 1000));
-  const formatPart = (n: number, unit: string) =>
-    future ? `${n} ${unit} sonra` : `${n} ${unit} önce`;
-  if (absSec < 30) return future ? 'biraz sonra' : 'şimdi';
-  if (absSec < 60) return formatPart(absSec, 'saniye');
+  // Keep dashboard labels deterministic (two days should not become the
+  // locale-specific “evvelsi gün” special case).
+  const relative = new Intl.RelativeTimeFormat(intlLocale(), { numeric: 'always' });
+  const direction = future ? 1 : -1;
+  if (absSec < 30) return copy('şimdi');
+  if (absSec < 60) return relative.format(direction * absSec, 'second');
   const min = Math.floor(absSec / 60);
-  if (min < 60) return formatPart(min, 'dakika');
+  if (min < 60) return relative.format(direction * min, 'minute');
   const hr = Math.floor(min / 60);
-  if (hr < 24) return formatPart(hr, 'saat');
+  if (hr < 24) return relative.format(direction * hr, 'hour');
   const day = Math.floor(hr / 24);
-  if (day < 30) return formatPart(day, 'gün');
+  if (day < 30) return relative.format(direction * day, 'day');
   const month = Math.floor(day / 30);
-  if (month < 12) return formatPart(month, 'ay');
+  if (month < 12) return relative.format(direction * month, 'month');
   const year = Math.floor(day / 365);
-  return formatPart(year, 'yıl');
+  return relative.format(direction * year, 'year');
 }
 
 export function labelTradeSide(value?: string | null): string {
-  return value === 'sell_to_customer' ? 'Müşteriye Satış' : 'Müşteriden Alış';
+  return translate(value === 'sell_to_customer' ? 'labels.trade.sell' : 'labels.trade.buy');
 }
 
 export function labelStatus(value?: string | null): string {
   switch (value) {
     case 'confirmed':
-      return 'Onaylandı';
+      return copy('Onaylandı');
     case 'cancelled':
-      return 'İptal';
+      return copy('İptal');
     case 'draft':
-      return 'Taslak';
+      return copy('Taslak');
     default:
-      return 'Bekliyor';
+      return copy('Bekliyor');
   }
 }
 
@@ -88,7 +83,8 @@ export function labelProductType(value?: string | null): string {
     bar: 'Külçe',
     jewelry: 'Takı',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function labelMetalType(value?: string | null): string {
@@ -99,11 +95,12 @@ export function labelMetalType(value?: string | null): string {
     platinum: 'Platin',
     palladium: 'Palladyum',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function labelDocumentKind(value?: string | null): string {
-  return value === 'faktura' ? 'Faktura' : 'Afregningsbilag';
+  return copy(value === 'faktura' ? 'Faktura' : 'Afregningsbilag');
 }
 
 export function labelOperationState(value?: string | null): string {
@@ -114,7 +111,8 @@ export function labelOperationState(value?: string | null): string {
     melted: 'Eritildi',
     mixed: 'Karma',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function labelAfgClassification(value?: string | null): string {
@@ -124,7 +122,8 @@ export function labelAfgClassification(value?: string | null): string {
     white_gold: 'Beyaz Altın',
     separate_storage: 'Ayrı Depo',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function labelInventoryCategory(value?: string | null): string {
@@ -135,7 +134,8 @@ export function labelInventoryCategory(value?: string | null): string {
     gumus: 'Sølv',
     platin_pd: 'Platin / Pd',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function labelInventorySubcategory(value?: string | null): string {
@@ -146,7 +146,8 @@ export function labelInventorySubcategory(value?: string | null): string {
     platin: 'Platin',
     palladyum: 'Palladyum',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function labelShopSyncStatus(value?: string | null): string {
@@ -155,7 +156,8 @@ export function labelShopSyncStatus(value?: string | null): string {
     mangler_foto: 'Mangler foto',
     listelendi: 'Listelendi',
   };
-  return map[value || ''] || value || '-';
+  const label = map[value || ''];
+  return label ? copy(label) : value || '-';
 }
 
 export function statusTone(value?: string | null): string {

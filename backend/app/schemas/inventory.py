@@ -54,6 +54,7 @@ class InventoryGridRowOut(AppBaseModel):
     spot_degeri_dkk: Decimal
     shop_fiyati_dkk: Decimal | None = None
     shop_sync_status: str | None = None
+    is_published_to_site: bool = False
     length_cm: str | None = None
     width_mm: Decimal | None = None
     thickness_mm: Decimal | None = None

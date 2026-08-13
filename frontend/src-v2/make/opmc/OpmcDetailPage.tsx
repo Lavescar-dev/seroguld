@@ -25,7 +25,7 @@ function dateTimeLabel(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date
-    .toLocaleString('tr-TR', {
+    .toLocaleString(document.documentElement.lang, {
       hour12: false,
       day: '2-digit',
       month: '2-digit',
@@ -315,7 +315,7 @@ export function MakeOpmcDetailPage({
                       Risk Seviyesi: {tone.label}
                     </p>
                     <p className="mt-1.5 text-sm text-brand-700">
-                      Toplam tutar: <span className="font-black text-brand-900" style={monoStyle}>{detail.total ? `${Number(detail.total).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}</span>
+                      Toplam tutar: <span className="font-black text-brand-900" style={monoStyle}>{detail.total ? `${Number(detail.total).toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}</span>
                       {' · '}Ödeme: <span className="font-bold text-brand-800">{detail.payment_method || '-'}</span>
                     </p>
                     <div className="mt-2 flex items-center gap-3">
@@ -454,10 +454,10 @@ export function MakeOpmcDetailPage({
                 </div>
                 <div className="flex flex-wrap items-center gap-3 border-t border-sky-100 bg-sky-50/40 px-3 py-2 text-[11px] text-sky-800">
                   {detail.customer_history.first_order_at ? (
-                    <span>İlk: {new Date(detail.customer_history.first_order_at).toLocaleDateString('da-DK')}</span>
+                    <span>İlk: {new Date(detail.customer_history.first_order_at).toLocaleDateString(document.documentElement.lang)}</span>
                   ) : null}
                   {detail.customer_history.last_order_at ? (
-                    <span>Son: {new Date(detail.customer_history.last_order_at).toLocaleDateString('da-DK')}</span>
+                    <span>Son: {new Date(detail.customer_history.last_order_at).toLocaleDateString(document.documentElement.lang)}</span>
                   ) : null}
                   {detail.customer_history.matched_by ? (
                     <span className="ml-auto text-sky-600">
@@ -633,7 +633,7 @@ export function MakeOpmcDetailPage({
               </div>
               <div className="divide-y divide-brand-100">
                 <InfoRow label="Yöntem" value={detail.payment_method || '-'} accent="font-bold text-brand-900" />
-                <InfoRow label="Tutar" value={detail.total ? `${Number(detail.total).toLocaleString('da-DK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'} mono accent="font-black text-emerald-800" />
+                <InfoRow label="Tutar" value={detail.total ? `${Number(detail.total).toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'} mono accent="font-black text-emerald-800" />
                 <InfoRow label="Durum" value={formatOrderStatus(detail.status)} />
               </div>
             </div>

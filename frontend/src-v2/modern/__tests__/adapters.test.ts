@@ -34,7 +34,9 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
       invoice_misc_mode: 'auto',
       invoice_misc: { rows: [], total_amount_dkk: '0' },
       quick_mode_editable: true,
-      summary: { active_line_count: 0, total_weight_grams: '0', total_pure_gold_grams: '0', gold_weight_grams: '0', silver_weight_grams: '0', total_amount_dkk: '0' },
+      purchase_vat_enabled: true,
+      purchase_vat_rate_percent: '25',
+      summary: { active_line_count: 0, total_weight_grams: '0', total_pure_gold_grams: '0', gold_weight_grams: '0', silver_weight_grams: '0', total_amount_dkk: '0', net_amount_dkk: '0', vat_rate_percent: '25', vat_amount_dkk: '0', gross_amount_dkk: '0' },
     },
     draftWorkspace: null,
     onResumeDraft: () => undefined,
@@ -94,6 +96,8 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     setMarketRates: () => undefined,
     afgNote: '',
     setAfgNote: () => undefined,
+    purchaseVatEnabled: true,
+    setPurchaseVatEnabled: () => undefined,
     calculators: { gold_rows: [], silver_rows: [] },
     setCalculators: () => undefined,
     paymentMethod: 'bank',
@@ -211,7 +215,7 @@ describe('modern transition blockers', () => {
   it('builds alis blocker reasons from pending operations', () => {
     const blocker = createAlisTransitionBlocker(buildAlisState({ customerPending: true, finalizePending: true }), { hasPendingAutosave: true });
     expect(blocker?.when).toBe(true);
-    expect(blocker?.reasons).toContain('Autosave kuyruğu henüz tamamlanmadı');
+    expect(blocker?.reasons).toContain('Otomatik kaydetme kuyruğu henüz tamamlanmadı');
     expect(blocker?.reasons).toContain('Müşteri kartı güncelleniyor');
     expect(blocker?.severity).toBe('danger');
   });

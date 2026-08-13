@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin
+from app.config import get_settings
 from app.database import get_db
 from app.models.enums import RoleEnum
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UserOut
+from app.schemas.auth import (
+    LoginRequest,
+    PasswordChangeRequest,
+    RefreshRequest,
+    RegisterRequest,
+    BootstrapStateOut,
+    TokenResponse,
+    UserOut,
+)
 from app.schemas.customer import CustomerCreate
 from app.services.customer_service import create_customer
 from app.utils.cpr import normalize_cpr
@@ -42,7 +52,39 @@ def _to_user_out(user: User) -> UserOut:
         city=user.city,
         cpr_number_masked=mask_cpr(cpr_plain),
         is_active=user.is_active,
+        must_change_password=user.must_change_password,
+        password_changed_at=user.password_changed_at,
         created_at=user.created_at,
+    )
+
+
+def _password_policy_error(password: str) -> str | None:
+    if not password.strip():
+        return "Yeni şifre boş olamaz"
+    return None
+
+
+@router.get("/bootstrap-state", response_model=BootstrapStateOut)
+async def bootstrap_state(db: AsyncSession = Depends(get_db)) -> BootstrapStateOut:
+    """Return only the safe one-time bootstrap hint for the desktop login."""
+
+    settings = get_settings()
+    user = await db.scalar(
+        select(User).where(User.email == settings.initial_admin_email, User.role == RoleEnum.ADMIN)
+    )
+    if user is not None and getattr(user, "role", RoleEnum.ADMIN) != RoleEnum.ADMIN:
+        user = None
+    has_any_account = user is not None
+    if user is None:
+        candidate = await db.scalar(
+            select(User).order_by(case((User.role == RoleEnum.ADMIN, 0), else_=1), User.created_at.asc())
+        )
+        has_any_account = candidate is not None
+        if candidate is not None and getattr(candidate, "role", RoleEnum.ADMIN) == RoleEnum.ADMIN:
+            user = candidate
+    return BootstrapStateOut(
+        email=user.email if user is not None else settings.initial_admin_email,
+        initial_login_pending=bool(user.must_change_password) if user is not None else not has_any_account,
     )
 
 
@@ -86,6 +128,33 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
         access_token=access_token,
         refresh_token=refresh_token_value,
         user=_to_user_out(user),
+    )
+
+
+@router.post("/change-password", response_model=TokenResponse)
+async def change_password(
+    payload: PasswordChangeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TokenResponse:
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mevcut şifre hatalı")
+    if payload.new_password != payload.new_password_confirmation:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yeni şifreler eşleşmiyor")
+    policy_error = _password_policy_error(payload.new_password)
+    if policy_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=policy_error)
+
+    current_user.password_hash = get_password_hash(payload.new_password)
+    current_user.must_change_password = False
+    current_user.password_changed_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(current_user)
+
+    return TokenResponse(
+        access_token=create_access_token(str(current_user.id), current_user.role.value),
+        refresh_token=create_refresh_token(str(current_user.id), current_user.role.value),
+        user=_to_user_out(current_user),
     )
 
 

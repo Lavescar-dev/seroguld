@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SERO GULD CRM",
-  "version": "0.2.0",
+  "version": "0.3.4",
   "identifier": "dk.seroguld.crm",
   "build": {
     "devUrl": "http://127.0.0.1:3300",
@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' asset: data: blob: filesystem: http://127.0.0.1:* http://localhost:* tauri: http://tauri.localhost https://tauri.localhost https://seroguld.193.234.88.63.sslip.io https://seroguld.dk https://www.seroguld.dk http://192.168.1.105:*; connect-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* tauri: http://tauri.localhost https://tauri.localhost wss://tauri.localhost https://seroguld.193.234.88.63.sslip.io wss://seroguld.193.234.88.63.sslip.io http://192.168.1.105:* ws://192.168.1.105:*; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost https://seroguld.193.234.88.63.sslip.io https://seroguld.dk https://www.seroguld.dk http://192.168.1.105:*; style-src 'self' 'unsafe-inline' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; font-src 'self' data: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; script-src 'self' 'unsafe-eval' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; media-src 'self' data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost https://seroguld.193.234.88.63.sslip.io https://seroguld.dk https://www.seroguld.dk http://192.168.1.105:*; frame-src 'self' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost https://seroguld.193.234.88.63.sslip.io http://192.168.1.105:*;",
+      "csp": "default-src 'self' asset: data: blob: filesystem: tauri: http://tauri.localhost https://tauri.localhost; connect-src 'self' asset: data: blob: http://127.0.0.1:8100 http://localhost:8100 ws://127.0.0.1:8100 ws://localhost:8100 tauri: http://tauri.localhost https://tauri.localhost wss://tauri.localhost; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost https://seroguld.193.234.88.63.sslip.io https://seroguld.dk https://www.seroguld.dk; style-src 'self' 'unsafe-inline' http://tauri.localhost https://tauri.localhost; font-src 'self' data: http://tauri.localhost https://tauri.localhost; script-src 'self' 'unsafe-eval' http://tauri.localhost https://tauri.localhost; media-src 'self' data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost https://seroguld.193.234.88.63.sslip.io https://seroguld.dk https://www.seroguld.dk; frame-src 'self' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost;",
       "devCsp": "default-src 'self' asset: data: blob: filesystem: http://127.0.0.1:* http://localhost:* tauri: http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; connect-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* tauri: http://tauri.localhost https://tauri.localhost wss://tauri.localhost http://192.168.1.105:* ws://192.168.1.105:*; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; style-src 'self' 'unsafe-inline' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; font-src 'self' data: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; script-src 'self' 'unsafe-eval' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; media-src 'self' data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; frame-src 'self' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*;"
     }
   },
@@ -27,8 +27,24 @@
     "active": true,
     "targets": "nsis",
     "icon": [
-      "icons/icon.png",
-      "icons/icon.ico"
-    ]
+      "../../installer/windows/assets/seroguld-sg.png",
+      "../../installer/windows/assets/seroguld-sg.ico"
+    ],
+    "resources": {
+      "runtime/seroguld-runtime": "runtime/seroguld-runtime"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "compression": "zlib",
+        "installMode": "perMachine",
+        "installerIcon": "../../installer/windows/assets/seroguld-sg.ico",
+        "startMenuFolder": "Sero Guld CRM",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
   }
 }

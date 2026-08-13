@@ -615,10 +615,28 @@ async def _sync_processors(session: AsyncSession) -> list[GdprProcessorOut]:
             processor.detail = "Customer privacy sync conservative matching"
         elif processor.processor_key == "onlyoffice":
             check = readiness_by_name.get("office_afg")
-            processor.configured = bool(settings.onlyoffice_runtime_url.strip())
-            processor.status = "healthy" if check and check.ok else ("missing" if not processor.configured else "degraded")
-            processor.endpoint_url = settings.onlyoffice_runtime_url or None
-            processor.detail = check.detail if check else "ONLYOFFICE runtime"
+            configured_providers = {
+                str(getattr(settings, field, "embedded") or "embedded").strip().lower()
+                for field in (
+                    "office_provider_default",
+                    "office_provider_afg",
+                    "office_provider_depolama",
+                    "office_provider_log",
+                )
+            }
+            onlyoffice_active = "onlyoffice" in configured_providers
+            processor.configured = onlyoffice_active and bool(settings.onlyoffice_runtime_url.strip())
+            if not onlyoffice_active:
+                # The desktop distribution uses the native embedded grid.  A
+                # compatibility URL must not make a retired external processor
+                # look active in the GDPR cockpit.
+                processor.status = "retired"
+                processor.endpoint_url = None
+                processor.detail = "Embedded office provider aktif; ONLYOFFICE legacy processor devre dışı."
+            else:
+                processor.status = "healthy" if check and check.ok else ("missing" if not processor.configured else "degraded")
+                processor.endpoint_url = settings.onlyoffice_runtime_url or None
+                processor.detail = check.detail if check else "ONLYOFFICE runtime"
         elif processor.processor_key == "openai":
             processor.configured = bool(settings.openai_api_key.strip())
             processor.status = "healthy" if processor.configured else "missing"

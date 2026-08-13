@@ -36,11 +36,13 @@ from app.api.customers import (
     put_customer as legacy_put_customer,
     search_customers as legacy_search_customers,
 )
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import require_admin, require_password_change_complete
 from app.api.inventory import (
     get_inventory_workspace as get_legacy_inventory_workspace,
 )
 from app.api.v2_inventory import router as inventory_router
+from app.api.v2_document_artifacts import router as document_artifacts_router
+from app.api.v2_excel_sessions import router as excel_sessions_router
 from app.api.v2_support import apply_inventory_workbook_artifact_inputs, artifact_file_response
 from app.api.pos import get_pos_documents as get_legacy_pos_documents
 from app.api.pos import get_pos_document_detail as get_legacy_pos_document_detail
@@ -63,10 +65,10 @@ from app.api.products import (
     update_ai_describe as legacy_update_ai_describe,
     upload_photos as legacy_upload_photos,
 )
-from app.config import ROOT_ENV_FILE, get_settings
+from app.config import ROOT_ENV_FILE, get_settings, resolve_desktop_onlyoffice_jwt_secret
 from app.database import get_db
 from app.models.customer_identity import CustomerIdentityDocument
-from app.models.enums import PosDocumentTypeEnum, PosTradeSideEnum, RoleEnum
+from app.models.enums import PosDocumentTypeEnum, PosSessionStatusEnum, PosTradeSideEnum, RoleEnum
 from app.models.pos_document import PosDocument
 from app.models.pos_session import PosSession
 from app.models.transaction import Transaction
@@ -173,6 +175,7 @@ from app.services.pos_service import (
 from app.services.document_artifact_service import (
     XLSM_MIME,
     XLSX_MIME,
+    artifact_absolute_path,
     build_afg_workspace_reconcile_preview,
     build_inventory_reconcile_preview,
     build_afg_document_preview,
@@ -180,7 +183,6 @@ from app.services.document_artifact_service import (
     build_inventory_preview,
     build_log_preview,
     get_artifact_record,
-    artifact_absolute_path,
     list_artifact_records,
     office_contract_version_for_kind,
     parse_afg_workspace_inputs_from_workbook,
@@ -194,7 +196,6 @@ from app.services.document_artifact_service import (
     sync_log_workbook_artifact,
 )
 from app.services.office_host_service import office_host_service
-from app.services.postcode_service import lookup_danish_postal_code
 from app.services.runtime_readiness import collect_runtime_readiness
 from app.services.sequence_service import preview_afregnings_number, preview_invoice_number, preview_product_number
 from app.services.uniconta_service import (
@@ -236,20 +237,60 @@ CAT_LABELS = {
 
 def _as_utc_datetime(value: datetime) -> datetime:
     """Normalize SQLite-naive and PostgreSQL-aware timestamps to UTC."""
+
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
-async def _lookup_danish_postal_code(
-    postal_code: str,
-    *,
-    force_refresh: bool = False,
-) -> PosPostalLookupOut:
+def _normalize_postal_lookup_code(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())[:4]
+
+
+def _first_named_item(value) -> str | None:
+    if isinstance(value, list) and value:
+        first = value[0]
+        if isinstance(first, dict):
+            name = str(first.get("navn") or "").strip()
+            return name or None
+        name = str(first or "").strip()
+        return name or None
+    if isinstance(value, dict):
+        name = str(value.get("navn") or "").strip()
+        return name or None
+    text = str(value or "").strip()
+    return text or None
+
+
+async def _lookup_danish_postal_code(postal_code: str) -> PosPostalLookupOut:
+    normalized = _normalize_postal_lookup_code(postal_code)
+    if len(normalized) != 4:
+        raise HTTPException(status_code=422, detail="Postnr. 4 rakam olmalı.")
+
+    url = f"https://api.dataforsyningen.dk/postnumre/{normalized}"
     try:
-        return await lookup_danish_postal_code(postal_code, force_refresh=force_refresh)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+            response = await client.get(url, headers={"Accept": "application/json"})
+    except httpx.HTTPError:
+        return PosPostalLookupOut(postal_code=normalized, found=False, available=False)
+
+    if response.status_code == 404:
+        return PosPostalLookupOut(postal_code=normalized, found=False, available=True)
+
+    response.raise_for_status()
+    payload = response.json() if response.content else {}
+    postal_district = str(payload.get("navn") or "").strip() or None
+    municipality_name = _first_named_item(payload.get("kommuner"))
+    region_name = _first_named_item(payload.get("regioner"))
+
+    return PosPostalLookupOut(
+        postal_code=normalized,
+        found=bool(postal_district),
+        available=True,
+        postal_district=postal_district,
+        municipality_name=municipality_name,
+        region_name=region_name,
+    )
 BACKEND_STARTED_AT = utc_now()
 DESKTOP_SESSION_FILE = ROOT_ENV_FILE.parent / ".run" / "desktop-dev-session.json"
 
@@ -313,33 +354,11 @@ async def _ensure_alis_workspace_artifact(
     workspace: PosWorkspaceOut,
     *,
     force_sync: bool,
-) -> str:
-    """Best-effort workbook projection; never fail the core workspace save."""
-    artifact_key = f"alis.workspace.{workspace.session.id}"
-    existing = await get_artifact_record(db, artifact_key)
-    if not force_sync and existing:
-        workspace.artifact_sync_state = "synced"
-        workspace.artifact_workspace_revision = workspace.workspace_revision
-        return "synced"
-    try:
-        await sync_afg_workspace_artifact(db, workspace)
-        await db.commit()
-    except Exception:
-        # The row/customer mutation has already committed before this helper
-        # is called.  Roll back only the failed artifact transaction and let
-        # the frontend retry the projection explicitly.
-        await db.rollback()
-        logger.exception(
-            "alis workspace artifact sync failed session=%s workspace_revision=%s",
-            workspace.session.id,
-            workspace.workspace_revision,
-        )
-        workspace.artifact_sync_state = "error"
-        workspace.artifact_workspace_revision = workspace.workspace_revision
-        return "error"
-    workspace.artifact_sync_state = "synced"
-    workspace.artifact_workspace_revision = workspace.workspace_revision
-    return "synced"
+) -> None:
+    if not force_sync and await get_artifact_record(db, f"alis.workspace.{workspace.session.id}"):
+        return
+    await sync_afg_workspace_artifact(db, workspace)
+    await db.commit()
 
 
 async def _ensure_log_artifact(
@@ -453,12 +472,13 @@ async def _apply_afg_workspace_artifact_inputs(
     office_lineage: bool = False,
     allow_full_clear: bool = False,
     office_workspace_revision: int | None = None,
+    enforce_base_version: bool = True,
 ) -> PosWorkspaceOut:
     try:
         parsed = parse_afg_workspace_inputs_from_workbook(workbook_bytes)
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if parsed.base_version and not office_lineage:
+    if enforce_base_version and parsed.base_version and not office_lineage:
         record = await get_artifact_record(db, f"alis.workspace.{pos_session.id}")
         if record is not None:
             conflict_state = resolve_artifact_conflict_state(
@@ -482,26 +502,27 @@ async def _apply_afg_workspace_artifact_inputs(
         )
     workspace = current_workspace
     customer_mutation_started = False
+    customer_payload = parsed.customer.model_copy(
+        update={"base_revision": office_workspace_revision}
+    ) if office_workspace_revision is not None else parsed.customer
     if pos_session.customer_id is not None:
         workspace = await update_purchase_workspace_customer(
             db,
             pos_session=pos_session,
-            payload=parsed.customer.model_copy(update={"base_revision": office_workspace_revision})
-            if office_workspace_revision is not None
-            else parsed.customer,
+            payload=customer_payload,
             commit=False,
             emit=False,
+            claim_revision=office_workspace_revision is not None,
         )
         customer_mutation_started = True
     elif _customer_update_has_business_inputs(parsed.customer):
         workspace = await update_purchase_workspace_draft_customer(
             db,
             pos_session=pos_session,
-            payload=parsed.customer.model_copy(update={"base_revision": office_workspace_revision})
-            if office_workspace_revision is not None
-            else parsed.customer,
+            payload=customer_payload,
             commit=False,
             emit=False,
+            claim_revision=office_workspace_revision is not None,
         )
         customer_mutation_started = True
     workspace = await replace_purchase_workspace_sections(
@@ -512,7 +533,7 @@ async def _apply_afg_workspace_artifact_inputs(
                 "market_rates": parsed.sections.market_rates or current_workspace.market_rates,
                 **(
                     {"base_revision": office_workspace_revision}
-                    if office_workspace_revision is not None
+                    if office_workspace_revision is not None and not customer_mutation_started
                     else {}
                 ),
             }
@@ -583,8 +604,9 @@ async def _apply_office_session_content(
     *,
     entry,
     workbook_bytes: bytes,
-) -> PosWorkspaceOut | None:
+) -> PosSession | None:
     office_pos_session: PosSession | None = None
+    applied_workspace_revision: int | None = None
     if entry.artifact_key:
         record = await get_artifact_record(db, entry.artifact_key)
         if record is None:
@@ -640,13 +662,6 @@ async def _apply_office_session_content(
                 incoming_base_revision = int(metadata.base_version) if metadata.base_version is not None else None
             except (TypeError, ValueError):
                 incoming_base_revision = None
-            # OnlyOffice keeps the embedded base_version from launch; it does
-            # not receive the regenerated workbook after every callback.  A
-            # later save from this same session may therefore carry the
-            # original revision.  Accept that monotonic in-session lineage as
-            # long as no external writer advanced the artifact meanwhile.
-            # Reject values outside the session range so an old document from
-            # another launch cannot resurrect deleted workspace data.
             if (
                 incoming_base_revision is None
                 or incoming_base_revision < launch_revision
@@ -678,19 +693,13 @@ async def _apply_office_session_content(
             pos_session=pos_session,
             workbook_bytes=workbook_bytes,
             office_lineage=True,
-            office_workspace_revision=int(applied_workspace_revision),
+            office_workspace_revision=int(applied_workspace_revision) if applied_workspace_revision is not None else None,
         )
     if entry.kind == "depolama":
         await apply_inventory_workbook_artifact_inputs(db, workbook_bytes=workbook_bytes, create_snapshot=False)
         return None
     if entry.kind == "log":
-        await _apply_log_workbook_artifact_inputs(
-            db,
-            year=_default_artifact_year(int(entry.key)),
-            workbook_bytes=workbook_bytes,
-            create_snapshot=False,
-        )
-        return None
+        raise HTTPException(status_code=409, detail="Log workbook salt okunurdur")
     raise HTTPException(status_code=409, detail="Bu office oturumu yazma desteklemiyor")
 
 
@@ -705,39 +714,13 @@ def _verify_onlyoffice_callback_token(request: Request, payload: dict) -> None:
     if not raw_token:
         return
     try:
-        jwt.decode(raw_token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+        jwt.decode(
+            raw_token,
+            resolve_desktop_onlyoffice_jwt_secret(settings.onlyoffice_jwt_secret),
+            algorithms=["HS256"],
+        )
     except JWTError as exc:
         raise HTTPException(status_code=401, detail="ONLYOFFICE callback token geçersiz") from exc
-
-
-async def _ensure_current_alis_workspace_artifact(
-    db: AsyncSession,
-    *,
-    workspace: PosWorkspaceOut,
-    artifact,
-):
-    """Fail closed instead of launching an old writable workbook.
-
-    Normal workspace saves keep their core transaction independent from the
-    generated workbook.  If the projection failed, the next Office launch
-    must repair it from the current workspace before handing out a writable
-    session; otherwise a stale workbook could pass its own artifact revision
-    check and overwrite newer CRM data.
-    """
-    if artifact is not None:
-        try:
-            metadata = read_artifact_sync_metadata(
-                artifact_absolute_path(artifact).read_bytes(),
-                expected_kind="alis-workspace",
-                expected_key=str(workspace.session.id),
-            )
-        except (OSError, ValueError, KeyError, TypeError):
-            metadata = None
-        if metadata is not None and getattr(metadata, "workspace_revision", None) == str(workspace.workspace_revision):
-            return artifact
-    bundle = await sync_afg_workspace_artifact(db, workspace)
-    await db.commit()
-    return bundle.artifact
 
 
 async def _office_preview_for_kind(
@@ -752,9 +735,19 @@ async def _office_preview_for_kind(
             session_id = UUID(key)
             pos_session = await get_pos_session_or_404(db, session_id)
             workspace = await build_purchase_workspace(db, pos_session=pos_session)
-            artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
-            artifact = await _ensure_current_alis_workspace_artifact(db, workspace=workspace, artifact=artifact)
-            return build_afg_workspace_preview(workspace, artifact=artifact), True
+            bundle = await sync_afg_workspace_artifact(db, workspace)
+            await db.commit()
+            preview = build_afg_workspace_preview(workspace, artifact=bundle.artifact)
+            can_write = pos_session.status == PosSessionStatusEnum.DRAFT
+            if not can_write:
+                preview = preview.model_copy(
+                    update={
+                        "import_supported": False,
+                        "external_edit_supported": False,
+                        "editable_cells": [],
+                    }
+                )
+            return preview, can_write
         if kind == "alis-document":
             sequence_no = int(key)
             detail = await get_legacy_pos_document_detail(sequence_no=sequence_no, db=db, _=admin)
@@ -771,11 +764,7 @@ async def _office_preview_for_kind(
             workspace = await build_log_workspace(db, q=None, limit=200)
             bundle = await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)
             await db.commit()
-            return build_log_preview(workspace, year=year, artifact=bundle.artifact), True
-    except FileNotFoundError as exc:
-        await db.rollback()
-        detail = "AFG_REFERENCE_TEMPLATE_MISSING" if "Afregningsbilag" in str(exc) else "OFFICE_REFERENCE_TEMPLATE_MISSING"
-        raise HTTPException(status_code=424, detail=detail) from exc
+            return build_log_preview(workspace, year=year, artifact=bundle.artifact), False
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Geçersiz office belge anahtarı") from exc
     raise HTTPException(status_code=404, detail="Office belge bulunamadı")
@@ -805,11 +794,14 @@ async def _office_status_for_kind(
         if kind == "alis-workspace":
             session_id = UUID(key)
             artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
+            if artifact is None:
+                pos_session = await get_pos_session_or_404(db, session_id)
+                workspace = await build_purchase_workspace(db, pos_session=pos_session)
+                artifact = (await sync_afg_workspace_artifact(db, workspace)).artifact
+                await db.commit()
             pos_session = await get_pos_session_or_404(db, session_id)
-            workspace = await build_purchase_workspace(db, pos_session=pos_session)
-            artifact = await _ensure_current_alis_workspace_artifact(db, workspace=workspace, artifact=artifact)
-            can_write = True
-            import_supported = True
+            can_write = pos_session.status == PosSessionStatusEnum.DRAFT
+            import_supported = can_write
         elif kind == "alis-document":
             sequence_no = int(key)
             artifact = await get_artifact_record(db, f"alis.document.{sequence_no}")
@@ -832,14 +824,12 @@ async def _office_status_for_kind(
                 workspace = await build_log_workspace(db, q=None, limit=200)
                 artifact = (await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)).artifact
                 await db.commit()
-            can_write = True
-            import_supported = True
+            # Log/history workbooks are projections and intentionally cannot
+            # write through the controlled grid or Excel bridge.
+            can_write = False
+            import_supported = False
         else:
             raise HTTPException(status_code=404, detail="Office belge bulunamadı")
-    except FileNotFoundError as exc:
-        await db.rollback()
-        detail = "AFG_REFERENCE_TEMPLATE_MISSING" if "Afregningsbilag" in str(exc) else "OFFICE_REFERENCE_TEMPLATE_MISSING"
-        raise HTTPException(status_code=424, detail=detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Geçersiz office belge anahtarı") from exc
 
@@ -848,7 +838,6 @@ async def _office_status_for_kind(
         kind=kind,
         key=key,
     )
-    office_entry = office_host_service.get_session(access_token)
     return OfficeDocumentStatusOut(
         kind=kind,
         key=key,
@@ -863,10 +852,6 @@ async def _office_status_for_kind(
         live_sync_state=live_sync_state,
         live_sync_message=live_sync_message,
         last_callback_at=last_callback_at,
-        launch_revision=(office_entry.launch_revision if office_entry else None),
-        applied_revision=(office_entry.artifact_revision if office_entry else None),
-        last_requested_save_id=(office_entry.last_requested_save_id if office_entry else 0),
-        last_applied_save_id=(office_entry.last_applied_save_id if office_entry else 0),
     )
 
 
@@ -926,9 +911,6 @@ async def _build_alis_saved_purchase_items(
             select(
                 PosDocument.sequence_no,
                 PosDocument.notes,
-                PosDocument.customer_address,
-                PosDocument.customer_postal_code,
-                PosDocument.customer_city,
                 PosSession.customer_id,
                 User.address_encrypted,
                 User.postal_code,
@@ -948,9 +930,6 @@ async def _build_alis_saved_purchase_items(
     for (
         sequence_no,
         notes,
-        document_address,
-        document_postal_code,
-        document_city,
         customer_id,
         address_encrypted,
         postal_code,
@@ -963,8 +942,8 @@ async def _build_alis_saved_purchase_items(
         cpr_masked = None
         cpr_plain = None
         identity_plain = None
-        address = document_address
-        if address is None and address_encrypted:
+        address = None
+        if address_encrypted:
             try:
                 address = decrypt_field(address_encrypted)
             except Exception:
@@ -987,8 +966,7 @@ async def _build_alis_saved_purchase_items(
             "customer_id": str(customer_id) if customer_id else None,
             "address": address,
             "payment_method": extract_purchase_payment_method(notes),
-            "postal_code": document_postal_code if document_postal_code is not None else postal_code,
-            "city": document_city,
+            "postal_code": postal_code,
             "cpr_masked": cpr_masked,
             "cpr": cpr_plain,
             "identity_doc_number": identity_plain,
@@ -1045,7 +1023,6 @@ async def _build_alis_saved_purchase_items(
             customer_email=item.customer_email,
             customer_address=extra_map.get(item.sequence_no, {}).get("address"),
             customer_postal_code=extra_map.get(item.sequence_no, {}).get("postal_code"),
-            customer_city=extra_map.get(item.sequence_no, {}).get("city"),
             customer_cpr=extra_map.get(item.sequence_no, {}).get("cpr"),
             customer_cpr_masked=extra_map.get(item.sequence_no, {}).get("cpr_masked"),
             customer_identity_doc_number=extra_map.get(item.sequence_no, {}).get("identity_doc_number"),
@@ -1178,34 +1155,53 @@ def _build_alis_document_xlsx(detail: PosDocumentDetailOut) -> bytes:
 
 def _build_settings_screen_out() -> SettingsScreenOut:
     settings = get_settings()
+    configured_secret_fields = [
+        field_name
+        for field_name, value in (
+            ("openai_api_key", settings.openai_api_key),
+            ("opmc_api_key", settings.opmc_api_key),
+            ("opmc_webhook_secret", settings.opmc_webhook_secret),
+            ("woo_consumer_key", settings.woocommerce_consumer_key),
+            ("woo_consumer_secret", settings.woocommerce_consumer_secret),
+            ("woo_webhook_secret", settings.woocommerce_webhook_secret),
+            ("wp_app_password", settings.wp_app_password),
+            ("uniconta_password", settings.uniconta_password),
+            ("uniconta_api_key", settings.uniconta_api_key),
+        )
+        if str(value or "").strip()
+    ]
     return SettingsScreenOut(
-        openai_api_key=settings.openai_api_key,
+        openai_api_key="",
         openai_model=settings.openai_model,
         openai_max_tokens=str(settings.openai_max_tokens),
         opmc_api_url=settings.opmc_api_url,
-        opmc_api_key=settings.opmc_api_key,
-        opmc_webhook_secret=settings.opmc_webhook_secret,
+        opmc_api_key="",
+        opmc_webhook_secret="",
         woo_store_url=settings.woocommerce_base_url,
-        woo_consumer_key=settings.woocommerce_consumer_key,
-        woo_consumer_secret=settings.woocommerce_consumer_secret,
-        woo_webhook_secret=settings.woocommerce_webhook_secret,
+        woo_consumer_key="",
+        woo_consumer_secret="",
+        woo_webhook_secret="",
         wp_site_url=settings.wordpress_base_url,
         wp_username=settings.wp_app_username,
-        wp_app_password=settings.wp_app_password,
-        uniconta_api_url=settings.uniconta_api_url,
+        wp_app_password="",
+        uniconta_api_url=UNICONTA_WEB_API_BASE,
         uniconta_username=settings.uniconta_username,
-        uniconta_password=settings.uniconta_password,
+        uniconta_password="",
         uniconta_company_id=settings.uniconta_company_id,
-        uniconta_api_key=settings.uniconta_api_key,
+        uniconta_api_key="",
+        uniconta_purchase_vat_code_25=settings.uniconta_purchase_vat_code_25,
+        uniconta_purchase_vat_code_0=settings.uniconta_purchase_vat_code_0,
         market_gold=str(settings.inventory_market_gold_dkk),
         market_silver=str(settings.inventory_market_silver_dkk),
         market_platin=str(settings.inventory_market_platinum_dkk),
         market_palladyum=str(settings.inventory_market_palladium_dkk),
+        market_rates_live_enabled=bool(settings.market_rates_live_enabled),
         firma_adi=settings.invoice_seller_name,
         firma_cvr=settings.invoice_seller_cvr,
         firma_telefon=settings.invoice_seller_phone,
         firma_email=settings.invoice_seller_email,
         firma_adres=settings.invoice_seller_address_line1,
+        secret_fields_configured=configured_secret_fields,
     )
 
 
@@ -1255,7 +1251,15 @@ def _build_uniconta_invoice(
     lines: list[TransactionLine],
 ) -> UnicontaInvoiceOut:
     invoice_number = format_document_number(document)
-    invoice_type = "Kreditnota" if Decimal(document.gross_amount_dkk or 0) < 0 else "Salgsfaktura"
+    signed_total_amount = _to_float(document.gross_amount_dkk)
+    invoice_type = "Kreditnota" if signed_total_amount < 0 else "Salgsfaktura"
+    amount_direction = (
+        "income"
+        if signed_total_amount > 0
+        else "expense"
+        if signed_total_amount < 0
+        else "neutral"
+    )
     line_items = [
         UnicontaInvoiceLineOut(
             id=str(line.id),
@@ -1291,7 +1295,9 @@ def _build_uniconta_invoice(
         kalemler=line_items,
         subtotal=_to_float(document.net_amount_dkk),
         momsTotal=_to_float(document.vat_amount_dkk),
-        total=_to_float(document.gross_amount_dkk),
+        total=signed_total_amount,
+        signedTotalAmount=signed_total_amount,
+        amountDirection=amount_direction,
         valuta=document.currency_code,
         note=document.notes,
         wooOrderId=None,
@@ -1514,7 +1520,7 @@ def _build_woocommerce_workspace(inventory_workspace: InventoryWorkspaceOut) -> 
 @router.get("/bootstrap", response_model=DesktopBootstrapOut)
 async def get_bootstrap_v2(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_password_change_complete),
 ) -> DesktopBootstrapOut:
     return await get_legacy_bootstrap(db=db, current_user=current_user)
 
@@ -1540,36 +1546,49 @@ async def put_settings_v2(
     _: User = Depends(require_admin),
 ) -> SettingsScreenOut:
     updates = {
-        "OPENAI_API_KEY": payload.openai_api_key.strip(),
         "OPENAI_MODEL": payload.openai_model.strip() or "gpt-5.4",
         "OPENAI_MAX_TOKENS": payload.openai_max_tokens.strip() or "4096",
         "OPMC_API_URL": payload.opmc_api_url.strip(),
-        "OPMC_API_KEY": payload.opmc_api_key.strip(),
-        "OPMC_WEBHOOK_SECRET": payload.opmc_webhook_secret.strip(),
         "WOOCOMMERCE_BASE_URL": payload.woo_store_url.strip(),
-        "WOOCOMMERCE_CONSUMER_KEY": payload.woo_consumer_key.strip(),
-        "WOOCOMMERCE_CONSUMER_SECRET": payload.woo_consumer_secret.strip(),
-        "WOOCOMMERCE_WEBHOOK_SECRET": payload.woo_webhook_secret.strip(),
         "WORDPRESS_BASE_URL": payload.wp_site_url.strip(),
         "WP_APP_USERNAME": payload.wp_username.strip(),
-        "WP_APP_PASSWORD": payload.wp_app_password.strip(),
-        "UNICONTA_API_URL": payload.uniconta_api_url.strip(),
+        "UNICONTA_API_URL": UNICONTA_WEB_API_BASE,
         "UNICONTA_USERNAME": payload.uniconta_username.strip(),
-        "UNICONTA_PASSWORD": payload.uniconta_password.strip(),
         "UNICONTA_COMPANY_ID": payload.uniconta_company_id.strip(),
-        "UNICONTA_API_KEY": payload.uniconta_api_key.strip(),
+        "UNICONTA_PURCHASE_VAT_CODE_25": payload.uniconta_purchase_vat_code_25.strip() or "Købsmoms",
+        "UNICONTA_PURCHASE_VAT_CODE_0": payload.uniconta_purchase_vat_code_0.strip() or "KøbBrugtmoms",
         "INVENTORY_MARKET_GOLD_DKK": payload.market_gold.strip() or "2850",
         "INVENTORY_MARKET_SILVER_DKK": payload.market_silver.strip() or "8.5",
         "INVENTORY_MARKET_PLATINUM_DKK": payload.market_platin.strip() or "280",
         "INVENTORY_MARKET_PALLADIUM_DKK": payload.market_palladyum.strip() or "335",
+        "MARKET_RATES_LIVE_ENABLED": "true" if payload.market_rates_live_enabled else "false",
         "INVOICE_SELLER_NAME": payload.firma_adi.strip(),
         "INVOICE_SELLER_CVR": payload.firma_cvr.strip(),
         "INVOICE_SELLER_PHONE": payload.firma_telefon.strip(),
         "INVOICE_SELLER_EMAIL": payload.firma_email.strip(),
         "INVOICE_SELLER_ADDRESS_LINE1": payload.firma_adres.strip(),
     }
+    secret_updates = {
+        "OPENAI_API_KEY": payload.openai_api_key,
+        "OPMC_API_KEY": payload.opmc_api_key,
+        "OPMC_WEBHOOK_SECRET": payload.opmc_webhook_secret,
+        "WOOCOMMERCE_CONSUMER_KEY": payload.woo_consumer_key,
+        "WOOCOMMERCE_CONSUMER_SECRET": payload.woo_consumer_secret,
+        "WOOCOMMERCE_WEBHOOK_SECRET": payload.woo_webhook_secret,
+        "WP_APP_PASSWORD": payload.wp_app_password,
+        "UNICONTA_PASSWORD": payload.uniconta_password,
+        "UNICONTA_API_KEY": payload.uniconta_api_key,
+    }
+    updates.update(
+        {
+            key: value.strip()
+            for key, value in secret_updates.items()
+            if value is not None and value.strip()
+        }
+    )
     upsert_env_values(ROOT_ENV_FILE, updates)
     get_settings.cache_clear()
+    reset_uniconta_client()
     return _build_settings_screen_out()
 
 
@@ -1589,11 +1608,7 @@ async def post_uniconta_connect_v2(
     company_id = payload.companyId.strip() or current.uniconta_company_id.strip()
     username = payload.username.strip() or current.uniconta_username.strip()
     password = (payload.password or "").strip() or current.uniconta_password.strip()
-    configured = bool(
-        company_id
-        and username
-        and password
-    )
+    configured = bool(company_id and username and password)
     if not configured:
         message = "Uniconta baglanti bilgileri eksik."
         config = _build_uniconta_config_out(message=message, connection_status="bagli_degil")
@@ -1603,8 +1618,8 @@ async def post_uniconta_connect_v2(
             message=message,
             config=config,
         )
-    # Önce aday kimlik bilgileriyle test et; başarısız aday mevcut .env'i
-    # bozmamalı. Uniconta Web API'si için tek kanonik canlı endpoint kullanılır.
+    # Aday değerleri önce ayrı bir istemciyle doğrula. Başarısız bir test mevcut
+    # çalışan kimlik bilgilerini veya token cache'ini değiştirmemelidir.
     client = UnicontaClient(
         base_url=UNICONTA_WEB_API_BASE,
         company_id=company_id,
@@ -1616,7 +1631,12 @@ async def post_uniconta_connect_v2(
     if not result.get("ok"):
         message = result.get("message", "Uniconta baglantisi basarisiz.")
         config = _build_uniconta_config_out(message=message, connection_status="hata")
-        return UnicontaConnectOut(connectionStatus="hata", configured=config.configured, message=message, config=config)
+        return UnicontaConnectOut(
+            connectionStatus="hata",
+            configured=config.configured,
+            message=message,
+            config=config,
+        )
 
     existing_api_key = current.uniconta_api_key.strip()
     supplied_api_key = (payload.apiKey or "").strip()
@@ -1641,7 +1661,12 @@ async def post_uniconta_connect_v2(
         connection_status="bagli",
         last_refreshed_at=last_refreshed_at,
     )
-    return UnicontaConnectOut(connectionStatus="bagli", configured=True, message=message, config=config)
+    return UnicontaConnectOut(
+        connectionStatus="bagli",
+        configured=True,
+        message=message,
+        config=config,
+    )
 
 
 @router.get("/uniconta/invoices", response_model=UnicontaInvoicesOut)
@@ -2119,7 +2144,7 @@ async def get_musteri_alis_summary_v2(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> CustomerAlisSummaryOut:
-    from datetime import timedelta
+    from datetime import timedelta, timezone
 
     from app.models.pos_session_line import PosSessionLine
 
@@ -2152,8 +2177,8 @@ async def get_musteri_alis_summary_v2(
     now = datetime.now(timezone.utc)
     cutoff_30 = now - timedelta(days=30)
     cutoff_365 = now - timedelta(days=365)
-    docs_30 = [d for d in documents if d.issued_at and _as_utc_datetime(d.issued_at) >= cutoff_30]
-    docs_365 = [d for d in documents if d.issued_at and _as_utc_datetime(d.issued_at) >= cutoff_365]
+    docs_30 = [d for d in documents if d.issued_at and d.issued_at >= cutoff_30]
+    docs_365 = [d for d in documents if d.issued_at and d.issued_at >= cutoff_365]
     amount_30 = sum((d.gross_amount_dkk or Decimal("0")) for d in docs_30)
     amount_365 = sum((d.gross_amount_dkk or Decimal("0")) for d in docs_365)
 
@@ -2247,3 +2272,5 @@ router.include_router(alis_router)
 router.include_router(log_router)
 router.include_router(office_runtime_router)
 router.include_router(woocommerce_router)
+router.include_router(document_artifacts_router)
+router.include_router(excel_sessions_router)

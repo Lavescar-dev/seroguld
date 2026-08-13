@@ -67,16 +67,25 @@ def parse_backup_timestamp_from_name(name: str) -> datetime | None:
 
 
 def find_latest_hourly_backup(backup_root: Path) -> datetime | None:
-    hourly_dir = backup_root / "hourly"
-    if not hourly_dir.exists() or not hourly_dir.is_dir():
-        return None
     latest: datetime | None = None
-    for file in hourly_dir.glob("seroguld-backup-*.tar.gz"):
-        parsed = parse_backup_timestamp_from_name(file.name)
-        if not parsed:
-            continue
-        if latest is None or parsed > latest:
-            latest = parsed
+    hourly_dir = backup_root / "hourly"
+    if hourly_dir.exists() and hourly_dir.is_dir():
+        for file in hourly_dir.glob("seroguld-backup-*.tar.gz"):
+            parsed = parse_backup_timestamp_from_name(file.name)
+            if parsed and (latest is None or parsed > latest):
+                latest = parsed
+    # Windows native desktop backups are verified encrypted bundles. Their
+    # filenames include a timestamp, but mtime is authoritative after an
+    # atomic local publication or a preserved OneDrive restore.
+    daily_dir = backup_root / "daily"
+    if daily_dir.exists() and daily_dir.is_dir():
+        for file in daily_dir.glob("*.sgbackup"):
+            try:
+                parsed = datetime.fromtimestamp(file.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            if latest is None or parsed > latest:
+                latest = parsed
     return latest
 
 

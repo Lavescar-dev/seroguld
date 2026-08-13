@@ -21,6 +21,7 @@ from app.api.v2 import (
     _verify_onlyoffice_callback_token,
 )
 from app.database import get_db
+from app.models.enums import PosSessionStatusEnum
 from app.models.user import User
 from app.schemas.document_artifact import (
     DocumentArtifactPreviewOut,
@@ -345,7 +346,16 @@ async def get_excel_preview_v2(
             pos_session = await get_pos_session_or_404(db, session_id)
             workspace = await build_purchase_workspace(db, pos_session=pos_session)
             artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
-            return build_afg_workspace_preview(workspace, artifact=artifact)
+            preview = build_afg_workspace_preview(workspace, artifact=artifact)
+            if pos_session.status != PosSessionStatusEnum.DRAFT:
+                preview = preview.model_copy(
+                    update={
+                        "import_supported": False,
+                        "external_edit_supported": False,
+                        "editable_cells": [],
+                    }
+                )
+            return preview
         if kind == "alis-document":
             sequence_no = int(key)
             detail = await get_legacy_pos_document_detail(sequence_no=sequence_no, db=db, _=admin)

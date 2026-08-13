@@ -43,13 +43,25 @@ async def get_current_user(
     return user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
+def require_password_change_complete(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "password_change_required",
+                "message": "Devam etmeden önce geçici şifrenizi değiştirin.",
+            },
+        )
+    return current_user
+
+
+def require_admin(current_user: User = Depends(require_password_change_complete)) -> User:
     if current_user.role != RoleEnum.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu işlem için admin yetkisi gerekli")
     return current_user
 
 
-def require_customer(current_user: User = Depends(get_current_user)) -> User:
+def require_customer(current_user: User = Depends(require_password_change_complete)) -> User:
     if current_user.role != RoleEnum.CUSTOMER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu işlem için müşteri yetkisi gerekli")
     return current_user

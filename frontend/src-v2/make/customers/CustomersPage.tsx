@@ -96,32 +96,33 @@ function DraftRow({
     <tr className="bg-amber-50">
       <td className="border border-brand-300 px-3 py-2 text-center text-xs font-bold text-brand-600">+</td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input value={draft.name} onChange={(event) => onChange('name', event.target.value)} className={cellInput} />
+        <input aria-label="Müşteri adı" value={draft.name} onChange={(event) => onChange('name', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input value={draft.cpr_number} onChange={(event) => onChange('cpr_number', event.target.value)} className={cellInput} />
+        <input aria-label="CPR" value={draft.cpr_number} onChange={(event) => onChange('cpr_number', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input value={draft.phone} onChange={(event) => onChange('phone', event.target.value)} className={cellInput} />
+        <input aria-label="Telefon" value={draft.phone} onChange={(event) => onChange('phone', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input value={draft.email} onChange={(event) => onChange('email', event.target.value)} className={cellInput} />
+        <input aria-label="E-posta" value={draft.email} onChange={(event) => onChange('email', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input value={draft.address} onChange={(event) => onChange('address', event.target.value)} className={cellInput} />
+        <input aria-label="Adres" value={draft.address} onChange={(event) => onChange('address', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input value={draft.postal_code} onChange={(event) => onChange('postal_code', event.target.value)} className={cellInput} />
+        <input aria-label="Posta kodu" value={draft.postal_code} onChange={(event) => onChange('postal_code', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
         <div className="grid gap-1">
-          <select value={draft.identity_doc_type} onChange={(event) => onChange('identity_doc_type', event.target.value)} className={cellInput}>
+          <select aria-label="Belge tipi" value={draft.identity_doc_type} onChange={(event) => onChange('identity_doc_type', event.target.value)} className={cellInput}>
             <option value="">Belge tipi</option>
             <option value="driver_license">Korekort</option>
             <option value="passport">Pas</option>
             <option value="id_card">Kimlik</option>
           </select>
           <input
+            aria-label="Belge numarası"
             value={draft.identity_doc_number}
             onChange={(event) => onChange('identity_doc_number', event.target.value)}
             className={cellInput}
@@ -132,10 +133,10 @@ function DraftRow({
       <td className="border border-brand-300 px-2 py-2 text-xs text-brand-500">{saveLabel}</td>
       <td className="border border-brand-300 px-2 py-2">
         <div className="flex items-center justify-center space-x-1">
-          <button type="button" onClick={onSave} className="p-1 text-green-700 transition-colors hover:text-green-900">
+          <button type="button" aria-label={`${saveLabel} kaydet`} title={`${saveLabel} kaydet`} onClick={onSave} className="p-1 text-green-700 transition-colors hover:text-green-900">
             <Check className="h-4 w-4" />
           </button>
-          <button type="button" onClick={onCancel} className="p-1 text-brand-400 transition-colors hover:text-brand-700">
+          <button type="button" aria-label="Düzenlemeyi iptal et" title="Düzenlemeyi iptal et" onClick={onCancel} className="p-1 text-brand-400 transition-colors hover:text-brand-700">
             <X className="h-4 w-4" />
           </button>
         </div>

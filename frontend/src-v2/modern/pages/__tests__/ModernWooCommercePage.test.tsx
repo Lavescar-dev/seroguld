@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveWooSelectedProductId, type WooMakeState } from '@/make/woocommerce/useWooMakeState';
-import type { ProductOut } from '@/types';
+import { mapWooYayin, resolveWooSelectedProductId, type WooMakeState } from '@/make/woocommerce/useWooMakeState';
+import type { InventoryGridRow, ProductOut } from '@/types';
 
 import { ModernWooCommercePage } from '../ModernWooCommercePage';
 
@@ -48,6 +48,67 @@ const state = {
   isCreatingProduct: false,
   loadingWorkspace: false,
   workspaceError: null,
+  catalogSearch: '',
+  setCatalogSearch: vi.fn(),
+  catalogPageNumber: 1,
+  setCatalogPageNumber: vi.fn(),
+  catalogStatus: {
+    configured: true,
+    reachable: true,
+    remote_published_count: 466,
+    local_active_count: 1,
+    local_inactive_count: 0,
+    catalog_revision: 2,
+    last_synced_at: '2026-08-13T04:00:00Z',
+    checked_at: '2026-08-13T04:00:00Z',
+    message: 'ok',
+  },
+  catalog: {
+    items: [{
+      id: 'catalog-1',
+      woocommerce_product_id: 42,
+      name: 'Canlı Woo Ürünü',
+      slug: 'canli-woo-urunu',
+      sku: 'WOO-42',
+      permalink: 'https://example.com/product/42',
+      remote_status: 'publish',
+      catalog_visibility: 'visible',
+      stock_status: 'instock',
+      stock_quantity: 3,
+      price_dkk: '1250',
+      regular_price_dkk: '1250',
+      sale_price_dkk: null,
+      weight_raw: '10',
+      weight_grams: '10',
+      weight_missing: false,
+      manual_review_required: false,
+      manual_review_reasons: [],
+      photo_missing: false,
+      image_count: 1,
+      images: [],
+      categories: [{ name: 'Altın' }],
+      is_active: true,
+      linked_product_id: null,
+      remote_created_at: null,
+      remote_modified_at: null,
+      first_seen_at: '2026-08-13T04:00:00Z',
+      last_seen_at: '2026-08-13T04:00:00Z',
+      updated_at: '2026-08-13T04:00:00Z',
+    }],
+    page: 1,
+    page_size: 50,
+    total: 1,
+    total_pages: 1,
+    catalog_revision: 2,
+  },
+  catalogPreview: null,
+  catalogLoading: false,
+  catalogError: null,
+  isPreviewingCatalog: false,
+  isApplyingCatalog: false,
+  refreshCatalog: vi.fn(async () => undefined),
+  previewCatalogSync: vi.fn(),
+  applyCatalogSync: vi.fn(),
 } as unknown as WooMakeState;
 
 const detail = {
@@ -99,6 +160,13 @@ function makeDetailedState() {
 }
 
 describe('ModernWooCommercePage', () => {
+  it('uses the persisted publication flag as the single publication source', () => {
+    expect(mapWooYayin({ is_published_to_site: true, shop_sync_status: null } as unknown as InventoryGridRow)).toBe('Yayında');
+    expect(mapWooYayin({ is_published_to_site: false, shop_sync_status: 'hazir' } as unknown as InventoryGridRow)).toBe('Taslak');
+    expect(mapWooYayin({ is_published_to_site: false, shop_sync_status: null } as unknown as InventoryGridRow)).toBe('Yayınlanmadı');
+    expect(mapWooYayin({ is_published_to_site: false, shop_sync_status: 'listelendi' } as unknown as InventoryGridRow)).toBe('Yayınlanmadı');
+  });
+
   it('keeps the URL-selected product instead of reverting to the previous row', () => {
     expect(resolveWooSelectedProductId('product-1', items)).toBe('product-1');
     expect(resolveWooSelectedProductId('missing', items)).toBe('product-0');
@@ -106,6 +174,8 @@ describe('ModernWooCommercePage', () => {
 
   it('paginates larger product lists without losing the selected detail surface', () => {
     render(<ModernWooCommercePage state={state} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'CRM ürünleri' }));
 
     expect(screen.getAllByRole('button', { name: /^SKU-/ })).toHaveLength(25);
     expect(screen.getByText('Ürünler 1–25 / 30')).toBeInTheDocument();
@@ -120,6 +190,8 @@ describe('ModernWooCommercePage', () => {
     const detailedState = makeDetailedState();
     render(<ModernWooCommercePage state={detailedState} />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'CRM ürünleri' }));
+
     expect(screen.getByText('Yayın hazırlığı')).toBeInTheDocument();
     expect(screen.getAllByText('Shop —').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Satış kontrolü/ })).toBeInTheDocument();
@@ -133,6 +205,17 @@ describe('ModernWooCommercePage', () => {
     expect(detailedState.generateAi).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: /Yeni ürün/ }));
-    expect(screen.getByText('Yeni Ürün Ekle')).toBeInTheDocument();
+    expect(screen.getByText('Yeni ürün oluştur')).toBeInTheDocument();
+    expect(screen.getByText('Ürün kaynağı')).toBeInTheDocument();
+  });
+
+  it('opens on the separate live Woo catalog and requires an explicit sync action', () => {
+    const catalogState = { ...state, previewCatalogSync: vi.fn() } as unknown as WooMakeState;
+    render(<ModernWooCommercePage state={catalogState} />);
+
+    expect(screen.getByText('Canlı Woo Ürünü')).toBeInTheDocument();
+    expect(screen.getByText('466')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Woo’dan senkronize et/ }));
+    expect(catalogState.previewCatalogSync).toHaveBeenCalledTimes(1);
   });
 });

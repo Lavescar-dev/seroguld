@@ -24,7 +24,7 @@ from app.schemas.pos import (
     PosWorkspaceNumberingOut,
     PosWorkspaceSilverRowOut,
 )
-from app.services.gold_price import GoldPriceService
+from app.services.market_rate_profile import get_effective_market_rate_profile_cached
 from app.utils.helpers import quantize_2, to_decimal
 
 
@@ -388,6 +388,8 @@ def _workspace_note_defaults() -> dict[str, Any]:
         "invoice_misc_mode": core.COMPANION_MODE_AUTO,
         "invoice_misc": {"rows": []},
         "freeform_note": None,
+        "purchase_vat_enabled": True,
+        "purchase_vat_rate_percent": "25.00",
         "edit_source_session_id": None,
         "edit_source_sequence_no": None,
     }
@@ -478,6 +480,10 @@ def _parse_workspace_note_payload(value: str | None) -> dict[str, Any]:
     )
     freeform_note = parsed.get("freeform_note")
     parsed["freeform_note"] = str(freeform_note).strip() or None if freeform_note else None
+    parsed["purchase_vat_enabled"] = bool(parsed.get("purchase_vat_enabled", True))
+    parsed["purchase_vat_rate_percent"] = str(
+        quantize_2(to_decimal(parsed.get("purchase_vat_rate_percent") or Decimal("25.00")))
+    )
     payment_method = str(parsed.get("payment_method") or "").strip().lower()
     parsed["payment_method"] = payment_method if payment_method in {"bank", "cash"} else "bank"
     raw_source_session_id = parsed.get("edit_source_session_id")
@@ -592,6 +598,10 @@ def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
     }
     freeform_note = str(payload.get("freeform_note") or "").strip()
     sanitized["freeform_note"] = freeform_note or None
+    sanitized["purchase_vat_enabled"] = bool(payload.get("purchase_vat_enabled", True))
+    sanitized["purchase_vat_rate_percent"] = str(
+        quantize_2(to_decimal(payload.get("purchase_vat_rate_percent") or Decimal("25.00")))
+    )
     payment_method = str(payload.get("payment_method") or "").strip().lower()
     sanitized["payment_method"] = payment_method if payment_method in {"bank", "cash"} else "bank"
     source_session_id = str(payload.get("edit_source_session_id") or "").strip()
@@ -772,18 +782,21 @@ async def _workspace_market_rates_from_session(pos_session: PosSession) -> PosWo
     # Stooq request would keep SQLite locked and the browser would report a
     # generic ``Load failed`` transport error.  Live refresh endpoints still
     # call ``get_rates`` explicitly and populate this cache.
-    rates = GoldPriceService.cached_rates_or_fallback()
-    live_gold_fallback = quantize_2(rates.get("gold", 0))
+    market_payload = note_payload.get("market_rates", {}) if isinstance(note_payload.get("market_rates"), dict) else {}
+    if not market_payload and pos_session.rate_source != PosRateSourceEnum.MANUAL:
+        market_payload = get_effective_market_rate_profile_cached()
+    rates = get_effective_market_rate_profile_cached()
+    live_gold_fallback = quantize_2(to_decimal(rates.get("gold_24k_dkk", 0)))
     manual_gold_fallback = quantize_2(to_decimal(pos_session.manual_rate_dkk))
     gold_fallback = (
         manual_gold_fallback
         if pos_session.rate_source == PosRateSourceEnum.MANUAL and manual_gold_fallback > 0
         else live_gold_fallback
     )
-    silver_fallback = quantize_2(rates.get("silver", 0))
+    silver_fallback = quantize_2(to_decimal(rates.get("silver_dkk", 0)))
 
     return _market_rate_payload_to_workspace(
-        note_payload.get("market_rates", {}) if isinstance(note_payload.get("market_rates"), dict) else {},
+        market_payload,
         fallback_gold_24k_dkk=gold_fallback,
         fallback_silver_dkk=silver_fallback,
     )
@@ -860,49 +873,54 @@ def _invoice_gold_auto_sheet_from_workspace_rows(
     silver_rows: list[PosWorkspaceSilverRowOut],
     market_rates: PosWorkspaceMarketRates,
 ) -> PosWorkspaceInvoiceGoldSheetOut:
-    generated_rows: list[dict[str, Any]] = []
+    generated_rows: list[PosWorkspaceInvoiceGoldRowOut] = []
     for row in gold_rows:
         gram = quantize_2(to_decimal(row.gram))
         if gram <= 0:
             continue
         generated_rows.append(
-            {
-                "code": "1",
-                "fineness": _workspace_decimal_text(row.karat),
-                "gram": str(gram),
-            }
+            PosWorkspaceInvoiceGoldRowOut(
+                row_key="",
+                code="1",
+                label="Guld",
+                fineness=_workspace_decimal_text(row.karat),
+                lodighed=str(row.lodighed),
+                gram=gram,
+                unit_price_dkk=quantize_2(to_decimal(row.unit_price_dkk)),
+                line_total_dkk=quantize_2(to_decimal(row.line_total_dkk)),
+            )
         )
     for row in silver_rows:
         gram = quantize_2(to_decimal(row.gram))
         if gram <= 0:
             continue
         generated_rows.append(
-            {
-                "code": str(row.type_code),
-                "fineness": str(row.lodighed),
-                "gram": str(gram),
-            }
+            PosWorkspaceInvoiceGoldRowOut(
+                row_key="",
+                code=str(row.type_code),
+                label=str(row.label),
+                fineness=str(row.lodighed),
+                lodighed=str(row.lodighed),
+                gram=gram,
+                unit_price_dkk=quantize_2(to_decimal(row.unit_price_dkk)),
+                line_total_dkk=quantize_2(to_decimal(row.line_total_dkk)),
+            )
         )
-
-    rows = []
-    for default, generated in zip(_invoice_gold_default_rows(), generated_rows):
-        rows.append(
-            {
-                "row_key": str(default["row_key"]),
-                "code": generated["code"],
-                "fineness": generated["fineness"],
-                "gram": generated["gram"],
-            }
-        )
-
-    return _invoice_gold_rows_from_note(
-        {
-            "invoice_gold": {
-                "rows": rows,
-                "footer_lines": ["", "", ""],
-            }
-        },
-        market_rates=market_rates,
+    rows: list[PosWorkspaceInvoiceGoldRowOut] = []
+    total_grams = Decimal("0.00")
+    total_amount = Decimal("0.00")
+    for index, generated in enumerate(generated_rows[: len(_invoice_gold_default_rows())], start=1):
+        generated.row_key = f"invoice_gold:{index}"
+        rows.append(generated)
+        total_grams += generated.gram
+        total_amount += generated.line_total_dkk
+    for index in range(len(rows) + 1, len(_invoice_gold_default_rows()) + 1):
+        rows.append(PosWorkspaceInvoiceGoldRowOut(row_key=f"invoice_gold:{index}"))
+    return PosWorkspaceInvoiceGoldSheetOut(
+        rows=rows,
+        footer_lines=["", "", ""],
+        total_grams=quantize_2(total_grams),
+        total_amount_dkk=quantize_2(total_amount),
     )
 
 

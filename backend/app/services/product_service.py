@@ -378,12 +378,18 @@ async def create_product(session: AsyncSession, payload: ProductCreate, actor_id
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ürün numarası üretilirken çakışma oluştu")
 
 
-async def get_product_or_404(session: AsyncSession, product_id, *, include_deleted: bool = False) -> Product:
+async def get_product_or_404(
+    session: AsyncSession,
+    product_id,
+    *,
+    include_deleted: bool = False,
+    commit_gdpr_changes: bool = True,
+) -> Product:
     return await _load_product_for_output(
         session,
         product_id,
         include_deleted=include_deleted,
-        commit_gdpr_changes=True,
+        commit_gdpr_changes=commit_gdpr_changes,
     )
 
 
