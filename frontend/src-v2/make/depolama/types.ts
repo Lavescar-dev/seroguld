@@ -94,3 +94,19 @@ export const EMPTY_FILTERS: InventoryFilterState = {
   needsCleaning: false,
   gdprLocked: 'all',
 };
+
+export function describeActiveInventoryFilters(
+  filters: InventoryFilterState,
+  categoryScope: MainCategory | 'all',
+): string[] {
+  const active: string[] = [];
+  if (categoryScope !== 'all') active.push('kategori seçimi');
+  if (filters.q.trim()) active.push(`arama "${filters.q.trim()}"`);
+  if (filters.location.trim()) active.push(`lokasyon "${filters.location.trim()}"`);
+  if (filters.dateFrom || filters.dateTo) active.push('tarih aralığı');
+  if (filters.weightMin || filters.weightMax) active.push('gram aralığı');
+  if (filters.priceMin || filters.priceMax) active.push('fiyat aralığı');
+  if (filters.needsCleaning) active.push('temizlik bekleyenler');
+  if (filters.gdprLocked !== 'all') active.push('GDPR kilidi');
+  return active;
+}

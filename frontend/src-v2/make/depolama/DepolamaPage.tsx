@@ -1426,13 +1426,23 @@ export function DepolamaPage({
                   ? 'Filtreyi temizleyin veya farklı kriterler deneyin.'
                   : 'Yukarıdan "Yeni Ürün" ekleyebilirsiniz.'}
               </p>
-              <button
-                type="button"
-                onClick={startNew}
-                className="mt-4 inline-flex items-center gap-2 border border-brand-900 bg-brand-900 px-4 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-black"
-              >
-                <Plus className="h-3.5 w-3.5" /> Yeni Ürün Ekle
-              </button>
+              {stokList.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="mt-4 inline-flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-700 hover:bg-brand-50"
+                >
+                  <X className="h-3.5 w-3.5" /> Filtreleri Sıfırla
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startNew}
+                  className="mt-4 inline-flex items-center gap-2 border border-brand-900 bg-brand-900 px-4 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-black"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Yeni Ürün Ekle
+                </button>
+              )}
             </div>
           ) : (
             <div className="overflow-x-auto">

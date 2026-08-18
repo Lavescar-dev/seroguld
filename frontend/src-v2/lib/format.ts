@@ -99,6 +99,20 @@ export function labelMetalType(value?: string | null): string {
   return label ? copy(label) : value || '-';
 }
 
+export function labelMetalDanish(value?: string | null): string {
+  // Danca metal adları locale'den bağımsız tek gösterim adıdır; copy()
+  // çevirisinden geçirilirse tr locale bunları tekrar Türkçeye çevirip
+  // "Altın · Guld" ikiliğini geri getirir.
+  const map: Record<string, string> = {
+    yellow_gold: 'Guld',
+    white_gold: 'Hvidguld',
+    silver: 'Sølv',
+    platinum: 'Platin',
+    palladium: 'Palladium',
+  };
+  return map[value || ''] || value || '-';
+}
+
 export function labelDocumentKind(value?: string | null): string {
   return copy(value === 'faktura' ? 'Faktura' : 'Afregningsbilag');
 }

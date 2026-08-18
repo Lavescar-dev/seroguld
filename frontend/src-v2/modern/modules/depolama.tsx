@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
 import { formatDate, formatMoney, formatNumber, labelInventoryCategory, labelInventorySubcategory, labelShopSyncStatus } from '@/lib/format';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
-import type { MainCategory, PlatinumSub, SilverSub, StokItem } from '@/make/depolama/types';
+import { describeActiveInventoryFilters, type MainCategory, type PlatinumSub, type SilverSub, type StokItem } from '@/make/depolama/types';
 import { InventoryWorkbookImport } from '@/make/depolama/InventoryWorkbookImport';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 
@@ -122,7 +122,26 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
       <ModernStatGrid items={viewModel.stats} />
 
       {viewModel.phase === 'loading' ? <LoadingState label="Depolama workspace yükleniyor" /> : null}
-      {viewModel.phase === 'empty' ? <EmptyState title="Bu görünümde ürün yok" message="Kategori veya filtreyi değiştirin; tüm kayıtlar için ‘Tüm ürünler’i seçin." /> : null}
+      {viewModel.phase === 'empty' ? (() => {
+        const activeFilters = describeActiveInventoryFilters(state.filters, categoryScope);
+        return (
+          <EmptyState
+            title="Bu görünümde ürün yok"
+            message={activeFilters.length
+              ? `Kayıtlar şu aktif filtreler nedeniyle gizleniyor olabilir: ${activeFilters.join(', ')}.`
+              : 'Henüz kayıtlı ürün yok. Yeni ürün akışını başlatabilirsiniz.'}
+            action={activeFilters.length ? (
+              <button
+                type="button"
+                onClick={() => { state.resetFilters(); state.setCategoryScope?.('all'); }}
+                className={shellButtonClass('primary')}
+              >
+                <X className="h-4 w-4" />Filtreleri sıfırla ve tümünü göster
+              </button>
+            ) : undefined}
+          />
+        );
+      })() : null}
 
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <ModernSection title="Stok Listesi" subtitle="Mobil görünüm taşmayı önlemek için kart düzenine geçer.">

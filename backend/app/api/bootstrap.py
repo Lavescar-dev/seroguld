@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
@@ -27,7 +28,7 @@ from app.services.dashboard_helpers import (
     to_utc as _to_utc,
 )
 from app.services.gold_price import GoldPriceService
-from app.services.product_service import visible_product_clause
+from app.services.product_service import ACTIVE_STATUSES, visible_product_clause
 from app.config import get_settings
 from app.models.ai_usage_log import AIUsageLog
 from app.models.woocommerce_log import WooCommerceSyncLog
@@ -36,16 +37,7 @@ from app.utils.helpers import to_decimal, utc_now
 router = APIRouter()
 
 
-@router.get("", response_model=DesktopBootstrapOut)
-async def get_bootstrap(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_password_change_complete),
-) -> DesktopBootstrapOut:
-    settings = get_settings()
-    now = utc_now()
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
+async def product_summary_counts(db: AsyncSession, month_start: datetime) -> tuple:
     summary_row = await db.execute(
         select(
             func.count(Product.id),
@@ -64,10 +56,26 @@ async def get_bootstrap(
                     else_=0,
                 )
             ),
+            func.sum(case((Product.status.in_(tuple(ACTIVE_STATUSES)), 1), else_=0)),
         )
         .where(visible_product_clause())
     )
-    total_products, locked, free, for_sale, sold_this_month, melted_this_month = summary_row.one()
+    return summary_row.one()
+
+
+@router.get("", response_model=DesktopBootstrapOut)
+async def get_bootstrap(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_password_change_complete),
+) -> DesktopBootstrapOut:
+    settings = get_settings()
+    now = utc_now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    total_products, locked, free, for_sale, sold_this_month, melted_this_month, active_inventory = (
+        await product_summary_counts(db, month_start)
+    )
 
     active_statuses = [
         ProductStatusEnum.PURCHASED,
@@ -188,7 +196,8 @@ async def get_bootstrap(
         navigation=BootstrapNavigationOut(
             total_documents=int(total_documents or 0),
             pending_documents=int(pending_documents or 0),
-            total_inventory=int(total_products or 0),
+            # Depolama listesi ACTIVE_STATUSES ile filtreler; menü sayacı aynı kümeyi saymalı
+            total_inventory=int(active_inventory or 0),
             total_customers=int(total_customers or 0),
             locked_products=int(locked or 0),
             pending_ai=int(pending_ai_description or 0),

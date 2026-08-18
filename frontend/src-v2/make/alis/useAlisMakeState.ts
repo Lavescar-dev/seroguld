@@ -1,6 +1,6 @@
 import { type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
 import { requestCriticalBackup } from '@/lib/backup';
@@ -571,9 +571,13 @@ function computedPreviewSilverRowsPayload(rows: EditableSilverRow[], marketRates
 
 export function useAlisMakeState(): AlisPageProps {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  // Müşteri ekranındaki "Alış başlat" bir kez uygulanır; param temizlenmeden
+  // yeniden tetiklenmesin diye ref'te tutulur.
+  const pendingCustomerParamRef = useRef<string | null>(searchParams.get('customer'));
   const [workspace, setWorkspace] = useState<PosWorkspace | null>(null);
   const [draftWorkspace, setDraftWorkspace] = useState<PosWorkspace | null>(null);
   const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>({
@@ -1031,6 +1035,19 @@ export function useAlisMakeState(): AlisPageProps {
       toast.warning('Müşteri seçilemedi', error instanceof Error ? error.message : 'Workspace başka bir yüzeyde değişti.');
     },
   });
+
+  useEffect(() => {
+    const customerId = pendingCustomerParamRef.current;
+    if (!customerId || !workspace?.session.id) return;
+    pendingCustomerParamRef.current = null;
+    if (!workspace.customer.customer_id) {
+      selectCustomerMutation.mutate({ customer_id: customerId });
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('customer');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace?.session.id]);
 
   const updateDraftCustomerMutation = useMutation({
     mutationFn: (payload: EditableCustomer) =>

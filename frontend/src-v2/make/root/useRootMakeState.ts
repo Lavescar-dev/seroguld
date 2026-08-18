@@ -69,6 +69,16 @@ export function resolveMarketStat(key: string, bootstrapValue: unknown, fallback
   return tryNum(key, fallback);
 }
 
+export function resolveInventoryCount(bootstrapValue: unknown, localCount: number): number {
+  // Menü sayacı, depolama listesiyle aynı sunucu kümesini (aktif stok) esas alır;
+  // localStorage önbelleği yalnız bootstrap yokken devreye girer.
+  const liveValue = Number(bootstrapValue);
+  if (bootstrapValue !== null && bootstrapValue !== undefined && Number.isFinite(liveValue)) {
+    return liveValue;
+  }
+  return localCount;
+}
+
 function loadStats(bootstrap?: DesktopBootstrap): SidebarStats {
   if (typeof window === 'undefined') {
     return {
@@ -112,7 +122,7 @@ function loadStats(bootstrap?: DesktopBootstrap): SidebarStats {
     alisList:
       alisItems.length || bootstrap?.navigation.pending_documents || bootstrap?.navigation.total_documents || 0,
     customerCount: custItems.length || bootstrap?.navigation.total_customers || 0,
-    depoCount: depoItems.length || bootstrap?.navigation.total_inventory || 0,
+    depoCount: resolveInventoryCount(bootstrap?.navigation.total_inventory, depoItems.length),
     logCount: logItems.length || bootstrap?.navigation.total_documents || 0,
     ayirmaCount: ayirItems.length,
     eritmeCount: eritItems.length,

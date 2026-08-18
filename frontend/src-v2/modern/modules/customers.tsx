@@ -1,4 +1,4 @@
-import { Check, Eye, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, Eye, Pencil, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 import type { ModernCustomersViewModel } from '@/modern/adapters/customers';
 import { formatDate, formatMoney, formatRelativeTime } from '@/lib/format';
@@ -224,6 +224,15 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                     <p className="mt-1 text-sm text-sg-text">{state.historySummary.count} belge</p>
                     <p className="mt-1 text-xs text-sg-text-soft">{formatMoney(state.historySummary.total)}</p>
                   </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => { window.location.hash = `/?customer=${encodeURIComponent(selected.id)}`; }}
+                    className={shellButtonClass('primary')}
+                  >
+                    <ShoppingBag className="h-4 w-4" />Alış başlat
+                  </button>
                 </div>
               </div>
 
