@@ -1,7 +1,7 @@
 # Sero Guld CRM 0.3.5 Müşteri Kabul Çalışma Planı
 
 > Oluşturulma: 2026-08-13  
-> Durum: Uygulama aşamasında  
+> Durum: Uygulama aşamasında — 2026-08-18: P0 + müşteri/KDV/fiyat + Woo drag-drop tamam; OCR fixture (test görselleri bekleniyor), workbook alan sözleşmesi ve P2 açık  
 > Kaynak: 13 Ağustos müşteri toplantısında gözlenen gerçek masaüstü akışları
 
 Bu belge açık maddelerin sohbet içinde kaybolmaması için tek takip kaynağıdır. Her
@@ -10,37 +10,37 @@ birlikte geçtiğinde tamamlanmış sayılır.
 
 ## P0 — Veri bütünlüğü ve bloke eden hatalar
 
-- [ ] **Depolama ürün oluşturma atomikliği:** `document_artifacts.updated_at`
+- [x] **Depolama ürün oluşturma atomikliği:** `document_artifacts.updated_at`
   alanına yanlışlıkla metin gönderilmesi düzeltilir. Ürün + envanter workbook
   artefaktı tek veritabanı işlemi olarak tamamlanır; başarısız isteğin ürünü
   veritabanında bırakıp tekrar denemede çoğaltmasına izin verilmez.
-- [ ] **Depoda görünmeyen kayıtlar:** Sol menü sayacı ile liste aynı veri kümesini
+- [x] **Depoda görünmeyen kayıtlar:** Sol menü sayacı ile liste aynı veri kümesini
   kullanır. Aktif filtre yüzünden tüm kayıtlar gizleniyorsa filtre görünür biçimde
   sıfırlanabilir ve boş ekran nedenini açıklar.
-- [ ] **Eski AFG importu:** Etiket hücreleri C/F, değer hücreleri D/G olan eski
+- [x] **Eski AFG importu:** Etiket hücreleri C/F, değer hücreleri D/G olan eski
   şablon algılanır. Satırlar hücre numarasından değil tür/ayar imzasından okunur.
   Kaynak belge numarası ve tamamlanmış tarihsel net/KDV/genel toplam korunur;
   tarihsel kayıt güncel fiyatlarla yeniden değerlenmez ve aynı dosya iki kez
   içe aktarılamaz.
-- [ ] **Excel'de aç:** Gerçek Excel tespiti, çalışma kopyası ve bridge başlatma
+- [x] **Excel'de aç:** Gerçek Excel tespiti, çalışma kopyası ve bridge başlatma
   hataları kullanıcıya anlaşılır gösterilir; `.xlsm` VBA içeriği korunur.
 
 ## P1 — Müşteri, OCR ve alış deneyimi
 
-- [ ] **Müşteri seçimi:** `Seç` kişiyi alış ekranına götürmez. Aynı müşteri
+- [x] **Müşteri seçimi:** `Seç` kişiyi alış ekranına götürmez. Aynı müşteri
   ekranında sağ tarafta kişinin özeti, iletişim bilgileri, belgeleri, alış geçmişi
   ve toplamları açılır. Alış başlatmak ayrı ve açık bir eylemdir.
-- [ ] **Müşteri metal özeti:** Altın, gümüş, platin, paladyum, bıçak ve hesaplayıcı
+- [x] **Müşteri metal özeti:** Altın, gümüş, platin, paladyum, bıçak ve hesaplayıcı
   kalemleri gösterilir. `Altın · Guld` / `Sølv · Sølv` gibi yinelenen adlar tek bir
   kullanıcı dostu ada indirilir; ham enum/kodlar doğrudan gösterilmez.
 - [ ] **OCR gerçek fixture testi:** Mevcut test kimlik görselleri gerçek OCR
   hattından geçirilir. Ad, soyad, doğum tarihi, belge numarası, adres, posta kodu,
   şehir, telefon ve e-posta desteklendiği ölçüde doğru form alanlarına yazılır.
   Eksik/güvensiz değer sessizce uydurulmaz; confidence ve manuel düzeltme görünür.
-- [ ] **Yeni alışta KDV yok:** Yeni müşteri alışlarında KDV seçeneği ve hesabı
+- [x] **Yeni alışta KDV yok:** Yeni müşteri alışlarında KDV seçeneği ve hesabı
   tamamen kaldırılır; net = ödenecek. Eski tamamlanmış KDV'li belgeler yalnız
   tarihsel kanıt olarak aynı tutarlarla korunur.
-- [ ] **Piyasa fiyatı:** Manuel 24K oranı, altın saflık fiyatları ve alış birim
+- [x] **Piyasa fiyatı:** Manuel 24K oranı, altın saflık fiyatları ve alış birim
   fiyatı aynı kaynaktan ve doğru birimden üretilir. `382` girildiğinde eski `2850`
   değerinin kalması gibi snapshot/cache sapmaları engellenir.
 
@@ -59,9 +59,9 @@ birlikte geçtiğinde tamamlanmış sayılır.
 
 ## P1 — WooCommerce fotoğraf deneyimi
 
-- [ ] Fotoğraf alanı tıklayarak seçmenin yanında drag-and-drop kabul eder.
-- [ ] Desteklenen dosya türü/boyutu istemci ve sunucuda aynı doğrulanır.
-- [ ] Sürükleme vurgusu, yükleme durumu, hata mesajı ve başarılı yükleme sonrası
+- [x] Fotoğraf alanı tıklayarak seçmenin yanında drag-and-drop kabul eder.
+- [x] Desteklenen dosya türü/boyutu istemci ve sunucuda aynı doğrulanır.
+- [x] Sürükleme vurgusu, yükleme durumu, hata mesajı ve başarılı yükleme sonrası
   galeri yenilemesi test edilir.
 
 ## P2 — Önceden bildirilen regresyonların kapanışı
