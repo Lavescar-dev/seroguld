@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, apiRequest, buildApiUrl, downloadAuthedDocument } from '@/lib/api';
 import {
+  type ExcelBridgeStatus,
   closeManagedExcelSession,
   exportDocumentBytes,
   focusManagedExcelSession,
@@ -339,6 +340,8 @@ export function useEmbeddedWorkbookState(
     setExcelMessage(null);
     setExcelConflict(false);
     let session: ExcelSession | null = null;
+    // Hata mesajı aşamaya göre ayrışır: çalışma kopyası mı, köprü mü?
+    let stage: 'working-copy' | 'bridge' = 'working-copy';
     try {
       await flushPendingChanges();
       session = await apiRequest<ExcelSession>('/api/v2/excel-sessions', {
@@ -347,19 +350,31 @@ export function useEmbeddedWorkbookState(
       });
       const token = session.bearer_token || '';
       if (!token) throw new Error(t('workbook.sessionTokenMissing', getLocale()));
-      const bridge = await launchExcelBridge({
-        // The backend keeps each working copy below documents/working/<id>.
-        // Only this relative path is sent to the native shell; the bearer
-        // token remains in memory and is never put on a command line.
-        workbook_path: `${session.session_id}/${session.working_file_name}`,
-        sync_url: buildApiUrl(`/api/v2/excel-sessions/${session.session_id}/sync`),
-        close_url: buildApiUrl(`/api/v2/excel-sessions/${session.session_id}`),
-        session_token: token,
-        base_revision: session.revision,
-        can_write: session.can_write,
-      });
+      stage = 'bridge';
+      let bridge: ExcelBridgeStatus | null = null;
+      let bridgeError: string | null = null;
+      try {
+        bridge = await launchExcelBridge({
+          // The backend keeps each working copy below documents/working/<id>.
+          // Only this relative path is sent to the native shell; the bearer
+          // token remains in memory and is never put on a command line.
+          workbook_path: `${session.session_id}/${session.working_file_name}`,
+          sync_url: buildApiUrl(`/api/v2/excel-sessions/${session.session_id}/sync`),
+          close_url: buildApiUrl(`/api/v2/excel-sessions/${session.session_id}`),
+          session_token: token,
+          base_revision: session.revision,
+          can_write: session.can_write,
+        });
+      } catch (nativeError) {
+        bridgeError = nativeError instanceof Error ? nativeError.message : String(nativeError);
+      }
       if (!bridge?.running) {
-        throw new Error(t('workbook.excelMissing', getLocale()));
+        const detail = bridge?.message || bridgeError;
+        throw new Error(
+          detail
+            ? `${t('workbook.excelBridgeFailed', getLocale())}: ${detail}`
+            : t('workbook.excelMissing', getLocale()),
+        );
       }
       excelSessionRef.current = { sessionId: session.session_id, token };
       setManagedExcelOpen(true);
@@ -380,7 +395,16 @@ export function useEmbeddedWorkbookState(
       if (error instanceof ApiError && error.status === 409) {
         setExcelConflict(true);
       }
-      setExcelMessage(error instanceof Error ? error.message : t('workbook.excelMissing', getLocale()));
+      const detail = error instanceof Error && error.message ? error.message : null;
+      if (stage === 'working-copy') {
+        setExcelMessage(
+          detail
+            ? `${t('workbook.workingCopyFailed', getLocale())}: ${detail}`
+            : t('workbook.workingCopyFailed', getLocale()),
+        );
+      } else {
+        setExcelMessage(detail || t('workbook.excelMissing', getLocale()));
+      }
     } finally {
       setIsOpeningExcel(false);
     }

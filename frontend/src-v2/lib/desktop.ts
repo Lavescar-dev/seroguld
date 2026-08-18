@@ -605,11 +605,9 @@ export async function getExcelAvailability(): Promise<ExcelAvailability | null> 
 
 export async function launchExcelBridge(request: ExcelBridgeRequest): Promise<ExcelBridgeStatus | null> {
   if (!isTauriRuntime()) return null;
-  try {
-    return await invokeDesktop<ExcelBridgeStatus>('launch_excel_bridge', { request });
-  } catch {
-    return null;
-  }
+  // Native başlatma hatası yutulmaz: gerçek neden (Excel yok, çalışma
+  // kopyası açılamadı, köprü süreci düşmedi) kullanıcıya gösterilecek.
+  return await invokeDesktop<ExcelBridgeStatus>('launch_excel_bridge', { request });
 }
 
 export async function confirmDesktopClose(discardChanges: boolean): Promise<boolean> {

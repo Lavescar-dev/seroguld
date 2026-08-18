@@ -81,6 +81,10 @@ class HistoricalAfgParsed:
     total_weight_grams: Decimal
     total_amount_dkk: Decimal
     errors: list[str]
+    # Legacy şablon: belgedeki tamamlanmış tutarlar birebir korunur, yeniden hesaplanmaz.
+    template_profile: str = "current"
+    net_amount_dkk: Decimal | None = None
+    vat_amount_dkk: Decimal | None = None
 
 
 def _clean_text(value: object) -> str | None:
@@ -211,7 +215,266 @@ def _make_lines(sections: object) -> tuple[list[HistoricalAfgLine], list[str]]:
     return lines, errors
 
 
+_LEGACY_SCAN_MAX_ROW = 80
+_LEGACY_CUSTOMER_LABELS = (
+    ("navn", "name"),
+    ("adresse", "address"),
+    ("postnr", "postal_code"),
+    ("post nr", "postal_code"),
+    ("by", "city"),
+    ("cpr", "cpr_number"),
+    ("kørekort", "identity_doc_number"),
+    ("pas", "identity_doc_number"),
+    ("tlf", "phone"),
+    ("telefon", "phone"),
+    ("mail", "email"),
+)
+_LEGACY_NET_LABELS = ("subtotal", "netto", "net")
+_LEGACY_VAT_LABELS = ("moms",)
+_LEGACY_GROSS_LABELS = ("i alt", "total")
+_LEGACY_NUMBER_LABELS = ("afregningsnr", "afregnings nr", "bilag nr", "bilagsnr")
+_LEGACY_DATE_LABELS = ("dato",)
+
+
+def _norm_label(value: object) -> str:
+    text = _clean_text(value) or ""
+    return " ".join(text.casefold().replace(":", " ").replace(".", " ").split())
+
+
+def _legacy_decimal(value: object) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip().replace("kr", "").replace("DKK", "").strip()
+        cleaned = cleaned.replace(".", "").replace(",", ".") if "," in cleaned else cleaned
+        try:
+            return quantize_2(Decimal(cleaned))
+        except (InvalidOperation, ValueError):
+            return None
+    try:
+        return quantize_2(to_decimal(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _legacy_sheet(content: bytes):
+    workbook = load_workbook(BytesIO(content), read_only=False, data_only=True)
+    if "Afregningsbilag" in workbook.sheetnames:
+        return workbook, workbook["Afregningsbilag"]
+    return workbook, workbook[workbook.sheetnames[0]]
+
+
+def looks_like_legacy_afg_template(content: bytes) -> bool:
+    """Eski şablon: etiketler C/F sütununda kalır, değerler D/G'ye yazılır.
+
+    Güncel üretimde müşteri değerleri etiket hücrelerinin üzerine (C16/F16...)
+    yazıldığı için dolu bir güncel belgede C sütununda etiket metni kalmaz.
+    """
+    workbook, sheet = _legacy_sheet(content)
+    try:
+        label_hits = 0
+        value_hits = 0
+        for row in range(1, _LEGACY_SCAN_MAX_ROW + 1):
+            for label_col, value_col in (("C", "D"), ("F", "G")):
+                label = _norm_label(sheet[f"{label_col}{row}"].value)
+                if not label:
+                    continue
+                if any(label.startswith(prefix) for prefix, _ in _LEGACY_CUSTOMER_LABELS):
+                    label_hits += 1
+                    if _clean_text(sheet[f"{value_col}{row}"].value) is not None:
+                        value_hits += 1
+        return label_hits >= 2 and value_hits >= 1
+    finally:
+        workbook.close()
+
+
+def _legacy_gold_definition(label: str) -> dict | None:
+    if "guld" not in label and "kt" not in label and "karat" not in label:
+        return None
+    lodighed_match = re.search(r"\b(333|585|750|875|900|917|999)\b", label)
+    if lodighed_match:
+        return next(
+            (
+                item
+                for item in pos_core.GOLD_WORKSPACE_ROWS
+                if str(item["lodighed"]) == lodighed_match.group(1)
+            ),
+            None,
+        )
+    karat_match = re.search(r"\b(21[.,]6|8|14|18|21|22|24)\b", label)
+    if not karat_match:
+        return None
+    karat = karat_match.group(1).replace(",", ".")
+    return next(
+        (
+            item
+            for item in pos_core.GOLD_WORKSPACE_ROWS
+            if to_decimal(item["karat"]) == to_decimal(karat)
+        ),
+        None,
+    )
+
+
+def _legacy_silver_definition(label: str) -> dict | None:
+    lodighed: str | None = None
+    if "finsølv" in label or "999" in label:
+        lodighed = "999"
+    elif "sterling" in label or "925" in label:
+        lodighed = "925"
+    elif "tårnet" in label or "830" in label:
+        lodighed = "830"
+    elif "plet" in label or "800" in label:
+        lodighed = "800"
+    if lodighed is None:
+        return None
+    return next(
+        (item for item in pos_core.SILVER_WORKSPACE_ROWS if str(item["lodighed"]) == lodighed),
+        None,
+    )
+
+
+def _parse_legacy_upload(upload: HistoricalAfgUpload) -> HistoricalAfgParsed:
+    try:
+        workbook, sheet = _legacy_sheet(upload.content)
+    except (OSError, KeyError, ValueError, InvalidOperation) as exc:
+        return HistoricalAfgParsed(
+            upload=upload,
+            legacy_document_number=None,
+            issued_at=None,
+            customer=None,
+            sections=None,
+            lines=[],
+            total_weight_grams=Decimal("0.00"),
+            total_amount_dkk=Decimal("0.00"),
+            errors=[f"AFG dosyası okunamadı: {exc}"],
+            template_profile="legacy",
+        )
+    try:
+        customer_fields: dict[str, str | None] = {}
+        lines: list[HistoricalAfgLine] = []
+        errors: list[str] = []
+        seen_row_keys: set[str] = set()
+        legacy_number: str | None = None
+        issued_at: datetime | None = None
+        net_amount: Decimal | None = None
+        vat_amount: Decimal | None = None
+        gross_amount: Decimal | None = None
+        line_no = 1
+
+        for row in range(1, _LEGACY_SCAN_MAX_ROW + 1):
+            for label_col, value_col in (("C", "D"), ("F", "G")):
+                raw_label = sheet[f"{label_col}{row}"].value
+                label = _norm_label(raw_label)
+                if not label:
+                    continue
+                value = sheet[f"{value_col}{row}"].value
+
+                for prefix, field in _LEGACY_CUSTOMER_LABELS:
+                    if label.startswith(prefix) and field not in customer_fields:
+                        customer_fields[field] = _clean_text(value)
+                        break
+
+                if legacy_number is None and any(label.startswith(p) for p in _LEGACY_NUMBER_LABELS):
+                    legacy_number = _clean_text(value)
+                if issued_at is None and any(label.startswith(p) for p in _LEGACY_DATE_LABELS):
+                    issued_at = _as_datetime(value)
+
+                amount = _legacy_decimal(value)
+                if amount is not None:
+                    if net_amount is None and any(label.startswith(p) for p in _LEGACY_NET_LABELS):
+                        net_amount = amount
+                    elif vat_amount is None and any(label.startswith(p) for p in _LEGACY_VAT_LABELS):
+                        vat_amount = amount
+                    elif gross_amount is None and any(label.startswith(p) for p in _LEGACY_GROSS_LABELS):
+                        gross_amount = amount
+
+                # Metal satırı: tür/ayar imzası etikette; gram D'de, satır tutarı G'de.
+                if label_col != "C":
+                    continue
+                gold_def = _legacy_gold_definition(label)
+                silver_def = None if gold_def is not None else _legacy_silver_definition(label)
+                definition = gold_def or silver_def
+                if definition is None or str(definition["row_key"]) in seen_row_keys:
+                    continue
+                gram = _legacy_decimal(sheet[f"D{row}"].value)
+                if gram is None or gram <= 0:
+                    continue
+                line_total = _legacy_decimal(sheet[f"G{row}"].value)
+                if line_total is None or line_total <= 0:
+                    errors.append(f"{definition['label']} satırının tutarı (G{row}) okunamadı.")
+                    continue
+                seen_row_keys.add(str(definition["row_key"]))
+                rate = quantize_2(line_total / gram) if gram > 0 else Decimal("0.00")
+                lines.append(
+                    HistoricalAfgLine(
+                        line_no=line_no,
+                        row_key=str(definition["row_key"]),
+                        metal_type=MetalTypeEnum.YELLOW_GOLD if gold_def is not None else MetalTypeEnum.SILVER,
+                        purity_karat=str(definition["label"]).upper() if gold_def is not None else None,
+                        purity_percentage=quantize_2(to_decimal(definition["purity_percentage"])),
+                        weight_grams=quantize_2(gram),
+                        rate_dkk=rate,
+                        margin_percent=Decimal("0.00"),
+                        line_total_dkk=line_total,
+                        type_label=(
+                            f"Guld {str(definition['label']).upper()}"
+                            if gold_def is not None
+                            else str(definition["label"])
+                        ),
+                    )
+                )
+                line_no += 1
+    finally:
+        workbook.close()
+
+    if not lines:
+        errors.append("Tür/ayar imzasıyla eşleşen pozitif gramlı metal satırı bulunamadı.")
+    if not legacy_number:
+        errors.append("Eski AFG numarası bulunamadı.")
+    elif len(legacy_number) > 80:
+        errors.append("Eski AFG numarası 80 karakteri aşıyor.")
+    if issued_at is None:
+        errors.append("Belge tarihi bulunamadı.")
+
+    line_sum = quantize_2(sum((line.line_total_dkk for line in lines), Decimal("0.00")))
+    if gross_amount is None:
+        gross_amount = line_sum
+    if vat_amount is not None and net_amount is None:
+        net_amount = quantize_2(gross_amount - vat_amount)
+    if net_amount is not None and vat_amount is not None:
+        expected = quantize_2(net_amount + vat_amount)
+        if expected != gross_amount:
+            errors.append(
+                f"Belgedeki net+KDV ({expected}) genel toplamla ({gross_amount}) uyuşmuyor."
+            )
+
+    customer = (
+        CustomerCreate.model_construct(**{key: value for key, value in customer_fields.items() if value})
+        if customer_fields.get("name")
+        else None
+    )
+    return HistoricalAfgParsed(
+        upload=upload,
+        legacy_document_number=legacy_number,
+        issued_at=issued_at,
+        customer=customer,
+        sections=None,
+        lines=lines,
+        total_weight_grams=quantize_2(sum((line.weight_grams for line in lines), Decimal("0.00"))),
+        total_amount_dkk=gross_amount,
+        errors=errors,
+        template_profile="legacy",
+        net_amount_dkk=net_amount,
+        vat_amount_dkk=vat_amount,
+    )
+
+
 def _parse_upload(upload: HistoricalAfgUpload) -> HistoricalAfgParsed:
+    try:
+        if looks_like_legacy_afg_template(upload.content):
+            return _parse_legacy_upload(upload)
+    except (OSError, KeyError, ValueError, InvalidOperation):
+        pass
     try:
         legacy_number, issued_at = _metadata_from_workbook(upload.content)
         inputs = parse_afg_workspace_inputs_from_workbook(upload.content)
@@ -418,9 +681,15 @@ def _historical_notes(parsed: HistoricalAfgParsed) -> str:
     return json.dumps(
         {
             "kind": "historical_afg_import_v1",
+            "template_profile": parsed.template_profile,
             "source_file": parsed.upload.filename,
             "source_sha256": parsed.upload.source_hash,
             "legacy_document_number": parsed.legacy_document_number,
+            "document_totals": {
+                "gross_dkk": str(parsed.total_amount_dkk),
+                "net_dkk": str(parsed.net_amount_dkk) if parsed.net_amount_dkk is not None else None,
+                "vat_dkk": str(parsed.vat_amount_dkk) if parsed.vat_amount_dkk is not None else None,
+            },
             "payment_method": getattr(parsed.sections, "payment_method", "bank") or "bank",
             "bank_info": getattr(parsed.sections, "bank_info", {}) or {},
             "market_rates": market_rates.model_dump(mode="json") if market_rates is not None else {},
@@ -448,6 +717,16 @@ async def _persist(
 
     rates = getattr(parsed.sections, "market_rates", None)
     notes = _historical_notes(parsed)
+    # Tarihsel belgedeki tamamlanmış tutarlar aynen taşınır; KDV'li eski
+    # belgelerde net/KDV yeniden hesaplanmaz.
+    gross_amount = parsed.total_amount_dkk
+    vat_amount = parsed.vat_amount_dkk if parsed.vat_amount_dkk is not None else Decimal("0.00")
+    net_amount = parsed.net_amount_dkk if parsed.net_amount_dkk is not None else quantize_2(gross_amount - vat_amount)
+    vat_rate = (
+        quantize_2(vat_amount / net_amount * Decimal("100"))
+        if vat_amount > 0 and net_amount > 0
+        else Decimal("0.00")
+    )
     pos_session = PosSession(
         session_code="IMP-" + parsed.upload.source_hash[:12].upper(),
         display_token=secrets.token_urlsafe(30),
@@ -503,10 +782,10 @@ async def _persist(
         issued_at=parsed.issued_at,
         supply_at=parsed.issued_at,
         currency_code="DKK",
-        gross_amount_dkk=parsed.total_amount_dkk,
-        net_amount_dkk=parsed.total_amount_dkk,
-        vat_rate_percent=Decimal("0.00"),
-        vat_amount_dkk=Decimal("0.00"),
+        gross_amount_dkk=gross_amount,
+        net_amount_dkk=net_amount,
+        vat_rate_percent=vat_rate,
+        vat_amount_dkk=vat_amount,
         customer_name=customer.name,
         customer_phone=customer.phone,
         customer_email=customer.email,
@@ -530,10 +809,10 @@ async def _persist(
         customer_id=customer.id,
         clerk_user_id=actor.id,
         currency_code="DKK",
-        gross_amount_dkk=parsed.total_amount_dkk,
-        net_amount_dkk=parsed.total_amount_dkk,
-        vat_rate_percent=Decimal("0.00"),
-        vat_amount_dkk=Decimal("0.00"),
+        gross_amount_dkk=gross_amount,
+        net_amount_dkk=net_amount,
+        vat_rate_percent=vat_rate,
+        vat_amount_dkk=vat_amount,
         notes="Tarihsel AFG içe aktarımı; dış entegrasyonlar kapalı.",
         created_at=parsed.issued_at,
         confirmed_at=parsed.issued_at,
