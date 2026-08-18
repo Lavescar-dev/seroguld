@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bot,
   Check,
@@ -48,6 +48,7 @@ import {
   parseAiSeoBundle,
 } from '@/make/woocommerce/WooCommercePage';
 import type { WooFilter, WooMakeState, WooListItem } from '@/make/woocommerce/useWooMakeState';
+import { filesFromDataTransfer } from '@/make/woocommerce/photoUpload';
 import { WooCatalogPanel } from '@/make/woocommerce/WooCatalogPanel';
 import { ModernWooProductWizard } from './ModernWooProductWizard';
 
@@ -260,8 +261,9 @@ function OverviewTab({ state, seoMissing }: { state: WooMakeState; seoMissing: s
   );
 }
 
-function PhotosTab({ state }: { state: WooMakeState }) {
+export function PhotosTab({ state }: { state: WooMakeState }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const detail = state.detail;
   if (!detail) return <ModernLoadingState title="Fotoğraflar hazırlanıyor" />;
   const photos = detail.photos.filter((photo, index, all) => {
@@ -273,9 +275,26 @@ function PhotosTab({ state }: { state: WooMakeState }) {
     if (files.length) state.uploadPhotos(files);
     event.target.value = '';
   }
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDragActive(false);
+    const files = filesFromDataTransfer(event.dataTransfer);
+    if (files.length) state.uploadPhotos(files);
+  }
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-sg-text">Ürün fotoğrafları</h3><p className="mt-1 text-sm text-sg-text-soft">Woo medya akışı bu ürün fotoğraf kayıtlarından beslenir.</p></div><ModernButton tone="primary" icon={Upload} disabled={state.isUploadingPhotos} onClick={() => inputRef.current?.click()}>Fotoğraf yükle</ModernButton></div>
+    <div
+      data-testid="woo-photo-dropzone"
+      onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+      onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+      onDrop={handleDrop}
+      className={`space-y-4 rounded-sg-lg transition ${dragActive ? 'ring-2 ring-sg-accent ring-offset-2 bg-sg-surface-accent/40' : ''}`}
+    >
+      {dragActive ? (
+        <div className="rounded-sg-md border-2 border-dashed border-sg-accent bg-sg-surface-accent/60 px-4 py-6 text-center text-sm font-semibold text-sg-accent-dark">
+          Fotoğrafları buraya bırakın
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-sg-text">Ürün fotoğrafları</h3><p className="mt-1 text-sm text-sg-text-soft">Woo medya akışı bu ürün fotoğraf kayıtlarından beslenir. Dosyaları tıklayarak seçin veya bu alana sürükleyip bırakın.</p></div><ModernButton tone="primary" icon={Upload} disabled={state.isUploadingPhotos} onClick={() => inputRef.current?.click()}>{state.isUploadingPhotos ? 'Yükleniyor…' : 'Fotoğraf yükle'}</ModernButton></div>
       <input ref={inputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFiles} />
       {photos.length === 0 ? <ModernEmptyState title="Fotoğraf yok" description="Yayın için en az bir fotoğraf yükleyin." action={<ModernButton tone="primary" icon={Upload} onClick={() => inputRef.current?.click()}>İlk fotoğrafı yükle</ModernButton>} /> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{photos.map((photo, index) => <div key={`${photo.id || photo.original_url || photo.url || photo.filename || 'photo'}:${index}`} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><img src={photo.avif_url || photo.url} alt={detail.display_name || 'Ürün fotoğrafı'} className="h-full w-full object-cover" />{photo.is_primary || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2">Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/35 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => window.open(photo.original_url || photo.url, '_blank', 'noopener,noreferrer')}>Aç</ModernButton>{photo.id ? <ModernButton aria-label="Fotoğrafı sil" size="sm" tone="danger" icon={Trash2} disabled={state.isDeletingPhoto} onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.deletePhoto(photo.id!); }}>Sil</ModernButton> : null}</div></div><p className="truncate px-3 py-2 text-xs text-sg-text-soft">{photo.filename || 'Fotoğraf'}</p></div>)}</div>}
     </div>

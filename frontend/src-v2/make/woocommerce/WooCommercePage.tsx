@@ -1,4 +1,4 @@
-import { type ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Bot,
@@ -31,6 +31,7 @@ import {
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { WooCatalogPanel } from './WooCatalogPanel';
+import { describeRejectedPhotos, filesFromDataTransfer, validatePhotoFiles } from './photoUpload';
 
 import {
   buildDraftFromStock,
@@ -313,6 +314,7 @@ export function YeniUrunPanel({
   const [stokArama, setStokArama] = useState('');
   const [seoAcik, setSeoAcik] = useState(false);
   const [hata, setHata] = useState<string | null>(null);
+  const [photoDragActive, setPhotoDragActive] = useState(false);
   const [form, setForm] = useState<NewWooProductDraft>(defaultNewWooProductDraft());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -379,10 +381,14 @@ export function YeniUrunPanel({
     });
   }
 
-  function onDraftFilesSelected(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files || []);
+  function addDraftPhotos(files: File[]) {
     if (files.length === 0) return;
-    const next: DraftPhoto[] = files.map((file, index) => ({
+    const { accepted, rejected } = validatePhotoFiles(files);
+    if (rejected.length > 0) {
+      setHata(`Bazı dosyalar kabul edilmedi — ${describeRejectedPhotos(rejected)}`);
+    }
+    if (accepted.length === 0) return;
+    const next: DraftPhoto[] = accepted.map((file, index) => ({
       id: `${file.name}-${file.size}-${Date.now()}-${index}`,
       name: file.name,
       url: URL.createObjectURL(file),
@@ -390,7 +396,17 @@ export function YeniUrunPanel({
       birincil: form.fotograflar.length === 0 && index === 0,
     }));
     patch({ fotograflar: [...form.fotograflar, ...next] });
+  }
+
+  function onDraftFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    addDraftPhotos(Array.from(event.target.files || []));
     event.target.value = '';
+  }
+
+  function onDraftPhotosDropped(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setPhotoDragActive(false);
+    addDraftPhotos(filesFromDataTransfer(event.dataTransfer));
   }
 
   function removeDraftPhoto(photoId: string) {
@@ -688,7 +704,18 @@ export function YeniUrunPanel({
           ) : null}
 
           {adim === 4 ? (
-            <div className="space-y-4">
+            <div
+              data-testid="woo-draft-photo-dropzone"
+              onDragOver={(event) => { event.preventDefault(); setPhotoDragActive(true); }}
+              onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setPhotoDragActive(false); }}
+              onDrop={onDraftPhotosDropped}
+              className={`space-y-4 ${photoDragActive ? 'ring-2 ring-brand-500 ring-offset-2 bg-brand-50' : ''}`}
+            >
+              {photoDragActive ? (
+                <div className="border-2 border-dashed border-brand-500 bg-brand-50 px-4 py-6 text-center text-sm font-bold text-brand-700">
+                  Fotoğrafları buraya bırakın
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"

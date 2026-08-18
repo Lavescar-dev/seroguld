@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { ApiError, apiRequest } from '@/lib/api';
 import { useToast } from '@/lib/toast';
+import { describeRejectedPhotos, validatePhotoFiles } from './photoUpload';
 import type {
   DesktopBootstrap,
   InventoryGridRow,
@@ -933,8 +934,13 @@ export function useWooMakeState(): WooMakeState {
       }
     },
     uploadPhotos: (files) => {
-      if (detailQuery.data && files.length > 0) {
-        uploadPhotosMutation.mutate({ productId: detailQuery.data.id, files });
+      if (!detailQuery.data || files.length === 0) return;
+      const { accepted, rejected } = validatePhotoFiles(files);
+      if (rejected.length > 0) {
+        toast.error('Bazı dosyalar kabul edilmedi', describeRejectedPhotos(rejected));
+      }
+      if (accepted.length > 0) {
+        uploadPhotosMutation.mutate({ productId: detailQuery.data.id, files: accepted });
       }
     },
     deletePhoto: (photoId) => {
