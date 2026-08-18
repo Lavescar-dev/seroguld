@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { apiRequest } from '@/lib/api';
 import type { CustomerDetailOut, CustomerOut, LogWorkspace, PaginatedResponse, PosDocumentDetail, PosDocumentListItem } from '@/types';
@@ -25,10 +25,9 @@ export function useCustomersMakeState(): CustomersPageProps {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { customerId: routeCustomerId } = useParams<{ customerId?: string }>();
   const [search, setSearch] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
-  const [selectedId, setSelectedId] = useState<string | null>(routeCustomerId || searchParams.get('customer'));
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('customer'));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedSequenceNo, setExpandedSequenceNo] = useState<number | null>(null);
   const [previewSequenceNo, setPreviewSequenceNo] = useState<number | null>(null);
@@ -37,15 +36,15 @@ export function useCustomersMakeState(): CustomersPageProps {
   const [editDraft, setEditDraft] = useState<CustomerDraft>(EMPTY_DRAFT);
 
   useEffect(() => {
-    const customerId = routeCustomerId || searchParams.get('customer');
+    const customerId = searchParams.get('customer');
     if (customerId === selectedId) return;
     setSelectedId(customerId);
-  }, [routeCustomerId, searchParams, selectedId]);
+  }, [searchParams, selectedId]);
 
   function setSelectedCustomerId(customerId: string | null) {
     setSelectedId(customerId);
     if (customerId) {
-      navigate(`/musteriler/${customerId}`);
+      navigate(customerSelectionRoute(customerId));
     } else {
       navigate('/musteriler');
     }
@@ -280,4 +279,8 @@ export function useCustomersMakeState(): CustomersPageProps {
     onPreviewOpen: setPreviewSequenceNo,
     onPreviewClose: () => setPreviewSequenceNo(null),
   };
+}
+
+export function customerSelectionRoute(customerId: string): string {
+  return `/musteriler?customer=${encodeURIComponent(customerId)}`;
 }

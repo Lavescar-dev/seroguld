@@ -1962,21 +1962,21 @@ async def sync_inventory_workbook_artifact(
     )
     if create_snapshot:
         now = utc_now()
-        stamp = now.strftime("%Y%m%d-%H%M%S")
+        snapshot_stamp = now.strftime("%Y%m%d-%H%M%S")
         await _store_artifact(
             session,
-            artifact_key=f"depolama.snapshot.{stamp}",
+            artifact_key=f"depolama.snapshot.{snapshot_stamp}",
             module_name="depolama",
             document_type="inventory_workbook",
             business_key="live",
             version_kind="snapshot",
             is_live=False,
-            file_name=f"{stamp}-Depolama.xlsx",
-            relative_path=Path("depolama") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{stamp}-Depolama.xlsx",
+            file_name=f"{snapshot_stamp}-Depolama.xlsx",
+            relative_path=Path("depolama") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{snapshot_stamp}-Depolama.xlsx",
             mime_type=XLSX_MIME,
             template_name=DEPOLAMA_TEMPLATE_NAME,
             content=content,
-            updated_at=stamp,
+            updated_at=now,
         )
     return live_bundle
 
@@ -2019,20 +2019,20 @@ async def sync_log_workbook_artifact(
     )
     if create_snapshot:
         now = utc_now()
-        stamp = now.strftime("%Y%m%d-%H%M%S")
+        snapshot_stamp = now.strftime("%Y%m%d-%H%M%S")
         await _store_artifact(
             session,
-            artifact_key=f"log.snapshot.{year}.{stamp}",
+            artifact_key=f"log.snapshot.{year}.{snapshot_stamp}",
             module_name="log",
             document_type="log_workbook",
             business_key=str(year),
             version_kind="snapshot",
             is_live=False,
-            file_name=f"{stamp}-Log-{year}.xlsx",
-            relative_path=Path("log") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{stamp}-Log-{year}.xlsx",
+            file_name=f"{snapshot_stamp}-Log-{year}.xlsx",
+            relative_path=Path("log") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{snapshot_stamp}-Log-{year}.xlsx",
             mime_type=XLSX_MIME,
             template_name=LOG_TEMPLATE_NAME,
             content=content,
-            updated_at=stamp,
+            updated_at=now,
         )
     return live_bundle

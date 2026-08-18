@@ -598,7 +598,13 @@ async def update_product(
     return to_product_out(updated)
 
 
-async def soft_delete_product(session: AsyncSession, product: Product, actor_id) -> None:
+async def soft_delete_product(
+    session: AsyncSession,
+    product: Product,
+    actor_id,
+    *,
+    commit: bool = True,
+) -> None:
     if product.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ürün bulunamadı")
 
@@ -615,7 +621,10 @@ async def soft_delete_product(session: AsyncSession, product: Product, actor_id)
         notes="Depolama soft-delete",
     )
 
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
 
 
 async def update_status(

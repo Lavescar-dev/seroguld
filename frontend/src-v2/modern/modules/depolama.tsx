@@ -63,6 +63,15 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
   const { state } = viewModel;
   const selected = state.selectedProduct;
   const [migrationOpen, setMigrationOpen] = useState(false);
+  const categoryScope = state.categoryScope || state.activeKat;
+  const categoryOptions: Array<{ key: MainCategory | 'all'; label: string }> = [
+    { key: 'all', label: 'Tüm ürünler' },
+    { key: 'kulce', label: 'Külçe' },
+    { key: 'sikke', label: 'Sikke' },
+    { key: 'taki', label: 'Takı' },
+    { key: 'gumus', label: 'Gümüş' },
+    { key: 'platin_pd', label: 'Platin / Pd' },
+  ];
 
   if (state.editing) {
     return <ModernInventoryEditor state={state} />;
@@ -75,7 +84,7 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
       subtitle="Gerçek stok akışı, GDPR lock ve lifecycle durumlarını koruyan modern light yüzey."
       badges={
         <>
-          <DataPill label="Kategori" value={labelInventoryCategory(state.activeKat)} />
+          <DataPill label="Kategori" value={categoryScope === 'all' ? 'Tüm ürünler' : labelInventoryCategory(categoryScope)} />
           <DataPill label="Görünüm" value={state.activeView === 'excel' ? 'Office' : 'Sistem'} tone={state.activeView === 'excel' ? 'warning' : 'neutral'} />
           <DataPill label="Fiyat" value={state.savingPrices ? 'Kaydediliyor' : 'Hazır'} tone={state.savingPrices ? 'warning' : 'success'} />
         </>
@@ -97,10 +106,23 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
         <ModernDepolamaOfficeSurface onClose={() => state.setActiveView('system')} />
       ) : (
         <>
+      <div className="flex flex-wrap gap-2 rounded-sg-xl border border-sg-border bg-sg-surface p-2" role="group" aria-label="Depolama kategorisi">
+        {categoryOptions.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => state.setCategoryScope?.(option.key)}
+            aria-pressed={categoryScope === option.key}
+            className={categoryScope === option.key ? shellButtonClass('primary') : shellButtonClass('secondary')}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       <ModernStatGrid items={viewModel.stats} />
 
       {viewModel.phase === 'loading' ? <LoadingState label="Depolama workspace yükleniyor" /> : null}
-      {viewModel.phase === 'empty' ? <EmptyState title="Stok Yok" message="Seçili filtrede ürün bulunmuyor. Yeni ürün akışını başlatabilirsiniz." /> : null}
+      {viewModel.phase === 'empty' ? <EmptyState title="Bu görünümde ürün yok" message="Kategori veya filtreyi değiştirin; tüm kayıtlar için ‘Tüm ürünler’i seçin." /> : null}
 
       <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <ModernSection title="Stok Listesi" subtitle="Mobil görünüm taşmayı önlemek için kart düzenine geçer.">

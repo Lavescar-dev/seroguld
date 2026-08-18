@@ -292,10 +292,14 @@ function sortItems(items: StokItem[], sort: InventorySortState): StokItem[] {
   });
 }
 
-function buildWorkspaceQueryParams(filters: InventoryFilterState, category: MainCategory, subcategory: string | null): string {
+export function buildWorkspaceQueryParams(
+  filters: InventoryFilterState,
+  category: MainCategory | 'all',
+  subcategory: string | null,
+): string {
   const params = new URLSearchParams();
   if (filters.q.trim()) params.set('q', filters.q.trim());
-  params.set('category', category);
+  if (category !== 'all') params.set('category', category);
   if (subcategory) params.set('subcategory', subcategory);
   if (filters.location.trim()) params.set('location', filters.location.trim());
   if (filters.needsCleaning) params.set('needs_cleaning', 'true');
@@ -311,13 +315,16 @@ function buildWorkspaceQueryParams(filters: InventoryFilterState, category: Main
 
 import { EMPTY_FILTERS } from './types';
 
-export function useDepolamaMakeState(): DepolamaPageProps {
+export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boolean } = {}): DepolamaPageProps {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
   const [prices, setPrices] = useState<MarketPrices>(DEFAULT_MARKET_PRICES);
   const [priceOpen, setPriceOpen] = useState(false);
-  const [activeKat, setActiveKat] = useState<MainCategory>('kulce');
+  const [activeKat, setActiveKatState] = useState<MainCategory>('kulce');
+  const [categoryScope, setCategoryScopeState] = useState<MainCategory | 'all'>(
+    options.showAllCategoriesInitially ? 'all' : 'kulce',
+  );
   const [gumusAlt, setGumusAlt] = useState<SilverSub>('smykker');
   const [platinAlt, setPlatinAlt] = useState<PlatinumSub>('platin');
   const [activeView, setActiveView] = useState<InventorySurfaceView>('system');
@@ -330,11 +337,11 @@ export function useDepolamaMakeState(): DepolamaPageProps {
   const [retryingLabelId, setRetryingLabelId] = useState<string | null>(null);
 
   const subcategory =
-    activeKat === 'gumus' ? gumusAlt : activeKat === 'platin_pd' ? platinAlt : null;
+    categoryScope === 'gumus' ? gumusAlt : categoryScope === 'platin_pd' ? platinAlt : null;
 
   const workspaceParams = useMemo(
-    () => buildWorkspaceQueryParams(filters, activeKat, subcategory),
-    [filters, activeKat, subcategory],
+    () => buildWorkspaceQueryParams(filters, categoryScope, subcategory),
+    [filters, categoryScope, subcategory],
   );
 
   const workspaceQuery = useQuery({
@@ -417,6 +424,18 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     const now = todayDa();
     setOpdateret(now);
     writeUpdated(now);
+  }
+
+  function setCategoryScope(value: MainCategory | 'all') {
+    setCategoryScopeState(value);
+    if (value !== 'all') setActiveKatState(value);
+    setSelectedProductId(null);
+  }
+
+  function setActiveKat(value: MainCategory) {
+    setActiveKatState(value);
+    setCategoryScopeState(value);
+    setSelectedProductId(null);
   }
 
   const extractApiMessage = (error: unknown, fallback: string): string => {
@@ -615,7 +634,7 @@ export function useDepolamaMakeState(): DepolamaPageProps {
   function startNew() {
     setActiveView('system');
     setSelectedProductId(null);
-    setEditing(buildNewItem(activeKat, gumusAlt, platinAlt));
+    setEditing(buildNewItem(categoryScope === 'all' ? 'taki' : activeKat, gumusAlt, platinAlt));
   }
 
   function saveItem() {
@@ -695,6 +714,8 @@ export function useDepolamaMakeState(): DepolamaPageProps {
     setPriceOpen,
     activeKat,
     setActiveKat,
+    categoryScope,
+    setCategoryScope,
     gumusAlt,
     setGumusAlt,
     platinAlt,

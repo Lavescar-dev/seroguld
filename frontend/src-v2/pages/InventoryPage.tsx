@@ -5,8 +5,8 @@ import { ModernDepolamaModule } from '@/modern/modules';
 import { useUiVariant } from '@/ui-variants';
 
 export function InventoryPage() {
-  const depolamaState = useDepolamaMakeState();
   const { variant } = useUiVariant();
+  const depolamaState = useDepolamaMakeState({ showAllCategoriesInitially: variant === 'modern' });
   return variant === 'modern' ? (
     <ModernDepolamaModule viewModel={createModernDepolamaViewModel(depolamaState)} />
   ) : (

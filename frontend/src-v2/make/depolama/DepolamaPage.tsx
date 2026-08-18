@@ -1078,6 +1078,8 @@ export interface DepolamaPageProps {
   setPriceOpen: (value: boolean) => void;
   activeKat: MainCategory;
   setActiveKat: (value: MainCategory) => void;
+  categoryScope?: MainCategory | 'all';
+  setCategoryScope?: (value: MainCategory | 'all') => void;
   gumusAlt: SilverSub;
   setGumusAlt: (value: SilverSub) => void;
   platinAlt: PlatinumSub;

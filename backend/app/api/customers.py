@@ -25,7 +25,7 @@ from app.models.product import Product
 from app.models.product_history import ProductHistory
 from app.models.transaction import Transaction
 from app.models.transaction_line import TransactionLine
-from app.models.enums import MetalTypeEnum, PosDocumentTypeEnum, ProductStatusEnum, RoleEnum
+from app.models.enums import MetalTypeEnum, PosDocumentTypeEnum, PosSessionStatusEnum, ProductStatusEnum, RoleEnum
 from app.models.user import User
 from app.schemas.customer import (
     CustomerCreate,
@@ -48,6 +48,7 @@ from app.schemas.pos import PosDocumentListItemOut
 from app.services.customer_service import create_customer, get_customer_detail, to_customer_out, update_customer
 from app.services.customer_statement_renderer import render_customer_statement_pdf
 from app.services.pos_document_service import document_title_tr, format_document_number
+from app.services.pos_workspace_state import _parse_workspace_note_payload, _workspace_calculators_from_note
 from app.services.woocommerce import WooCommerceService
 from app.utils.security import hash_cpr, hash_sensitive_value
 
@@ -604,11 +605,13 @@ async def get_customer_workspace(customer_id: UUID, db: AsyncSession = Depends(g
     customer = await _customer_record(db, customer_id)
     detail = await get_customer_detail(db, customer)
     visible = Product.deleted_at.is_(None)
-    purchase_count, purchase_amount, gold_grams, silver_grams = (await db.execute(select(
+    purchase_count, purchase_amount, gold_grams, silver_grams, platinum_grams, palladium_grams = (await db.execute(select(
         func.count(Product.id),
         func.coalesce(func.sum(Product.purchase_price_dkk), Decimal("0")),
-        func.coalesce(func.sum(case((Product.metal_type != MetalTypeEnum.SILVER, Product.weight_grams), else_=0)), Decimal("0")),
+        func.coalesce(func.sum(case((Product.metal_type.in_((MetalTypeEnum.YELLOW_GOLD, MetalTypeEnum.WHITE_GOLD)), Product.weight_grams), else_=0)), Decimal("0")),
         func.coalesce(func.sum(case((Product.metal_type == MetalTypeEnum.SILVER, Product.weight_grams), else_=0)), Decimal("0")),
+        func.coalesce(func.sum(case((Product.metal_type == MetalTypeEnum.PLATINUM, Product.weight_grams), else_=0)), Decimal("0")),
+        func.coalesce(func.sum(case((Product.metal_type == MetalTypeEnum.PALLADIUM, Product.weight_grams), else_=0)), Decimal("0")),
     ).where(Product.seller_customer_id == customer_id, visible))).one()
     sale_count, sale_amount = (await db.execute(select(
         func.count(Product.id), func.coalesce(func.sum(Product.sale_price_dkk), Decimal("0"))
@@ -618,6 +621,21 @@ async def get_customer_workspace(customer_id: UUID, db: AsyncSession = Depends(g
     last_purchase = await db.scalar(select(func.max(Product.purchase_date)).where(Product.seller_customer_id == customer_id, visible))
     last_sale = await db.scalar(select(func.max(Product.sale_date)).where(Product.buyer_customer_id == customer_id, visible))
     last_transaction_at = max([value for value in (last_purchase, last_sale) if value is not None], default=None)
+
+    knife_count = Decimal("0")
+    knife_total_weight = Decimal("0")
+    session_notes = await db.scalars(
+        select(PosSession.notes).where(
+            PosSession.customer_id == customer_id,
+            PosSession.status == PosSessionStatusEnum.CONFIRMED,
+        )
+    )
+    for notes in session_notes:
+        calculators = _workspace_calculators_from_note(_parse_workspace_note_payload(notes))
+        for row in calculators.gold_rows:
+            knife_count += row.count
+            knife_total_weight += row.total_weight
+
     return CustomerWorkspaceOut(
         customer=detail,
         purchase_count=int(purchase_count or 0),
@@ -626,6 +644,10 @@ async def get_customer_workspace(customer_id: UUID, db: AsyncSession = Depends(g
         sale_amount_dkk=str(sale_amount or 0),
         total_gold_grams=str(gold_grams or 0),
         total_silver_grams=str(silver_grams or 0),
+        total_platinum_grams=str(platinum_grams or 0),
+        total_palladium_grams=str(palladium_grams or 0),
+        knife_count=str(knife_count),
+        knife_total_weight_grams=str(knife_total_weight),
         document_count=int(document_count or 0),
         note_count=int(note_count or 0),
         last_transaction_at=last_transaction_at,

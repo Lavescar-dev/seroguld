@@ -179,6 +179,10 @@ class CustomerWorkspaceOut(AppBaseModel):
     sale_amount_dkk: str
     total_gold_grams: str
     total_silver_grams: str
+    total_platinum_grams: str = "0"
+    total_palladium_grams: str = "0"
+    knife_count: str = "0"
+    knife_total_weight_grams: str = "0"
     document_count: int
     note_count: int
     last_transaction_at: datetime | None = None

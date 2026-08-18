@@ -9,11 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
 from app.api.inventory import (
-    delete_inventory_product as delete_legacy_inventory_product,
     get_inventory_market_prices as get_legacy_inventory_market_prices,
     get_inventory_workspace as get_legacy_inventory_workspace,
-    patch_inventory_product as patch_legacy_inventory_product,
-    post_inventory_product as post_legacy_inventory_product,
     put_inventory_market_prices as put_legacy_inventory_market_prices,
 )
 from app.database import get_db
@@ -35,6 +32,11 @@ from app.services.document_artifact_service import (
     sync_inventory_workbook_artifact,
 )
 from app.services.product_service import get_product_or_404, to_product_out, update_status
+from app.services.product_service import (
+    create_product as create_product_service,
+    soft_delete_product,
+    update_product as update_product_service,
+)
 
 from app.api.v2_support import (
     apply_inventory_workbook_artifact_inputs,
@@ -44,6 +46,28 @@ from app.api.v2_support import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _sync_inventory_projection(
+    db: AsyncSession,
+    *,
+    admin: User,
+) -> None:
+    """Flush the workbook projection inside the caller's DB transaction.
+
+    Product mutations and their DocumentArtifact records must either become
+    visible together or roll back together.  In particular, a workbook error
+    must never leave a product behind after the API returned HTTP 500.
+    """
+
+    workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
+    await ensure_inventory_artifact(
+        db,
+        workspace,
+        create_snapshot=True,
+        force_sync=True,
+        commit=False,
+    )
 
 
 @router.get("/depolama/workspace", response_model=InventoryWorkspaceOut)
@@ -144,10 +168,15 @@ async def patch_depolama_product_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> ProductOut:
-    product = await patch_legacy_inventory_product(product_id=product_id, payload=payload, db=db, admin=admin)
-    workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
-    await ensure_inventory_artifact(db, workspace, create_snapshot=True, force_sync=True)
-    return product
+    try:
+        current = await get_product_or_404(db, product_id, commit_gdpr_changes=False)
+        product = await update_product_service(db, current, payload, admin.id, commit=False)
+        await _sync_inventory_projection(db, admin=admin)
+        await db.commit()
+        return product
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.post("/depolama/products", response_model=ProductOut, status_code=201)
@@ -156,10 +185,14 @@ async def post_depolama_product_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> ProductOut:
-    product = await post_legacy_inventory_product(payload=payload, db=db, admin=admin)
-    workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
-    await ensure_inventory_artifact(db, workspace, create_snapshot=True, force_sync=True)
-    return product
+    try:
+        product = await create_product_service(db, payload, admin.id, commit=False)
+        await _sync_inventory_projection(db, admin=admin)
+        await db.commit()
+        return product
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.delete("/depolama/products/{product_id}", status_code=204, response_class=Response)
@@ -168,10 +201,15 @@ async def delete_depolama_product_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> Response:
-    await delete_legacy_inventory_product(product_id=product_id, db=db, admin=admin)
-    workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
-    await ensure_inventory_artifact(db, workspace, create_snapshot=True, force_sync=True)
-    return Response(status_code=204)
+    try:
+        product = await get_product_or_404(db, product_id, commit_gdpr_changes=False)
+        await soft_delete_product(db, product, admin.id, commit=False)
+        await _sync_inventory_projection(db, admin=admin)
+        await db.commit()
+        return Response(status_code=204)
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.patch("/depolama/products/{product_id}/status", response_model=ProductOut)
@@ -181,11 +219,15 @@ async def patch_depolama_product_status_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> ProductOut:
-    product = await get_product_or_404(db, product_id)
-    updated = await update_status(db, product, payload, admin.id)
-    workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
-    await ensure_inventory_artifact(db, workspace, create_snapshot=True, force_sync=True)
-    return updated
+    try:
+        product = await get_product_or_404(db, product_id, commit_gdpr_changes=False)
+        updated = await update_status(db, product, payload, admin.id, commit=False)
+        await _sync_inventory_projection(db, admin=admin)
+        await db.commit()
+        return updated
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.get("/depolama/workbook")
