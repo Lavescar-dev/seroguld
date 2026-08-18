@@ -79,6 +79,10 @@ const PREVIEW_DEBOUNCE_MS = 120;
 const INVOICE_GOLD_AUTO_ROW_COUNT = 13;
 const INVOICE_MISC_AUTO_ROW_COUNT = 15;
 const DEFAULT_MARKET_FX = '7.45';
+// Backend market_rate_profile varsayılanlarıyla aynı; oranların tek kaynağı
+// backend profilidir, localStorage snapshot'ı kullanılmaz.
+const DEFAULT_MARKET_GOLD_DKK = '615.50';
+const DEFAULT_MARKET_SILVER_DKK = '7.80';
 
 function parseDecimalValue(value: string | number | null | undefined) {
   const numeric = Number(normalizeTextInput(String(value ?? '0')));
@@ -144,7 +148,11 @@ function buildDefaultMarketRates(gold24Dkk: string, silverDkk: string, fx = DEFA
 
 function normalizeMarketRatesInput(marketRates: PosWorkspaceMarketRates): PosWorkspaceMarketRates {
   return {
-    ...buildDefaultMarketRates(marketRates.gold_24k_dkk || '2850', marketRates.silver_dkk || '8.5', marketRates.eur_dkk_fx || DEFAULT_MARKET_FX),
+    ...buildDefaultMarketRates(
+      marketRates.gold_24k_dkk || DEFAULT_MARKET_GOLD_DKK,
+      marketRates.silver_dkk || DEFAULT_MARKET_SILVER_DKK,
+      marketRates.eur_dkk_fx || DEFAULT_MARKET_FX,
+    ),
     ...marketRates,
   };
 }
@@ -163,16 +171,6 @@ function normalizeRateKey(value: string | number | null | undefined) {
   const numeric = parseDecimalValue(value ?? 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return '';
   return String(numeric);
-}
-
-function readStoredMarketRate(key: string, fallback: string) {
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw || fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function normalizeTextInput(value: string): string {
@@ -232,7 +230,7 @@ function workspaceRowsPayload(
     },
     afg_note: afgNote.trim() || null,
     purchase_vat_enabled: purchaseVatEnabled,
-    purchase_vat_rate_percent: 25,
+    purchase_vat_rate_percent: purchaseVatEnabled ? 25 : 0,
     calculators: {
       gold_rows: calculators.gold_rows.map((row) => ({
         row_key: row.row_key,
@@ -607,17 +605,16 @@ export function useAlisMakeState(): AlisPageProps {
   const [invoiceMiscMode, setInvoiceMiscMode] = useState<CompanionMode>('auto');
   const [invoiceMiscRows, setInvoiceMiscRows] = useState<EditableInvoiceMiscRow[]>([]);
   const [bankInfo, setBankInfo] = useState<PosWorkspaceBankInfo>(EMPTY_BANK_INFO);
+  // Başlangıç yalnızca yer tutucudur; workspace yüklenince oranlar backend
+  // profilinden gelir. localStorage'daki bayat snapshot ("382 girildi, 2850
+  // kaldı" hatası) artık okunmaz.
   const [marketRates, setMarketRates] = useState<PosWorkspaceMarketRates>(() =>
     normalizeMarketRatesInput(
-      buildDefaultMarketRates(
-        readStoredMarketRate('market_gold', '2850'),
-        readStoredMarketRate('market_silver', '8.5'),
-        readStoredMarketRate('market_fx', DEFAULT_MARKET_FX),
-      ),
+      buildDefaultMarketRates(DEFAULT_MARKET_GOLD_DKK, DEFAULT_MARKET_SILVER_DKK, DEFAULT_MARKET_FX),
     ),
   );
   const [afgNote, setAfgNote] = useState('');
-  const [purchaseVatEnabled, setPurchaseVatEnabled] = useState(true);
+  const [purchaseVatEnabled, setPurchaseVatEnabled] = useState(false);
   const [calculators, setCalculators] = useState<PosWorkspaceCalculators>({ gold_rows: [], silver_rows: [] });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank');
   const [priceOpen, setPriceOpen] = useState(false);
@@ -794,7 +791,7 @@ export function useAlisMakeState(): AlisPageProps {
     setBankInfo(resolvedBankInfo);
     setMarketRates(normalizeMarketRatesInput(data.market_rates));
     setAfgNote(data.afg_note || '');
-    setPurchaseVatEnabled(data.purchase_vat_enabled !== false);
+    setPurchaseVatEnabled(data.purchase_vat_enabled === true);
     setCalculators(data.calculators);
     const resolvedPaymentMethod: PaymentMethod = 'bank';
     setPaymentMethod(resolvedPaymentMethod);
@@ -805,7 +802,7 @@ export function useAlisMakeState(): AlisPageProps {
       resolvedBankInfo,
       normalizeMarketRatesInput(data.market_rates),
       data.afg_note || '',
-      data.purchase_vat_enabled !== false,
+      data.purchase_vat_enabled === true,
       data.calculators,
       resolvedPaymentMethod,
       toEditableNumbering(data.numbering_preview),
@@ -1135,7 +1132,7 @@ export function useAlisMakeState(): AlisPageProps {
       });
       setMarketRates(normalizeMarketRatesInput(data.market_rates));
       setAfgNote(data.afg_note || '');
-      setPurchaseVatEnabled(data.purchase_vat_enabled !== false);
+      setPurchaseVatEnabled(data.purchase_vat_enabled === true);
       setCalculators(data.calculators);
       setPaymentMethod('bank');
       autosaveKeyRef.current = JSON.stringify(payload);
@@ -1349,7 +1346,7 @@ export function useAlisMakeState(): AlisPageProps {
           },
           payment_method: 'bank',
           purchase_vat_enabled: purchaseVatEnabled,
-          purchase_vat_rate_percent: 25,
+          purchase_vat_rate_percent: purchaseVatEnabled ? 25 : 0,
         }),
     }),
     onSuccess: async (response) => {
@@ -1770,10 +1767,12 @@ export function useAlisMakeState(): AlisPageProps {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem('market_gold', marketRates.gold_24k_dkk || '2850');
-    window.localStorage.setItem('market_silver', marketRates.silver_dkk || '8.5');
-    window.localStorage.setItem('market_fx', marketRates.eur_dkk_fx || DEFAULT_MARKET_FX);
-  }, [marketRates.eur_dkk_fx, marketRates.gold_24k_dkk, marketRates.silver_dkk]);
+    // Eski sürümlerin bıraktığı bayat snapshot'lar temizlenir; oranların tek
+    // kaynağı backend profili + workspace payload'ıdır.
+    window.localStorage.removeItem('market_gold');
+    window.localStorage.removeItem('market_silver');
+    window.localStorage.removeItem('market_fx');
+  }, []);
 
   useEffect(() => {
     clearLegacyPaymentMethodPreference();

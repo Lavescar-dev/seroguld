@@ -877,11 +877,9 @@ function ActiveWorkspaceView(props: {
                       Toplam gram: {formatNumber(liveTotalWeight)} g
                     </p>
                     <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">Net: {formatMoney(liveTotalAmount)} DKK</p>
-                    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs font-bold text-brand-800">
-                      <input type="checkbox" checked={purchaseVatEnabled} onChange={(event) => setPurchaseVatEnabled(event.target.checked)} />
-                      %25 KDV ekle
-                    </label>
-                    <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">KDV: {formatMoney(liveVatAmount)} DKK</p>
+                    {purchaseVatEnabled ? (
+                      <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">KDV (tarihsel belge): {formatMoney(liveVatAmount)} DKK</p>
+                    ) : null}
                     <p className="mono text-sm font-black uppercase tracking-wider text-emerald-800">Ödenecek: {formatMoney(liveGrossAmount)} DKK</p>
                     <label className="mt-3 block text-[10px] font-black uppercase tracking-widest text-brand-500">
                       AFG notu

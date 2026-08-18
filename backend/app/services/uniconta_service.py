@@ -1083,9 +1083,9 @@ async def sync_pos_document_to_uniconta(
 
         invoice_date = _dt.now(timezone.utc).date().isoformat()
         settings = get_settings()
-        purchase_vat_enabled = bool(note_payload.get("purchase_vat_enabled", True))
+        purchase_vat_enabled = bool(note_payload.get("purchase_vat_enabled", False))
         purchase_vat_rate = (
-            quantize_2(to_decimal(note_payload.get("purchase_vat_rate_percent") or Decimal("25.00")))
+            quantize_2(to_decimal(note_payload.get("purchase_vat_rate_percent") or Decimal("0.00")))
             if purchase_vat_enabled
             else Decimal("0.00")
         )

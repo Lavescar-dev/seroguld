@@ -566,8 +566,8 @@ class PosWorkspaceOut(AppBaseModel):
     payment_method: str = Field(default="bank", pattern="^(bank|cash)$")
     market_rates: PosWorkspaceMarketRates
     afg_note: str | None = None
-    purchase_vat_enabled: bool = True
-    purchase_vat_rate_percent: Decimal = Decimal("25.00")
+    purchase_vat_enabled: bool = False
+    purchase_vat_rate_percent: Decimal = Decimal("0.00")
     calculators: PosWorkspaceCalculatorsOut = Field(default_factory=PosWorkspaceCalculatorsOut)
     numbering_preview: PosWorkspaceNumberingOut
     invoice_gold_mode: str = Field(default="auto", pattern="^(auto|manual)$")

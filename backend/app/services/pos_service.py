@@ -1321,9 +1321,9 @@ async def build_purchase_workspace(
         if invoice_misc_mode == COMPANION_MODE_AUTO
         else _invoice_misc_rows_from_note(note_payload)
     )
-    purchase_vat_enabled = bool(note_payload.get("purchase_vat_enabled", True))
+    purchase_vat_enabled = bool(note_payload.get("purchase_vat_enabled", False))
     purchase_vat_rate = (
-        quantize_2(to_decimal(note_payload.get("purchase_vat_rate_percent") or Decimal("25.00")))
+        quantize_2(to_decimal(note_payload.get("purchase_vat_rate_percent") or Decimal("0.00")))
         if purchase_vat_enabled
         else Decimal("0.00")
     )

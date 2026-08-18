@@ -109,9 +109,9 @@ async def finalize_purchase_workspace(
     finalized_notes = "\n".join(note_parts) or None
     workspace_note["freeform_note"] = payload.notes.strip() if payload.notes and payload.notes.strip() else None
     structured_notes = core._serialize_workspace_note_payload(workspace_note)
-    vat_enabled = bool(workspace_note.get("purchase_vat_enabled", True))
+    vat_enabled = bool(workspace_note.get("purchase_vat_enabled", False))
     vat_rate = (
-        core.quantize_2(core.to_decimal(workspace_note.get("purchase_vat_rate_percent") or Decimal("25.00")))
+        core.quantize_2(core.to_decimal(workspace_note.get("purchase_vat_rate_percent") or Decimal("0.00")))
         if vat_enabled
         else Decimal("0.00")
     )

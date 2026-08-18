@@ -388,8 +388,10 @@ def _workspace_note_defaults() -> dict[str, Any]:
         "invoice_misc_mode": core.COMPANION_MODE_AUTO,
         "invoice_misc": {"rows": []},
         "freeform_note": None,
-        "purchase_vat_enabled": True,
-        "purchase_vat_rate_percent": "25.00",
+        # Yeni alışlarda KDV yok: net = ödenecek. Eski KDV'li belgeler bu
+        # anahtarı notlarında açıkça taşıdığı için etkilenmez.
+        "purchase_vat_enabled": False,
+        "purchase_vat_rate_percent": "0.00",
         "edit_source_session_id": None,
         "edit_source_sequence_no": None,
     }
@@ -480,9 +482,9 @@ def _parse_workspace_note_payload(value: str | None) -> dict[str, Any]:
     )
     freeform_note = parsed.get("freeform_note")
     parsed["freeform_note"] = str(freeform_note).strip() or None if freeform_note else None
-    parsed["purchase_vat_enabled"] = bool(parsed.get("purchase_vat_enabled", True))
+    parsed["purchase_vat_enabled"] = bool(parsed.get("purchase_vat_enabled", False))
     parsed["purchase_vat_rate_percent"] = str(
-        quantize_2(to_decimal(parsed.get("purchase_vat_rate_percent") or Decimal("25.00")))
+        quantize_2(to_decimal(parsed.get("purchase_vat_rate_percent") or Decimal("0.00")))
     )
     payment_method = str(parsed.get("payment_method") or "").strip().lower()
     parsed["payment_method"] = payment_method if payment_method in {"bank", "cash"} else "bank"
@@ -598,9 +600,9 @@ def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
     }
     freeform_note = str(payload.get("freeform_note") or "").strip()
     sanitized["freeform_note"] = freeform_note or None
-    sanitized["purchase_vat_enabled"] = bool(payload.get("purchase_vat_enabled", True))
+    sanitized["purchase_vat_enabled"] = bool(payload.get("purchase_vat_enabled", False))
     sanitized["purchase_vat_rate_percent"] = str(
-        quantize_2(to_decimal(payload.get("purchase_vat_rate_percent") or Decimal("25.00")))
+        quantize_2(to_decimal(payload.get("purchase_vat_rate_percent") or Decimal("0.00")))
     )
     payment_method = str(payload.get("payment_method") or "").strip().lower()
     sanitized["payment_method"] = payment_method if payment_method in {"bank", "cash"} else "bank"
