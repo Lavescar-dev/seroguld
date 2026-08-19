@@ -5,7 +5,8 @@
 ## Installer
 
 - Dosya: `C:\Users\Lavescar\Downloads\SERO-GULD-CRM-FULL-SETUP.exe`
-- SHA256: (build sonrası eklenecek)
+- SHA256: `96721d01d795f22802530cda46c7eaebbd09d483c6039571ee4f6cd353e339e2` (255,9 MB)
+- Manifest: payload check passed, Defender taraması passed / 0 tehdit; önceki 0.3.6 installer arşive taşındı.
 - Sürüm pinleri (7 konum, hepsi 0.3.7); alembic tek head `0035_product_dims_inventory`.
 
 ## Kapsam (aşama → commit)
