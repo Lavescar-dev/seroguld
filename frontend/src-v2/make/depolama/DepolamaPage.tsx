@@ -1136,6 +1136,8 @@ export function DepolamaPage({
   setPriceOpen,
   activeKat,
   setActiveKat,
+  categoryScope,
+  setCategoryScope,
   gumusAlt,
   setGumusAlt,
   platinAlt,
@@ -1198,11 +1200,12 @@ export function DepolamaPage({
   const filteredItems = useMemo(
     () =>
       stokList.filter((item) => {
+        if (categoryScope === 'all') return true;
         if (activeKat === 'gumus') return item.gumusAlt === gumusAlt;
         if (activeKat === 'platin_pd') return item.platinAlt === platinAlt;
         return true;
       }),
-    [activeKat, gumusAlt, platinAlt, stokList],
+    [activeKat, categoryScope, gumusAlt, platinAlt, stokList],
   );
 
   const catTotal = useMemo<CategoryTotals>(
@@ -1243,7 +1246,7 @@ export function DepolamaPage({
     });
   }
 
-  const countFor = (key: MainCategory) => stokList.filter((item) => item.mainKat === key).length;
+  const countFor = (key: MainCategory | 'all') => (key === 'all' ? stokList.length : stokList.filter((item) => item.mainKat === key).length);
   const workbookStatus = formatWorkbookStamp(opdateret);
   const selectedDraft = selectedProductId ? stokList.find((item) => item.id === selectedProductId) ?? null : null;
   const isInitialLoading = loading && stokList.length === 0;
@@ -1272,6 +1275,7 @@ export function DepolamaPage({
         <div className="flex border-b-2 border-brand-300 flex-shrink-0 bg-brand-50 overflow-x-auto">
           {(
             [
+              { key: 'all', label: 'Tümü', sub: 'Alle varer', badge: '∑', color: 'slate' },
               { key: 'kulce', label: 'Guldbarrer', sub: 'Külçeler', badge: 'Au', color: 'amber' },
               { key: 'sikke', label: 'Guldmønter', sub: 'Sikkeler', badge: 'Au', color: 'amber' },
               { key: 'taki', label: 'Guldsmykker', sub: 'Takılar', badge: 'Au', color: 'amber' },
@@ -1279,13 +1283,15 @@ export function DepolamaPage({
               { key: 'platin_pd', label: 'Platin & Pd', sub: 'Diğer Metaller', badge: 'Pt', color: 'zinc' },
             ] as const
           ).map(({ key, label, sub, badge, color }) => {
-            const isActive = activeKat === key;
+            const scope = categoryScope ?? activeKat;
+            const isActive = key === 'all' ? scope === 'all' : scope === key;
             return (
               <button
                 key={key}
                 type="button"
                 onClick={() => {
-                  setActiveKat(key);
+                  if (key === 'all') setCategoryScope?.('all');
+                  else setActiveKat(key);
                   setEditing(null);
                   onCloseDetail();
                 }}
@@ -1320,7 +1326,7 @@ export function DepolamaPage({
         </div>
       ) : null}
 
-      {!editing && activeKat === 'gumus' ? (
+      {!editing && categoryScope !== 'all' && activeKat === 'gumus' ? (
         <div className="flex border-b border-brand-200 bg-slate-50 flex-shrink-0">
           {(
             [
@@ -1346,7 +1352,7 @@ export function DepolamaPage({
         </div>
       ) : null}
 
-      {!editing && activeKat === 'platin_pd' ? (
+      {!editing && categoryScope !== 'all' && activeKat === 'platin_pd' ? (
         <div className="flex border-b border-brand-200 bg-zinc-50 flex-shrink-0">
           {(
             [

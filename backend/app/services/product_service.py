@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import ProductStatusEnum
+from app.models.enums import MetalTypeEnum, ProductStatusEnum, ProductTypeEnum
 from app.models.product import Product
 from app.models.product_history import ProductHistory
 from app.models.user import User
@@ -80,6 +80,21 @@ def calculate_offer_price(
 ) -> Decimal:
     # commission_rate is 0-1 based ratio (0.10 = 10%)
     return quantize_2(pure_gold_grams * gold_rate_dkk_per_gram * (Decimal("1") - commission_rate))
+
+
+def infer_inventory_categories(
+    metal_type: MetalTypeEnum, product_type: ProductTypeEnum
+) -> tuple[str, str | None]:
+    """Depo kategorisinin tek kaynağı; api/inventory.py görüntüleme ve
+    kayıt yazma yolları aynı türetmeyi kullanır (liste filtresi ham kolona
+    baktığından kolon her kayıtta dolu tutulmalıdır — 0035 backfill)."""
+    if metal_type == MetalTypeEnum.SILVER:
+        return "gumus", ("barrer" if product_type == ProductTypeEnum.BAR else "smykker")
+    if metal_type in {MetalTypeEnum.PLATINUM, MetalTypeEnum.PALLADIUM}:
+        return "platin_pd", ("palladyum" if metal_type == MetalTypeEnum.PALLADIUM else "platin")
+    if product_type == ProductTypeEnum.BAR:
+        return "kulce", None
+    return "taki", None
 
 
 def visible_product_clause():
@@ -311,6 +326,7 @@ async def create_product(session: AsyncSession, payload: ProductCreate, actor_id
     pure_gold_grams = calculate_pure_gold_grams(payload.weight_grams, payload.purity_percentage)
     total_weight_grams = payload.total_weight_grams or quantize_2(payload.weight_grams * Decimal(payload.unit_count))
     locked = _is_locked(gdpr_release_date)
+    _inferred_category, _inferred_subcategory = infer_inventory_categories(payload.metal_type, payload.product_type)
 
     for _ in range(3):
         try:
@@ -343,8 +359,12 @@ async def create_product(session: AsyncSession, payload: ProductCreate, actor_id
                 width_mm=(quantize_2(payload.width_mm) if payload.width_mm is not None else None),
                 thickness_mm=(quantize_2(payload.thickness_mm) if payload.thickness_mm is not None else None),
                 producer=payload.producer,
-                inventory_category=payload.inventory_category,
-                inventory_subcategory=payload.inventory_subcategory,
+                inventory_category=payload.inventory_category or _inferred_category,
+                inventory_subcategory=(
+                    payload.inventory_subcategory
+                    if payload.inventory_category or payload.inventory_subcategory
+                    else _inferred_subcategory
+                ),
                 operation_destination=payload.operation_destination,
                 operation_classification=payload.operation_classification,
                 photos=[item.model_dump() for item in payload.photos],
@@ -485,6 +505,7 @@ async def update_product(
                 },
             )
 
+    _old_inferred_category, _ = infer_inventory_categories(product.metal_type, product.product_type)
     old_snapshot = {
         "reference_number": product.reference_number,
         "display_name": product.display_name,
@@ -551,6 +572,19 @@ async def update_product(
         product.inventory_category = payload.inventory_category
     if payload.inventory_subcategory is not None:
         product.inventory_subcategory = payload.inventory_subcategory
+    if payload.inventory_category is None and (
+        product.inventory_category is None
+        # Tip değişiminde yalnız türetilmiş (elle atanmamış) kategori tazelenir;
+        # operatörün elle seçtiği kategori (ör. 'sikke') korunur.
+        or (
+            (payload.metal_type is not None or payload.product_type is not None)
+            and product.inventory_category == _old_inferred_category
+        )
+    ):
+        _new_category, _new_subcategory = infer_inventory_categories(product.metal_type, product.product_type)
+        product.inventory_category = _new_category
+        if payload.inventory_subcategory is None:
+            product.inventory_subcategory = _new_subcategory
     if payload.operation_destination is not None:
         product.operation_destination = payload.operation_destination
     if payload.operation_classification is not None:

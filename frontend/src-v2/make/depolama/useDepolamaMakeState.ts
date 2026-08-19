@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
@@ -325,6 +325,15 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   const [categoryScope, setCategoryScopeState] = useState<MainCategory | 'all'>(
     options.showAllCategoriesInitially ? 'all' : 'kulce',
   );
+  // Variant (modern/klasik) mount'tan sonra yerleşirse başlangıç kapsamını
+  // kullanıcı dokunmadıysa senkronla — aksi halde modern açılış 'kulce'de
+  // takılı kalır ve liste boş görünürdü.
+  const scopeTouchedRef = useRef(false);
+  useEffect(() => {
+    if (options.showAllCategoriesInitially && !scopeTouchedRef.current) {
+      setCategoryScopeState('all');
+    }
+  }, [options.showAllCategoriesInitially]);
   const [gumusAlt, setGumusAlt] = useState<SilverSub>('smykker');
   const [platinAlt, setPlatinAlt] = useState<PlatinumSub>('platin');
   const [activeView, setActiveView] = useState<InventorySurfaceView>('system');
@@ -427,12 +436,14 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   }
 
   function setCategoryScope(value: MainCategory | 'all') {
+    scopeTouchedRef.current = true;
     setCategoryScopeState(value);
     if (value !== 'all') setActiveKatState(value);
     setSelectedProductId(null);
   }
 
   function setActiveKat(value: MainCategory) {
+    scopeTouchedRef.current = true;
     setActiveKatState(value);
     setCategoryScopeState(value);
     setSelectedProductId(null);

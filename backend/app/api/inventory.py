@@ -75,15 +75,9 @@ def _photo_count(product: Product) -> int:
 def _infer_inventory_category(product: Product) -> tuple[str, str | None]:
     if product.inventory_category:
         return product.inventory_category, product.inventory_subcategory
-
-    if product.metal_type == MetalTypeEnum.SILVER:
-        sub = "barrer" if product.product_type.value == "bar" else "smykker"
-        return "gumus", sub
-    if product.metal_type in {MetalTypeEnum.PLATINUM, MetalTypeEnum.PALLADIUM}:
-        return "platin_pd", ("palladyum" if product.metal_type == MetalTypeEnum.PALLADIUM else "platin")
-    if product.product_type.value == "bar":
-        return "kulce", None
-    return "taki", None
+    # Tek kaynak: product_service.infer_inventory_categories (0035 backfill +
+    # create/update yazımıyla aynı türetme).
+    return infer_inventory_categories(product.metal_type, product.product_type)
 
 
 def _saflik_label(product: Product) -> str:
