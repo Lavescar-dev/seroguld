@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from 'react';
 import {
   Calculator,
+  Camera,
   ChevronDown,
   CalendarDays,
   Download,
@@ -44,7 +45,6 @@ const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?:
   { key: 'cpr_number', label: 'CPR nr.' },
   { key: 'identity_doc_number', label: 'Kimlik / Pasaport' },
   { key: 'identity_doc_type', label: 'Belge türü' },
-  { key: 'identity_doc_country', label: 'Belge ülkesi' },
   { key: 'phone', label: 'Telefon' },
   { key: 'email', label: 'E-posta', type: 'email' },
   { key: 'address', label: 'Adres' },
@@ -254,7 +254,7 @@ export function ModernAlisModule({
                       layoutMode={layoutMode}
                       expandedGroups={expandedGroups}
                       onToggleGroup={(group) => setExpandedGroups((current) => { const next = new Set(current); if (next.has(group)) next.delete(group); else next.add(group); return next; })}
-                      onOpenTool={(nextTool) => { if (nextTool === 'customer') state.setCustomerMode('existing'); setTool(nextTool); }}
+                      onOpenTool={(nextTool) => { if (nextTool === 'customer') state.setCustomerMode(null); setTool(nextTool); }}
                       onCancel={cancelWorkspace}
                     />
                   ) : (
@@ -381,7 +381,7 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sg-border pb-3">
         <div className="flex min-w-0 items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-sg-amber" /><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{workspace.customer.name || 'Müşteri bekleniyor'}</p><p className="text-xs text-sg-text-soft">{state.finalizePending ? 'Kaydediliyor...' : 'Taslak otomatik kaydediliyor'} · {displayLabel}</p></div></div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => onOpenTool('customer')} className={shellButtonClass('secondary')}><Users className="h-4 w-4" />{hasSelectedCustomer ? 'Müşteri' : 'Müşteri seç'}</button>
+          <button type="button" onClick={() => onOpenTool('customer')} className={shellButtonClass(hasSelectedCustomer ? 'secondary' : 'warning')}><Users className="h-4 w-4" />{hasSelectedCustomer ? 'Müşteri' : 'Müşteri seç'}</button>
           <button type="button" onClick={state.onOpenWorkspaceExcelPreview} disabled={Boolean(state.hasPendingWorkspaceSync?.())} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button>
           <button type="button" onClick={state.onPrintWorkspace} className={shellButtonClass('ghost')}><Printer className="h-4 w-4" />Yazdır</button>
           {displayBridge?.onOpenCustomerDisplay && !isWide ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Müşteri ekranı</button> : null}
@@ -393,7 +393,7 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
         <main className="min-w-0 border border-sg-border bg-sg-surface">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sg-border px-4 py-3">
             <div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">AFG satırları</p><p className="mt-1 text-sm text-sg-text-soft">Gram ve avance alanlarını düzenleyin; fiyatlar oranlardan hesaplanır.</p></div>
-            <button type="button" onClick={() => onOpenTool('calculator')} className={shellButtonClass('ghost')}><Calculator className="h-4 w-4" />Hesaplayıcı</button>
+            <button type="button" onClick={() => onOpenTool('calculator')} className={shellButtonClass('ghost')}><Calculator className="h-4 w-4" />Kniv beregner</button>
           </div>
           <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateGoldRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateGoldRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
           <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateSilverRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateSilverRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
@@ -415,7 +415,7 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
 function AlisInspector({ state, workspace, hasSelectedCustomer, displayBridge, displayLabel, onOpenTool }: { state: ModernAlisState; workspace: NonNullable<ModernAlisState['workspace']>; hasSelectedCustomer: boolean; displayBridge?: ModernAlisDisplayBridge; displayLabel: string; onOpenTool: (tool: Exclude<ModernAlisTool, null>) => void }) {
   return (
     <div className="border border-sg-border bg-sg-surface">
-      <div className="border-b border-sg-border px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><div className="mt-2 flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-semibold text-sg-text">{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p><p className="mt-1 text-xs text-sg-text-soft">{hasSelectedCustomer ? state.customerForm.phone || 'Telefon yok' : 'Kesinleştirme öncesi gerekli'}</p></div><DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" /></div><button type="button" onClick={() => onOpenTool('customer')} className={`${shellButtonClass('secondary')} mt-3 w-full justify-center`}>{hasSelectedCustomer ? 'Müşteriyi düzenle' : 'Müşteri seç'}</button></div>
+      <div className="border-b border-sg-border px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><div className="mt-2 flex items-start justify-between gap-3"><div className="min-w-0"><p className={`truncate text-base font-semibold ${hasSelectedCustomer ? 'text-sg-text' : 'text-sg-amber'}`}>{hasSelectedCustomer ? workspace.customer.name : 'Müşteri seçilmedi'}</p><p className="mt-1 text-xs text-sg-text-soft">{hasSelectedCustomer ? state.customerForm.phone || 'Telefon yok' : 'Kesinleştirme öncesi gerekli'}</p></div><DataPill label="Ödeme" value={state.paymentMethod.toUpperCase()} tone="success" /></div>{hasSelectedCustomer ? <button type="button" onClick={() => onOpenTool('customer')} className={`${shellButtonClass('secondary')} mt-3 w-full justify-center`}>Müşteriyi düzenle</button> : null}</div>
       <div className="border-b border-sg-border px-4 py-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Piyasa oranları</p><p className="mt-1 text-sm font-semibold text-sg-text">Au {formatDecimalFixed(state.marketRates.gold_24k_dkk)} DKK/g</p><p className="mt-0.5 text-xs text-sg-text-soft">FX {formatDecimalFixed(state.marketRates.eur_dkk_fx)} · satır fiyatlarına otomatik uygulanır</p></div><button type="button" onClick={() => onOpenTool('rates')} className={shellButtonClass('ghost')}><SlidersHorizontal className="h-4 w-4" />Düzenle</button></div></div>
       <div className="border-b border-sg-border px-4 py-4">
         {state.purchaseVatEnabled ? <p className="text-sm font-semibold text-sg-text">%25 alış KDV'si (tarihsel belge)</p> : null}
@@ -458,8 +458,32 @@ function AlisHistory({ state, documents, filters, onChange, onReset }: { state: 
 function AlisToolSheet({ tool, state, hasSelectedCustomer, filters, onFilterChange, onFilterReset, unsupportedControls, onClose }: { tool: Exclude<ModernAlisTool, null>; state: ModernAlisState; hasSelectedCustomer: boolean; filters: ModernAlisListFilters; onFilterChange: (next: Partial<ModernAlisListFilters>) => void; onFilterReset: () => void; unsupportedControls: UnsupportedControlDescriptor[]; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, [tool]);
-  const title = tool === 'customer' ? 'Müşteri' : tool === 'rates' ? 'Piyasa oranları' : tool === 'calculator' ? 'Hesaplayıcılar' : tool === 'filters' ? 'Geçmiş filtreleri' : 'Hazır olmayan entegrasyonlar';
-  return <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /></> : null}{tool === 'rates' || tool === 'calculator' ? <WorkspaceControls state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
+  const title = tool === 'customer' ? 'Müşteri' : tool === 'rates' ? 'Piyasa oranları' : tool === 'calculator' ? 'Kniv beregner' : tool === 'filters' ? 'Geçmiş filtreleri' : 'Hazır olmayan entegrasyonlar';
+  return <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /></> : null}{tool === 'rates' ? <WorkspaceControls state={state} /> : null}{tool === 'calculator' ? <KnivCalculators state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
+}
+
+function KnivCalculators({ state }: { state: ModernAlisState }) {
+  return (
+    <div className="grid gap-3">
+      <p className="text-sm text-sg-text-soft">Birim gram × adet hesaplanır; "Aktar" sonucu seçilen alış satırının gramına yazar.</p>
+      <ModernCalculatorPanel
+        title="Kniv beregner"
+        kind="gold_rows"
+        rows={state.calculators.gold_rows}
+        targets={GOLD_MATRIX_ROWS.map((row) => ({ value: `gold:${row.key}`, label: row.label }))}
+        setCalculators={state.setCalculators}
+        onApply={(rowKey, total) => state.onUpdateGoldRow(rowKey, 'gram', total)}
+      />
+      <ModernCalculatorPanel
+        title="Beregner (sølv)"
+        kind="silver_rows"
+        rows={state.calculators.silver_rows}
+        targets={SILVER_MATRIX_ROWS.map((row, index) => ({ value: `silver:${index + 2}`, label: row.label }))}
+        setCalculators={state.setCalculators}
+        onApply={(rowKey, total) => state.onUpdateSilverRow(rowKey, 'gram', total)}
+      />
+    </div>
+  );
 }
 
 function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewModel['state']; hasSelectedCustomer: boolean }) {
@@ -491,7 +515,7 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
           <button type="button" onClick={() => state.setCustomerMode('new')} className="rounded-sg-lg border border-sg-border bg-sg-surface p-4 text-left transition hover:border-sg-accent hover:bg-sg-accent-soft">
             <UserPlus className="h-5 w-5 text-sg-accent" />
             <p className="mt-3 text-sm font-semibold text-sg-text">Yeni müşteri oluştur</p>
-            <p className="mt-1 text-xs text-sg-text-soft">Müşteri kartını doldurup çalışma alanına bağlayın.</p>
+            <p className="mt-1 text-xs text-sg-text-soft">Kimlik fotoğrafı veya tarayıcı ile alanlar otomatik dolar; elle de girilebilir.</p>
           </button>
         </div>
       </div>
@@ -594,10 +618,8 @@ function EditableCustomerFields({
               className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
             />
           )}
-          {field.key === 'cpr_number' && customer.cpr_number ? (
-            <span className={`mt-1 block text-[10px] font-semibold ${cprValidation.formatOk && cprValidation.mod11Ok ? 'text-sg-green-strong' : cprValidation.formatOk ? 'text-sg-amber' : 'text-sg-red'}`}>
-              {cprValidation.formatOk && cprValidation.mod11Ok ? 'CPR mod-11 doğrulandı' : cprValidation.formatOk ? 'CPR formatı tamamlandı; mod-11 uyarısı' : 'CPR formatı eksik veya geçersiz'}
-            </span>
+          {field.key === 'cpr_number' && customer.cpr_number && cprValidation.formatOk && cprValidation.mod11Ok ? (
+            <span className="mt-1 block text-[10px] font-semibold text-sg-green-strong">CPR mod-11 doğrulandı</span>
           ) : null}
         </label>
       ))}
@@ -618,12 +640,16 @@ function ModernIdentityScanner({
   return (
     <div className="rounded-sg-md border border-sg-border bg-sg-surface p-3 sm:col-span-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><p className="text-xs font-semibold text-sg-text">Kimlik tarama</p><p className="mt-1 text-[11px] text-sg-text-soft">Yerel tarayıcı veya kimlik dosyasıyla alınan metin cihazda ayrıştırılır. CPR doğum tarihinden türetilmez.</p></div>
+        <div><p className="text-xs font-semibold text-sg-text">Kimlik fotoğrafı / tarama (OCR)</p><p className="mt-1 text-[11px] text-sg-text-soft">Yerel tarayıcı veya kimlik dosyasıyla alınan metin cihazda ayrıştırılır. CPR doğum tarihinden türetilmez.</p></div>
         <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${identity.status === 'applied' ? 'bg-sg-green-soft text-sg-green-strong' : identity.status === 'error' ? 'bg-sg-red-soft text-sg-red' : 'bg-sg-surface-soft text-sg-text-soft'}`}>
           {identity.status === 'applied' ? 'Alanlar uygulandı' : identity.status === 'review' ? 'İnceleme gerekli' : identity.status === 'acquiring' ? 'Okunuyor' : identity.status === 'unavailable' ? 'Destek yok' : 'Hazır'}
         </span>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('front')} className={shellButtonClass('secondary')}>Ön yüz tara</button><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('front')} className={shellButtonClass('ghost')}>Ön yüz dosyası</button><button type="button" onClick={() => void identity.refreshCapabilities()} className={shellButtonClass('ghost')}>Yenile</button>{identity.result?.documentType === 'id_card' ? <><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('back')} className={shellButtonClass('ghost')}>Arka yüz tara</button><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('back')} className={shellButtonClass('ghost')}>Arka yüz dosyası</button></> : null}</div>
+      <div className="mt-3 rounded-sg-md border-2 border-dashed border-sg-border bg-sg-surface-soft p-4 text-center">
+        <Camera className="mx-auto h-6 w-6 text-sg-accent" />
+        <p className="mt-2 text-xs text-sg-text">Kimlik fotoğrafını yükleyin veya tarayıcıdan okutun — alanlar otomatik dolar.</p>
+        <div className="mt-3 flex flex-wrap justify-center gap-2"><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('front')} className={shellButtonClass('secondary')}>Fotoğraf yükle (ön yüz)</button><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('front')} className={shellButtonClass('secondary')}>Tarayıcıdan tara</button><button type="button" onClick={() => void identity.refreshCapabilities()} className={shellButtonClass('ghost')}>Yenile</button>{identity.result?.documentType === 'id_card' ? <><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('back')} className={shellButtonClass('ghost')}>Fotoğraf yükle (arka yüz)</button><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('back')} className={shellButtonClass('ghost')}>Arka yüz tara</button></> : null}</div>
+      </div>
       {identity.error ? <p className="mt-2 text-xs font-semibold text-sg-red">{identity.error}</p> : null}
       {identity.result ? <div className="mt-3 rounded-sg-md border border-sg-green-soft bg-sg-green-soft p-3"><p className="text-xs font-semibold text-sg-green-strong">Okunan alanlar — doğrulanmayanları inceleyin</p><div className="mt-2 grid gap-1 sm:grid-cols-2">{Object.entries(identity.result.fields).map(([field, parsed]) => parsed ? <p key={field} className="text-xs text-sg-text"><span className="font-semibold">{modernIdentityFieldLabel(field as IdentityFieldName)}:</span> {parsed.value} <span className={parsed.review === 'validated' ? 'text-sg-green-strong' : 'text-sg-amber'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p> : null)}</div>{Object.keys(identity.previews).length ? <div className="mt-3 flex gap-2">{(['front', 'back'] as const).map((side) => identity.previews[side] ? <img key={side} src={identity.previews[side]} alt={`Kimlik ${side === 'front' ? 'ön' : 'arka'} yüz önizlemesi`} className="h-20 max-w-32 rounded-sg-sm border border-sg-border object-cover" /> : null)}</div> : null}<div className="mt-3 flex justify-end gap-2"><button type="button" onClick={identity.clear} className={shellButtonClass('ghost')}>Vazgeç</button><button type="button" onClick={identity.confirm} className={shellButtonClass('primary')}>İnceledim, alanları uygula</button></div></div> : null}
     </div>
@@ -692,7 +718,7 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
           title="Beregner"
           kind="silver_rows"
           rows={state.calculators.silver_rows}
-          targets={SILVER_MATRIX_ROWS.map((row) => ({ value: `silver:${row.key}`, label: row.label }))}
+          targets={SILVER_MATRIX_ROWS.map((row, index) => ({ value: `silver:${index + 2}`, label: row.label }))}
           setCalculators={state.setCalculators}
           onApply={(rowKey, total) => state.onUpdateSilverRow(rowKey, 'gram', total)}
         />

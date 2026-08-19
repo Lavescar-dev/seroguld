@@ -305,7 +305,7 @@ function StokForm({
             value={editing.uretici || ''}
             onChange={(event) => upd('uretici', event.target.value)}
             className={cellIn}
-            placeholder="Umicore, Metalor..."
+            placeholder=""
           />
         </div>
 

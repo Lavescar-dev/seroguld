@@ -876,8 +876,8 @@ function ActiveWorkspaceView(props: {
                   setCalculators={setCalculators}
                   onUpdateGoldRow={onUpdateGoldRow}
                   onUpdateSilverRow={onUpdateSilverRow}
-                  title="Document Settings"
-                  description="AFG v3 contract: müşteri dışı doküman ayarları, EUR bazlı piyasa matrisi, AFG notu ve calculator blokları burada tutulur."
+                  title="Belge ayarları"
+                  description="Doküman ayarları, EUR bazlı piyasa matrisi, AFG notu ve hesaplayıcılar burada tutulur."
                   layout="compactSidebar"
                   showCalculators={false}
                 />

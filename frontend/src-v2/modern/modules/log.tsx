@@ -58,7 +58,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
         <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
           <ModernSection
             title="AFG Belgeleri"
-            subtitle="Responsive belge listesi ve hızlı rota aksiyonları."
+            subtitle="Belgeleri arayın ve satırları hızla yönlendirin."
             actions={
               state.pendingRouteCount > 0 ? (
                 <>

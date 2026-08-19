@@ -57,7 +57,6 @@ function CustomerDraftForm({
         </select>
       </label>
       {field('identity_doc_number', 'Belge numarası')}
-      {field('identity_doc_country', 'Belge ülkesi')}
       <div className="flex items-end justify-end gap-2 sm:col-span-2">
         <button type="button" onClick={onCancel} className={shellButtonClass('secondary')}><X className="h-4 w-4" />Vazgeç</button>
         <button type="submit" className={shellButtonClass('primary')}><Check className="h-4 w-4" />Kaydet</button>
@@ -80,7 +79,7 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
     <ModernModuleShell
       eyebrow="Müşteriler"
       title="Müşteri Yönetimi"
-      subtitle="Arama, seçim, geçmiş ve AFG önizleme akışlarını mevcut müşteri hook sözleşmesiyle kullanan light modern yüzey."
+      subtitle="Müşteri kayıtlarını arayın, seçin ve geçmiş belgeleriyle birlikte yönetin."
       actions={
         <button type="button" onClick={state.onToggleNewRow} className={shellButtonClass('primary')}>
           <Plus className="h-4 w-4" />

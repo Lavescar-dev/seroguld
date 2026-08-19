@@ -4,7 +4,10 @@ import { AlertTriangle, Ban, Loader2 } from 'lucide-react';
 
 import type { TransitionBlockerDescriptor, UnsupportedControlDescriptor } from '@/modern/adapters/types';
 
-export function shellButtonClass(kind: 'primary' | 'secondary' | 'ghost' | 'danger' = 'secondary') {
+export function shellButtonClass(kind: 'primary' | 'secondary' | 'ghost' | 'danger' | 'warning' = 'secondary') {
+  if (kind === 'warning') {
+    return 'inline-flex items-center justify-center gap-2 rounded-sg-md border border-sg-amber/40 bg-sg-amber-soft px-4 py-2 text-sm font-semibold text-sg-amber transition hover:bg-sg-amber-soft/70 disabled:cursor-not-allowed disabled:opacity-50';
+  }
   if (kind === 'primary') {
     return 'inline-flex items-center justify-center gap-2 rounded-sg-md border border-sg-green bg-sg-green px-4 py-2 text-sm font-semibold text-white transition hover:bg-sg-green-strong disabled:cursor-not-allowed disabled:opacity-50';
   }

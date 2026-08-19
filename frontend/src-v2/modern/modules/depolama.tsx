@@ -50,7 +50,7 @@ function ModernInventoryEditor({ state }: { state: ModernDepolamaViewModel['stat
           <NumericDraftInput id="inventory-width" label="Genişlik (mm)" value={editing.olcuGenislik} onCommit={(value) => update({ olcuGenislik: value || undefined })} />
           <NumericDraftInput id="inventory-thickness" label="Kalınlık (mm)" value={editing.olcuKalinlik} onCommit={(value) => update({ olcuKalinlik: value || undefined })} />
           <NumericDraftInput id="inventory-diameter" label="Çap (mm)" value={editing.olcuCap} onCommit={(value) => update({ olcuCap: value || undefined })} />
-          <label htmlFor="inventory-producer" className="text-xs font-semibold text-sg-text-soft">Üretici / Marka<input id="inventory-producer" name="producer" value={editing.uretici || ''} onChange={(event) => update({ uretici: event.target.value || undefined })} placeholder="Umicore, AUR..." className={editorInputClass} /></label>
+          <label htmlFor="inventory-producer" className="text-xs font-semibold text-sg-text-soft">Üretici / Marka<input id="inventory-producer" name="producer" value={editing.uretici || ''} onChange={(event) => update({ uretici: event.target.value || undefined })} className={editorInputClass} /></label>
           <label htmlFor="inventory-location" className="text-xs font-semibold text-sg-text-soft">Depo lokasyonu<input id="inventory-location" name="storage_location" value={editing.storageLocation || ''} onChange={(event) => update({ storageLocation: event.target.value })} className={editorInputClass} /></label>
           <label htmlFor="inventory-notes" className="text-xs font-semibold text-sg-text-soft md:col-span-2">Notlar<textarea id="inventory-notes" name="notes" value={editing.notlar || ''} onChange={(event) => update({ notlar: event.target.value })} className={`${editorInputClass} min-h-24`} /></label>
           <div className="flex flex-wrap justify-end gap-2 border-t border-sg-border pt-4 md:col-span-2">
@@ -86,7 +86,7 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
     <ModernModuleShell
       eyebrow="Depolama"
       title="Envanter ve Stok"
-      subtitle="Gerçek stok akışı, GDPR lock ve lifecycle durumlarını koruyan modern light yüzey."
+      subtitle="Stok, GDPR bekleme süresi ve ürün yaşam döngüsü tek ekranda."
       badges={
         <>
           <DataPill label="Kategori" value={categoryScope === 'all' ? 'Tüm ürünler' : labelInventoryCategory(categoryScope)} />

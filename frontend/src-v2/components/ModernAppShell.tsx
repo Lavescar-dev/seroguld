@@ -25,7 +25,7 @@ import { SessionLogoutControl } from '@/components/SessionLogoutControl';
 import type { ReturnTypeOfRootMakeState } from './modernShellTypes';
 
 const routeMeta: Record<string, { eyebrow: string; title: string; description: string }> = {
-  '/': { eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı', description: 'Müşteri, metal satırları, teklif, AFG ve teslim zinciri aynı gerçek workspace üzerinde.' },
+  '/': { eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı', description: 'Müşteri, metal satırları, teklif ve AFG belgesi tek ekranda.' },
   '/dashboard': { eyebrow: 'Operasyon Merkezi', title: 'Genel Bakış', description: 'Bugünün kayıtları, bekleyen işler ve entegrasyon sağlığı tek operasyon bağlamında.' },
   '/depolama': { eyebrow: 'Lager', title: 'Depolama', description: 'Stok, ürün ilişkileri ve workbook işlemleri.' },
   '/log': { eyebrow: 'AFG Defteri', title: 'Log ve melt akışı', description: 'AFG satırlarını Depolama, Kararsız ve Eritme hedeflerine yönetin.' },
