@@ -286,16 +286,17 @@ class PosWorkspaceRateMatrixEntry(AppBaseModel):
     row_key: str = Field(min_length=1, max_length=30)
     label: str = Field(min_length=1, max_length=60)
     lodighed: str = Field(min_length=1, max_length=20)
-    eur_per_gram: Decimal = Field(default=Decimal("0"), ge=0)
     dkk_per_gram: Decimal = Field(default=Decimal("0"), ge=0)
     karat: Decimal | None = Field(default=None, ge=0)
     type_code: str | None = Field(default=None, max_length=10)
 
 
 class PosWorkspaceMarketRates(AppBaseModel):
+    # Kanonik operatör birimi DKK/g. eur_dkk_fx yalnız bağlam/görüntü değeridir;
+    # oran hesabında çarpan olarak kullanılmaz.
     eur_dkk_fx: Decimal = Field(default=Decimal("7.45"), gt=0)
-    gold_rates_eur: dict[str, Decimal] = Field(default_factory=dict)
-    silver_rates_eur: dict[str, Decimal] = Field(default_factory=dict)
+    gold_rates_dkk: dict[str, Decimal] = Field(default_factory=dict)
+    silver_rates_dkk: dict[str, Decimal] = Field(default_factory=dict)
     gold_24k_dkk: Decimal = Field(ge=0)
     silver_dkk: Decimal = Field(ge=0)
     gold_matrix: list[PosWorkspaceRateMatrixEntry] = Field(default_factory=list)

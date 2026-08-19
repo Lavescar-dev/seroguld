@@ -16,10 +16,20 @@ from app.services.market_rate_profile import (
 router = APIRouter()
 
 
+class MarketRateMetaOut(AppBaseModel):
+    source: Literal["manual", "live", "fallback"]
+    observed_at: str | None = None
+    stale: bool = False
+
+
 class MarketRateProfileUpdateIn(AppBaseModel):
+    # Kanonik operatör birimi DKK/g; EUR alanları wire sözleşmesinden kalktı.
     eur_dkk_fx: str
-    gold_rates_eur: dict[str, str]
-    silver_rates_eur: dict[str, str]
+    gold_rates_dkk: dict[str, str]
+    silver_rates_dkk: dict[str, str]
+    plet_dkk: str
+    gold_bar_dkk: str
+    silver_bar_dkk: str
     platinum_dkk: str
     palladium_dkk: str
 
@@ -29,6 +39,7 @@ class MarketRateProfileOut(MarketRateProfileUpdateIn):
     silver_dkk: str
     live_enabled: bool
     source: Literal["manual", "live"]
+    rate_meta: dict[str, MarketRateMetaOut]
 
 
 @router.get("/defaults", response_model=MarketRateProfileOut)
@@ -41,9 +52,9 @@ async def put_market_rate_defaults(
     payload: MarketRateProfileUpdateIn,
     _: object = Depends(require_admin),
 ) -> dict:
-    current = await get_effective_market_rate_profile()
-    if current.get("live_enabled"):
-        raise HTTPException(status_code=409, detail="Canlı piyasa oranları açık; manuel oran kaydetmek için Ayarlar'dan canlı modu kapatın.")
-    if set(payload.gold_rates_eur) != set(GOLD_RATE_KEYS) or set(payload.silver_rates_eur) != set(SILVER_RATE_KEYS):
+    # Canlı mod yalnız oto değerleri (fx, Pt, Pd) besler; manuel altın/gümüş/
+    # bar/Plet alanları her zaman operatör değeridir ve canlı moddayken de
+    # kaydedilebilir (eski 409 kilidi kaldırıldı).
+    if set(payload.gold_rates_dkk) != set(GOLD_RATE_KEYS) or set(payload.silver_rates_dkk) != set(SILVER_RATE_KEYS):
         raise HTTPException(status_code=422, detail="Altın ve gümüş oran matrisi eksik veya hatalı.")
     return save_manual_market_rate_profile(payload.model_dump())

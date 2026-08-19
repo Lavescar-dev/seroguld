@@ -221,24 +221,24 @@ def _silver_definition_by_lodighed(lodighed: str) -> dict[str, str | Decimal] | 
     return pos_workspace_state._silver_definition_by_lodighed(lodighed)
 
 
-def _default_gold_rate_map(*, gold_24k_dkk: Decimal, fx: Decimal) -> dict[str, Decimal]:
-    return pos_workspace_state._default_gold_rate_map(gold_24k_dkk=gold_24k_dkk, fx=fx)
+def _default_gold_rate_map(*, gold_24k_dkk: Decimal) -> dict[str, Decimal]:
+    return pos_workspace_state._default_gold_rate_map(gold_24k_dkk=gold_24k_dkk)
 
 
-def _default_silver_rate_map(*, silver_999_dkk: Decimal, fx: Decimal) -> dict[str, Decimal]:
-    return pos_workspace_state._default_silver_rate_map(silver_999_dkk=silver_999_dkk, fx=fx)
+def _default_silver_rate_map(*, silver_999_dkk: Decimal) -> dict[str, Decimal]:
+    return pos_workspace_state._default_silver_rate_map(silver_999_dkk=silver_999_dkk)
 
 
 def _build_workspace_market_rates(
     *,
     eur_dkk_fx: Decimal,
-    gold_rates_eur: dict[str, Decimal],
-    silver_rates_eur: dict[str, Decimal],
+    gold_rates_dkk: dict[str, Decimal],
+    silver_rates_dkk: dict[str, Decimal],
 ) -> PosWorkspaceMarketRates:
     return pos_workspace_state._build_workspace_market_rates(
         eur_dkk_fx=eur_dkk_fx,
-        gold_rates_eur=gold_rates_eur,
-        silver_rates_eur=silver_rates_eur,
+        gold_rates_dkk=gold_rates_dkk,
+        silver_rates_dkk=silver_rates_dkk,
     )
 
 

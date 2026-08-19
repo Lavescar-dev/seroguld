@@ -131,23 +131,23 @@ def _silver_definition_by_lodighed(lodighed: str) -> dict[str, str | Decimal] | 
     return next((item for item in core.SILVER_WORKSPACE_ROWS if str(item["lodighed"]) == target), None)
 
 
-def _default_gold_rate_map(*, gold_24k_dkk: Decimal, fx: Decimal) -> dict[str, Decimal]:
+def _default_gold_rate_map(*, gold_24k_dkk: Decimal) -> dict[str, Decimal]:
     core = _core()
-    gold_24k_eur = _quantize_4(to_decimal(gold_24k_dkk) / to_decimal(fx or core.DEFAULT_EUR_DKK_FX))
+    gold_24k = quantize_2(to_decimal(gold_24k_dkk))
     return {
-        str(item["row_key"]).split(":", 1)[1]: _quantize_4(
-            gold_24k_eur * (to_decimal(item["karat"]) / Decimal("24"))
+        str(item["row_key"]).split(":", 1)[1]: quantize_2(
+            gold_24k * (to_decimal(item["karat"]) / Decimal("24"))
         )
         for item in core.GOLD_WORKSPACE_ROWS
     }
 
 
-def _default_silver_rate_map(*, silver_999_dkk: Decimal, fx: Decimal) -> dict[str, Decimal]:
+def _default_silver_rate_map(*, silver_999_dkk: Decimal) -> dict[str, Decimal]:
     core = _core()
-    silver_999_eur = _quantize_4(to_decimal(silver_999_dkk) / to_decimal(fx or core.DEFAULT_EUR_DKK_FX))
+    silver_999 = quantize_2(to_decimal(silver_999_dkk))
     return {
-        str(item["lodighed"]): _quantize_4(
-            silver_999_eur * (to_decimal(item["purity_percentage"]) / Decimal("99.90"))
+        str(item["lodighed"]): quantize_2(
+            silver_999 * (to_decimal(item["purity_percentage"]) / Decimal("99.90"))
         )
         for item in core.SILVER_WORKSPACE_ROWS
     }
@@ -156,24 +156,20 @@ def _default_silver_rate_map(*, silver_999_dkk: Decimal, fx: Decimal) -> dict[st
 def _build_workspace_market_rates(
     *,
     eur_dkk_fx: Decimal,
-    gold_rates_eur: dict[str, Decimal],
-    silver_rates_eur: dict[str, Decimal],
+    gold_rates_dkk: dict[str, Decimal],
+    silver_rates_dkk: dict[str, Decimal],
 ) -> PosWorkspaceMarketRates:
     core = _core()
     fx = quantize_2(to_decimal(eur_dkk_fx or core.DEFAULT_EUR_DKK_FX))
-    gold_24k_eur = _quantize_4(gold_rates_eur.get("24"))
-    silver_999_eur = _quantize_4(silver_rates_eur.get("999"))
     gold_matrix = []
     for definition in core.GOLD_WORKSPACE_ROWS:
         rate_key = str(definition["row_key"]).split(":", 1)[1]
-        eur_per_gram = _quantize_4(gold_rates_eur.get(rate_key))
         gold_matrix.append(
             {
                 "row_key": str(definition["row_key"]),
                 "label": str(definition["label"]).upper(),
                 "lodighed": str(definition["lodighed"]),
-                "eur_per_gram": eur_per_gram,
-                "dkk_per_gram": quantize_2(eur_per_gram * fx),
+                "dkk_per_gram": quantize_2(gold_rates_dkk.get(rate_key)),
                 "karat": quantize_2(to_decimal(definition["karat"])),
                 "type_code": "1",
             }
@@ -181,24 +177,22 @@ def _build_workspace_market_rates(
     silver_matrix = []
     for definition in core.SILVER_WORKSPACE_ROWS:
         rate_key = str(definition["lodighed"])
-        eur_per_gram = _quantize_4(silver_rates_eur.get(rate_key))
         silver_matrix.append(
             {
                 "row_key": str(definition["row_key"]),
                 "label": str(definition["label"]),
                 "lodighed": rate_key,
-                "eur_per_gram": eur_per_gram,
-                "dkk_per_gram": quantize_2(eur_per_gram * fx),
+                "dkk_per_gram": quantize_2(silver_rates_dkk.get(rate_key)),
                 "karat": None,
                 "type_code": str(definition["type_code"]),
             }
         )
     return PosWorkspaceMarketRates(
         eur_dkk_fx=fx,
-        gold_rates_eur={key: _quantize_4(value) for key, value in gold_rates_eur.items()},
-        silver_rates_eur={key: _quantize_4(value) for key, value in silver_rates_eur.items()},
-        gold_24k_dkk=quantize_2(gold_24k_eur * fx),
-        silver_dkk=quantize_2(silver_999_eur * fx),
+        gold_rates_dkk={key: quantize_2(value) for key, value in gold_rates_dkk.items()},
+        silver_rates_dkk={key: quantize_2(value) for key, value in silver_rates_dkk.items()},
+        gold_24k_dkk=quantize_2(gold_rates_dkk.get("24")),
+        silver_dkk=quantize_2(silver_rates_dkk.get("999")),
         gold_matrix=gold_matrix,
         silver_matrix=silver_matrix,
     )
@@ -210,24 +204,41 @@ def _market_rate_payload_to_workspace(
     fallback_gold_24k_dkk: Decimal,
     fallback_silver_dkk: Decimal,
 ) -> PosWorkspaceMarketRates:
+    """Tek uyumluluk çekirdeği: (1) DKK map'leri doğrudan, (2) yalnız eski
+    EUR map'leri varsa ×fx çevir (0.3.5 ve öncesi note payload'ları),
+    (3) hiçbiri yoksa skaler varsayılanlardan türet."""
     core = _core()
     fx = _workspace_positive_decimal(market_payload.get("eur_dkk_fx"), core.DEFAULT_EUR_DKK_FX)
-    gold_fallback_map = _default_gold_rate_map(gold_24k_dkk=fallback_gold_24k_dkk, fx=fx)
-    silver_fallback_map = _default_silver_rate_map(silver_999_dkk=fallback_silver_dkk, fx=fx)
-    raw_gold_rates = market_payload.get("gold_rates_eur") if isinstance(market_payload.get("gold_rates_eur"), dict) else {}
-    raw_silver_rates = market_payload.get("silver_rates_eur") if isinstance(market_payload.get("silver_rates_eur"), dict) else {}
-    gold_rates_eur = {
-        key: _workspace_positive_decimal4(raw_gold_rates.get(key), gold_fallback_map[key])
+    gold_fallback_map = _default_gold_rate_map(gold_24k_dkk=fallback_gold_24k_dkk)
+    silver_fallback_map = _default_silver_rate_map(silver_999_dkk=fallback_silver_dkk)
+
+    raw_gold_dkk = market_payload.get("gold_rates_dkk") if isinstance(market_payload.get("gold_rates_dkk"), dict) else None
+    raw_silver_dkk = market_payload.get("silver_rates_dkk") if isinstance(market_payload.get("silver_rates_dkk"), dict) else None
+    if raw_gold_dkk is None:
+        raw_gold_eur = market_payload.get("gold_rates_eur") if isinstance(market_payload.get("gold_rates_eur"), dict) else {}
+        raw_gold_dkk = {
+            key: quantize_2(_workspace_positive_decimal4(raw_gold_eur.get(key), Decimal("0")) * fx)
+            for key in raw_gold_eur
+        }
+    if raw_silver_dkk is None:
+        raw_silver_eur = market_payload.get("silver_rates_eur") if isinstance(market_payload.get("silver_rates_eur"), dict) else {}
+        raw_silver_dkk = {
+            key: quantize_2(_workspace_positive_decimal4(raw_silver_eur.get(key), Decimal("0")) * fx)
+            for key in raw_silver_eur
+        }
+
+    gold_rates_dkk = {
+        key: _workspace_positive_decimal(raw_gold_dkk.get(key), gold_fallback_map[key])
         for key in core.GOLD_RATE_KEYS
     }
-    silver_rates_eur = {
-        key: _workspace_positive_decimal4(raw_silver_rates.get(key), silver_fallback_map[key])
+    silver_rates_dkk = {
+        key: _workspace_positive_decimal(raw_silver_dkk.get(key), silver_fallback_map[key])
         for key in core.SILVER_RATE_KEYS
     }
     return _build_workspace_market_rates(
         eur_dkk_fx=fx,
-        gold_rates_eur=gold_rates_eur,
-        silver_rates_eur=silver_rates_eur,
+        gold_rates_dkk=gold_rates_dkk,
+        silver_rates_dkk=silver_rates_dkk,
     )
 
 
@@ -251,10 +262,12 @@ def _serialize_workspace_market_rates_payload(
         fallback_gold_24k_dkk=fallback_gold,
         fallback_silver_dkk=fallback_silver,
     )
+    # Yeni yazımlar yalnız DKK taşır; EUR map'leri bir daha yazılmaz.
     return {
+        "rates_unit": "dkk",
         "eur_dkk_fx": str(workspace_rates.eur_dkk_fx),
-        "gold_rates_eur": {key: str(_quantize_4(value)) for key, value in workspace_rates.gold_rates_eur.items()},
-        "silver_rates_eur": {key: str(_quantize_4(value)) for key, value in workspace_rates.silver_rates_eur.items()},
+        "gold_rates_dkk": {key: str(quantize_2(value)) for key, value in workspace_rates.gold_rates_dkk.items()},
+        "silver_rates_dkk": {key: str(quantize_2(value)) for key, value in workspace_rates.silver_rates_dkk.items()},
         "gold_24k_dkk": str(quantize_2(workspace_rates.gold_24k_dkk)),
         "silver_dkk": str(quantize_2(workspace_rates.silver_dkk)),
     }
@@ -263,11 +276,11 @@ def _serialize_workspace_market_rates_payload(
 def _workspace_market_rate_dkk(market_rates: PosWorkspaceMarketRates, row_key: str) -> Decimal:
     if row_key.startswith("gold:"):
         key = row_key.split(":", 1)[1]
-        return quantize_2(_quantize_4(market_rates.gold_rates_eur.get(key)) * to_decimal(market_rates.eur_dkk_fx))
+        return quantize_2(market_rates.gold_rates_dkk.get(key))
     definition = _silver_definition_by_row_key(row_key)
     if definition is not None:
         key = str(definition["lodighed"])
-        return quantize_2(_quantize_4(market_rates.silver_rates_eur.get(key)) * to_decimal(market_rates.eur_dkk_fx))
+        return quantize_2(market_rates.silver_rates_dkk.get(key))
     return Decimal("0.00")
 
 

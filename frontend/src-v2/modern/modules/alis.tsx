@@ -700,7 +700,7 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Piyasa oranları</p>
-          <p className="mt-1 text-xs text-sg-text-soft">EUR fiyatı → kur → DKK. Altın ve gümüş alanları matrisle birlikte güncellenir.</p>
+          <p className="mt-1 text-xs text-sg-text-soft">Tüm alış fiyatları doğrudan DKK/g girilir. Altın ve gümüş alanları matrisle birlikte güncellenir.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <DataPill label="Au 24K" value={`${formatDecimalFixed(state.marketRates.gold_24k_dkk)} DKK/g`} tone="warning" />
@@ -709,36 +709,34 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
       </div>
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <div className="rounded-sg-md border border-sg-border-soft bg-sg-surface-soft p-3">
-          <p className="text-xs font-semibold text-sg-text">Altın EUR / gram</p>
+          <p className="text-xs font-semibold text-sg-text">Altın DKK / gram</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {GOLD_MATRIX_ROWS.map((row) => (
               <RateInput
                 key={row.key}
                 label={`${row.label} · ${row.lodighed}`}
-                value={state.marketRates.gold_rates_eur?.[row.key] || ''}
-                dkk={formatDecimalFixed(parseDecimalValue(state.marketRates.gold_rates_eur?.[row.key]) * (parseDecimalValue(state.marketRates.eur_dkk_fx) || 1))}
-                onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { gold_rates_eur: { ...current.gold_rates_eur, [row.key]: value === null ? '' : String(value) } }))}
+                value={state.marketRates.gold_rates_dkk?.[row.key] || ''}
+                onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { gold_rates_dkk: { ...current.gold_rates_dkk, [row.key]: value === null ? '' : String(value) } }))}
               />
             ))}
           </div>
         </div>
         <div className="rounded-sg-md border border-sg-border-soft bg-sg-surface-soft p-3">
-          <p className="text-xs font-semibold text-sg-text">Gümüş EUR / gram</p>
+          <p className="text-xs font-semibold text-sg-text">Gümüş DKK / gram</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {SILVER_MATRIX_ROWS.map((row) => (
               <RateInput
                 key={row.key}
                 label={`${row.label} · ${row.lodighed}`}
-                value={state.marketRates.silver_rates_eur?.[row.key] || ''}
-                dkk={formatDecimalFixed(parseDecimalValue(state.marketRates.silver_rates_eur?.[row.key]) * (parseDecimalValue(state.marketRates.eur_dkk_fx) || 1))}
-                onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { silver_rates_eur: { ...current.silver_rates_eur, [row.key]: value === null ? '' : String(value) } }))}
+                value={state.marketRates.silver_rates_dkk?.[row.key] || ''}
+                onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { silver_rates_dkk: { ...current.silver_rates_dkk, [row.key]: value === null ? '' : String(value) } }))}
               />
             ))}
           </div>
         </div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <WorkspaceInput label="EUR / DKK kuru" value={state.marketRates.eur_dkk_fx} onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: value }))} />
+        <WorkspaceInput label="EUR / DKK kuru (bilgi amaçlı)" value={state.marketRates.eur_dkk_fx} onCommit={(value) => state.setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: value }))} />
         <CommittedRateInput
           label="Au 24K DKK/g · tüm karatlara uygula"
           value={state.marketRates.gold_24k_dkk}
@@ -750,13 +748,13 @@ function ModernRatesPanel({ state }: { state: ModernAlisViewModel['state'] }) {
   );
 }
 
-function RateInput({ label, value, dkk, onCommit }: { label: string; value: string; dkk: string; onCommit: (value: string) => void }) {
+function RateInput({ label, value, onCommit }: { label: string; value: string; onCommit: (value: string) => void }) {
   return (
     <label className="rounded-sg-md border border-sg-border bg-sg-surface p-2 text-[11px] font-semibold text-sg-text-soft">
-      <span className="flex items-center justify-between gap-2"><span>{label}</span><span className="font-normal text-sg-text-soft">{dkk} DKK</span></span>
+      <span className="flex items-center justify-between gap-2"><span>{label}</span><span className="font-normal text-sg-text-soft">DKK/g</span></span>
       <CommittedNumericInput
         value={value}
-        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 4 }}
+        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
         onCommit={(_, canonical) => onCommit(canonical)}
         className="mt-1 w-full rounded-sg-sm border border-sg-border bg-sg-surface-soft px-2 py-1.5 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10"
       />

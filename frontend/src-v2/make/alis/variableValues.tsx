@@ -72,23 +72,14 @@ export function VariableValuesSheetEditor({
   showSettings?: boolean;
   showCalculators?: boolean;
 }) {
-  const fx = parseDecimalValue(marketRates.eur_dkk_fx) || 1;
-  const goldMatrixRows = GOLD_MATRIX_ROWS.map((row) => {
-    const eur = normalizeTextInput(marketRates.gold_rates_eur?.[row.key] || '0');
-    return {
-      ...row,
-      eur_per_gram: eur,
-      dkk_per_gram: formatDecimalFixed(parseDecimalValue(eur) * fx),
-    };
-  });
-  const silverMatrixRows = SILVER_MATRIX_ROWS.map((row) => {
-    const eur = normalizeTextInput(marketRates.silver_rates_eur?.[row.key] || '0');
-    return {
-      ...row,
-      eur_per_gram: eur,
-      dkk_per_gram: formatDecimalFixed(parseDecimalValue(eur) * fx),
-    };
-  });
+  const goldMatrixRows = GOLD_MATRIX_ROWS.map((row) => ({
+    ...row,
+    dkk_per_gram: formatDecimalFixed(marketRates.gold_rates_dkk?.[row.key] || '0'),
+  }));
+  const silverMatrixRows = SILVER_MATRIX_ROWS.map((row) => ({
+    ...row,
+    dkk_per_gram: formatDecimalFixed(marketRates.silver_rates_dkk?.[row.key] || '0'),
+  }));
   const goldCalculatorRows = calculators.gold_rows.map((row) =>
     withCalculatedTotal({
       row_key: row.row_key,
@@ -111,8 +102,8 @@ export function VariableValuesSheetEditor({
   function updateGoldRate(rowKey: string, value: string) {
     setMarketRates((current) =>
       syncMarketRateState(current, {
-        gold_rates_eur: {
-          ...current.gold_rates_eur,
+        gold_rates_dkk: {
+          ...current.gold_rates_dkk,
           [rowKey]: normalizeTextInput(value),
         },
       }),
@@ -122,8 +113,8 @@ export function VariableValuesSheetEditor({
   function updateSilverRate(rowKey: string, value: string) {
     setMarketRates((current) =>
       syncMarketRateState(current, {
-        silver_rates_eur: {
-          ...current.silver_rates_eur,
+        silver_rates_dkk: {
+          ...current.silver_rates_dkk,
           [rowKey]: normalizeTextInput(value),
         },
       }),
@@ -451,8 +442,8 @@ export function VariableValuesSheetEditor({
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="border border-brand-200 bg-white">
           <div className="border-b border-brand-200 bg-brand-50 px-4 py-3">
-            <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Gold Rates — EUR Truth</p>
-            <p className="mt-1 text-sm text-brand-700">Tüm karat fiyatları EUR/g olarak düzenlenir; DKK karşılığı FX ile türetilir ve workbook’la mirror olur.</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Gold Rates — DKK/g</p>
+            <p className="mt-1 text-sm text-brand-700">Tüm karat fiyatları doğrudan DKK/g olarak düzenlenir ve workbook’la mirror olur.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
@@ -460,7 +451,6 @@ export function VariableValuesSheetEditor({
                 <tr className="border-b border-brand-300">
                   <th className="border border-brand-200 bg-brand-100 px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-brand-500">Karat</th>
                   <th className="border border-brand-200 bg-brand-100 px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-brand-500">Lødighed</th>
-                  <th className="border border-amber-200 bg-amber-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-amber-700">EUR / g</th>
                   <th className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-emerald-700">DKK / g</th>
                 </tr>
               </thead>
@@ -469,16 +459,13 @@ export function VariableValuesSheetEditor({
                   <tr key={row.key}>
                     <td className="mono border border-brand-200 px-3 py-2 font-black text-brand-900">{row.label}</td>
                     <td className="mono border border-brand-200 px-3 py-2 text-brand-700">{row.lodighed}</td>
-                    <td className="border border-amber-200 bg-amber-50 px-2 py-2">
+                    <td className="border border-emerald-200 bg-emerald-50 px-2 py-2">
                       <CommittedNumericInput
-                        value={row.eur_per_gram}
-                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 4 }}
+                        value={row.dkk_per_gram}
+                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
                         onCommit={(_, canonical) => updateGoldRate(row.key, canonical)}
-                        className="mono w-full border border-amber-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-amber-500"
+                        className="mono w-full border border-emerald-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-emerald-500"
                       />
-                    </td>
-                    <td className="mono border border-emerald-200 bg-emerald-50 px-3 py-2 text-right font-black text-emerald-900">
-                      {row.dkk_per_gram}
                     </td>
                   </tr>
                 ))}
@@ -489,8 +476,8 @@ export function VariableValuesSheetEditor({
 
         <div className="border border-brand-200 bg-white">
           <div className="border-b border-brand-200 bg-brand-50 px-4 py-3">
-            <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Silver Rates — EUR Truth</p>
-            <p className="mt-1 text-sm text-brand-700">Silver satırları da EUR/g truth ile güncellenir; workbook `Variable værdier` bunu readonly DKK’ye çevirir.</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Silver Rates — DKK/g</p>
+            <p className="mt-1 text-sm text-brand-700">Silver satırları da doğrudan DKK/g olarak düzenlenir; workbook `Variable værdier` aynı değeri taşır.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
@@ -498,7 +485,6 @@ export function VariableValuesSheetEditor({
                 <tr className="border-b border-brand-300">
                   <th className="border border-brand-200 bg-brand-100 px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-brand-500">Tip</th>
                   <th className="border border-brand-200 bg-brand-100 px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-brand-500">Lødighed</th>
-                  <th className="border border-sky-200 bg-sky-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-sky-700">EUR / g</th>
                   <th className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-emerald-700">DKK / g</th>
                 </tr>
               </thead>
@@ -507,16 +493,13 @@ export function VariableValuesSheetEditor({
                   <tr key={row.key}>
                     <td className="border border-brand-200 px-3 py-2 font-semibold text-brand-900">{row.label}</td>
                     <td className="mono border border-brand-200 px-3 py-2 text-brand-700">{row.lodighed}</td>
-                    <td className="border border-sky-200 bg-sky-50 px-2 py-2">
+                    <td className="border border-emerald-200 bg-emerald-50 px-2 py-2">
                       <CommittedNumericInput
-                        value={row.eur_per_gram}
-                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 4 }}
+                        value={row.dkk_per_gram}
+                        rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
                         onCommit={(_, canonical) => updateSilverRate(row.key, canonical)}
-                        className="mono w-full border border-sky-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-sky-500"
+                        className="mono w-full border border-emerald-300 bg-white px-3 py-1.5 text-right text-sm text-brand-900 outline-none focus:border-emerald-500"
                       />
-                    </td>
-                    <td className="mono border border-emerald-200 bg-emerald-50 px-3 py-2 text-right font-black text-emerald-900">
-                      {row.dkk_per_gram}
                     </td>
                   </tr>
                 ))}

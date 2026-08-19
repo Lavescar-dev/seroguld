@@ -89,10 +89,8 @@ function parseDecimalValue(value: string | number | null | undefined) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function buildDefaultGoldRatesEur(gold24Dkk: string, fx: string) {
+function buildDefaultGoldRatesDkk(gold24Dkk: string) {
   const gold24 = parseDecimalValue(gold24Dkk);
-  const exchangeRate = parseDecimalValue(fx) || 1;
-  const gold24Eur = gold24 / exchangeRate;
   const defs = [
     ['8', 8],
     ['14', 14],
@@ -102,46 +100,43 @@ function buildDefaultGoldRatesEur(gold24Dkk: string, fx: string) {
     ['22', 22],
     ['24', 24],
   ] as const;
-  return Object.fromEntries(defs.map(([key, karat]) => [key, (gold24Eur * karat) / 24])) as Record<string, number>;
+  return Object.fromEntries(defs.map(([key, karat]) => [key, (gold24 * karat) / 24])) as Record<string, number>;
 }
 
-function buildDefaultSilverRatesEur(silverDkk: string, fx: string) {
+function buildDefaultSilverRatesDkk(silverDkk: string) {
   const silver999 = parseDecimalValue(silverDkk);
-  const exchangeRate = parseDecimalValue(fx) || 1;
-  const silver999Eur = silver999 / exchangeRate;
   const defs = [
     ['999', 0.999],
     ['925', 0.925],
     ['830', 0.83],
     ['800', 0.8],
   ] as const;
-  return Object.fromEntries(defs.map(([key, ratio]) => [key, silver999Eur * ratio])) as Record<string, number>;
+  return Object.fromEntries(defs.map(([key, ratio]) => [key, silver999 * ratio])) as Record<string, number>;
 }
 
 function buildDefaultMarketRates(gold24Dkk: string, silverDkk: string, fx = DEFAULT_MARKET_FX): PosWorkspaceMarketRates {
-  const goldRates = buildDefaultGoldRatesEur(gold24Dkk, fx);
-  const silverRates = buildDefaultSilverRatesEur(silverDkk, fx);
-  const exchangeRate = parseDecimalValue(fx) || 1;
+  const goldRates = buildDefaultGoldRatesDkk(gold24Dkk);
+  const silverRates = buildDefaultSilverRatesDkk(silverDkk);
   return {
     eur_dkk_fx: fx,
     gold_24k_dkk: gold24Dkk,
     silver_dkk: silverDkk,
-    gold_rates_eur: Object.fromEntries(Object.entries(goldRates).map(([key, value]) => [key, value.toFixed(4)])),
-    silver_rates_eur: Object.fromEntries(Object.entries(silverRates).map(([key, value]) => [key, value.toFixed(4)])),
+    gold_rates_dkk: Object.fromEntries(Object.entries(goldRates).map(([key, value]) => [key, value.toFixed(2)])),
+    silver_rates_dkk: Object.fromEntries(Object.entries(silverRates).map(([key, value]) => [key, value.toFixed(2)])),
     gold_matrix: [
-      { row_key: 'gold:8', label: '8K', lodighed: '333', eur_per_gram: goldRates['8'].toFixed(4), dkk_per_gram: (goldRates['8'] * exchangeRate).toFixed(2), karat: '8.00', type_code: '1' },
-      { row_key: 'gold:14', label: '14K', lodighed: '585', eur_per_gram: goldRates['14'].toFixed(4), dkk_per_gram: (goldRates['14'] * exchangeRate).toFixed(2), karat: '14.00', type_code: '1' },
-      { row_key: 'gold:18', label: '18K', lodighed: '750', eur_per_gram: goldRates['18'].toFixed(4), dkk_per_gram: (goldRates['18'] * exchangeRate).toFixed(2), karat: '18.00', type_code: '1' },
-      { row_key: 'gold:21', label: '21K', lodighed: '875', eur_per_gram: goldRates['21'].toFixed(4), dkk_per_gram: (goldRates['21'] * exchangeRate).toFixed(2), karat: '21.00', type_code: '1' },
-      { row_key: 'gold:21.6', label: '21.6K', lodighed: '900', eur_per_gram: goldRates['21.6'].toFixed(4), dkk_per_gram: (goldRates['21.6'] * exchangeRate).toFixed(2), karat: '21.60', type_code: '1' },
-      { row_key: 'gold:22', label: '22K', lodighed: '917', eur_per_gram: goldRates['22'].toFixed(4), dkk_per_gram: (goldRates['22'] * exchangeRate).toFixed(2), karat: '22.00', type_code: '1' },
-      { row_key: 'gold:24', label: '24K', lodighed: '999', eur_per_gram: goldRates['24'].toFixed(4), dkk_per_gram: (goldRates['24'] * exchangeRate).toFixed(2), karat: '24.00', type_code: '1' },
+      { row_key: 'gold:8', label: '8K', lodighed: '333', dkk_per_gram: goldRates['8'].toFixed(2), karat: '8.00', type_code: '1' },
+      { row_key: 'gold:14', label: '14K', lodighed: '585', dkk_per_gram: goldRates['14'].toFixed(2), karat: '14.00', type_code: '1' },
+      { row_key: 'gold:18', label: '18K', lodighed: '750', dkk_per_gram: goldRates['18'].toFixed(2), karat: '18.00', type_code: '1' },
+      { row_key: 'gold:21', label: '21K', lodighed: '875', dkk_per_gram: goldRates['21'].toFixed(2), karat: '21.00', type_code: '1' },
+      { row_key: 'gold:21.6', label: '21.6K', lodighed: '900', dkk_per_gram: goldRates['21.6'].toFixed(2), karat: '21.60', type_code: '1' },
+      { row_key: 'gold:22', label: '22K', lodighed: '917', dkk_per_gram: goldRates['22'].toFixed(2), karat: '22.00', type_code: '1' },
+      { row_key: 'gold:24', label: '24K', lodighed: '999', dkk_per_gram: goldRates['24'].toFixed(2), karat: '24.00', type_code: '1' },
     ],
     silver_matrix: [
-      { row_key: 'silver:2', label: 'Finsølv', lodighed: '999', eur_per_gram: silverRates['999'].toFixed(4), dkk_per_gram: (silverRates['999'] * exchangeRate).toFixed(2), karat: null, type_code: '2' },
-      { row_key: 'silver:3', label: 'Sterling sølv', lodighed: '925', eur_per_gram: silverRates['925'].toFixed(4), dkk_per_gram: (silverRates['925'] * exchangeRate).toFixed(2), karat: null, type_code: '3' },
-      { row_key: 'silver:4', label: '3 tårnet sølv', lodighed: '830', eur_per_gram: silverRates['830'].toFixed(4), dkk_per_gram: (silverRates['830'] * exchangeRate).toFixed(2), karat: null, type_code: '4' },
-      { row_key: 'silver:5', label: 'Sølv', lodighed: '800', eur_per_gram: silverRates['800'].toFixed(4), dkk_per_gram: (silverRates['800'] * exchangeRate).toFixed(2), karat: null, type_code: '5' },
+      { row_key: 'silver:2', label: 'Finsølv', lodighed: '999', dkk_per_gram: silverRates['999'].toFixed(2), karat: null, type_code: '2' },
+      { row_key: 'silver:3', label: 'Sterling sølv', lodighed: '925', dkk_per_gram: silverRates['925'].toFixed(2), karat: null, type_code: '3' },
+      { row_key: 'silver:4', label: '3 tårnet sølv', lodighed: '830', dkk_per_gram: silverRates['830'].toFixed(2), karat: null, type_code: '4' },
+      { row_key: 'silver:5', label: 'Sølv', lodighed: '800', dkk_per_gram: silverRates['800'].toFixed(2), karat: null, type_code: '5' },
     ],
   };
 }
@@ -221,11 +216,11 @@ function workspaceRowsPayload(
       eur_dkk_fx: Number(normalizeTextInput(marketRates.eur_dkk_fx || DEFAULT_MARKET_FX)),
       gold_24k_dkk: Number(normalizeTextInput(marketRates.gold_24k_dkk || '0')),
       silver_dkk: Number(normalizeTextInput(marketRates.silver_dkk || '0')),
-      gold_rates_eur: Object.fromEntries(
-        Object.entries(marketRates.gold_rates_eur || {}).map(([key, value]) => [key, Number(normalizeTextInput(value || '0'))]),
+      gold_rates_dkk: Object.fromEntries(
+        Object.entries(marketRates.gold_rates_dkk || {}).map(([key, value]) => [key, Number(normalizeTextInput(value || '0'))]),
       ),
-      silver_rates_eur: Object.fromEntries(
-        Object.entries(marketRates.silver_rates_eur || {}).map(([key, value]) => [key, Number(normalizeTextInput(value || '0'))]),
+      silver_rates_dkk: Object.fromEntries(
+        Object.entries(marketRates.silver_rates_dkk || {}).map(([key, value]) => [key, Number(normalizeTextInput(value || '0'))]),
       ),
     },
     afg_note: afgNote.trim() || null,
@@ -532,13 +527,13 @@ async function openExcelPreviewRoute(route: string, title: string) {
 }
 
 function computedPreviewGoldRowsPayload(rows: EditableGoldRow[], marketRates: PosWorkspaceMarketRates) {
-  const fx = toNumeric(marketRates.eur_dkk_fx) || 1;
   return rows.map((row) => {
-    const liveRate = toNumeric(marketRates.gold_rates_eur?.[normalizeRateKey(row.karat)]) * fx;
-    const purity = toNumeric(row.purity_percentage);
+    // Karat oranı saflığı zaten içerir; sunucu matematiğiyle aynı:
+    // unit = rate × (1 − avance/100), saflık ikinci kez uygulanmaz.
+    const liveRate = toNumeric(marketRates.gold_rates_dkk?.[normalizeRateKey(row.karat)]);
     const gram = toNumeric(row.gram);
     const avance = toNumeric(row.avance_percent);
-    const unitPrice = liveRate * (purity / 100) * (1 - avance / 100);
+    const unitPrice = liveRate * (1 - avance / 100);
     const lineTotal = unitPrice * gram;
     return {
       ...previewGoldRowsPayload([row])[0],
@@ -550,13 +545,11 @@ function computedPreviewGoldRowsPayload(rows: EditableGoldRow[], marketRates: Po
 }
 
 function computedPreviewSilverRowsPayload(rows: EditableSilverRow[], marketRates: PosWorkspaceMarketRates) {
-  const fx = toNumeric(marketRates.eur_dkk_fx) || 1;
   return rows.map((row) => {
-    const liveRate = toNumeric(marketRates.silver_rates_eur?.[normalizeRateKey(row.lodighed)]) * fx;
-    const purity = toNumeric(row.purity_percentage);
+    const liveRate = toNumeric(marketRates.silver_rates_dkk?.[normalizeRateKey(row.lodighed)]);
     const gram = toNumeric(row.gram);
     const avance = toNumeric(row.avance_percent);
-    const unitPrice = liveRate * (purity / 100) * (1 - avance / 100);
+    const unitPrice = liveRate * (1 - avance / 100);
     const lineTotal = unitPrice * gram;
     return {
       ...previewSilverRowsPayload([row])[0],

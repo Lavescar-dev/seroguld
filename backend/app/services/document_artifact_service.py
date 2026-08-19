@@ -68,7 +68,7 @@ AFG_TEMPLATE_NAME = "Afregningsbilag ( alis frontumuz).xlsm"
 DEPOLAMA_TEMPLATE_NAME = "Depolama.xlsx"
 LOG_TEMPLATE_NAME = "Log sistemi- afg verileri buraya yazdiriyorum..xlsx"
 
-AFG_CONTRACT_VERSION = "afg-v1"
+AFG_CONTRACT_VERSION = "afg-v2"
 INVENTORY_CONTRACT_VERSION = "inventory-v1"
 LOG_CONTRACT_VERSION = "log-v2"
 
@@ -124,17 +124,17 @@ AFG_VARIABLE_EDITABLE_CELLS = (
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "C10", "label": "EUR / DKK FX", "input_kind": "decimal", "field": "market_rates:eur_dkk_fx"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "C4", "label": "Au 24K DKK", "input_kind": "decimal", "field": "market_rates:gold_24k_dkk"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "C5", "label": "Ag DKK", "input_kind": "decimal", "field": "market_rates:silver_dkk"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I4", "label": "Gold 8K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:8"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I5", "label": "Gold 14K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:14"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I6", "label": "Gold 18K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:18"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I7", "label": "Gold 21K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:21"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I8", "label": "Gold 21.6K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:21.6"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I9", "label": "Gold 22K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:22"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I10", "label": "Gold 24K EUR/g", "input_kind": "decimal", "field": "market_rates:gold_rates_eur:24"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I11", "label": "Silver 999 EUR/g", "input_kind": "decimal", "field": "market_rates:silver_rates_eur:999"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I12", "label": "Silver 925 EUR/g", "input_kind": "decimal", "field": "market_rates:silver_rates_eur:925"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I13", "label": "Silver 830 EUR/g", "input_kind": "decimal", "field": "market_rates:silver_rates_eur:830"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "I14", "label": "Silver 800 EUR/g", "input_kind": "decimal", "field": "market_rates:silver_rates_eur:800"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J4", "label": "Gold 8K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:8"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J5", "label": "Gold 14K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:14"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J6", "label": "Gold 18K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:18"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J7", "label": "Gold 21K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:21"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J8", "label": "Gold 21.6K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:21.6"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J9", "label": "Gold 22K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:22"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J10", "label": "Gold 24K DKK/g", "input_kind": "decimal", "field": "market_rates:gold_rates_dkk:24"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J11", "label": "Silver 999 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:999"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J12", "label": "Silver 925 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:925"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J13", "label": "Silver 830 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:830"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J14", "label": "Silver 800 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:800"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "C14", "label": "Afregningsnr.", "input_kind": "text", "field": "numbering:afregnings_number_next"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "D14", "label": "Fakturanr.", "input_kind": "text", "field": "numbering:invoice_number_next"},
 )
@@ -1038,21 +1038,20 @@ def _split_afg_address_line(value: object) -> tuple[str | None, str | None]:
 
 def _build_afg_market_rates_from_workspace(market_rates: PosWorkspaceMarketRates) -> PosWorkspaceMarketRates:
     fx = quantize_2(to_decimal(market_rates.eur_dkk_fx))
-    gold_rates_eur = {str(key): _quantize_4(to_decimal(value)) for key, value in (market_rates.gold_rates_eur or {}).items()}
-    silver_rates_eur = {str(key): _quantize_4(to_decimal(value)) for key, value in (market_rates.silver_rates_eur or {}).items()}
+    gold_rates_dkk = {str(key): quantize_2(to_decimal(value)) for key, value in (market_rates.gold_rates_dkk or {}).items()}
+    silver_rates_dkk = {str(key): quantize_2(to_decimal(value)) for key, value in (market_rates.silver_rates_dkk or {}).items()}
     gold_24k_dkk = quantize_2(
-        to_decimal(market_rates.gold_24k_dkk or (gold_rates_eur.get("24", Decimal("0.00")) * fx))
+        to_decimal(market_rates.gold_24k_dkk or gold_rates_dkk.get("24", Decimal("0.00")))
     )
     silver_dkk = quantize_2(
-        to_decimal(market_rates.silver_dkk or (silver_rates_eur.get("999", Decimal("0.00")) * fx))
+        to_decimal(market_rates.silver_dkk or silver_rates_dkk.get("999", Decimal("0.00")))
     )
     gold_matrix = [
         PosWorkspaceRateMatrixEntry(
             row_key=f"gold:{key}",
             label=f"{key}K",
             lodighed=lodighed,
-            eur_per_gram=gold_rates_eur.get(key, Decimal("0.00")),
-            dkk_per_gram=quantize_2(gold_rates_eur.get(key, Decimal("0.00")) * fx),
+            dkk_per_gram=gold_rates_dkk.get(key, Decimal("0.00")),
             karat=to_decimal(key),
             type_code="1",
         )
@@ -1063,8 +1062,7 @@ def _build_afg_market_rates_from_workspace(market_rates: PosWorkspaceMarketRates
             row_key=f"silver:{type_code}",
             label=label,
             lodighed=lodighed,
-            eur_per_gram=silver_rates_eur.get(lodighed, Decimal("0.00")),
-            dkk_per_gram=quantize_2(silver_rates_eur.get(lodighed, Decimal("0.00")) * fx),
+            dkk_per_gram=silver_rates_dkk.get(lodighed, Decimal("0.00")),
             karat=None,
             type_code=type_code,
         )
@@ -1072,8 +1070,8 @@ def _build_afg_market_rates_from_workspace(market_rates: PosWorkspaceMarketRates
     ]
     return PosWorkspaceMarketRates(
         eur_dkk_fx=fx,
-        gold_rates_eur=gold_rates_eur,
-        silver_rates_eur=silver_rates_eur,
+        gold_rates_dkk=gold_rates_dkk,
+        silver_rates_dkk=silver_rates_dkk,
         gold_24k_dkk=gold_24k_dkk,
         silver_dkk=silver_dkk,
         gold_matrix=gold_matrix,
@@ -1094,33 +1092,34 @@ def _apply_afg_market_rate_cells(vars_sheet, market_rates: PosWorkspaceMarketRat
     vars_sheet["C10"] = fx
     vars_sheet["C4"] = quantize_2(to_decimal(market_rates.gold_24k_dkk))
     vars_sheet["C5"] = quantize_2(to_decimal(market_rates.silver_dkk))
-    vars_sheet["C6"] = quantize_2(to_decimal(market_rates.silver_rates_eur.get("925", 0)) * fx)
-    vars_sheet["C7"] = quantize_2(to_decimal(market_rates.silver_rates_eur.get("830", 0)) * fx)
+    vars_sheet["C6"] = quantize_2(to_decimal(market_rates.silver_rates_dkk.get("925", 0)))
+    vars_sheet["C7"] = quantize_2(to_decimal(market_rates.silver_rates_dkk.get("830", 0)))
     vars_sheet["G2"] = "Kategori"
     vars_sheet["H2"] = "Beskrivelse"
-    vars_sheet["I2"] = "EUR/g"
+    # I sütunundaki eski EUR aynası artık yazılmaz; kanonik birim DKK/g (J).
+    vars_sheet["I2"] = None
     vars_sheet["J2"] = "DKK/g"
     vars_sheet["K2"] = "Lødighed / Karat"
     values = (
-        ("gold", "Gold 8K", market_rates.gold_rates_eur.get("8"), "333"),
-        ("gold", "Gold 14K", market_rates.gold_rates_eur.get("14"), "585"),
-        ("gold", "Gold 18K", market_rates.gold_rates_eur.get("18"), "750"),
-        ("gold", "Gold 21K", market_rates.gold_rates_eur.get("21"), "875"),
-        ("gold", "Gold 21.6K", market_rates.gold_rates_eur.get("21.6"), "900"),
-        ("gold", "Gold 22K", market_rates.gold_rates_eur.get("22"), "917"),
-        ("gold", "Gold 24K", market_rates.gold_rates_eur.get("24"), "999"),
-        ("silver", "Finsølv", market_rates.silver_rates_eur.get("999"), "999"),
-        ("silver", "Sterling sølv", market_rates.silver_rates_eur.get("925"), "925"),
-        ("silver", "3 tårnet sølv", market_rates.silver_rates_eur.get("830"), "830"),
-        ("silver", "Sølv", market_rates.silver_rates_eur.get("800"), "800"),
+        ("gold", "Gold 8K", market_rates.gold_rates_dkk.get("8"), "333"),
+        ("gold", "Gold 14K", market_rates.gold_rates_dkk.get("14"), "585"),
+        ("gold", "Gold 18K", market_rates.gold_rates_dkk.get("18"), "750"),
+        ("gold", "Gold 21K", market_rates.gold_rates_dkk.get("21"), "875"),
+        ("gold", "Gold 21.6K", market_rates.gold_rates_dkk.get("21.6"), "900"),
+        ("gold", "Gold 22K", market_rates.gold_rates_dkk.get("22"), "917"),
+        ("gold", "Gold 24K", market_rates.gold_rates_dkk.get("24"), "999"),
+        ("silver", "Finsølv", market_rates.silver_rates_dkk.get("999"), "999"),
+        ("silver", "Sterling sølv", market_rates.silver_rates_dkk.get("925"), "925"),
+        ("silver", "3 tårnet sølv", market_rates.silver_rates_dkk.get("830"), "830"),
+        ("silver", "Sølv", market_rates.silver_rates_dkk.get("800"), "800"),
     )
-    for row, (kind, label, eur_value, lodighed) in zip(AFG_VARIABLE_MATRIX_ROWS, values, strict=False):
+    for row, (kind, label, dkk_value, lodighed) in zip(AFG_VARIABLE_MATRIX_ROWS, values, strict=False):
         eur_cell, dkk_cell, meta_cell, _legacy_label, _legacy_lodighed = row
         row_idx = int(eur_cell[1:])
         vars_sheet[f"G{row_idx}"] = kind
         vars_sheet[f"H{row_idx}"] = label
-        vars_sheet[eur_cell] = _quantize_4(to_decimal(eur_value))
-        vars_sheet[dkk_cell] = quantize_2(to_decimal(eur_value) * fx)
+        vars_sheet[eur_cell] = None
+        vars_sheet[dkk_cell] = quantize_2(to_decimal(dkk_value))
         vars_sheet[meta_cell] = lodighed
 
 

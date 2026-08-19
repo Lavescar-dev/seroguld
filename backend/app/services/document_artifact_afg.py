@@ -175,26 +175,25 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
         f"{core.AFG_VARIABLES_SHEET}!D14": workspace.numbering_preview.invoice_number_next or "—",
     }
     matrix_keys = (
-        ("I4", "J4", "8", "gold"),
-        ("I5", "J5", "14", "gold"),
-        ("I6", "J6", "18", "gold"),
-        ("I7", "J7", "21", "gold"),
-        ("I8", "J8", "21.6", "gold"),
-        ("I9", "J9", "22", "gold"),
-        ("I10", "J10", "24", "gold"),
-        ("I11", "J11", "999", "silver"),
-        ("I12", "J12", "925", "silver"),
-        ("I13", "J13", "830", "silver"),
-        ("I14", "J14", "800", "silver"),
+        ("J4", "8", "gold"),
+        ("J5", "14", "gold"),
+        ("J6", "18", "gold"),
+        ("J7", "21", "gold"),
+        ("J8", "21.6", "gold"),
+        ("J9", "22", "gold"),
+        ("J10", "24", "gold"),
+        ("J11", "999", "silver"),
+        ("J12", "925", "silver"),
+        ("J13", "830", "silver"),
+        ("J14", "800", "silver"),
     )
-    for eur_cell, dkk_cell, rate_key, kind in matrix_keys:
-        eur_value = (
-            workspace.market_rates.gold_rates_eur.get(rate_key)
+    for dkk_cell, rate_key, kind in matrix_keys:
+        dkk_value = (
+            workspace.market_rates.gold_rates_dkk.get(rate_key)
             if kind == "gold"
-            else workspace.market_rates.silver_rates_eur.get(rate_key)
+            else workspace.market_rates.silver_rates_dkk.get(rate_key)
         )
-        values[f"{core.AFG_VARIABLES_SHEET}!{eur_cell}"] = core._fmt_decimal(eur_value, "0.0000")
-        values[f"{core.AFG_VARIABLES_SHEET}!{dkk_cell}"] = core._fmt_decimal(core.to_decimal(eur_value or 0) * core.to_decimal(workspace.market_rates.eur_dkk_fx))
+        values[f"{core.AFG_VARIABLES_SHEET}!{dkk_cell}"] = core._fmt_decimal(dkk_value)
     for idx, row in enumerate(core._afg_gold_rows_from_workspace(workspace), start=core.AFG_GOLD_ROW_START):
         values[f"{core.AFG_PRIMARY_SHEET}!B{idx}"] = core._fmt_decimal(row.avance_percent)
         values[f"{core.AFG_PRIMARY_SHEET}!F{idx}"] = core._fmt_decimal(row.gram)
@@ -308,38 +307,42 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
             if core._clean_text(vars_sheet["C10"].value) is not None
             else Decimal("7.45")
         )
+        def _matrix_cell(column: str, row_idx: int) -> Decimal:
+            ref = f"{column}{row_idx}"
+            if core._clean_text(vars_sheet[ref].value) is None:
+                return Decimal("0")
+            return core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, ref))
+
+        gold_matrix_rows = {"8": 4, "14": 5, "18": 6, "21": 7, "21.6": 8, "22": 9, "24": 10}
+        silver_matrix_rows = {"999": 11, "925": 12, "830": 13, "800": 14}
+        # Kanonik birim J sütununda DKK/g'dir. 0.3.5 ve öncesi taslaklarda J,
+        # I (EUR) × C10 (fx) ile yazılmış aynaydı; J boş kalan çok eski
+        # dosyalarda I×fx çevrimine düşülür.
         gold_rate_cells = {
-            "8": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I4")),
-            "14": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I5")),
-            "18": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I6")),
-            "21": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I7")),
-            "21.6": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I8")),
-            "22": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I9")),
-            "24": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I10")),
+            key: core.quantize_2(_matrix_cell("J", row_idx) or (_matrix_cell("I", row_idx) * fx))
+            for key, row_idx in gold_matrix_rows.items()
         }
         silver_rate_cells = {
-            "999": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I11")),
-            "925": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I12")),
-            "830": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I13")),
-            "800": core._decimal4_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "I14")),
+            key: core.quantize_2(_matrix_cell("J", row_idx) or (_matrix_cell("I", row_idx) * fx))
+            for key, row_idx in silver_matrix_rows.items()
         }
         has_matrix_values = any(value > 0 for value in [*gold_rate_cells.values(), *silver_rate_cells.values()])
         if has_matrix_values:
             gold_24k_dkk = (
                 core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C4"))
                 if core._clean_text(vars_sheet["C4"].value) is not None
-                else core.quantize_2(gold_rate_cells["24"] * fx)
+                else gold_rate_cells["24"]
             )
             silver_dkk = (
                 core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C5"))
                 if core._clean_text(vars_sheet["C5"].value) is not None
-                else core.quantize_2(silver_rate_cells["999"] * fx)
+                else silver_rate_cells["999"]
             )
             market_rates = core._build_afg_market_rates_from_workspace(
                 PosWorkspaceMarketRates(
                     eur_dkk_fx=fx,
-                    gold_rates_eur=gold_rate_cells,
-                    silver_rates_eur=silver_rate_cells,
+                    gold_rates_dkk=gold_rate_cells,
+                    silver_rates_dkk=silver_rate_cells,
                     gold_24k_dkk=gold_24k_dkk,
                     silver_dkk=silver_dkk,
                 )
@@ -351,8 +354,8 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                 market_rates = core._build_afg_market_rates_from_workspace(
                     PosWorkspaceMarketRates(
                         eur_dkk_fx=fx,
-                        gold_rates_eur={},
-                        silver_rates_eur={},
+                        gold_rates_dkk={},
+                        silver_rates_dkk={},
                         gold_24k_dkk=core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C4")),
                         silver_dkk=core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, "C5")),
                     )

@@ -896,16 +896,16 @@ export interface PosWorkspaceRateMatrixEntry {
   row_key: string;
   label: string;
   lodighed: string;
-  eur_per_gram: string;
   dkk_per_gram: string;
   karat?: string | null;
   type_code?: string | null;
 }
 
+// Kanonik operatör birimi DKK/g; eur_dkk_fx yalnız bağlam/görüntü değeridir.
 export interface PosWorkspaceMarketRates {
   eur_dkk_fx: string;
-  gold_rates_eur: Record<string, string>;
-  silver_rates_eur: Record<string, string>;
+  gold_rates_dkk: Record<string, string>;
+  silver_rates_dkk: Record<string, string>;
   gold_24k_dkk: string;
   silver_dkk: string;
   gold_matrix: PosWorkspaceRateMatrixEntry[];

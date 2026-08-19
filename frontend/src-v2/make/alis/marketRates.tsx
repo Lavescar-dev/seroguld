@@ -41,14 +41,10 @@ export function formatDecimalFixed(value: string | number | null | undefined) {
   return parseDecimalValue(value).toFixed(2);
 }
 
-function formatMatrixRate(value: string | number | null | undefined) {
-  return parseDecimalValue(value).toFixed(4);
-}
-
 function formatRatePlaceholder(value: string | number | null | undefined) {
   const text = String(value ?? '').trim();
   if (!text || parseDecimalValue(text) === 0) {
-    return '0.0000';
+    return '0.00';
   }
   return text;
 }
@@ -63,52 +59,51 @@ function buildEmptyMatrixRateDrafts(): MatrixRateDrafts {
 
 export function syncMarketRateState(
   current: PosWorkspaceMarketRates,
-  overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_24k_dkk' | 'gold_rates_eur' | 'silver_rates_eur'>>,
+  overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_24k_dkk' | 'gold_rates_dkk' | 'silver_rates_dkk'>>,
 ): PosWorkspaceMarketRates {
   const eur_dkk_fx = normalizeTextInput(String(overrides?.eur_dkk_fx ?? current.eur_dkk_fx ?? '7.45'));
-  const fx = parseDecimalValue(eur_dkk_fx) || 1;
+  // Kanonik birim DKK/g: 24K override'ı karatlara DOĞRUDAN fan edilir, kurla
+  // çevrim yapılmaz ("382 girildi, 2850 oldu" hatasının kökü buydu).
   const gold24DkkOverride = overrides?.gold_24k_dkk;
-  const gold24EurOverride = gold24DkkOverride === undefined
-    ? null
-    : parseDecimalValue(gold24DkkOverride) / fx;
   const goldRates = Object.fromEntries(
     GOLD_RATE_ORDER.map((key) => [
       key,
-      formatMatrixRate(
-        gold24EurOverride === null
-          ? overrides?.gold_rates_eur?.[key] ?? current.gold_rates_eur?.[key] ?? '0'
-          : gold24EurOverride * (parseDecimalValue(key) / 24),
+      formatDecimalFixed(
+        gold24DkkOverride === undefined
+          ? overrides?.gold_rates_dkk?.[key] ?? current.gold_rates_dkk?.[key] ?? '0'
+          : parseDecimalValue(gold24DkkOverride) * (parseDecimalValue(key) / 24),
       ),
     ]),
   ) as Record<string, string>;
   const silverRates = Object.fromEntries(
     SILVER_RATE_ORDER.map((key) => [
       key,
-      formatMatrixRate(overrides?.silver_rates_eur?.[key] ?? current.silver_rates_eur?.[key] ?? '0'),
+      formatDecimalFixed(overrides?.silver_rates_dkk?.[key] ?? current.silver_rates_dkk?.[key] ?? '0'),
     ]),
   ) as Record<string, string>;
   return {
     ...current,
     eur_dkk_fx,
-    gold_rates_eur: goldRates,
-    silver_rates_eur: silverRates,
-    gold_24k_dkk: formatDecimalFixed(parseDecimalValue(goldRates['24']) * fx),
-    silver_dkk: formatDecimalFixed(parseDecimalValue(silverRates['999']) * fx),
-    gold_matrix: [
-      { row_key: 'gold:8', label: '8K', lodighed: '333', eur_per_gram: goldRates['8'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['8']) * fx), karat: '8.00', type_code: '1' },
-      { row_key: 'gold:14', label: '14K', lodighed: '585', eur_per_gram: goldRates['14'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['14']) * fx), karat: '14.00', type_code: '1' },
-      { row_key: 'gold:18', label: '18K', lodighed: '750', eur_per_gram: goldRates['18'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['18']) * fx), karat: '18.00', type_code: '1' },
-      { row_key: 'gold:21', label: '21K', lodighed: '875', eur_per_gram: goldRates['21'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['21']) * fx), karat: '21.00', type_code: '1' },
-      { row_key: 'gold:21.6', label: '21.6K', lodighed: '900', eur_per_gram: goldRates['21.6'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['21.6']) * fx), karat: '21.60', type_code: '1' },
-      { row_key: 'gold:22', label: '22K', lodighed: '917', eur_per_gram: goldRates['22'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['22']) * fx), karat: '22.00', type_code: '1' },
-      { row_key: 'gold:24', label: '24K', lodighed: '999', eur_per_gram: goldRates['24'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(goldRates['24']) * fx), karat: '24.00', type_code: '1' },
-    ],
-    silver_matrix: [
-      { row_key: 'silver:2', label: 'Finsølv', lodighed: '999', eur_per_gram: silverRates['999'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(silverRates['999']) * fx), karat: null, type_code: '2' },
-      { row_key: 'silver:3', label: 'Sterling sølv', lodighed: '925', eur_per_gram: silverRates['925'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(silverRates['925']) * fx), karat: null, type_code: '3' },
-      { row_key: 'silver:4', label: '3 tårnet sølv', lodighed: '830', eur_per_gram: silverRates['830'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(silverRates['830']) * fx), karat: null, type_code: '4' },
-      { row_key: 'silver:5', label: 'Sølv', lodighed: '800', eur_per_gram: silverRates['800'], dkk_per_gram: formatDecimalFixed(parseDecimalValue(silverRates['800']) * fx), karat: null, type_code: '5' },
-    ],
+    gold_rates_dkk: goldRates,
+    silver_rates_dkk: silverRates,
+    gold_24k_dkk: goldRates['24'],
+    silver_dkk: silverRates['999'],
+    gold_matrix: GOLD_MATRIX_ROWS.map((row) => ({
+      row_key: `gold:${row.key}`,
+      label: row.label,
+      lodighed: row.lodighed,
+      dkk_per_gram: goldRates[row.key],
+      karat: parseDecimalValue(row.key).toFixed(2),
+      type_code: '1',
+    })),
+    silver_matrix: SILVER_MATRIX_ROWS.map((row, index) => ({
+      row_key: `silver:${index + 2}`,
+      label: row.label,
+      lodighed: row.lodighed,
+      dkk_per_gram: silverRates[row.key],
+      karat: null,
+      type_code: String(index + 2),
+    })),
   };
 }
 
@@ -224,7 +219,7 @@ export function MarketRatesEditor({
   const commitGoldRate = (rateKey: string, value: string) => {
     if (parseDecimalValue(value) <= 0) return false;
     setMarketRates((current) => syncMarketRateState(current, {
-      gold_rates_eur: { ...current.gold_rates_eur, [rateKey]: value },
+      gold_rates_dkk: { ...current.gold_rates_dkk, [rateKey]: value },
     }));
     return true;
   };
@@ -232,7 +227,7 @@ export function MarketRatesEditor({
   const commitSilverRate = (rateKey: string, value: string) => {
     if (parseDecimalValue(value) <= 0) return false;
     setMarketRates((current) => syncMarketRateState(current, {
-      silver_rates_eur: { ...current.silver_rates_eur, [rateKey]: value },
+      silver_rates_dkk: { ...current.silver_rates_dkk, [rateKey]: value },
     }));
     return true;
   };
@@ -266,14 +261,14 @@ export function MarketRatesEditor({
         <span className="inline-flex items-center gap-1">
           <span className="mono bg-amber-100 px-1.5 py-0.5 font-black text-amber-800">Au 24K</span>
           <span className={variant === 'dark' ? 'mono font-bold text-white' : 'mono font-bold text-brand-700'}>
-            {formatNumber(marketRates.gold_rates_eur?.['24'])} EUR
+            {formatNumber(marketRates.gold_24k_dkk)} DKK
           </span>
         </span>
         <span className={variant === 'dark' ? 'text-brand-500' : 'text-brand-300'}>·</span>
         <span className="inline-flex items-center gap-1">
           <span className="mono bg-slate-100 px-1.5 py-0.5 font-black text-slate-700">Ag 999</span>
           <span className={variant === 'dark' ? 'mono font-bold text-white' : 'mono font-bold text-brand-700'}>
-            {formatNumber(marketRates.silver_rates_eur?.['999'])} EUR
+            {formatNumber(marketRates.silver_dkk)} DKK
           </span>
         </span>
         {priceOpen ? <ChevronUp className="h-3.5 w-3.5 text-brand-500" /> : <ChevronDown className="h-3.5 w-3.5 text-brand-500" />}
@@ -288,7 +283,7 @@ export function MarketRatesEditor({
           >
             <div className="min-w-0">
               <p className={headingClassName}>Gunluk Piyasa Fiyatlari</p>
-              <p className={`${sectionMetaClassName} mt-1`}>EUR truth burada tutulur. Workbook Variable værdier ve AFG satır fiyatları aynı state&apos;ten beslenir.</p>
+              <p className={`${sectionMetaClassName} mt-1`}>Alış fiyatları doğrudan DKK/g girilir. Workbook Variable værdier ve AFG satır fiyatları aynı state&apos;ten beslenir.</p>
             </div>
             <button
               type="button"
@@ -308,7 +303,7 @@ export function MarketRatesEditor({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className={fieldTitleClassName}>EUR / DKK FX</p>
-                  <p className={fieldMetaClassName}>Canlı dönüşüm kuru</p>
+                  <p className={fieldMetaClassName}>Bilgi amaçlı kur (fiyat hesabına girmez)</p>
                 </div>
                 <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:w-[min(100%,18rem)]">
                   <label htmlFor={`${panelId}-fx`} className="sr-only">
@@ -337,7 +332,7 @@ export function MarketRatesEditor({
               <div className={sectionClassName}>
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className={sectionTitleClassName}>Gold EUR / G</p>
+                    <p className={sectionTitleClassName}>Gold DKK / G</p>
                     <p className={sectionMetaClassName}>Altın karat fiyatları</p>
                   </div>
                   <span className={sectionCountClassName}>7 karat</span>
@@ -352,25 +347,25 @@ export function MarketRatesEditor({
                         </div>
                         <div className={fieldInputRowClassName}>
                           <label htmlFor={`${panelId}-gold-${row.key}`} className="sr-only">
-                            {row.label} Gold EUR / G
+                            {row.label} Gold DKK / G
                           </label>
                           <input
                             id={`${panelId}-gold-${row.key}`}
                             type="text"
-                            value={activeRateField === `gold:${row.key}` ? rateDrafts.gold[row.key] ?? '' : marketRates.gold_rates_eur?.[row.key] ?? ''}
-                            placeholder={formatRatePlaceholder(marketRates.gold_rates_eur?.[row.key])}
+                            value={activeRateField === `gold:${row.key}` ? rateDrafts.gold[row.key] ?? '' : marketRates.gold_rates_dkk?.[row.key] ?? ''}
+                            placeholder={formatRatePlaceholder(marketRates.gold_rates_dkk?.[row.key])}
                             onChange={(event) => updateGoldRate(row.key, event.target.value)}
                             onFocus={() => {
                               setActiveRateField(`gold:${row.key}`);
-                              setRateDrafts((current) => ({ ...current, gold: { ...current.gold, [row.key]: current.gold[row.key] || marketRates.gold_rates_eur?.[row.key] || '' } }));
+                              setRateDrafts((current) => ({ ...current, gold: { ...current.gold, [row.key]: current.gold[row.key] || marketRates.gold_rates_dkk?.[row.key] || '' } }));
                             }}
                             onBlur={(event) => {
                               if (commitGoldRate(row.key, event.currentTarget.value)) setActiveRateField(null);
                             }}
                             className={fieldInputClassName}
-                            aria-label={`${row.label} Gold EUR / G`}
+                            aria-label={`${row.label} Gold DKK / G`}
                           />
-                          <span className={unitClassName}>EUR/g</span>
+                          <span className={unitClassName}>DKK/g</span>
                         </div>
                       </div>
                     </div>
@@ -381,7 +376,7 @@ export function MarketRatesEditor({
               <div className={sectionClassName}>
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className={sectionTitleClassName}>Silver EUR / G</p>
+                    <p className={sectionTitleClassName}>Silver DKK / G</p>
                     <p className={sectionMetaClassName}>Gümüş fineness fiyatları</p>
                   </div>
                   <span className={sectionCountClassName}>4 fineness</span>
@@ -396,25 +391,25 @@ export function MarketRatesEditor({
                         </div>
                         <div className={fieldInputRowClassName}>
                           <label htmlFor={`${panelId}-silver-${row.key}`} className="sr-only">
-                            {row.label} EUR / G
+                            {row.label} DKK / G
                           </label>
                           <input
                             id={`${panelId}-silver-${row.key}`}
                             type="text"
-                            value={activeRateField === `silver:${row.key}` ? rateDrafts.silver[row.key] ?? '' : marketRates.silver_rates_eur?.[row.key] ?? ''}
-                            placeholder={formatRatePlaceholder(marketRates.silver_rates_eur?.[row.key])}
+                            value={activeRateField === `silver:${row.key}` ? rateDrafts.silver[row.key] ?? '' : marketRates.silver_rates_dkk?.[row.key] ?? ''}
+                            placeholder={formatRatePlaceholder(marketRates.silver_rates_dkk?.[row.key])}
                             onChange={(event) => updateSilverRate(row.key, event.target.value)}
                             onFocus={() => {
                               setActiveRateField(`silver:${row.key}`);
-                              setRateDrafts((current) => ({ ...current, silver: { ...current.silver, [row.key]: current.silver[row.key] || marketRates.silver_rates_eur?.[row.key] || '' } }));
+                              setRateDrafts((current) => ({ ...current, silver: { ...current.silver, [row.key]: current.silver[row.key] || marketRates.silver_rates_dkk?.[row.key] || '' } }));
                             }}
                             onBlur={(event) => {
                               if (commitSilverRate(row.key, event.currentTarget.value)) setActiveRateField(null);
                             }}
                             className={fieldInputClassName}
-                            aria-label={`${row.label} EUR / G`}
+                            aria-label={`${row.label} DKK / G`}
                           />
-                          <span className={unitClassName}>EUR/g</span>
+                          <span className={unitClassName}>DKK/g</span>
                         </div>
                       </div>
                     </div>

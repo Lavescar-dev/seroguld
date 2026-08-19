@@ -159,10 +159,33 @@ class Settings(BaseSettings):
     gold_price_timeout_seconds: float = 6.0
     gold_price_cache_seconds: int = 20
 
-    inventory_market_gold_dkk: Decimal = Decimal("2850")
-    inventory_market_silver_dkk: Decimal = Decimal("8.5")
+    # Metals.Dev tek çağrıda DKK/gram döndürür (canlı Pt/Pd + spot referans).
+    # Anahtar boşsa servis devre dışıdır ve Stooq/fallback zinciri kullanılır.
+    metals_dev_api_key: str = ""
+    metals_dev_url: str = "https://api.metals.dev/v1/latest"
+    metals_dev_timeout_seconds: float = 8.0
+    metals_dev_cache_seconds: int = 1800
+    ecb_fx_url: str = (
+        "https://data-api.ecb.europa.eu/service/data/EXR/D.DKK.EUR.SP00.A"
+        "?lastNObservations=1&format=csvdata"
+    )
+    ecb_fx_timeout_seconds: float = 6.0
+    ecb_fx_cache_seconds: int = 3600
+    # Stooq Pt/Pd sembolleri hedef makinede probe_market_feeds ile doğrulanıp
+    # gerekirse buradan geçersiz kılınır (boş = gömülü varsayılan).
+    stooq_symbol_platinum: str = ""
+    stooq_symbol_palladium: str = ""
+
+    inventory_market_gold_dkk: Decimal = Decimal("615.50")
+    inventory_market_silver_dkk: Decimal = Decimal("7.80")
     inventory_market_platinum_dkk: Decimal = Decimal("280")
     inventory_market_palladium_dkk: Decimal = Decimal("335")
+    inventory_market_gold_bar_dkk: Decimal = Decimal("615.50")
+    inventory_market_silver_bar_dkk: Decimal = Decimal("7.80")
+    inventory_market_plet_dkk: Decimal = Decimal("0.02")
+    # save_manual_market_rate_profile bu anahtarı yazar; Settings'te bildirilmezse
+    # pydantic (extra="ignore") değeri yutar ve kayıtlı karat matrisi hiç okunmaz.
+    inventory_market_rate_profile_json: str = ""
 
     initial_admin_email: str = "info@seroguld.dk"
     initial_admin_password: str = "admin"
