@@ -1029,16 +1029,8 @@ async def apply_afg_route_requests(
         for line, transaction, document, pos_session, linked_product in line_rows:
             payload = line_request_map[line.id]
             purchase_date = transaction.confirmed_at or document.issued_at
-            if payload.destination == "melt" and linked_product is None and _is_locked_purchase(purchase_date):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="14 gün dolmadan yeni alınan ürün eritmeye gönderilemez",
-                )
-            if payload.destination == "melt" and linked_product is not None and linked_product.is_gdpr_locked:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="14 gün dolmadan kilitli ürün eritmeye gönderilemez",
-                )
+            # GDPR 14 gün penceresi eritme dahil hiçbir rotayı engellemez
+            # (0.3.8: yalnız bilgi rozetleri kalır).
 
             classification = payload.classification or _default_classification(line)
             category, subcategory = _default_inventory_category(line, classification)

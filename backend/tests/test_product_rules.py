@@ -219,3 +219,91 @@ def test_update_clear_flags_reset_dimension_fields():
         await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_gdpr_window_is_informational_only():
+    """0.3.8: 14 gün penceresi hiçbir işlemi engellemez — kilitli ürün
+    satışa alınabilir; bayrak bilgi olarak doğru kalır; tarih düzeltmesi
+    kullanıcının seçtiği durumu zorla PURCHASED'a çekmez."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.database import Base
+    from app.models.enums import RoleEnum
+    from app.models.user import User
+    from app.schemas.product import ProductStatusUpdate, ProductUpdate
+    from app.services.product_service import (
+        _allowed_status_transition,
+        create_product,
+        get_product_or_404,
+        update_product,
+        update_status,
+    )
+
+    # Geçiş matrisi: taze alım doğrudan satışa/satılmışa alınabilir.
+    assert _allowed_status_transition(ProductStatusEnum.PURCHASED, ProductStatusEnum.FOR_SALE)
+    assert _allowed_status_transition(ProductStatusEnum.PURCHASED, ProductStatusEnum.SOLD)
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+        async with Session() as db:
+            admin = User(
+                email="gdpr-admin@example.com",
+                password_hash="unused",
+                name="Admin",
+                role=RoleEnum.ADMIN,
+                is_active=True,
+            )
+            db.add(admin)
+            await db.flush()
+
+            created = await create_product(
+                db,
+                ProductCreate(
+                    product_type=ProductTypeEnum.RING,
+                    metal_type=MetalTypeEnum.YELLOW_GOLD,
+                    weight_grams=Decimal("10"),
+                    purchase_price_dkk=Decimal("1000"),
+                    commission=Decimal("8"),
+                    purchase_date=datetime.now(timezone.utc),  # bugün alındı → kilitli
+                ),
+                admin.id,
+            )
+            product = await get_product_or_404(db, created.id)
+            assert product.is_gdpr_locked is True
+            assert product.status == ProductStatusEnum.PURCHASED
+
+            # Kilitliyken satışa alınabilir (engel yok, bayrak bilgi kalır).
+            await update_status(db, product, ProductStatusUpdate(status=ProductStatusEnum.FOR_SALE), admin.id)
+            assert product.status == ProductStatusEnum.FOR_SALE
+            assert product.is_gdpr_locked is True
+
+            # Tarih düzeltmesi (hâlâ kilitli pencerede) kullanıcının seçtiği
+            # FOR_SALE durumunu zorla PURCHASED'a ÇEKMEZ.
+            await update_product(
+                db,
+                product,
+                ProductUpdate(purchase_date=datetime.now(timezone.utc) - timedelta(days=2)),
+                admin.id,
+            )
+            assert product.status == ProductStatusEnum.FOR_SALE
+            assert product.is_gdpr_locked is True
+
+            # Pencere geçmiş tarihe alınınca bayrak düşer; durum korunur.
+            await update_product(
+                db,
+                product,
+                ProductUpdate(purchase_date=datetime.now(timezone.utc) - timedelta(days=30)),
+                admin.id,
+            )
+            assert product.is_gdpr_locked is False
+            assert product.status == ProductStatusEnum.FOR_SALE
+
+        await engine.dispose()
+
+    asyncio.run(run())

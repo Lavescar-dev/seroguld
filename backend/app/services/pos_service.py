@@ -2042,8 +2042,7 @@ async def confirm_session(
         if payload.sale_product_id is not None:
             # Envanterden satış modu
             sale_product = await get_inventory_product_or_404(session, payload.sale_product_id)
-            if sale_product.is_gdpr_locked:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="14 gün kilidi olan ürün satılamaz")
+            # GDPR kilidi satışı engellemez (0.3.8: yalnız bilgi).
             if sale_product.status != ProductStatusEnum.FOR_SALE:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

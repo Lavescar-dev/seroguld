@@ -236,7 +236,7 @@ function OverviewTab({ state, seoMissing }: { state: WooMakeState; seoMissing: s
     { label: 'AI onayı', ready: detail.ai_description_approved },
     { label: 'SEO paketi', ready: seoMissing.length === 0, detail: seoMissing.length ? `Eksik: ${seoMissing.join(', ')}` : undefined },
     { label: 'Manuel review', ready: !detail.manual_review_required, detail: detail.manual_review_reasons?.join(' · ') },
-    { label: 'GDPR', ready: !detail.is_gdpr_locked, detail: detail.is_gdpr_locked ? '14 günlük kilit aktif' : undefined },
+    { label: 'GDPR', ready: true, detail: detail.is_gdpr_locked ? '14 günlük süre devam ediyor (bilgi — yayını engellemez)' : undefined },
     { label: 'Shop fiyatı', ready: Number(state.publishPrice || 0) > 0, detail: money(state.publishPrice) },
   ];
   return (

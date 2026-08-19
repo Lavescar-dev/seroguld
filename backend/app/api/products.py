@@ -726,8 +726,9 @@ async def publish(
 ) -> ProductPublishResponse:
     product = await get_product_or_404(db, product_id)
 
-    if product.is_gdpr_locked:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="14 gün dolmadan yayın yapılamaz")
+    # GDPR 14 gün penceresi 0.3.8'den itibaren HİÇBİR işlemi engellemez;
+    # yalnız bilgi olarak gösterilir (kullanıcı kararı: "hiçbir yerde
+    # engellememeli, sadece yazmalı").
     if product.status in {ProductStatusEnum.SOLD, ProductStatusEnum.MELTED}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Satılmış/eritilmiş ürün yayınlanamaz")
     if not product.ai_description or not product.ai_description.strip():

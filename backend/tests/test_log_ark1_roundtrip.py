@@ -298,17 +298,35 @@ async def test_log_route_batch_apply_is_atomic_on_failure():
         line_one_id = line_one.id
         line_two_id = line_two.id
 
-        with pytest.raises(Exception) as exc_info:
-            await apply_afg_route_requests(
-                db=session,
-                route_requests=[
-                    AfgRouteRequest(line_ids=[line_one_id], destination="inventory", classification="standard"),
-                    AfgRouteRequest(line_ids=[line_two_id], destination="melt", classification="standard"),
-                ],
-                actor_id=admin.id,
-            )
+        # Atomiklik tetikleyicisi: ikinci istekte ürün oluşturma kasıtlı
+        # patlatılır. (Eski tetikleyici GDPR eritme engeliydi; 0.3.8'de o engel
+        # bilgiye dönüştü — testin amacı olan atomiklik aynı kalır.)
+        from app.api import afg as afg_module
 
-        assert "eritmeye" in str(exc_info.value).lower()
+        real_create = afg_module.create_product_service
+        call_count = {"n": 0}
+
+        async def failing_create(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                raise RuntimeError("test: ikinci ürün oluşturma kasıtlı patladı")
+            return await real_create(*args, **kwargs)
+
+        afg_module.create_product_service = failing_create
+        try:
+            with pytest.raises(Exception) as exc_info:
+                await apply_afg_route_requests(
+                    db=session,
+                    route_requests=[
+                        AfgRouteRequest(line_ids=[line_one_id], destination="inventory", classification="standard"),
+                        AfgRouteRequest(line_ids=[line_two_id], destination="inventory", classification="standard"),
+                    ],
+                    actor_id=admin.id,
+                )
+        finally:
+            afg_module.create_product_service = real_create
+
+        assert "kasıtlı" in str(exc_info.value).lower()
 
         product_count = await session.scalar(select(func.count()).select_from(Product))
         assert product_count == 0

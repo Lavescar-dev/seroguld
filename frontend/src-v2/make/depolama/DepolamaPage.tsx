@@ -439,7 +439,8 @@ const PRODUCT_STATUS_TONE: Record<string, string> = {
 
 // Backend `_allowed_status_transition` ile sync (product_service.py:120-145)
 const ALLOWED_TRANSITIONS: Record<string, InventoryLifecycleStatus[]> = {
-  purchased: ['in_inventory', 'undecided', 'melted'],
+  // GDPR penceresi bilgilendirme: taze alım doğrudan satışa alınabilir.
+  purchased: ['in_inventory', 'undecided', 'melted', 'for_sale'],
   in_inventory: ['for_sale', 'melted', 'undecided'],
   for_sale: ['in_inventory', 'melted'], // sold ayrı akış (sale_price gerek)
   undecided: ['in_inventory', 'for_sale', 'melted'],
@@ -916,10 +917,10 @@ function InventoryDetailDrawer({
                 {allowedNext.includes('in_inventory') ? (
                   <button
                     type="button"
-                    disabled={updatingStatus || isLocked}
+                    disabled={updatingStatus}
                     onClick={() => onUpdateStatus('in_inventory')}
                     className="inline-flex items-center gap-1 border border-emerald-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={isLocked ? '14 gün GDPR kilidi dolmadan değiştirilemez' : 'Depoda tut'}
+                    title="Depoda tut"
                   >
                     <PackageCheck className="h-3 w-3" /> Depoda
                   </button>
@@ -927,10 +928,10 @@ function InventoryDetailDrawer({
                 {allowedNext.includes('for_sale') ? (
                   <button
                     type="button"
-                    disabled={updatingStatus || isLocked}
+                    disabled={updatingStatus}
                     onClick={() => onUpdateStatus('for_sale')}
                     className="inline-flex items-center gap-1 border border-sky-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={isLocked ? '14 gün GDPR kilidi dolmadan değiştirilemez' : 'Satışa hazırla'}
+                    title="Satışa hazırla"
                   >
                     <ShoppingBag className="h-3 w-3" /> Satışa Hazırla
                   </button>
@@ -948,10 +949,10 @@ function InventoryDetailDrawer({
                 {allowedNext.includes('melted') ? (
                   <button
                     type="button"
-                    disabled={updatingStatus || isLocked}
+                    disabled={updatingStatus}
                     onClick={() => setMeltDialogOpen(true)}
                     className="inline-flex items-center gap-1 border border-rose-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={isLocked ? '14 gün GDPR kilidi dolmadan eritilemez' : 'Eritmeye Taşı'}
+                    title="Eritmeye Taşı"
                   >
                     <Flame className="h-3 w-3" /> Erit
                   </button>

@@ -138,6 +138,10 @@ def _allowed_status_transition(current: ProductStatusEnum, new: ProductStatusEnu
             ProductStatusEnum.IN_INVENTORY,
             ProductStatusEnum.UNDECIDED,
             ProductStatusEnum.MELTED,
+            # GDPR penceresi bilgilendirme olduğu için taze alım doğrudan
+            # satışa/satılmışa alınabilir (0.3.8 kararı).
+            ProductStatusEnum.FOR_SALE,
+            ProductStatusEnum.SOLD,
         },
         ProductStatusEnum.IN_INVENTORY: {
             ProductStatusEnum.FOR_SALE,
@@ -532,9 +536,10 @@ async def update_product(
         product.purchase_date = payload.purchase_date
         product.gdpr_release_date = payload.purchase_date + timedelta(days=14)
         product.is_gdpr_locked = _is_locked(product.gdpr_release_date)
-        if product.is_gdpr_locked and product.status != ProductStatusEnum.PURCHASED:
-            product.status = ProductStatusEnum.PURCHASED
-        elif not product.is_gdpr_locked and product.status == ProductStatusEnum.PURCHASED:
+        # Kilit artık kullanıcı seçimini EZMEZ: tarih düzeltmesi ürünü zorla
+        # PURCHASED'a çekmiyordu olmamalı. Yalnız hâlâ PURCHASED bekleyen ürün
+        # kilit düşünce depoya alınır (kolaylık).
+        if not product.is_gdpr_locked and product.status == ProductStatusEnum.PURCHASED:
             product.status = ProductStatusEnum.IN_INVENTORY
     if payload.weight_grams is not None:
         product.weight_grams = quantize_2(payload.weight_grams)
@@ -710,12 +715,7 @@ async def update_status(
     if new_status == current_status:
         return to_product_out(product)
 
-    if product.is_gdpr_locked and new_status in {
-        ProductStatusEnum.FOR_SALE,
-        ProductStatusEnum.MELTED,
-        ProductStatusEnum.SOLD,
-    }:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="14 gün dolmadan bu işlem yapılamaz")
+    # GDPR kilidi artık durum geçişlerini engellemez (yalnız bilgi).
 
     if not _allowed_status_transition(current_status, new_status):
         raise HTTPException(

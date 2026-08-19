@@ -171,8 +171,8 @@ export function missingSeoFields(bundle: SeoBundle) {
 
 export function isPublishReady(state: WooMakeState['detail']) {
   if (!state) return false;
+  // GDPR penceresi yayını engellemez (0.3.8) — bilgi rozeti ayrı gösterilir.
   return (
-    !state.is_gdpr_locked &&
     state.photos.length > 0 &&
     Boolean(state.ai_description?.trim()) &&
     state.ai_description_approved &&

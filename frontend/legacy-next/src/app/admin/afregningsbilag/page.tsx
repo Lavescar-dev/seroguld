@@ -239,10 +239,7 @@ export default function AfregningsbilagPage() {
       return;
     }
 
-    if (target === 'melted' && document.has_locked_products) {
-      setError('Bu afregningsbilag icindeki en az bir urun 14 gun kilidinde. Dogrudan eritmeye gecemez.');
-      return;
-    }
+    // GDPR 14 gun penceresi eritmeyi engellemez (0.3.8: yalniz bilgi rozeti).
 
     let meltReason: string | undefined;
     if (target === 'melted') {

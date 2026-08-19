@@ -1483,9 +1483,9 @@ function PendingLinesTable({
                     <div className="grid grid-cols-3 gap-1">
                       <RouteButton label="Envanter" tone="emerald" active={draft.destination === 'inventory'} disabled={busy} onClick={() => onRoute(line, 'inventory')} />
                       <RouteButton label="Kararsız" tone="violet" active={draft.destination === 'undecided'} disabled={busy} onClick={() => onRoute(line, 'undecided')} />
-                      <RouteButton label="Erit" tone="orange" active={draft.destination === 'melt'} disabled={busy || line.is_gdpr_locked} onClick={() => onRoute(line, 'melt')} />
+                      <RouteButton label="Erit" tone="orange" active={draft.destination === 'melt'} disabled={busy} onClick={() => onRoute(line, 'melt')} />
                     </div>
-                    {line.is_gdpr_locked ? <p className="mt-2 text-[11px] text-orange-700">GDPR kilidi nedeniyle eritme kapalı.</p> : null}
+                    {line.is_gdpr_locked ? <p className="mt-2 text-[11px] text-orange-700">GDPR süresi devam ediyor (bilgi).</p> : null}
                   </td>
                 </tr>
               );
@@ -1554,7 +1554,7 @@ function SplitGroupCard({
                   <div className="grid grid-cols-3 gap-1">
                     <RouteButton label="Envanter" tone="emerald" active={draft.destination === 'inventory'} disabled={busy} onClick={() => onRoute(line, 'inventory')} />
                     <RouteButton label="Kararsız" tone="violet" active={draft.destination === 'undecided'} disabled={busy} onClick={() => onRoute(line, 'undecided')} />
-                    <RouteButton label="Erit" tone="orange" active={draft.destination === 'melt'} disabled={busy || line.is_gdpr_locked} onClick={() => onRoute(line, 'melt')} />
+                    <RouteButton label="Erit" tone="orange" active={draft.destination === 'melt'} disabled={busy} onClick={() => onRoute(line, 'melt')} />
                   </div>
                   <div className="grid gap-1 md:grid-cols-[0.9fr,1.1fr]">
                     <select value={draft.classification} onChange={(event) => onDraftChange(line.id, { classification: event.target.value as LineDraft['classification'] })} className="border border-brand-300 bg-white px-2 py-1 text-[11px] text-brand-700 outline-none transition focus:border-brand-700">
