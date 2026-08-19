@@ -20,6 +20,12 @@ class PhotoItem(AppBaseModel):
     original_url: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
+    # İç mutlak yollar + WP medya eşlemesi: Woo push bu alanlarla çalışır;
+    # şema düşürürse create/update roundtrip'inde kaybolurlar.
+    avif_path: str | None = None
+    original_path: str | None = None
+    wc_media_id: int | None = None
+    wc_media_uploaded_at: str | None = None
 
 
 class SellerInlineCreate(AppBaseModel):
@@ -233,6 +239,8 @@ class ProductPublishResponse(AppBaseModel):
     wc_product_id: int
     wc_permalink: str | None = None
     product: ProductOut
+    # Foto/medya gibi kısmi sorunlar yayını durdurmaz ama görünür olmalı.
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ProductHistoryOut(AppBaseModel):

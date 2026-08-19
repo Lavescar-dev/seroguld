@@ -13,7 +13,8 @@ from fastapi import HTTPException, status
 
 from app.config import get_settings
 from app.models.product import Product
-from app.utils.helpers import quantize_2
+from app.services.photo_service import sorted_photos_for_publish
+from app.utils.helpers import quantize_2, utc_now
 
 
 PRODUCT_TYPE_DA = {
@@ -304,32 +305,47 @@ class WooCommerceService:
         content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
         return content, content_type
 
-    async def _upload_media(self, photo_item: dict[str, Any]) -> dict[str, Any] | None:
-        if not self._can_upload_media():
-            return None
+    async def _upload_media(self, photo_item: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        """Tek fotoğrafı WP medya kütüphanesine yükler → ({"id": ...}, uyarı).
 
+        Daha önce yüklenmiş medya (wc_media_id) yeniden yüklenmez — duplicate
+        attachment birikimi biter. Hatalar yutulmaz; publish yanıtına ve sync
+        log'una uyarı olarak taşınır (eskiden üç noktada sessiz None dönüyordu
+        ve ürün 'yayınlandı' görünürken sitede hiç görsel olmuyordu).
+        """
+        photo_label = str(photo_item.get("filename") or photo_item.get("id") or "fotoğraf")
+        existing_media_id = photo_item.get("wc_media_id")
+        if existing_media_id:
+            return {"id": int(existing_media_id)}, None
+
+        # Orijinal dosya orijinal uzantısıyla gönderilir: WP'nin AVIF kabulü
+        # kurulum bağımlıdır ve filename/mime uyuşmazlığı WP tarafından
+        # reddedilir. filename + Content-Type HER ZAMAN gönderilen gerçek
+        # kaynaktan türetilir; kullanıcının yüklediği ad içerikle eşleşmiyorsa
+        # kullanılmaz.
         photo_url = str(
-            photo_item.get("avif_path")
-            or photo_item.get("original_path")
-            or photo_item.get("url")
+            photo_item.get("original_path")
+            or photo_item.get("avif_path")
             or photo_item.get("original_url")
+            or photo_item.get("url")
             or ""
         ).strip()
         if not photo_url:
-            return None
+            return None, f"{photo_label}: dosya yolu kayıtlı değil, atlandı."
 
         try:
             content, content_type = await self._load_photo_bytes(photo_url)
-        except Exception:
-            return None
+        except Exception as exc:  # noqa: BLE001 - uyarı olarak yüzeye taşınır
+            return None, f"{photo_label}: dosya okunamadı ({exc})."
 
-        filename = str(photo_item.get("filename") or "").strip()
-        if not filename:
-            filename = Path(photo_url.split("?")[0]).name or "seroguld-product.jpg"
+        source_name = Path(photo_url.split("?")[0]).name or "seroguld-product.jpg"
+        guessed_type = mimetypes.guess_type(source_name)[0]
+        if guessed_type:
+            content_type = guessed_type
 
         media_url = f"{self.wp_base_url}/wp-json/wp/v2/media"
         headers = {
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f'attachment; filename="{source_name}"',
             "Content-Type": content_type,
             "User-Agent": "SeroGuldCRM/1.0",
         }
@@ -342,17 +358,20 @@ class WooCommerceService:
                     headers=headers,
                     content=content,
                 )
-        except Exception:
-            return None
+        except Exception as exc:  # noqa: BLE001
+            return None, f"{photo_label}: WP medya isteği başarısız ({exc})."
 
         if response.status_code >= 400:
-            return None
+            body_head = response.text[:300]
+            return None, f"{photo_label}: WP medya {response.status_code} döndürdü: {body_head}"
 
         payload = response.json()
         media_id = payload.get("id")
         if not media_id:
-            return None
-        return {"id": int(media_id)}
+            return None, f"{photo_label}: WP medya yanıtında id yok."
+        photo_item["wc_media_id"] = int(media_id)
+        photo_item["wc_media_uploaded_at"] = utc_now().isoformat()
+        return {"id": int(media_id)}, None
 
     def _default_name(self, product: Product) -> str:
         product_type = PRODUCT_TYPE_DA.get(getattr(product.product_type, "value", str(product.product_type)), "Smykke")
@@ -391,18 +410,30 @@ class WooCommerceService:
         product: Product,
         regular_price_dkk: Decimal,
         name: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], list[str]]:
+        warnings: list[str] = []
         category_names = [
             METAL_TYPE_DA.get(getattr(product.metal_type, "value", str(product.metal_type)), "Ædelmetal"),
             PRODUCT_TYPE_DA.get(getattr(product.product_type, "value", str(product.product_type)), "Smykke"),
         ]
         category_ids = [await self._ensure_category(cat_name) for cat_name in category_names]
 
+        # is_primary önce → Woo images[0] öne çıkan görsel olur.
+        photos = sorted_photos_for_publish(product)
         images: list[dict[str, Any]] = []
-        for photo_item in product.photos or []:
-            uploaded = await self._upload_media(photo_item)
-            if uploaded:
-                images.append(uploaded)
+        if photos and not self._can_upload_media():
+            warnings.append(
+                "WP uygulama parolası eksik (WORDPRESS_BASE_URL / WP_APP_USERNAME / WP_APP_PASSWORD) — fotoğraflar gönderilmedi."
+            )
+        else:
+            for photo_item in photos:
+                uploaded, warning = await self._upload_media(photo_item)
+                if uploaded:
+                    images.append(uploaded)
+                if warning:
+                    warnings.append(warning)
+        if photos and not images and self._can_upload_media():
+            warnings.append("Hiçbir fotoğraf yüklenemedi — ürün görselsiz yayınlandı.")
 
         ai_text = (product.ai_description or "").strip()
         seo_bundle = _parse_ai_description_seo_bundle(ai_text)
@@ -437,15 +468,47 @@ class WooCommerceService:
         if images:
             payload["images"] = images
 
-        if product.woocommerce_product_id:
-            result = await self._wc_request(
-                "PUT",
-                f"/products/{product.woocommerce_product_id}",
-                json_payload=payload,
-            )
-        else:
-            result = await self._wc_request("POST", "/products", json_payload=payload)
-        return result
+        try:
+            if product.woocommerce_product_id:
+                result = await self._wc_request(
+                    "PUT",
+                    f"/products/{product.woocommerce_product_id}",
+                    json_payload=payload,
+                )
+            else:
+                result = await self._wc_request("POST", "/products", json_payload=payload)
+        except HTTPException as exc:
+            # Sitede elle silinmiş medya: kayıtlı wc_media_id'ler geçersizse
+            # Woo "invalid image id" döner — id'leri temizleyip TEK yeniden
+            # yükleme denemesi yapılır; ikinci hata normal akışla yükselir.
+            detail = str(exc.detail).lower()
+            reused_ids = [photo for photo in photos if photo.get("wc_media_id")]
+            if not reused_ids or ("image" not in detail and "attachment" not in detail):
+                raise
+            warnings.append("Sitedeki medya kayıtları geçersizdi; fotoğraflar yeniden yüklendi.")
+            for photo_item in reused_ids:
+                photo_item.pop("wc_media_id", None)
+                photo_item.pop("wc_media_uploaded_at", None)
+            retry_images: list[dict[str, Any]] = []
+            for photo_item in photos:
+                uploaded, warning = await self._upload_media(photo_item)
+                if uploaded:
+                    retry_images.append(uploaded)
+                if warning:
+                    warnings.append(warning)
+            if retry_images:
+                payload["images"] = retry_images
+            else:
+                payload.pop("images", None)
+            if product.woocommerce_product_id:
+                result = await self._wc_request(
+                    "PUT",
+                    f"/products/{product.woocommerce_product_id}",
+                    json_payload=payload,
+                )
+            else:
+                result = await self._wc_request("POST", "/products", json_payload=payload)
+        return result, warnings
 
     async def unpublish_product(self, wc_product_id: int) -> dict[str, Any]:
         return await self._wc_request(

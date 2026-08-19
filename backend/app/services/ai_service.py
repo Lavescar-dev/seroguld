@@ -12,6 +12,7 @@ import httpx
 from PIL import Image, ImageFile
 
 from app.config import get_settings
+from app.services.photo_service import sorted_photos_for_publish
 from app.models.product import Product
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -145,14 +146,7 @@ class AIService:
         )
 
     def _sorted_photos(self, product: Product) -> list[dict[str, Any]]:
-        photos = list(product.photos or [])
-        photos.sort(
-            key=lambda item: (
-                0 if bool(item.get("is_primary")) else 1,
-                str(item.get("uploaded_at") or ""),
-            )
-        )
-        return photos
+        return sorted_photos_for_publish(product)
 
     def _resolve_media_path_from_url(self, value: str) -> Path | None:
         text = value.strip()

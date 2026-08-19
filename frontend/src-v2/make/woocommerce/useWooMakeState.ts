@@ -709,6 +709,11 @@ export function useWooMakeState(): WooMakeState {
       await invalidateProduct(payload.product.id);
       setRawOpen(true);
       toast.success('Ürün WooCommerce’e yayınlandı', payload.wc_product_id ? `Woo ID: ${payload.wc_product_id}` : undefined);
+      // Kısmi sorunlar (ör. yüklenemeyen fotoğraf) yayını durdurmaz ama
+      // operatör görmeden geçmemeli.
+      for (const warning of payload.warnings || []) {
+        toast.error('Yayın uyarısı', warning);
+      }
     },
     onError: (error) => toast.error('Ürün yayınlanamadı', extractApiMessage(error, 'Sunucu hatası')),
   });

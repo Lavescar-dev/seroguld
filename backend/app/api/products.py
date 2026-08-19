@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import require_admin
 from app.database import get_db
@@ -752,7 +753,7 @@ async def publish(
     }
 
     try:
-        wc_product = await wc_service.publish_product(
+        wc_product, publish_warnings = await wc_service.publish_product(
             product=product,
             regular_price_dkk=payload.regular_price_dkk,
             name=payload.name,
@@ -777,6 +778,9 @@ async def publish(
     product.published_at = utc_now()
     product.sale_price_dkk = quantize_2(payload.regular_price_dkk)
     product.status = ProductStatusEnum.FOR_SALE
+    # _upload_media foto dict'lerine wc_media_id yazdı; JSON kolonun in-place
+    # mutasyonu SQLAlchemy tarafından izlenmez — açıkça işaretlenmeli.
+    flag_modified(product, "photos")
 
     db.add(
         ProductHistory(
@@ -799,8 +803,8 @@ async def publish(
             action="published",
             wc_product_id=product.woocommerce_product_id,
             request_payload=request_payload,
-            response_payload=wc_product,
-            status="success",
+            response_payload={"warnings": publish_warnings, "wc": wc_product},
+            status="partial" if publish_warnings else "success",
             error_message=None,
         )
     )
@@ -811,6 +815,7 @@ async def publish(
         wc_product_id=updated.woocommerce_product_id or 0,
         wc_permalink=wc_product.get("permalink"),
         product=to_product_out(updated),
+        warnings=publish_warnings,
     )
 
 

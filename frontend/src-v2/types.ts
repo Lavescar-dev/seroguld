@@ -219,6 +219,7 @@ export interface ProductPublishResponse {
   wc_product_id: number;
   wc_permalink?: string | null;
   product: ProductOut;
+  warnings?: string[];
 }
 
 export interface ProductHistoryEntry {

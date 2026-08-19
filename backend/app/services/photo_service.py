@@ -193,3 +193,16 @@ class PhotoService:
             remaining[0]["is_primary"] = True
 
         return remaining
+
+
+def sorted_photos_for_publish(product) -> list[dict]:
+    """is_primary önce, sonra uploaded_at — Woo/AI tüketicilerinin ortak sırası
+    (images[0] öne çıkan görsel olur)."""
+    photos = list(product.photos or [])
+    photos.sort(
+        key=lambda item: (
+            0 if bool(item.get("is_primary")) else 1,
+            str(item.get("uploaded_at") or ""),
+        )
+    )
+    return photos
