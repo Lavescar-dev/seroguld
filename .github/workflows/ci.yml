@@ -1,8 +1,9 @@
 name: ci
 
+# Actions dakika bütçesi için yalnız elle tetiklenir (gate'ler Windows'ta
+# lokal koşuyor: backend pytest + frontend typecheck/vitest — bkz. AGENTS.md).
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   backend-frontend-checks:
