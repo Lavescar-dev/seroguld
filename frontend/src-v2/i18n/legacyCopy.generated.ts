@@ -41,7 +41,7 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "CRM ürünleri": { en: "CRM products", da: "CRM-produkter" },
   "Woo’dan senkronize et": { en: "Sync from Woo", da: "Synkronisér fra Woo" },
   "Senkronizasyon önizlemesi hazır": { en: "Sync preview is ready", da: "Forhåndsvisning af synkronisering er klar" },
-  "Aşağıdaki değişiklikler yalnız “Onayla ve uygula” dediğinizde kataloğa yazılır.": { en: "The changes below are written to the catalog only when you choose “Approve and apply”.", da: "Ændringerne nedenfor skrives først til kataloget, når du vælger “Godkend og anvend”." },
+  "Aşağıdaki değişiklikler yalnız “Onayla ve uygula” dediğinizde kataloğa yazılır. Önizleme 15 dakika geçerlidir.": { en: "The changes below are written to the catalog only when you choose “Approve and apply”. The preview stays valid for 15 minutes.", da: "Ændringerne nedenfor skrives først til kataloget, når du vælger “Godkend og anvend”. Forhåndsvisningen er gyldig i 15 minutter." },
   "Onayla ve uygula": { en: "Approve and apply", da: "Godkend og anvend" },
   "Woo kataloğunda ara": { en: "Search Woo catalog", da: "Søg i Woo-katalog" },
   "Ürün adı, SKU veya Woo ID ara": { en: "Search product name, SKU or Woo ID", da: "Søg efter produktnavn, SKU eller Woo-id" },

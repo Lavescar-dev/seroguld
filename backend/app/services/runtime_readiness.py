@@ -6,6 +6,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+from app.version import APP_VERSION
 from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.schemas.runtime import RuntimeReadinessCheckOut, RuntimeReadinessOut
@@ -106,6 +107,7 @@ async def collect_runtime_readiness() -> RuntimeReadinessOut:
             checks.append(RuntimeReadinessCheckOut(name=name, ok=False, detail=str(exc)))
 
     return RuntimeReadinessOut(
+        version=APP_VERSION,
         app_name=settings.app_name,
         env=settings.env,
         checked_at=now,

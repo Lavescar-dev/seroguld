@@ -411,7 +411,8 @@ function FaturaDetay({
 
           <div className="overflow-hidden border border-brand-200">
             <div className="grid grid-cols-12 bg-brand-100 px-3 py-2 text-[11px] font-black uppercase tracking-wider text-brand-600">
-              <div className="col-span-5">Açıklama</div>
+              <div className="col-span-4">Açıklama</div>
+              <div className="col-span-1">Tarih</div>
               <div className="col-span-1 text-right">Adet</div>
               <div className="col-span-2 text-right">Birim</div>
               <div className="col-span-1 text-right">Rabat</div>
@@ -420,7 +421,8 @@ function FaturaDetay({
             </div>
             {fatura.kalemler.map((kalem, index) => (
               <div key={kalem.id} className={`grid grid-cols-12 border-t border-brand-100 px-3 py-2 text-sm ${index % 2 === 1 ? 'bg-brand-50/50' : 'bg-white'}`}>
-                <div className="col-span-5 text-brand-800">{kalem.beskrivelse}</div>
+                <div className="col-span-4 text-brand-800">{kalem.beskrivelse}</div>
+                <div className="col-span-1 text-brand-500" style={monoStyle}>{(kalem.dato || fatura.fakturadato || '').slice(0, 10)}</div>
                 <div className="col-span-1 text-right text-brand-700" style={monoStyle}>
                   {kalem.antal}
                 </div>
@@ -433,8 +435,8 @@ function FaturaDetay({
                 <div className="col-span-1 text-right text-brand-500" style={monoStyle}>
                   {kalem.moms > 0 ? `${kalem.moms}%` : '—'}
                 </div>
-                <div className="col-span-2 text-right font-black text-brand-900" style={monoStyle}>
-                  {fmtMoney(kalem.liniepris, fatura.valuta)}
+                <div className={`col-span-2 text-right font-black ${fatura.amountDirection === 'expense' ? 'text-red-700' : fatura.amountDirection === 'income' ? 'text-emerald-700' : 'text-brand-900'}`} style={monoStyle}>
+                  {(fatura.amountDirection === 'income' ? '+' : fatura.amountDirection === 'expense' ? '−' : '') + fmtMoney(Math.abs(kalem.liniepris), fatura.valuta)}
                 </div>
               </div>
             ))}

@@ -59,6 +59,7 @@ const KEYRING_SERVICE: &str = "dk.seroguld.crm";
 
 #[derive(Debug, Serialize, Clone)]
 struct RuntimeStatus {
+    app_version: String,
     state: String,
     message: String,
     runtime_path: Option<String>,
@@ -394,6 +395,7 @@ impl RuntimeSupervisor {
             job: Mutex::new(None),
             paths: Mutex::new(None),
             status: Mutex::new(RuntimeStatus {
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
                 state: "not-started".to_string(),
                 message: "Yerel runtime henüz başlatılmadı".to_string(),
                 runtime_path: None,
@@ -781,6 +783,7 @@ impl RuntimeSupervisor {
             .lock()
             .map(|value| value.clone())
             .unwrap_or_else(|_| RuntimeStatus {
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
                 state: "failed".to_string(),
                 message: "Runtime durumu okunamadı".to_string(),
                 runtime_path: None,

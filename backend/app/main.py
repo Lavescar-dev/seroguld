@@ -221,7 +221,9 @@ app.add_middleware(
 
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
-    return {"status": "ok"}
+    from app.version import APP_VERSION
+
+    return {"status": "ok", "version": APP_VERSION}
 
 
 @app.get("/readyz", response_model=RuntimeReadinessOut)

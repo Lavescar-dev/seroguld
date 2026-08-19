@@ -37,7 +37,7 @@ from app.services.woocommerce_import_helpers import (
 CATALOG_KEY = "default"
 REMOTE_PAGE_SIZE = 100
 MAX_REMOTE_PAGES = 1000
-PREVIEW_TTL_SECONDS = 300.0
+PREVIEW_TTL_SECONDS = 900.0
 MAX_CACHED_PREVIEWS = 8
 
 
@@ -93,7 +93,11 @@ def _cache_preview(
     return token
 
 
-def _consume_preview(*, token: str, owner_user_id: UUID | str) -> CachedCatalogPreview:
+def _peek_preview(*, token: str, owner_user_id: UUID | str) -> CachedCatalogPreview:
+    """Önizlemeyi doğrular ama TÜKETMEZ; token yalnız başarılı apply sonunda düşer.
+
+    Böylece revizyon çakışması gibi başarısız apply denemeleri operatörün
+    önizlemesini yok etmez (kullanıcı aynı token ile durumu görebilir)."""
     _purge_expired_previews()
     cached = _preview_cache.get(token)
     if cached is None:
@@ -112,7 +116,6 @@ def _consume_preview(*, token: str, owner_user_id: UUID | str) -> CachedCatalogP
                 "message": "WooCommerce katalog önizlemesi başka bir kullanıcıya ait.",
             },
         )
-    _preview_cache.pop(token, None)
     return cached
 
 
@@ -376,7 +379,7 @@ async def apply_catalog_sync(
     preview_revision: str,
     owner_user_id: UUID | str,
 ) -> WooCatalogSyncOut:
-    cached = _consume_preview(token=preview_revision, owner_user_id=owner_user_id)
+    cached = _peek_preview(token=preview_revision, owner_user_id=owner_user_id)
     state_row = await _get_state(db)
     base_revision = int(state_row.revision)
     if cached.base_revision != base_revision:
@@ -439,6 +442,8 @@ async def apply_catalog_sync(
     state_row.remote_published_count = len(snapshot.items)
     state_row.last_synced_at = seen_at
     await db.commit()
+    # Yalnız başarılı apply token'ı tüketir; yukarıdaki 409 yolları önizlemeyi korur.
+    _preview_cache.pop(preview_revision, None)
     return WooCatalogSyncOut(
         revision=base_revision + 1,
         summary=summary,

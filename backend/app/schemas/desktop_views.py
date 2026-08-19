@@ -209,6 +209,7 @@ class UnicontaInvoiceLineOut(AppBaseModel):
     rabat: float
     moms: float
     liniepris: float
+    dato: str | None = None
 
 
 class UnicontaInvoiceOut(AppBaseModel):

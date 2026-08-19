@@ -1269,6 +1269,7 @@ def _build_uniconta_invoice(
             rabat=_to_float(line.margin_percent),
             moms=_to_float(document.vat_rate_percent),
             liniepris=_to_float(line.line_total_dkk),
+            dato=document.issued_at.date().isoformat(),
         )
         for line in lines
     ]
@@ -1684,6 +1685,49 @@ async def get_uniconta_invoices_v2(
         except UnicontaError as exc:
             raise HTTPException(status_code=502, detail=f"Uniconta remote: {exc}") from exc
         invoices_remote = [UnicontaInvoiceOut(**map_uniconta_invoice_to_dto(r)) for r in rows]
+        # Uniconta liste kaydı kalem taşımaz; CRM'in senkronladığı faturalar
+        # için satırlar ve müşteri detayı yerel kayıttan hidre edilir.
+        numbers = [inv.fakturanummer for inv in invoices_remote if inv.fakturanummer]
+        if numbers:
+            local_rows = (
+                await db.execute(
+                    select(PosDocument, PosSession, Transaction)
+                    .join(PosSession, PosSession.id == PosDocument.pos_session_id)
+                    .outerjoin(Transaction, Transaction.pos_document_sequence_no == PosDocument.sequence_no)
+                    .where(PosDocument.uniconta_invoice_number.in_(numbers))
+                )
+            ).all()
+            transaction_ids = [t.id for _, _, t in local_rows if t is not None]
+            line_rows = (
+                (
+                    await db.execute(
+                        select(TransactionLine)
+                        .where(TransactionLine.transaction_id.in_(transaction_ids))
+                        .order_by(TransactionLine.transaction_id.asc(), TransactionLine.line_no.asc())
+                    )
+                ).scalars().all()
+                if transaction_ids
+                else []
+            )
+            lines_by_transaction: dict[UUID, list[TransactionLine]] = defaultdict(list)
+            for line in line_rows:
+                lines_by_transaction[line.transaction_id].append(line)
+            local_by_number: dict[str, UnicontaInvoiceOut] = {}
+            for document, pos_session, transaction in local_rows:
+                built = _build_uniconta_invoice(
+                    document,
+                    pos_session,
+                    transaction,
+                    lines_by_transaction.get(transaction.id, []) if transaction is not None else [],
+                )
+                if document.uniconta_invoice_number:
+                    local_by_number[str(document.uniconta_invoice_number)] = built
+            for invoice in invoices_remote:
+                local = local_by_number.get(invoice.fakturanummer)
+                if local is None:
+                    continue
+                invoice.kalemler = local.kalemler
+                invoice.kunde = local.kunde
         return UnicontaInvoicesOut(
             source="uniconta_remote",
             generatedAt=datetime.utcnow().isoformat(),

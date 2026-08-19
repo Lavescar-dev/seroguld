@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
 import { ApiError, apiRequest } from '@/lib/api';
@@ -526,6 +526,12 @@ export function useWooMakeState(): WooMakeState {
   const [aiDraft, setAiDraft] = useState('');
   const [rawOpen, setRawOpen] = useState(false);
   const [catalogSearch, setCatalogSearchState] = useState('');
+  // Arama sorgusu ~300ms debounce ile koşar; input anında, istek sakin.
+  const [debouncedCatalogSearch, setDebouncedCatalogSearch] = useState('');
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedCatalogSearch(catalogSearch.trim()), 300);
+    return () => window.clearTimeout(handle);
+  }, [catalogSearch]);
   const [catalogPageNumber, setCatalogPageNumber] = useState(1);
   const [catalogPreview, setCatalogPreview] = useState<WooCatalogSyncPreview | null>(null);
 
@@ -547,15 +553,17 @@ export function useWooMakeState(): WooMakeState {
   });
 
   const catalogQuery = useQuery({
-    queryKey: wooCatalogQueryKeys.list(catalogPageNumber, catalogSearch.trim()),
+    queryKey: wooCatalogQueryKeys.list(catalogPageNumber, debouncedCatalogSearch),
     queryFn: () => {
       const params = new URLSearchParams({
         page: String(catalogPageNumber),
         page_size: '50',
       });
-      if (catalogSearch.trim()) params.set('q', catalogSearch.trim());
+      if (debouncedCatalogSearch) params.set('q', debouncedCatalogSearch);
       return apiRequest<WooCatalogPage>(`/api/v2/woocommerce/catalog?${params.toString()}`);
     },
+    // Sayfa/arama değişiminde önceki sayfa görünür kalır; tablo ve pager boşalmaz.
+    placeholderData: keepPreviousData,
   });
 
   const setCatalogSearch = useCallback((value: string) => {

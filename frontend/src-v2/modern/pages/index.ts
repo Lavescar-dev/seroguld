@@ -4,7 +4,6 @@ export * from './ModernGdprPages';
 export * from './ModernLoginPage';
 export * from './ModernOpmcPages';
 export * from './ModernReportsHealthPage';
-export * from './ModernSettingsPage';
 export * from './ModernUnicontaPage';
 export * from './ModernWooCommercePage';
 export * from './types';

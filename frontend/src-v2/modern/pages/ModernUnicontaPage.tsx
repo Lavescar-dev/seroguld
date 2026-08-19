@@ -167,20 +167,21 @@ function InvoiceDetailDrawer({
           <div className="overflow-x-auto">
             <table className="min-w-[620px] w-full text-sm">
               <thead className="bg-sg-surface-soft text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">
-                <tr><th className="px-4 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-right">Adet</th><th className="px-3 py-2 text-right">Birim</th><th className="px-3 py-2 text-right">İndirim</th><th className="px-3 py-2 text-right">KDV</th><th className="px-4 py-2 text-right">Toplam</th></tr>
+                <tr><th className="px-4 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-right">Adet</th><th className="px-3 py-2 text-right">Birim</th><th className="px-3 py-2 text-right">İndirim</th><th className="px-3 py-2 text-right">KDV</th><th className="px-4 py-2 text-right">Toplam</th></tr>
               </thead>
               <tbody>
                 {invoice.kalemler.map((line) => (
                   <tr key={line.id} className="border-t border-sg-border-soft">
                     <td className="px-4 py-3 font-medium text-sg-text">{line.beskrivelse}</td>
+                    <td className="px-3 py-3 text-sg-text-soft">{line.dato ? formatInvoiceDate(line.dato) : formatInvoiceDate(invoice.fakturadato)}</td>
                     <td className="px-3 py-3 text-right text-sg-text-soft">{line.antal}</td>
                     <td className="px-3 py-3 text-right text-sg-text-soft">{formatMoney(line.enhedspris)}</td>
                     <td className="px-3 py-3 text-right text-sg-text-soft">{line.rabat > 0 ? `${line.rabat}%` : '—'}</td>
                     <td className="px-3 py-3 text-right text-sg-text-soft">{line.moms > 0 ? `${line.moms}%` : '—'}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-sg-text">{formatMoney(line.liniepris)}</td>
+                    <td className={`px-4 py-3 text-right font-semibold ${amountTextClass(invoice)}`}>{(invoice.amountDirection === 'income' ? '+' : invoice.amountDirection === 'expense' ? '−' : '') + formatMoney(Math.abs(line.liniepris))}</td>
                   </tr>
                 ))}
-                {invoice.kalemler.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-sg-text-soft">Fatura kalemi bulunmuyor.</td></tr> : null}
+                {invoice.kalemler.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-sg-text-soft">Fatura kalemi bulunmuyor.</td></tr> : null}
               </tbody>
             </table>
           </div>

@@ -4,12 +4,14 @@ import type { AuthTokenResponse } from '@/types';
 export class ApiError extends Error {
   status: number;
   requestId?: string;
+  url?: string;
 
-  constructor(status: number, message: string, requestId?: string) {
+  constructor(status: number, message: string, requestId?: string, url?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.requestId = requestId;
+    this.url = url;
   }
 }
 
@@ -167,7 +169,7 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
     } catch {
       if (rawBody.trim()) message = rawBody.trim().slice(0, 240);
     }
-    throw new ApiError(response.status, requestId ? `${message} (Kod: ${requestId})` : message, requestId);
+    throw new ApiError(response.status, requestId ? `${message} (Kod: ${requestId})` : message, requestId, path);
   }
 
   const contentType = response.headers.get('content-type') || '';

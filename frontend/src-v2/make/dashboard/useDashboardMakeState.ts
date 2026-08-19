@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
 import { ApiError, apiRequest } from '@/lib/api';
+import { getDesktopStartupState } from '@/lib/desktop';
 import { useToast } from '@/lib/toast';
 
 import type {
@@ -206,8 +207,33 @@ export function mapDashboardFallback(bundle: DashboardEndpointBundle): ModernDas
   };
 }
 
+const FALLBACK_SUMMARY: DashboardEndpointBundle['summary'] = {
+  total_products: 0, locked_products: 0, free_products: 0, for_sale_products: 0,
+  sold_this_month: 0, melted_this_month: 0,
+};
+const FALLBACK_STOCK: DashboardEndpointBundle['stock'] = { total_stock_value_dkk: '0', today_change_dkk: '0' };
+const FALLBACK_OPS: DashboardEndpointBundle['ops'] = {
+  active_products: 0, products_with_photo: 0, products_without_photo: 0, photo_coverage_percent: '0',
+  for_sale_without_photo: 0, needs_cleaning_queue: 0, pending_ai_description: 0, pending_ai_approval: 0,
+  pending_publish: 0, stale_gdpr_lock: 0, ready_for_sale: 0, avg_active_age_days: '0', urgent_action_count: 0,
+};
+const FALLBACK_INTEGRATIONS: DashboardEndpointBundle['integrations'] = {
+  openai_configured: false, woocommerce_configured: false, wordpress_media_configured: false,
+  webhook_secret_set: false, total_published_products: 0, sync_success_24h: 0, sync_failed_24h: 0,
+  last_sync_at: null, backup_latest_at: null, backup_recent_ok: false, backup_age_minutes: null,
+  offsite_enabled: false, offsite_last_sync_at: null, offsite_recent_ok: null, offsite_age_minutes: null,
+  restore_drill_last_at: null, restore_drill_recent_ok: false, restore_drill_age_hours: null,
+};
+const FALLBACK_MARKET: DashboardEndpointBundle['market'] = {
+  eur_dkk_fx: '0', gold_24k_dkk: '0', silver_dkk: '0', platinum_dkk: '0', palladium_dkk: '0',
+  live_enabled: false, source: 'manual', updated_at: null,
+};
+
 async function fetchFallbackBundle(): Promise<DashboardEndpointBundle> {
-  const [legacy, summary, stock, ops, charts, integrations, market] = await Promise.all([
+  // Tek uç noktanın 404/500'ü tüm panoyu boşaltmasın: legacy zorunlu, kalanı
+  // yumuşak varsayılana düşer (allSettled). Legacy hatası olduğu gibi fırlatılır
+  // ki ApiError.url + status sürüm tanısında görünsün.
+  const [legacyResult, summary, stock, ops, charts, integrations, market] = await Promise.allSettled([
     apiRequest<DashboardLegacyScreen>('/api/v2/dashboard'),
     apiRequest<DashboardEndpointBundle['summary']>('/api/dashboard/summary'),
     apiRequest<DashboardEndpointBundle['stock']>('/api/dashboard/stock-value'),
@@ -216,7 +242,16 @@ async function fetchFallbackBundle(): Promise<DashboardEndpointBundle> {
     apiRequest<DashboardEndpointBundle['integrations']>('/api/dashboard/integrations'),
     apiRequest<DashboardEndpointBundle['market']>('/api/v2/market-rates/defaults'),
   ]);
-  return { legacy, summary, stock, ops, charts, integrations, market };
+  if (legacyResult.status === 'rejected') throw legacyResult.reason;
+  return {
+    legacy: legacyResult.value,
+    summary: summary.status === 'fulfilled' ? summary.value : FALLBACK_SUMMARY,
+    stock: stock.status === 'fulfilled' ? stock.value : FALLBACK_STOCK,
+    ops: ops.status === 'fulfilled' ? ops.value : FALLBACK_OPS,
+    charts: charts.status === 'fulfilled' ? charts.value : { stock_flow_30d: [], monthly_profit_12m: [] },
+    integrations: integrations.status === 'fulfilled' ? integrations.value : FALLBACK_INTEGRATIONS,
+    market: market.status === 'fulfilled' ? market.value : FALLBACK_MARKET,
+  };
 }
 
 export async function fetchModernOverview(period: DashboardPeriod) {
@@ -271,6 +306,25 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
     refetchInterval: 60_000,
   });
 
+  // Pano yüklenemediğinde uygulama/runtime sürümlerini karşılaştırıp
+  // "eski runtime + yeni arayüz" kaymasını hatanın içinde görünür kılar.
+  const versionDiagQuery = useQuery({
+    queryKey: ['runtime-version-diagnostic'],
+    enabled: Boolean(dashboardQuery.error),
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      const [health, startup] = await Promise.allSettled([
+        apiRequest<{ status: string; version?: string }>('/health', { auth: false }),
+        getDesktopStartupState(),
+      ]);
+      return {
+        runtimeVersion: health.status === 'fulfilled' ? health.value.version ?? null : null,
+        appVersion: startup.status === 'fulfilled' ? startup.value?.app_version ?? null : null,
+      };
+    },
+  });
+
   const confirmationMutation = useMutation({
     mutationFn: () => apiRequest<DashboardMarketConfirmationResponse>('/api/v2/dashboard/market-rate-confirmation', {
       method: 'POST',
@@ -285,10 +339,24 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
 
   const data = dashboardQuery.data?.legacy ?? legacyQuery.data ?? EMPTY_DASHBOARD_DATA;
 
+  const modernError = (() => {
+    const error = dashboardQuery.error;
+    if (!(error instanceof Error)) return null;
+    const parts = [error.message];
+    if (error instanceof ApiError && error.url) {
+      parts.push(`Uç nokta: ${error.url} → HTTP ${error.status}.`);
+    }
+    const diag = versionDiagQuery.data;
+    if (diag?.appVersion && diag?.runtimeVersion && diag.appVersion !== diag.runtimeVersion) {
+      parts.push(`Sürüm uyuşmazlığı: uygulama v${diag.appVersion}, çalışma zamanı v${diag.runtimeVersion} — runtime güncellenmemiş olabilir.`);
+    }
+    return parts.join(' ');
+  })();
+
   return useMemo(() => ({
     data,
     modern: dashboardQuery.data?.view ?? null,
-    modernError: dashboardQuery.error instanceof Error ? dashboardQuery.error.message : null,
+    modernError,
     period,
     setPeriod,
     lastRefresh: dashboardQuery.dataUpdatedAt ? new Date(dashboardQuery.dataUpdatedAt) : new Date(),
@@ -301,7 +369,7 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
       if (mode === 'classic') void legacyQuery.refetch();
     },
     onNavigate: (path: string) => navigate(path),
-  }), [confirmationMutation.isPending, dashboardQuery, data, legacyQuery, mode, navigate, period]);
+  }), [confirmationMutation.isPending, dashboardQuery, data, legacyQuery, mode, modernError, navigate, period]);
 }
 
 export type DashboardMakeState = ReturnType<typeof useDashboardMakeState>;

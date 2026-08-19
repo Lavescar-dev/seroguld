@@ -104,6 +104,7 @@ export interface FaturaKalem {
   rabat: number;
   moms: number;
   liniepris: number;
+  dato?: string | null;
 }
 
 export interface Fatura {

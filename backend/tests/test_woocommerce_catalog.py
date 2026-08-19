@@ -295,7 +295,7 @@ def test_preview_token_is_user_bound_single_use_and_expires(monkeypatch) -> None
                 owner_user_id="admin-1",
                 service=FakeWooService([_remote_product(1)]),  # type: ignore[arg-type]
             )
-            clock[0] += 301.0
+            clock[0] += catalog_service.PREVIEW_TTL_SECONDS + 1.0
             with pytest.raises(HTTPException) as expired_error:
                 await apply_catalog_sync(
                     db,

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 
-import type { ApiConfig } from '@/make/settings/types';
 import type {
   GdprJob,
   GdprOverview,
@@ -112,22 +111,6 @@ export interface ModernLoginFormModel {
 export interface ModernLoginPageProps {
   runtime: ModernStatusItem[];
   form: ModernLoginFormModel;
-}
-
-export interface ModernSettingsPageProps {
-  config: ApiConfig;
-  runtime: ModernStatusItem[];
-  secretFieldKeys?: Array<keyof ApiConfig>;
-  uiVariantSlot?: ReactNode;
-  languageSettingsSlot?: ReactNode;
-  customerDisplayMonitorSlot?: ReactNode;
-  onFieldChange?: (key: keyof ApiConfig, value: string | boolean) => void;
-  onSave?: () => void;
-  onImport?: () => void;
-  onExport?: () => void;
-  saveAvailability?: ModernAvailability;
-  isSaving?: boolean;
-  savedLabel?: string;
 }
 
 export interface ModernReportCard {

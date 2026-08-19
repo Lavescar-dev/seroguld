@@ -120,6 +120,7 @@ export type DesktopOfficeRuntimeState = {
 };
 
 export type DesktopStartupState = {
+  app_version?: string | null;
   state: string;
   message: string;
   runtime_path?: string | null;
