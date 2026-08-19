@@ -130,6 +130,9 @@ class ProductAIDescriptionUpdate(AppBaseModel):
 class ProductPublishRequest(AppBaseModel):
     regular_price_dkk: Decimal = Field(gt=0)
     name: str | None = Field(default=None, max_length=255)
+    # None = ürün üzerindeki override'a dokunma; [] = override'ı temizle
+    # (Settings haritasına dön); dolu liste = bu ID'lerle yayınla ve sakla.
+    category_ids: list[int] | None = None
 
 
 class ProductWooImportRequest(AppBaseModel):
@@ -179,6 +182,7 @@ class ProductOut(AppBaseModel):
     ai_description: str | None
     ai_description_approved: bool
     woocommerce_product_id: int | None
+    woocommerce_category_ids: list[int] | None = None
     is_published_to_site: bool
     published_at: datetime | None
     photos: list[PhotoItem]

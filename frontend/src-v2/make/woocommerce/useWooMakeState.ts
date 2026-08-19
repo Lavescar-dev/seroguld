@@ -119,6 +119,7 @@ export interface NewWooProductDraft {
   fotograflar: DraftPhoto[];
   wooYayin: WooYayinDurum;
   notlar: string;
+  kategoriIds: number[];
 }
 
 export interface WooCatalogStatus {
@@ -193,6 +194,28 @@ export interface WooCatalogSyncPreview {
   warnings: string[];
 }
 
+export interface WooCategory {
+  id: number;
+  name: string;
+  slug: string | null;
+  parent: number;
+  count: number;
+  depth: number;
+}
+
+export interface WooCategoriesPayload {
+  items: WooCategory[];
+  fetched_at: string;
+  cached: boolean;
+}
+
+export interface WooCatalogItemDetail extends WooCatalogItem {
+  description_html: string | null;
+  short_description_html: string | null;
+  seo_title: string | null;
+  meta_description: string | null;
+}
+
 export interface WooMakeState {
   search: string;
   setSearch: (value: string) => void;
@@ -252,6 +275,21 @@ export interface WooMakeState {
   refreshCatalog: () => Promise<void>;
   previewCatalogSync: () => void;
   applyCatalogSync: () => void;
+  categories: WooCategory[];
+  categoriesLoading: boolean;
+  categoriesError: string | null;
+  refreshCategories: () => Promise<void>;
+  publishCategoryIds: number[];
+  setPublishCategoryIds: (ids: number[]) => void;
+  togglePublishCategory: (id: number) => void;
+  catalogDetailId: string | null;
+  openCatalogDetail: (id: string | null) => void;
+  catalogDetail: WooCatalogItemDetail | null;
+  catalogDetailLoading: boolean;
+  linkCatalogItem: (catalogItemId: string, productId: string) => void;
+  unlinkCatalogItem: (catalogItemId: string) => void;
+  unpublishCatalogItem: (catalogItemId: string) => void;
+  isCatalogActionPending: boolean;
 }
 
 export function resolveWooSelectedProductId(
@@ -294,6 +332,7 @@ export function defaultNewWooProductDraft(): NewWooProductDraft {
     fotograflar: [],
     wooYayin: 'Taslak',
     notlar: '',
+    kategoriIds: [],
   };
 }
 
@@ -533,6 +572,8 @@ export function useWooMakeState(): WooMakeState {
   }, [catalogSearch]);
   const [catalogPageNumber, setCatalogPageNumber] = useState(1);
   const [catalogPreview, setCatalogPreview] = useState<WooCatalogSyncPreview | null>(null);
+  const [publishCategoryIds, setPublishCategoryIds] = useState<number[]>([]);
+  const [catalogDetailId, setCatalogDetailId] = useState<string | null>(null);
 
   const bootstrapQuery = useQuery({
     queryKey: ['bootstrap'],
@@ -569,6 +610,18 @@ export function useWooMakeState(): WooMakeState {
     setCatalogSearchState(value);
     setCatalogPageNumber(1);
   }, []);
+
+  const categoriesQuery = useQuery({
+    queryKey: ['woocommerce', 'categories'],
+    queryFn: () => apiRequest<WooCategoriesPayload>('/api/v2/woocommerce/categories'),
+    staleTime: 120_000,
+  });
+
+  const catalogDetailQuery = useQuery({
+    queryKey: ['woocommerce-catalog', 'detail', catalogDetailId],
+    enabled: Boolean(catalogDetailId),
+    queryFn: () => apiRequest<WooCatalogItemDetail>(`/api/v2/woocommerce/catalog/${catalogDetailId}`),
+  });
 
   const allRows = workspaceQuery.data?.rows || [];
   const requestedProductId = searchParams.get('product');
@@ -642,6 +695,7 @@ export function useWooMakeState(): WooMakeState {
     if (!product) return;
     setPublishPrice(String(product.shop_price_dkk || product.sale_price_dkk || product.purchase_price_dkk || ''));
     setAiDraft(product.ai_description || '');
+    setPublishCategoryIds((product.woocommerce_category_ids ?? []).map(Number));
   }, [detailQuery.data]);
 
   async function invalidateProduct(productId?: string | null) {
@@ -701,6 +755,8 @@ export function useWooMakeState(): WooMakeState {
         body: JSON.stringify({
           regular_price_dkk: Number(publishPrice || '0'),
           name: name || undefined,
+          // Seçici durumu yayınla birlikte kalıcılaşır; [] = harita davranışına dön.
+          category_ids: publishCategoryIds,
         }),
       }),
     onSuccess: async (payload) => {
@@ -800,6 +856,7 @@ export function useWooMakeState(): WooMakeState {
           body: JSON.stringify({
             regular_price_dkk: Number(draft.satisHasJiyati || draft.alimFiyati || '0'),
             name: draft.urunAdi.trim() || undefined,
+            category_ids: draft.kategoriIds,
           }),
         });
         current = payload.product;
@@ -858,6 +915,60 @@ export function useWooMakeState(): WooMakeState {
       toast.error('WooCommerce kataloğu güncellenemedi', extractApiMessage(error, 'Sunucu hatası'));
     },
   });
+
+  const invalidateCatalogDetail = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: wooCatalogQueryKeys.root });
+    await queryClient.invalidateQueries({ queryKey: ['woocommerce-catalog', 'detail'] });
+  }, [queryClient]);
+
+  const catalogLinkMutation = useMutation({
+    mutationFn: ({ catalogItemId, productId }: { catalogItemId: string; productId: string }) =>
+      apiRequest<WooCatalogItem>(`/api/v2/woocommerce/catalog/${catalogItemId}/link`, {
+        method: 'POST',
+        body: JSON.stringify({ product_id: productId }),
+      }),
+    onSuccess: async () => {
+      await invalidateCatalogDetail();
+      toast.success('Katalog kaydı CRM ürününe bağlandı');
+    },
+    onError: (error) => toast.error('Bağlantı kurulamadı', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
+  const catalogUnlinkMutation = useMutation({
+    mutationFn: (catalogItemId: string) =>
+      apiRequest<WooCatalogItem>(`/api/v2/woocommerce/catalog/${catalogItemId}/link`, { method: 'DELETE' }),
+    onSuccess: async () => {
+      await invalidateCatalogDetail();
+      toast.success('Katalog bağlantısı kaldırıldı');
+    },
+    onError: (error) => toast.error('Bağlantı kaldırılamadı', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
+  const catalogUnpublishMutation = useMutation({
+    mutationFn: (catalogItemId: string) =>
+      apiRequest<WooCatalogItem>(`/api/v2/woocommerce/catalog/${catalogItemId}/unpublish`, { method: 'POST' }),
+    onSuccess: async () => {
+      await invalidateCatalogDetail();
+      await invalidateProduct();
+      toast.success('Ürün sitede taslağa çekildi');
+    },
+    onError: (error) => toast.error('Yayından kaldırılamadı', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
+  const refreshCategories = useCallback(async () => {
+    try {
+      const payload = await apiRequest<WooCategoriesPayload>('/api/v2/woocommerce/categories?refresh=true');
+      queryClient.setQueryData(['woocommerce', 'categories'], payload);
+    } catch (error) {
+      toast.error('Kategoriler yenilenemedi', extractApiMessage(error, 'Sunucu hatası'));
+    }
+  }, [queryClient, toast]);
+
+  const togglePublishCategory = useCallback((id: number) => {
+    setPublishCategoryIds((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+    );
+  }, []);
 
   async function refreshWorkspace() {
     await workspaceQuery.refetch();
@@ -986,6 +1097,22 @@ export function useWooMakeState(): WooMakeState {
         catalogApplyMutation.mutate(catalogPreview.preview_revision);
       }
     },
+    categories: categoriesQuery.data?.items ?? [],
+    categoriesLoading: categoriesQuery.isLoading,
+    categoriesError: categoriesQuery.error ? extractApiMessage(categoriesQuery.error, 'Kategoriler alınamadı') : null,
+    refreshCategories,
+    publishCategoryIds,
+    setPublishCategoryIds,
+    togglePublishCategory,
+    catalogDetailId,
+    openCatalogDetail: setCatalogDetailId,
+    catalogDetail: catalogDetailQuery.data ?? null,
+    catalogDetailLoading: catalogDetailQuery.isLoading,
+    linkCatalogItem: (catalogItemId: string, productId: string) => catalogLinkMutation.mutate({ catalogItemId, productId }),
+    unlinkCatalogItem: (catalogItemId: string) => catalogUnlinkMutation.mutate(catalogItemId),
+    unpublishCatalogItem: (catalogItemId: string) => catalogUnpublishMutation.mutate(catalogItemId),
+    isCatalogActionPending:
+      catalogLinkMutation.isPending || catalogUnlinkMutation.isPending || catalogUnpublishMutation.isPending,
   };
 }
 

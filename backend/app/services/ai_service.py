@@ -114,6 +114,9 @@ class AIService:
         karat = product.purity_karat or "-"
         purity = str(product.purity_percentage) if product.purity_percentage is not None else "-"
         ref = product.reference_number or product.product_number or "-"
+        diameter = (
+            str(product.diameter_mm) if getattr(product, "diameter_mm", None) is not None else "-"
+        )
 
         return (
             "Skriv en dansk WooCommerce SEO-pakke for et smykke.\n"
@@ -131,7 +134,9 @@ class AIService:
             "SHORT_DESCRIPTION:\n"
             "<1-2 sætninger, 140-220 tegn>\n\n"
             "LONG_DESCRIPTION_HTML:\n"
-            "<HTML med 2 korte afsnit + en ul-liste med specifikationer + afsluttende CTA>\n\n"
+            "<HTML med 2 korte afsnit + en ul-liste med specifikationer + afsluttende CTA>\n"
+            "<Specifikationslisten skal mindst indeholde: Vare nr., Vægt (g), Karat/Renhed"
+            " og Diameter (mm, hvis kendt) — samme struktur som referencesiden>\n\n"
             "META_DESCRIPTION:\n"
             "<maks 155 tegn>\n\n"
             "URL_SLUG:\n"
@@ -143,6 +148,7 @@ class AIService:
             f"- Karat: {karat}\n"
             f"- Renhed: {purity}%\n"
             f"- Reference: {ref}\n"
+            f"- Diameter: {diameter} mm\n"
         )
 
     def _sorted_photos(self, product: Product) -> list[dict[str, Any]]:

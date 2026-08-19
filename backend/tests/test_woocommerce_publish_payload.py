@@ -9,8 +9,11 @@ from app.config import Settings
 from app.services.woocommerce import (
     DESC_FOOTER_DA_DEFAULT,
     DESC_FOOTER_MARKER_START,
+    SPEC_STRIP_MARKER_START,
     _apply_description_footer,
+    _apply_spec_strip,
     _build_badge_meta,
+    _spec_strip_text,
     build_publish_payload,
 )
 
@@ -238,3 +241,47 @@ def test_platinum_product_resolves_platin_pd_category() -> None:
     )
     assert payload["categories"] == [{"id": 131}]
     assert not any("kategori" in warning.lower() for warning in warnings)
+
+
+def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
+    once = _apply_spec_strip("<p>Metin</p>", "Vare nr. : 1427, Vægt: 0,93g")
+    twice = _apply_spec_strip(once, "Vare nr. : 1427, Vægt: 0,93g")
+    assert twice.count(SPEC_STRIP_MARKER_START) == 1
+    assert twice.count("Vare nr. : 1427") == 1
+    assert twice.index(SPEC_STRIP_MARKER_START) == 0  # her zaman başta
+
+    with_diameter = _product(diameter_mm=Decimal("5.97"), weight_grams=Decimal("0.93"), reference_number="1427")
+    assert _spec_strip_text(with_diameter) == "Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm"
+    without_diameter = _product()
+    assert _spec_strip_text(without_diameter) == "Vare nr. : xxxx, Vægt: 19,65g"
+
+    payload, _ = build_publish_payload(
+        product=with_diameter,
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    # Şerit iki yerde: kısa açıklamanın ve uzun açıklamanın başında.
+    assert payload["short_description"].startswith(SPEC_STRIP_MARKER_START)
+    assert "Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm" in payload["short_description"]
+    assert payload["description"].startswith(SPEC_STRIP_MARKER_START)
+    assert "Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm" in payload["description"]
+    # AI'dan gelen kısa açıklama korunur, şeridin arkasına eklenir.
+    assert "Elegant armbånd." in payload["short_description"]
+
+
+def test_category_override_beats_settings_map() -> None:
+    product = _product(woocommerce_category_ids=[555, 204])
+    payload, warnings = build_publish_payload(
+        product=product,
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(woocommerce_category_map_json="{}"),
+    )
+    assert payload["categories"] == [{"id": 555}, {"id": 204}]
+    meta = _meta_map(payload)
+    assert meta["_yoast_wpseo_primary_product_cat"] == "555"
+    # Harita boş olsa bile override varken kategori uyarısı üretilmez.
+    assert not any("Kategori" in warning for warning in warnings)

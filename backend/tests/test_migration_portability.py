@@ -73,6 +73,7 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
     # clean install as non-empty and skip creation of the bootstrap admin.
     assert catalog_state_rows == 0
     assert "diameter_mm" in product_columns
+    assert "woocommerce_category_ids" in product_columns
 
 
 def test_0035_backfills_inventory_category_like_runtime_inference(tmp_path: Path) -> None:

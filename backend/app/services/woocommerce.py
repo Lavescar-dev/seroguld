@@ -421,6 +421,47 @@ def _build_badge_meta(badge_config: dict[str, Any], *, now=None) -> tuple[list[d
     return meta, warnings
 
 
+SPEC_STRIP_MARKER_START = "<!-- sg-spec -->"
+SPEC_STRIP_MARKER_END = "<!-- /sg-spec -->"
+
+
+def _spec_strip_text(product: Product) -> str:
+    """Referans sitedeki 'Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm' şeridi.
+
+    Çap yoksa Diameter parçası atlanır; sayılar Danca formatlanır.
+    """
+    ref = (product.reference_number or product.product_number or "").strip()
+    if not ref:
+        return ""
+    parts = [f"Vare nr. : {ref}"]
+    if getattr(product, "weight_grams", None) is not None:
+        parts.append(f"Vægt: {_danish_number(product.weight_grams)}g")
+    if getattr(product, "diameter_mm", None) is not None:
+        parts.append(f"Diameter: {_danish_number(product.diameter_mm)}mm")
+    return ", ".join(parts[:2]) + (f" {parts[2]}" if len(parts) > 2 else "")
+
+
+def _strip_spec_block(value: str) -> str:
+    base = value or ""
+    start = base.find(SPEC_STRIP_MARKER_START)
+    if start >= 0:
+        end = base.find(SPEC_STRIP_MARKER_END)
+        if end >= 0:
+            base = base[:start] + base[end + len(SPEC_STRIP_MARKER_END):]
+        else:
+            base = base[:start]
+    return base.lstrip()
+
+
+def _apply_spec_strip(value: str, strip_text: str) -> str:
+    """Spec şeridini idempotent marker'la içeriğin BAŞINA ekler."""
+    base = _strip_spec_block(value)
+    if not strip_text:
+        return base
+    block = f"{SPEC_STRIP_MARKER_START}<p>{strip_text}</p>{SPEC_STRIP_MARKER_END}"
+    return f"{block}\n{base}" if base else block
+
+
 def _apply_description_footer(description: str, footer_html: str) -> str:
     """Footer'ı idempotent marker'la ekler; mevcut marker bloğu önce sökülür."""
     base = description or ""
@@ -488,8 +529,18 @@ def build_publish_payload(
     stonex_map = _load_json_setting(settings.woocommerce_stonex_meta_map_json)
     badge_config = _load_json_setting(settings.woocommerce_badge_meta_json)
 
-    categories, primary_category_id, category_warnings = _resolve_categories(product, category_map)
-    warnings.extend(category_warnings)
+    # Üründe kategori override'ı varsa (yayın panelindeki seçici) haritayı ezer.
+    override_ids = [
+        int(value)
+        for value in (getattr(product, "woocommerce_category_ids", None) or [])
+        if str(value).strip().isdigit() or isinstance(value, int)
+    ]
+    if override_ids:
+        categories: list[dict[str, int]] = [{"id": cid} for cid in override_ids]
+        primary_category_id: int | None = override_ids[0]
+    else:
+        categories, primary_category_id, category_warnings = _resolve_categories(product, category_map)
+        warnings.extend(category_warnings)
 
     ai_text = (product.ai_description or "").strip()
     seo_bundle = _parse_ai_description_seo_bundle(ai_text)
@@ -509,6 +560,13 @@ def build_publish_payload(
     ):
         footer_html = (settings.woocommerce_desc_footer_html or "").strip() or DESC_FOOTER_DA_DEFAULT
         description_value = _apply_description_footer(description_value, footer_html)
+
+    # Referans sitedeki spec şeridi ("Vare nr. : X, Vægt: Yg Diameter: Zmm")
+    # hem kısa açıklamanın hem uzun açıklamanın başına idempotent eklenir.
+    spec_text = _spec_strip_text(product)
+    if spec_text:
+        description_value = _apply_spec_strip(description_value, spec_text)
+        short_description_value = _apply_spec_strip(short_description_value or "", spec_text)
 
     resolved_name = name.strip() if name and name.strip() else (seo_title_value or _default_name_for(product))
     payload: dict[str, Any] = {
@@ -822,6 +880,22 @@ class WooCommerceService:
             else:
                 result = await self._wc_request("POST", "/products", json_payload=payload)
         return result, warnings
+
+    async def list_categories(self) -> list[dict[str, Any]]:
+        """Sitedeki TÜM ürün kategorilerini sayfalayarak çeker (probe kalıbı)."""
+        categories: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            batch = await self._wc_request(
+                "GET", "/products/categories", params={"per_page": 100, "page": page}
+            )
+            if not isinstance(batch, list) or not batch:
+                break
+            categories.extend(item for item in batch if isinstance(item, dict))
+            if len(batch) < 100:
+                break
+            page += 1
+        return categories
 
     async def unpublish_product(self, wc_product_id: int) -> dict[str, Any]:
         return await self._wc_request(

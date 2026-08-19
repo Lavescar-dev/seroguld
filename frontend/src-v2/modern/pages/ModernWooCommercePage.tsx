@@ -51,6 +51,7 @@ import {
 import type { WooFilter, WooMakeState, WooListItem } from '@/make/woocommerce/useWooMakeState';
 import { filesFromDataTransfer } from '@/make/woocommerce/photoUpload';
 import { WooCatalogPanel } from '@/make/woocommerce/WooCatalogPanel';
+import { WooCategoryPicker } from '@/make/woocommerce/WooCategoryPicker';
 import { ModernWooProductWizard } from './ModernWooProductWizard';
 
 type ModernWooCommercePageProps = { state: WooMakeState };
@@ -324,7 +325,18 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
     <div className="space-y-5">
       <ModernSectionHeader title="WooCommerce yayını" description="Yayın kararı gerçek ProductOut ve SEO readiness alanlarına göre verilir." />
       <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
-      <ModernNotice tone={ready ? 'success' : 'warning'} title={ready ? 'Yayın için hazır' : 'Yayın ön koşulları eksik'} description={ready ? 'Ürün yayınlanabilir. Harici WooCommerce yazması için onay verin.' : 'Fotoğraf, AI onayı, SEO, GDPR, manuel review ve fiyat alanlarını tamamlayın.'} icon={ready ? <CheckCircle2 className="h-5 w-5" /> : <Info className="h-5 w-5" />} />
+      <div className="max-w-xl">
+        <WooCategoryPicker
+          categories={state.categories}
+          selectedIds={state.publishCategoryIds}
+          onToggle={state.togglePublishCategory}
+          onRefresh={() => void state.refreshCategories()}
+          loading={state.categoriesLoading}
+          error={state.categoriesError}
+          variant="modern"
+        />
+      </div>
+      <ModernNotice tone={ready ? 'success' : 'warning'} title={ready ? 'Yayın için hazır' : 'Yayın ön koşulları eksik'} description={ready ? 'Ürün yayınlanabilir. Harici WooCommerce yazması için onay verin.' : 'Fotoğraf, AI onayı, SEO, manuel review ve fiyat alanlarını tamamlayın.'} icon={ready ? <CheckCircle2 className="h-5 w-5" /> : <Info className="h-5 w-5" />} />
       <div className="flex flex-wrap gap-2">
         <ModernButton tone="success" icon={Globe} disabled={!ready || state.isPublishing} onClick={state.publish}>
           {state.isPublishing ? 'Yayınlanıyor…' : 'Siteye yayınla'}
@@ -393,7 +405,18 @@ export function ModernWooCommercePage({ state }: ModernWooCommercePageProps) {
         trailing={<div className="flex flex-wrap items-center gap-2"><ModernBadge tone="neutral">{summary.total_products} ürün</ModernBadge><ModernBadge tone="success">{summary.published_products} yayında</ModernBadge><ModernBadge tone="warning">{summary.photo_pending_products} foto eksik</ModernBadge><ModernButton size="sm" tone="ghost" icon={Cloud} onClick={() => setSurface('catalog')}>Woo kataloğu</ModernButton><ModernButton size="sm" tone="ghost" icon={RefreshCw} disabled={state.loadingWorkspace} onClick={state.refreshWorkspace}>Yenile</ModernButton><ModernButton size="sm" tone="primary" icon={Plus} onClick={() => setWizardOpen(true)}>Yeni ürün</ModernButton></div>}
       />
       <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1fr)_minmax(480px,0.9fr)]"><ProductList state={state} /><ProductWorkspace state={state} /></div>
-      <ModernWooProductWizard open={wizardOpen} stokList={state.stokList} urunler={state.urunler} pending={state.isCreatingProduct} onClose={() => setWizardOpen(false)} onSave={state.createProductFromDraft} />
+      <ModernWooProductWizard
+        open={wizardOpen}
+        stokList={state.stokList}
+        urunler={state.urunler}
+        pending={state.isCreatingProduct}
+        onClose={() => setWizardOpen(false)}
+        onSave={state.createProductFromDraft}
+        categories={state.categories}
+        categoriesLoading={state.categoriesLoading}
+        categoriesError={state.categoriesError}
+        onRefreshCategories={() => void state.refreshCategories()}
+      />
     </ModernPage>
   );
 }

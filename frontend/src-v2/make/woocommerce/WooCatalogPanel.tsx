@@ -13,6 +13,8 @@ import {
   Search,
 } from 'lucide-react';
 
+import { useState } from 'react';
+
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import type { WooCatalogSyncSummary, WooMakeState } from './useWooMakeState';
 
@@ -132,7 +134,11 @@ export function WooCatalogPanel({ state, mode, onOpenLocalProducts }: WooCatalog
             </thead>
             <tbody>
               {catalog.items.map((item) => (
-                <tr key={item.id} className={`border-b ${classic ? 'border-brand-100 hover:bg-brand-50' : 'border-sg-border-soft hover:bg-sg-surface-soft'}`}>
+                <tr
+                  key={item.id}
+                  onClick={() => state.openCatalogDetail(item.id)}
+                  className={`cursor-pointer border-b ${classic ? 'border-brand-100 hover:bg-brand-50' : 'border-sg-border-soft hover:bg-sg-surface-soft'}`}
+                >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       {item.images[0]?.src ? <img src={item.images[0].src} alt="" className="h-10 w-10 shrink-0 rounded object-cover" /> : <div className={`flex h-10 w-10 shrink-0 items-center justify-center ${classic ? 'bg-brand-100' : 'rounded bg-sg-surface-soft'}`}><ImageOff className="h-4 w-4" /></div>}
@@ -144,7 +150,7 @@ export function WooCatalogPanel({ state, mode, onOpenLocalProducts }: WooCatalog
                   <td className="px-4 py-3">{item.weight_grams == null ? <span className="text-amber-700">Eksik</span> : formatNumber(item.weight_grams, ' g')}</td>
                   <td className="px-4 py-3"><p>{item.stock_status || '—'}</p><p className={`mt-1 ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{item.stock_quantity ?? '—'} adet</p></td>
                   <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{item.manual_review_required ? <span className="border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-amber-800">Manuel</span> : <span className="border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-emerald-800">Hazır</span>}{item.photo_missing ? <span className="border border-red-200 bg-red-50 px-1.5 py-0.5 text-red-700">Foto yok</span> : null}</div></td>
-                  <td className="px-4 py-3">{item.linked_product_id ? <span className="inline-flex items-center gap-1 text-emerald-700"><Link2 className="h-3.5 w-3.5" />CRM bağlı</span> : item.permalink ? <a href={item.permalink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline">Siteyi aç<ExternalLink className="h-3 w-3" /></a> : '—'}</td>
+                  <td className="px-4 py-3">{item.linked_product_id ? <span className="inline-flex items-center gap-1 text-emerald-700"><Link2 className="h-3.5 w-3.5" />CRM bağlı</span> : item.permalink ? <a href={item.permalink} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-1 text-blue-700 hover:underline">Siteyi aç<ExternalLink className="h-3 w-3" /></a> : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -161,6 +167,152 @@ export function WooCatalogPanel({ state, mode, onOpenLocalProducts }: WooCatalog
           </div>
         </footer>
       ) : null}
+
+      {state.catalogDetailId ? <WooCatalogDetailDrawer state={state} classic={classic} buttonClass={button} /> : null}
     </section>
+  );
+}
+
+/** HTML açıklamaları güvenli düz metin olarak gösterir (etiketler sökülür). */
+export function stripHtmlToText(value: string | null | undefined): string {
+  if (!value) return '';
+  return value
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function WooCatalogDetailDrawer({ state, classic, buttonClass }: { state: WooMakeState; classic: boolean; buttonClass: string }) {
+  const detail = state.catalogDetail;
+  const [linkTargetId, setLinkTargetId] = useState('');
+  const close = () => state.openCatalogDetail(null);
+  const seoRows: Array<[string, string]> = detail
+    ? [
+        ['SEO başlığı', detail.seo_title || '—'],
+        ['Meta açıklama', detail.meta_description || '—'],
+        ['Kısa açıklama', stripHtmlToText(detail.short_description_html) || '—'],
+        ['Açıklama', stripHtmlToText(detail.description_html) || '—'],
+      ]
+    : [];
+  const unlinkedProducts = state.urunler.filter((item) => item.id);
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/30" role="dialog" aria-modal="true" aria-label="Katalog ürün detayı" onClick={close}>
+      <div
+        className={`flex h-full w-full max-w-[560px] flex-col overflow-y-auto shadow-2xl ${classic ? 'bg-white text-brand-900' : 'border-l border-sg-border bg-sg-surface text-sg-text'}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className={`sticky top-0 z-10 flex items-start justify-between gap-3 border-b px-5 py-4 ${classic ? 'border-brand-200 bg-white' : 'border-sg-border bg-sg-surface'}`}>
+          <div className="min-w-0">
+            <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${classic ? 'text-brand-500' : 'text-sg-accent'}`}>Woo katalog ürünü</p>
+            <h3 className="mt-1 truncate text-base font-semibold">{detail?.name || 'Yükleniyor…'}</h3>
+            {detail ? <p className={`mt-0.5 text-xs ${classic ? 'text-brand-500' : 'text-sg-text-soft'}`}>#{detail.woocommerce_product_id} · {detail.remote_status === 'publish' ? 'Yayında' : detail.remote_status} · {detail.sku || 'SKU yok'}</p> : null}
+          </div>
+          <button type="button" className={buttonClass} onClick={close} aria-label="Kapat">Kapat</button>
+        </div>
+
+        {state.catalogDetailLoading || !detail ? (
+          <div className="flex items-center justify-center gap-2 px-6 py-16 text-sm"><LoaderCircle className="h-5 w-5 animate-spin" />Detay yükleniyor…</div>
+        ) : (
+          <div className="space-y-4 p-5">
+            {detail.images.length ? (
+              <div className="flex gap-2 overflow-x-auto">
+                {detail.images.slice(0, 6).map((image, index) => image.src ? <img key={image.id ?? index} src={image.src} alt={image.alt || ''} className="h-20 w-20 shrink-0 rounded object-cover" /> : null)}
+              </div>
+            ) : null}
+
+            <div className={`grid gap-px sm:grid-cols-3 ${classic ? 'border border-brand-200 bg-brand-200' : 'rounded-sg-md border border-sg-border-soft bg-sg-border-soft'}`}>
+              {([
+                ['Fiyat', detail.price_dkk == null ? '—' : formatMoney(detail.price_dkk)],
+                ['Ağırlık', detail.weight_grams == null ? '—' : formatNumber(detail.weight_grams, ' g')],
+                ['Kategoriler', detail.categories.map((entry) => entry.name).filter(Boolean).join(', ') || '—'],
+              ] as const).map(([label, value]) => (
+                <div key={label} className={`px-3 py-2 ${classic ? 'bg-white' : 'bg-sg-surface'}`}>
+                  <p className={`text-[10px] font-semibold uppercase tracking-[0.13em] ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{label}</p>
+                  <p className="mt-1 text-sm font-semibold">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className={classic ? 'border border-brand-200' : 'rounded-sg-md border border-sg-border-soft'}>
+              <p className={`border-b px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? 'border-brand-200 text-brand-500' : 'border-sg-border-soft text-sg-text-soft'}`}>SEO & açıklamalar</p>
+              <div className="space-y-3 p-3">
+                {seoRows.map(([label, value]) => (
+                  <div key={label}>
+                    <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{label}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {detail.permalink ? (
+                <a href={detail.permalink} target="_blank" rel="noreferrer" className={buttonClass}>
+                  <span className="inline-flex items-center gap-1">Siteyi aç<ExternalLink className="h-3 w-3" /></span>
+                </a>
+              ) : null}
+              {detail.remote_status === 'publish' && detail.is_active ? (
+                <button
+                  type="button"
+                  className={classic ? 'border border-red-300 bg-white px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-50' : 'rounded-sg-md border border-sg-red/30 bg-sg-red-soft px-3 py-2 text-xs font-semibold text-sg-red disabled:opacity-50'}
+                  disabled={state.isCatalogActionPending}
+                  onClick={() => {
+                    if (window.confirm('Ürün sitede taslağa çekilsin mi?')) state.unpublishCatalogItem(detail.id);
+                  }}
+                >
+                  Yayından kaldır
+                </button>
+              ) : null}
+            </div>
+
+            <div className={classic ? 'border border-brand-200 p-3' : 'rounded-sg-md border border-sg-border-soft p-3'}>
+              <p className={`text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? 'text-brand-500' : 'text-sg-text-soft'}`}>CRM bağlantısı</p>
+              {detail.linked_product_id ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"><Link2 className="h-3.5 w-3.5" />Bu kayıt bir CRM ürününe bağlı.</span>
+                  <button type="button" className={buttonClass} onClick={() => state.setSecilenId(detail.linked_product_id)}>CRM ürününü seç</button>
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    disabled={state.isCatalogActionPending}
+                    onClick={() => {
+                      if (window.confirm('Katalog kaydının CRM bağlantısı kaldırılsın mı?')) state.unlinkCatalogItem(detail.id);
+                    }}
+                  >
+                    Bağlantıyı kaldır
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <select
+                    aria-label="Bağlanacak CRM ürünü"
+                    value={linkTargetId}
+                    onChange={(event) => setLinkTargetId(event.target.value)}
+                    className={classic ? 'min-w-[220px] border border-brand-300 bg-white px-2 py-2 text-xs' : 'min-w-[220px] rounded-sg-md border border-sg-border bg-sg-surface px-2 py-2 text-xs'}
+                  >
+                    <option value="">CRM ürünü seçin…</option>
+                    {unlinkedProducts.map((item) => (
+                      <option key={item.id} value={item.id}>{item.urun}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    disabled={!linkTargetId || state.isCatalogActionPending}
+                    onClick={() => state.linkCatalogItem(detail.id, linkTargetId)}
+                  >
+                    <span className="inline-flex items-center gap-1"><Link2 className="h-3.5 w-3.5" />Bağla</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

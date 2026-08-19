@@ -267,6 +267,11 @@ def to_product_out(product: Product) -> ProductOut:
         ai_description=product.ai_description,
         ai_description_approved=product.ai_description_approved,
         woocommerce_product_id=product.woocommerce_product_id,
+        woocommerce_category_ids=(
+            [int(value) for value in product.woocommerce_category_ids]
+            if product.woocommerce_category_ids
+            else None
+        ),
         is_published_to_site=product.is_published_to_site,
         published_at=product.published_at,
         photos=product.photos or [],

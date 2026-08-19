@@ -1,5 +1,6 @@
 import { type ReactNode, useMemo } from 'react';
 import { Edit2, Eye, Lock, Printer, Sparkles, Trash2 } from 'lucide-react';
+import { LABEL_PRINTING_ENABLED } from '@/lib/featureFlags';
 
 import type {
   CategoryTotals,
@@ -427,15 +428,17 @@ export function InventoryDataTable({
                 >
                   <Edit2 className="h-3 w-3" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onPrintLabel(item)}
-                  disabled={printingLabelForId === item.id}
-                  className="border border-blue-300 bg-blue-50 p-1 text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-wait disabled:opacity-50"
-                  title="Etiket Yazdır"
-                >
-                  <Printer className="h-3 w-3" />
-                </button>
+                {LABEL_PRINTING_ENABLED ? (
+                  <button
+                    type="button"
+                    onClick={() => onPrintLabel(item)}
+                    disabled={printingLabelForId === item.id}
+                    className="border border-blue-300 bg-blue-50 p-1 text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-wait disabled:opacity-50"
+                    title="Etiket Yazdır"
+                  >
+                    <Printer className="h-3 w-3" />
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => onDelete(item.id)}

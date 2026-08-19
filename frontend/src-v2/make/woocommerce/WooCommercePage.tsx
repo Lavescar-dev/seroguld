@@ -32,6 +32,7 @@ import {
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { WooCatalogPanel } from './WooCatalogPanel';
+import { WooCategoryPicker } from './WooCategoryPicker';
 import { describeRejectedPhotos, filesFromDataTransfer, validatePhotoFiles } from './photoUpload';
 
 import {
@@ -1392,6 +1393,16 @@ export function MakeWooCommercePage({
                       />
                       <span className="text-sm font-bold text-brand-500">DKK</span>
                     </div>
+
+                    <WooCategoryPicker
+                      categories={catalogState.categories}
+                      selectedIds={catalogState.publishCategoryIds}
+                      onToggle={catalogState.togglePublishCategory}
+                      onRefresh={() => void catalogState.refreshCategories()}
+                      loading={catalogState.categoriesLoading}
+                      error={catalogState.categoriesError}
+                      variant="classic"
+                    />
 
                     {!seoTamMi ? (
                       <div className="flex items-center gap-2 border border-red-200 bg-red-50 px-3 py-2">

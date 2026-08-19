@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.product import Product
 from app.models.woocommerce_catalog import WooCommerceCatalogItem, WooCommerceCatalogState
 from app.schemas.woocommerce import (
+    WooCatalogItemDetailOut,
     WooCatalogItemOut,
     WooCatalogListOut,
     WooCatalogSyncOut,
@@ -590,3 +591,56 @@ async def _bump_revision(db: AsyncSession) -> int:
     state_row = await _get_state(db)
     state_row.revision = int(state_row.revision) + 1
     return int(state_row.revision)
+
+
+def _payload_meta_value(payload: dict, keys: tuple[str, ...]) -> str | None:
+    entries = payload.get("meta_data")
+    if not isinstance(entries, list):
+        return None
+    for key in keys:
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("key") == key:
+                value = str(entry.get("value") or "").strip()
+                if value:
+                    return value
+    return None
+
+
+async def get_catalog_item_detail(db: AsyncSession, *, catalog_item_id: UUID) -> WooCatalogItemDetailOut:
+    """Katalog satırının SEO/açıklama detayı — kayıtlı source_payload'dan, ağ erişimsiz."""
+    item = await db.get(WooCommerceCatalogItem, catalog_item_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WooCommerce katalog ürünü bulunamadı.")
+    payload = item.source_payload_json if isinstance(item.source_payload_json, dict) else {}
+    base = catalog_item_out(item)
+    return WooCatalogItemDetailOut(
+        **base.model_dump(),
+        description_html=str(payload.get("description") or "") or None,
+        short_description_html=str(payload.get("short_description") or "") or None,
+        seo_title=_payload_meta_value(payload, ("_yoast_wpseo_title", "rank_math_title")),
+        meta_description=_payload_meta_value(
+            payload, ("_yoast_wpseo_metadesc", "rank_math_description", "crm_meta_description")
+        ),
+    )
+
+
+async def unpublish_catalog_item(
+    db: AsyncSession, *, catalog_item_id: UUID, skip_remote: bool = False
+) -> WooCatalogItemOut:
+    """Katalog kaydını sitede taslağa çeker ve yerel durumu günceller.
+
+    Bağlı kayıtlarda uzak çağrı + history ürün-unpublish akışında yapılır;
+    o yol skip_remote=True ile yalnız katalog satırını günceller.
+    """
+    item = await db.get(WooCommerceCatalogItem, catalog_item_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WooCommerce katalog ürünü bulunamadı.")
+    if not skip_remote:
+        service = WooCommerceService()
+        await service.unpublish_product(item.woocommerce_product_id)
+    item.remote_status = "draft"
+    item.is_active = False
+    await _bump_revision(db)
+    await db.commit()
+    await db.refresh(item)
+    return catalog_item_out(item)

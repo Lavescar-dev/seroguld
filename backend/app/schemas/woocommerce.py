@@ -67,6 +67,31 @@ class WooCatalogItemOut(AppBaseModel):
     updated_at: datetime
 
 
+class WooCatalogItemDetailOut(WooCatalogItemOut):
+    """Katalog satırının SEO/açıklama detayı — source_payload'dan türetilir."""
+
+    description_html: str | None = None
+    short_description_html: str | None = None
+    seo_title: str | None = None
+    meta_description: str | None = None
+
+
+class WooCategoryOut(AppBaseModel):
+    id: int
+    name: str
+    slug: str | None = None
+    parent: int = 0
+    count: int = 0
+    # Girintili düz liste için ağaç derinliği (kök=0).
+    depth: int = 0
+
+
+class WooCategoriesOut(AppBaseModel):
+    items: list[WooCategoryOut] = Field(default_factory=list)
+    fetched_at: datetime
+    cached: bool = False
+
+
 class WooCatalogListOut(AppBaseModel):
     items: list[WooCatalogItemOut] = Field(default_factory=list)
     page: int

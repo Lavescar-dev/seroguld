@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
 import { formatDate, formatMoney, formatNumber, labelInventoryCategory, labelInventorySubcategory, labelShopSyncStatus } from '@/lib/format';
+import { LABEL_PRINTING_ENABLED } from '@/lib/featureFlags';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import { describeActiveInventoryFilters, type MainCategory, type PlatinumSub, type SilverSub, type StokItem } from '@/make/depolama/types';
 import { InventoryWorkbookImport } from '@/make/depolama/InventoryWorkbookImport';
@@ -192,7 +193,7 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
                     <td className="px-3 py-3">
                       <div className="flex gap-2">
                         <button type="button" onClick={() => state.onOpenDetail(item.id)} className={shellButtonClass('ghost')}>Detay</button>
-                        <button type="button" onClick={() => state.onPrintLabel(item.id, item.urun)} className={shellButtonClass('ghost')}>Etiket</button>
+                        {LABEL_PRINTING_ENABLED ? <button type="button" onClick={() => state.onPrintLabel(item.id, item.urun)} className={shellButtonClass('ghost')}>Etiket</button> : null}
                       </div>
                     </td>
                   </tr>
@@ -251,10 +252,12 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
                   <Eye className="h-4 w-4" />
                   Woo
                 </button>
-                <button type="button" onClick={() => state.onPrintLabel(selected.id, selected.product_number)} disabled={state.printingLabelForId === selected.id} className={shellButtonClass('secondary')}>
-                  <Tag className="h-4 w-4" />
-                  Etiket
-                </button>
+                {LABEL_PRINTING_ENABLED ? (
+                  <button type="button" onClick={() => state.onPrintLabel(selected.id, selected.product_number)} disabled={state.printingLabelForId === selected.id} className={shellButtonClass('secondary')}>
+                    <Tag className="h-4 w-4" />
+                    Etiket
+                  </button>
+                ) : null}
                 <button type="button" onClick={() => state.onUploadPhotos(selected.id, [])} disabled className={shellButtonClass('secondary')}>
                   <Camera className="h-4 w-4" />
                   Foto Yükle

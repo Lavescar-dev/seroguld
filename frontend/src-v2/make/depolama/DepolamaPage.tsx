@@ -27,6 +27,7 @@ import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
 import { InventoryDataTable } from './InventoryDataTable';
 import { InventoryFilters } from './InventoryFilters';
 import { InventoryWorkbookImport } from './InventoryWorkbookImport';
+import { LABEL_PRINTING_ENABLED } from '@/lib/featureFlags';
 import type {
   CategoryTotals,
   InventoryFilterState,
@@ -891,15 +892,17 @@ function InventoryDetailDrawer({
               <Edit2 className="h-3.5 w-3.5" />
               Düzenle
             </button>
-            <button
-              type="button"
-              onClick={onPrintLabel}
-              disabled={printingLabel}
-              className="inline-flex items-center gap-2 border border-blue-300 bg-blue-50 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-blue-800 transition hover:bg-blue-100 disabled:cursor-wait disabled:opacity-50"
-            >
-              {printingLabel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-              Etiket
-            </button>
+            {LABEL_PRINTING_ENABLED ? (
+              <button
+                type="button"
+                onClick={onPrintLabel}
+                disabled={printingLabel}
+                className="inline-flex items-center gap-2 border border-blue-300 bg-blue-50 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-blue-800 transition hover:bg-blue-100 disabled:cursor-wait disabled:opacity-50"
+              >
+                {printingLabel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                Etiket
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onOpenWooProduct}

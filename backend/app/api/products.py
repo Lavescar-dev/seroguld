@@ -747,10 +747,16 @@ async def publish(
             detail=f"SEO paketi eksik. Yayın için zorunlu alanlar: {', '.join(missing_fields)}",
         )
 
+    # Yayın panelindeki kategori seçimi ürüne kalıcı yazılır; None = dokunma,
+    # [] = override'ı temizle (Settings haritasına dön).
+    if payload.category_ids is not None:
+        product.woocommerce_category_ids = [int(value) for value in payload.category_ids] or None
+
     wc_service = WooCommerceService()
     request_payload = {
         "regular_price_dkk": str(payload.regular_price_dkk),
         "name": payload.name,
+        "category_ids": payload.category_ids,
     }
 
     try:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+import time
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.antifraud import (
@@ -37,6 +39,7 @@ from app.schemas.product import (
     WooSyncLogOut,
 )
 from app.schemas.woocommerce import (
+    WooCatalogItemDetailOut,
     WooCatalogItemOut,
     WooCatalogLinkIn,
     WooCatalogListOut,
@@ -44,23 +47,101 @@ from app.schemas.woocommerce import (
     WooCatalogSyncIn,
     WooCatalogSyncOut,
     WooCatalogSyncPreviewOut,
+    WooCategoriesOut,
+    WooCategoryOut,
     WooWorkspaceOut,
 )
 from app.config import get_settings
+from app.models.woocommerce_catalog import WooCommerceCatalogItem
 from app.services.woocommerce import WooCommerceService
 from app.services.woocommerce_catalog_service import (
     apply_catalog_sync,
     get_catalog_counts,
+    get_catalog_item_detail,
     get_catalog_state,
     link_catalog_item,
     list_catalog,
     preview_catalog_sync,
     unlink_catalog_item,
+    unpublish_catalog_item,
 )
 from app.utils.helpers import utc_now
 from app.services.product_service import get_product_or_404, to_product_out
 
 router = APIRouter()
+
+# Kategori listesi kısa süre cache'lenir — picker her açılışta WP'yi yormasın.
+_CATEGORY_CACHE_TTL_SECONDS = 120.0
+_category_cache: dict = {"flat": None, "fetched_at": None, "expires_at": 0.0}
+
+
+def _flatten_category_tree(raw: list[dict]) -> list[WooCategoryOut]:
+    """Ağacı ebeveyn-önce, kardeşler alfabetik sırayla düz listeye açar (depth'li)."""
+    by_parent: dict[int, list[dict]] = {}
+    for item in raw:
+        try:
+            parent = int(item.get("parent") or 0)
+        except (TypeError, ValueError):
+            parent = 0
+        by_parent.setdefault(parent, []).append(item)
+
+    out: list[WooCategoryOut] = []
+
+    def walk(parent: int, depth: int) -> None:
+        for item in sorted(by_parent.get(parent, []), key=lambda entry: str(entry.get("name") or "").lower()):
+            try:
+                item_id = int(item["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            out.append(
+                WooCategoryOut(
+                    id=item_id,
+                    name=str(item.get("name") or ""),
+                    slug=str(item.get("slug") or "") or None,
+                    parent=parent,
+                    count=int(item.get("count") or 0),
+                    depth=depth,
+                )
+            )
+            walk(item_id, depth + 1)
+
+    walk(0, 0)
+    # Ebeveyni listede olmayan (yetim) kategoriler kaybolmasın — kökte listelenir.
+    seen = {entry.id for entry in out}
+    for item in raw:
+        try:
+            item_id = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if item_id not in seen:
+            out.append(
+                WooCategoryOut(
+                    id=item_id,
+                    name=str(item.get("name") or ""),
+                    slug=str(item.get("slug") or "") or None,
+                    parent=0,
+                    count=int(item.get("count") or 0),
+                    depth=0,
+                )
+            )
+    return out
+
+
+@router.get("/woocommerce/categories", response_model=WooCategoriesOut)
+async def get_woocommerce_categories_v2(
+    refresh: bool = Query(default=False),
+    admin: User = Depends(require_admin),
+) -> WooCategoriesOut:
+    now = time.monotonic()
+    if not refresh and _category_cache["flat"] is not None and now < _category_cache["expires_at"]:
+        return WooCategoriesOut(items=_category_cache["flat"], fetched_at=_category_cache["fetched_at"], cached=True)
+
+    service = WooCommerceService()
+    raw = await service.list_categories()
+    flat = _flatten_category_tree(raw)
+    fetched_at = utc_now()
+    _category_cache.update({"flat": flat, "fetched_at": fetched_at, "expires_at": now + _CATEGORY_CACHE_TTL_SECONDS})
+    return WooCategoriesOut(items=flat, fetched_at=fetched_at, cached=False)
 
 
 @router.get("/woocommerce/status", response_model=WooCatalogStatusOut)
@@ -159,6 +240,32 @@ async def post_woocommerce_catalog_sync_v2(
         preview_revision=payload.preview_revision,
         owner_user_id=admin.id,
     )
+
+
+@router.get("/woocommerce/catalog/{catalog_item_id}", response_model=WooCatalogItemDetailOut)
+async def get_woocommerce_catalog_item_v2(
+    catalog_item_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> WooCatalogItemDetailOut:
+    return await get_catalog_item_detail(db, catalog_item_id=catalog_item_id)
+
+
+@router.post("/woocommerce/catalog/{catalog_item_id}/unpublish", response_model=WooCatalogItemOut)
+async def post_woocommerce_catalog_unpublish_v2(
+    catalog_item_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> WooCatalogItemOut:
+    item = await db.get(WooCommerceCatalogItem, catalog_item_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WooCommerce katalog ürünü bulunamadı.")
+    if item.linked_product_id is not None:
+        # Bağlı kayıt: uzak çağrı + history/sync log ürün akışında; sonra yalnız
+        # katalog satırı güncellenir.
+        await legacy_unpublish_product(product_id=item.linked_product_id, db=db, admin=admin)
+        return await unpublish_catalog_item(db, catalog_item_id=catalog_item_id, skip_remote=True)
+    return await unpublish_catalog_item(db, catalog_item_id=catalog_item_id)
 
 
 @router.post("/woocommerce/catalog/{catalog_item_id}/link", response_model=WooCatalogItemOut)

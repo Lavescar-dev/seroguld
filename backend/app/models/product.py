@@ -62,6 +62,10 @@ class Product(Base):
     ai_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_description_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     woocommerce_product_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Yayın kategorisi override'ı (WC kategori ID listesi); boşsa Settings haritası kullanılır.
+    woocommerce_category_ids: Mapped[list | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     is_published_to_site: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

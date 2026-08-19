@@ -193,6 +193,7 @@ export interface ProductOut {
   ai_description?: string | null;
   ai_description_approved: boolean;
   woocommerce_product_id?: number | null;
+  woocommerce_category_ids?: number[] | null;
   is_published_to_site: boolean;
   published_at?: string | null;
   photos: ProductPhoto[];
