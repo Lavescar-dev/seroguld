@@ -1,7 +1,7 @@
 # Sero Guld Repo AGENTS.md
 
 > **Son güncellenme:** 2026-08-13
-> **Migration head:** `0034_market_rate_confirmation`
+> **Migration head:** `0035_product_dims_inventory`
 > **Versiyon:** v0.3.4
 
 Bu dosya `seroguld-crm` için proje-özel çalışma kurallarını kilitler.
