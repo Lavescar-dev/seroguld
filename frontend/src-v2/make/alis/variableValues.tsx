@@ -27,7 +27,7 @@ const SILVER_CALCULATOR_TARGETS = [
   { value: 'silver:2', label: 'Finsølv' },
   { value: 'silver:3', label: 'Sterling' },
   { value: 'silver:4', label: '3 tårnet' },
-  { value: 'silver:5', label: 'Sølv' },
+  { value: 'silver:5', label: 'Plet' },
 ] as const;
 
 function withCalculatedTotal(row: EditableCalculatorRow): EditableCalculatorRow {

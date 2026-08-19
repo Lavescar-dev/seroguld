@@ -73,6 +73,8 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     onCustomerBlur: () => undefined,
     goldRows: [],
     silverRows: [],
+    barRows: [],
+    onUpdateBarRow: () => undefined,
     onUpdateGoldRow: () => undefined,
     onUpdateSilverRow: () => undefined,
     activeWorkspaceView: 'system',

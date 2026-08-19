@@ -272,6 +272,13 @@ def looks_like_legacy_afg_template(content: bytes) -> bool:
     """
     workbook, sheet = _legacy_sheet(content)
     try:
+        # CRM üretimi dosyalar gizli __SERO_SYNC sayfası taşır ve afg-v2
+        # düzeninde değerleri D/G'ye yazar — etiket sezgisine takılmadan
+        # kesin olarak "legacy değil" say.
+        from app.services.document_artifact_service import SYNC_SHEET_NAME
+
+        if SYNC_SHEET_NAME in workbook.sheetnames:
+            return False
         label_hits = 0
         value_hits = 0
         for row in range(1, _LEGACY_SCAN_MAX_ROW + 1):

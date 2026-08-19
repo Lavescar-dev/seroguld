@@ -16,6 +16,7 @@ from app.schemas.pos import (
     PosWorkspaceSectionsUpdate,
     PosWorkspaceSilverRowInput,
     PosWorkspaceGoldRowInput,
+    PosWorkspaceBarRowInput,
 )
 
 if TYPE_CHECKING:
@@ -59,7 +60,8 @@ def build_afg_workbook_bytes_from_workspace(workspace: "PosWorkspaceOut", *, syn
         email=workspace.customer.email,
         identity_doc=workspace.customer.identity_doc_number,
     )
-    core._apply_afg_workspace_rows(sheet, core._afg_gold_rows_from_workspace(workspace), core._afg_silver_rows_from_workspace(workspace))
+    core._apply_afg_workspace_rows(sheet, core._afg_gold_rows_from_workspace(workspace), core._afg_silver_rows_from_workspace(workspace), workspace.bar_rows)
+    core._apply_afg_footer_cells(sheet)
     core._apply_afg_calculator_cells(sheet, workspace.calculators)
     core._apply_afg_summary_cells(
         sheet,
@@ -120,7 +122,8 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
         email=detail.customer_email,
         identity_doc=detail.customer_identity_doc_number,
     )
-    core._apply_afg_detail_rows(sheet, core._aggregate_detail_gold_rows(detail), core._aggregate_detail_silver_rows(detail))
+    core._apply_afg_detail_rows(sheet, core._aggregate_detail_gold_rows(detail), core._aggregate_detail_silver_rows(detail), core._aggregate_detail_bar_rows(detail))
+    core._apply_afg_footer_cells(sheet)
     core._apply_afg_summary_cells(
         sheet,
         net_amount_dkk=core.quantize_2(core.to_decimal(detail.net_amount_dkk)),
@@ -156,13 +159,13 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
 def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, str]:
     core = _core()
     values = {
-        f"{core.AFG_PRIMARY_SHEET}!C16": workspace.customer.name or "—",
-        f"{core.AFG_PRIMARY_SHEET}!F16": workspace.customer.cpr_number or "—",
-        f"{core.AFG_PRIMARY_SHEET}!C17": core._compose_afg_address_line(workspace.customer.address, workspace.customer.city) or "—",
-        f"{core.AFG_PRIMARY_SHEET}!F17": workspace.customer.identity_doc_number or "—",
-        f"{core.AFG_PRIMARY_SHEET}!C18": workspace.customer.postal_code or "—",
-        f"{core.AFG_PRIMARY_SHEET}!F18": workspace.customer.phone or "—",
-        f"{core.AFG_PRIMARY_SHEET}!F19": workspace.customer.email or "—",
+        f"{core.AFG_PRIMARY_SHEET}!D16": workspace.customer.name or "—",
+        f"{core.AFG_PRIMARY_SHEET}!G16": core.cpr_birth_part(workspace.customer.cpr_number) or "—",
+        f"{core.AFG_PRIMARY_SHEET}!D17": (workspace.customer.address or "").strip() or "—",
+        f"{core.AFG_PRIMARY_SHEET}!G17": workspace.customer.identity_doc_number or "—",
+        f"{core.AFG_PRIMARY_SHEET}!D18": core._compose_afg_postal_line(workspace.customer.postal_code, workspace.customer.city) or "—",
+        f"{core.AFG_PRIMARY_SHEET}!G18": workspace.customer.phone or "—",
+        f"{core.AFG_PRIMARY_SHEET}!G19": workspace.customer.email or "—",
         f"{core.AFG_PRIMARY_SHEET}!C40": "Kontant" if workspace.payment_method == "cash" else "Overførsel",
         f"{core.AFG_PRIMARY_SHEET}!D41": "—" if workspace.payment_method == "cash" else (workspace.bank_info.reg_number or "—"),
         f"{core.AFG_PRIMARY_SHEET}!D42": "—" if workspace.payment_method == "cash" else (workspace.bank_info.account_number or "—"),
@@ -185,7 +188,6 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
         ("J11", "999", "silver"),
         ("J12", "925", "silver"),
         ("J13", "830", "silver"),
-        ("J14", "800", "silver"),
     )
     for dkk_cell, rate_key, kind in matrix_keys:
         dkk_value = (
@@ -194,6 +196,13 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
             else workspace.market_rates.silver_rates_dkk.get(rate_key)
         )
         values[f"{core.AFG_VARIABLES_SHEET}!{dkk_cell}"] = core._fmt_decimal(dkk_value)
+    values[f"{core.AFG_VARIABLES_SHEET}!J14"] = core._fmt_decimal(workspace.market_rates.plet_dkk)
+    values[f"{core.AFG_VARIABLES_SHEET}!J15"] = core._fmt_decimal(workspace.market_rates.gold_bar_dkk)
+    values[f"{core.AFG_VARIABLES_SHEET}!J16"] = core._fmt_decimal(workspace.market_rates.silver_bar_dkk)
+    for row in workspace.bar_rows:
+        bar_idx = core.AFG_BAR_GOLD_ROW if row.bar_type == "gold" else core.AFG_BAR_SILVER_ROW
+        values[f"{core.AFG_PRIMARY_SHEET}!B{bar_idx}"] = core._fmt_decimal(row.avance_percent)
+        values[f"{core.AFG_PRIMARY_SHEET}!F{bar_idx}"] = core._fmt_decimal(row.gram)
     for idx, row in enumerate(core._afg_gold_rows_from_workspace(workspace), start=core.AFG_GOLD_ROW_START):
         values[f"{core.AFG_PRIMARY_SHEET}!B{idx}"] = core._fmt_decimal(row.avance_percent)
         values[f"{core.AFG_PRIMARY_SHEET}!F{idx}"] = core._fmt_decimal(row.gram)
@@ -264,17 +273,41 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
             )
         return calculated_value
 
-    address, city = core._split_afg_address_line(sheet["C17"].value)
-    customer = PosWorkspaceCustomerUpdate(
-        name=core._clean_text(sheet["C16"].value),
-        cpr_number=core._clean_text(sheet["F16"].value),
-        address=address,
-        city=city,
-        identity_doc_number=core._clean_text(sheet["F17"].value),
-        postal_code=core._clean_text(sheet["C18"].value),
-        phone=core._clean_text(sheet["F18"].value),
-        email=core._clean_text(sheet["F19"].value),
-    )
+    # Hücre düzeni sözleşme sürümüne bağlı: afg-v1 (0.3.5 ve öncesi) değerleri
+    # etiket hücrelerine (C16/F16...) yazar; afg-v2 etiketlerin sağına (D/G).
+    contract_version = core.AFG_CONTRACT_VERSION
+    if core.SYNC_SHEET_NAME in workbook.sheetnames:
+        try:
+            contract_version = core._read_sync_sheet(workbook).contract_version or contract_version
+        except ValueError:
+            pass
+
+    if contract_version == "afg-v1":
+        address, city = core._split_afg_address_line(sheet["C17"].value)
+        customer = PosWorkspaceCustomerUpdate(
+            name=core._clean_text(sheet["C16"].value),
+            cpr_number=core._clean_text(sheet["F16"].value),
+            address=address,
+            city=city,
+            identity_doc_number=core._clean_text(sheet["F17"].value),
+            postal_code=core._clean_text(sheet["C18"].value),
+            phone=core._clean_text(sheet["F18"].value),
+            email=core._clean_text(sheet["F19"].value),
+        )
+    else:
+        postal_code, city = core._split_afg_postal_line(sheet["D18"].value)
+        # CPR bilinçli olarak geri OKUNMAZ: G16 yalnız doğum tarihi bölümünü
+        # gösterir; kayıtlı tam CPR'nin üzerine yazılmamalıdır (alan hiç set
+        # edilmez → model_fields_set'e girmez → mevcut değer korunur).
+        customer = PosWorkspaceCustomerUpdate(
+            name=core._clean_text(sheet["D16"].value),
+            address=core._clean_text(sheet["D17"].value),
+            city=city,
+            identity_doc_number=core._clean_text(sheet["G17"].value),
+            postal_code=postal_code,
+            phone=core._clean_text(sheet["G18"].value),
+            email=core._clean_text(sheet["G19"].value),
+        )
 
     payment_method = core._payment_method_from_excel(sheet["C40"].value)
     reg_number = core._clean_text(sheet["D41"].value)
@@ -298,6 +331,14 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         )
         for idx, row_key in enumerate(core.AFG_SILVER_ROW_KEYS, start=core.AFG_SILVER_ROW_START)
     ]
+    bar_rows = [
+        PosWorkspaceBarRowInput(
+            bar_type=bar_type,
+            gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
+            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
+        )
+        for bar_type, idx in (("gold", core.AFG_BAR_GOLD_ROW), ("silver", core.AFG_BAR_SILVER_ROW))
+    ]
 
     market_rates = None
     numbering = None
@@ -314,7 +355,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
             return core._decimal_from_excel(numeric_cell_value(vars_sheet, calculated_vars_sheet, ref))
 
         gold_matrix_rows = {"8": 4, "14": 5, "18": 6, "21": 7, "21.6": 8, "22": 9, "24": 10}
-        silver_matrix_rows = {"999": 11, "925": 12, "830": 13, "800": 14}
+        silver_matrix_rows = {"999": 11, "925": 12, "830": 13}
         # Kanonik birim J sütununda DKK/g'dir. 0.3.5 ve öncesi taslaklarda J,
         # I (EUR) × C10 (fx) ile yazılmış aynaydı; J boş kalan çok eski
         # dosyalarda I×fx çevrimine düşülür.
@@ -326,6 +367,9 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
             key: core.quantize_2(_matrix_cell("J", row_idx) or (_matrix_cell("I", row_idx) * fx))
             for key, row_idx in silver_matrix_rows.items()
         }
+        plet_cell = core.quantize_2(_matrix_cell("J", 14) or (_matrix_cell("I", 14) * fx))
+        gold_bar_cell = core.quantize_2(_matrix_cell("J", 15))
+        silver_bar_cell = core.quantize_2(_matrix_cell("J", 16))
         has_matrix_values = any(value > 0 for value in [*gold_rate_cells.values(), *silver_rate_cells.values()])
         if has_matrix_values:
             gold_24k_dkk = (
@@ -345,6 +389,9 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                     silver_rates_dkk=silver_rate_cells,
                     gold_24k_dkk=gold_24k_dkk,
                     silver_dkk=silver_dkk,
+                    plet_dkk=plet_cell,
+                    gold_bar_dkk=gold_bar_cell,
+                    silver_bar_dkk=silver_bar_cell,
                 )
             )
         else:
@@ -445,6 +492,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         sections=PosWorkspaceSectionsUpdate(
             gold_rows=gold_rows,
             silver_rows=silver_rows,
+            bar_rows=bar_rows,
             bank_info={
                 "reg_number": reg_number,
                 "account_number": account_number,

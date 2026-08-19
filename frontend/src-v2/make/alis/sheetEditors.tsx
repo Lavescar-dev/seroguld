@@ -7,6 +7,7 @@ import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 import { formatDecimalFixed, parseDecimalValue } from './marketRates';
 import type {
   CompanionMode,
+  EditableBarRow,
   EditableCustomer,
   EditableGoldRow,
   EditableInvoiceGoldRow,
@@ -22,7 +23,7 @@ const INVOICE_GOLD_CODE_OPTIONS = [
   { value: '2', label: 'Finsølv' },
   { value: '3', label: 'Sterling sølv' },
   { value: '4', label: '3 tårnet sølv' },
-  { value: '5', label: 'Sølv' },
+  { value: '5', label: 'Plet' },
 ] as const;
 const INVOICE_GOLD_LABEL_BY_CODE: Record<string, string> = Object.fromEntries(
   INVOICE_GOLD_CODE_OPTIONS.map((option) => [option.value, option.label]),
@@ -88,8 +89,10 @@ export function AfregningsSheetEditor({
   customerForm,
   goldRows,
   silverRows,
+  barRows,
   onUpdateGoldRow,
   onUpdateSilverRow,
+  onUpdateBarRow,
   bankInfo,
   setBankInfo,
 }: {
@@ -97,8 +100,10 @@ export function AfregningsSheetEditor({
   customerForm: EditableCustomer;
   goldRows: EditableGoldRow[];
   silverRows: EditableSilverRow[];
+  barRows: EditableBarRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   bankInfo: PosWorkspaceBankInfo;
   setBankInfo: Dispatch<SetStateAction<PosWorkspaceBankInfo>>;
   paymentMethod: PaymentMethod;
@@ -114,7 +119,9 @@ export function AfregningsSheetEditor({
             <span className="mono bg-slate-500 px-1.5 py-0.5 font-black text-white">2=Finsølv</span>
             <span className="mono bg-slate-400 px-1.5 py-0.5 font-black text-white">3=Sterling</span>
             <span className="mono bg-slate-400 px-1.5 py-0.5 font-black text-white">4=3-tårnet</span>
-            <span className="mono bg-slate-400 px-1.5 py-0.5 font-black text-white">5=Sølv</span>
+            <span className="mono bg-slate-400 px-1.5 py-0.5 font-black text-white">5=Plet</span>
+            <span className="mono bg-amber-600 px-1.5 py-0.5 font-black text-white">6=Guldbarre</span>
+            <span className="mono bg-slate-600 px-1.5 py-0.5 font-black text-white">7=Sølvbarre</span>
           </div>
         </div>
         <table className="w-full border-collapse text-sm">
@@ -192,7 +199,7 @@ export function AfregningsSheetEditor({
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-black uppercase tracking-widest text-white">Sølv — Gümüş</span>
                   <span className="h-3 w-px bg-slate-400" />
-                  <span className="mono text-xs text-slate-300">999 · 925 · 830 · 800</span>
+                  <span className="mono text-xs text-slate-300">999 · 925 · 830 · Plet · Barrer</span>
                 </div>
               </td>
             </tr>
@@ -230,6 +237,61 @@ export function AfregningsSheetEditor({
                       value={row.gram}
                       rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
                       onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'gram', canonical)}
+                      className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
+                        hasGram
+                          ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'
+                          : 'border-slate-200 bg-white text-brand-700 focus:border-slate-400'
+                      }`}
+                    />
+                  </td>
+                  <td className="mono border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-right text-sm">
+                    <span className={hasGram ? 'font-semibold text-emerald-700' : 'text-brand-300'}>
+                      {hasGram ? Number(row.unit_price_dkk).toFixed(2) : '—'}
+                    </span>
+                  </td>
+                  <td className={`mono border px-3 py-2.5 text-right text-sm ${
+                    hasGram ? 'border-slate-300 bg-slate-100 font-black text-slate-800' : 'border-brand-300 bg-brand-50 text-brand-300'
+                  }`}>
+                    {hasGram ? Number(row.line_total_dkk).toFixed(2) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+            {barRows.map((row, index) => {
+              const hasGram = parseDecimalValue(row.gram) > 0;
+              const isGold = row.bar_type === 'gold';
+              return (
+                <tr
+                  key={row.row_key}
+                  className={`border-b transition-colors ${hasGram ? (isGold ? 'border-amber-200 border-l-4 border-l-amber-500' : 'border-slate-200 border-l-4 border-l-slate-500') : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
+                  style={{ background: hasGram ? (isGold ? '#fffbeb' : '#f8fafc') : '#ffffff' }}
+                >
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + silverRows.length + index + 1}</td>
+                  <td className="border border-brand-300 px-2 py-2.5 text-center">
+                    <span className={`mono px-2 py-0.5 text-xs font-black ${isGold ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-700'}`}>{isGold ? '6' : '7'}</span>
+                  </td>
+                  <td className="border border-brand-300 px-3 py-2.5">
+                    <span className="text-sm font-semibold text-brand-800">{row.label}</span>
+                    <span className="mono ml-2 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{row.lodighed}‰</span>
+                  </td>
+                  <td className="border border-orange-300 bg-orange-50 px-1.5 py-2">
+                    <div className="flex items-center">
+                      <CommittedNumericInput
+                        value={row.avance_percent}
+                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        onCommit={(_, canonical) => onUpdateBarRow(row.row_key, 'avance_percent', canonical)}
+                        className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
+                      />
+                      <span className="ml-1 text-xs font-bold text-orange-400">%</span>
+                    </div>
+                  </td>
+                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-500">{isGold ? '24' : '—'}</td>
+                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-semibold text-slate-500">{row.lodighed}</td>
+                  <td className="border border-slate-300 bg-slate-50 px-1.5 py-2">
+                    <CommittedNumericInput
+                      value={row.gram}
+                      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                      onCommit={(_, canonical) => onUpdateBarRow(row.row_key, 'gram', canonical)}
                       className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
                         hasGram
                           ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'

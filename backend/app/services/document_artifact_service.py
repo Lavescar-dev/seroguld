@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -18,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import ROOT_DIR, get_settings
+from app.utils.cpr import cpr_birth_part
 from app.models.document_artifact import DocumentArtifact
 from app.schemas.afg import (
     AfgClassification,
@@ -99,13 +101,15 @@ LOG_SILVER_LEDGER_END = 87
 LOG_ROUTE_CODE_OPTIONS = ("-", "S", "H", "D", "M")
 
 AFG_CUSTOMER_EDITABLE_CELLS = (
-    {"cell_ref": "C16", "label": "Müşteri Adı", "input_kind": "text", "field": "name"},
-    {"cell_ref": "F16", "label": "CPR", "input_kind": "text", "field": "cpr_number"},
-    {"cell_ref": "C17", "label": "Adres", "input_kind": "text", "field": "address"},
-    {"cell_ref": "F17", "label": "Kimlik / Pas", "input_kind": "text", "field": "identity_doc_number"},
-    {"cell_ref": "C18", "label": "Posta Kodu", "input_kind": "text", "field": "postal_code"},
-    {"cell_ref": "F18", "label": "Telefon", "input_kind": "text", "field": "phone"},
-    {"cell_ref": "F19", "label": "E-mail", "input_kind": "text", "field": "email"},
+    # Değer hücreleri etiketlerin sağındadır (D/G); etiket hücreleri kilitli
+    # kalır. CPR workbook'tan DÜZENLENEMEZ: G16 salt görüntü (yalnız doğum
+    # tarihi bölümü), tam CPR CRM içinde kalır.
+    {"cell_ref": "D16", "label": "Müşteri Adı", "input_kind": "text", "field": "name"},
+    {"cell_ref": "D17", "label": "Adres (yalnız sokak)", "input_kind": "text", "field": "address"},
+    {"cell_ref": "G17", "label": "Kimlik / Pas", "input_kind": "text", "field": "identity_doc_number"},
+    {"cell_ref": "D18", "label": "Posta kodu + Şehir", "input_kind": "text", "field": "postal_line"},
+    {"cell_ref": "G18", "label": "Telefon", "input_kind": "text", "field": "phone"},
+    {"cell_ref": "G19", "label": "E-mail", "input_kind": "text", "field": "email"},
 )
 
 AFG_DOCUMENT_EDITABLE_CELLS = (
@@ -134,7 +138,9 @@ AFG_VARIABLE_EDITABLE_CELLS = (
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J11", "label": "Silver 999 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:999"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J12", "label": "Silver 925 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:925"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J13", "label": "Silver 830 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:830"},
-    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J14", "label": "Silver 800 DKK/g", "input_kind": "decimal", "field": "market_rates:silver_rates_dkk:800"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J14", "label": "Plet DKK/g", "input_kind": "decimal", "field": "market_rates:plet_dkk"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J15", "label": "Guldbarre DKK/g", "input_kind": "decimal", "field": "market_rates:gold_bar_dkk"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J16", "label": "Sølvbarre DKK/g", "input_kind": "decimal", "field": "market_rates:silver_bar_dkk"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "C14", "label": "Afregningsnr.", "input_kind": "text", "field": "numbering:afregnings_number_next"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "D14", "label": "Fakturanr.", "input_kind": "text", "field": "numbering:invoice_number_next"},
 )
@@ -145,13 +151,20 @@ AFG_VARIABLE_MATRIX_ROWS = (
     ("I6", "J6", "K6", "Gold 18K", "750"),
     ("I7", "J7", "K7", "Gold 21K", "875"),
     ("I8", "J8", "K8", "Gold 21.6K", "900"),
-    ("I9", "J9", "K9", "Gold 22K", "917"),
+    ("I9", "J9", "K9", "Gold 22K", "916"),
     ("I10", "J10", "K10", "Gold 24K", "999"),
     ("I11", "J11", "K11", "Finsølv", "999"),
     ("I12", "J12", "K12", "Sterling sølv", "925"),
     ("I13", "J13", "K13", "3 tårnet sølv", "830"),
-    ("I14", "J14", "K14", "Sølv", "800"),
+    ("I14", "J14", "K14", "Plet", ""),
+    ("I15", "J15", "K15", "Guldbarre", "999.9"),
+    ("I16", "J16", "K16", "Sølvbarre", "999"),
 )
+
+# Taslak workbook'ta bar giriş satırları: 29 (şablonda boş) ve 34 (ilk dolgu
+# satırı). Gümüş satırları 30-33'te kalır; SUM(F22:F37)/SUM(H22:H37) kapsar.
+AFG_BAR_GOLD_ROW = 29
+AFG_BAR_SILVER_ROW = 34
 
 AFG_GOLD_CALCULATOR_ROWS = (
     ("calc_gold:1", "J22", "K22", "L22"),
@@ -181,6 +194,10 @@ def _afg_row_editable_cells() -> list[dict[str, str]]:
         type_code = row_key.split(":", 1)[1]
         rows.append({"cell_ref": f"B{offset}", "label": f"Gümüş {type_code} Avance %", "input_kind": "percent", "field": f"{row_key}:avance"})
         rows.append({"cell_ref": f"F{offset}", "label": f"Gümüş {type_code} Gram", "input_kind": "decimal", "field": f"{row_key}:gram"})
+    rows.append({"cell_ref": f"B{AFG_BAR_GOLD_ROW}", "label": "Guldbarre Avance %", "input_kind": "percent", "field": "bar:gold:avance"})
+    rows.append({"cell_ref": f"F{AFG_BAR_GOLD_ROW}", "label": "Guldbarre Gram", "input_kind": "decimal", "field": "bar:gold:gram"})
+    rows.append({"cell_ref": f"B{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Avance %", "input_kind": "percent", "field": "bar:silver:avance"})
+    rows.append({"cell_ref": f"F{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Gram", "input_kind": "decimal", "field": "bar:silver:gram"})
     return rows
 
 
@@ -939,6 +956,8 @@ def _aggregate_detail_gold_rows(detail: PosDocumentDetailOut) -> list[dict[str, 
     for line in detail.lines:
         if str(line.metal_type or "").lower() != "yellow_gold":
             continue
+        if str(line.product_type or "").lower() == "bar":
+            continue
         karat = to_decimal(line.purity_karat.replace("K", "").replace("k", "")) if line.purity_karat else Decimal("0")
         row_key = purity_to_key.get(karat)
         if row_key is None:
@@ -959,7 +978,7 @@ def _aggregate_detail_silver_rows(detail: PosDocumentDetailOut) -> list[dict[str
         "silver:2": ("2", "Finsølv999‰", "999", Decimal("99.90")),
         "silver:3": ("3", "Sterling sølv925‰", "925", Decimal("92.50")),
         "silver:4": ("4", "3 tårnet sølv830‰", "830", Decimal("83.00")),
-        "silver:5": ("5", "Sølv800‰", "800", Decimal("80.00")),
+        "silver:5": ("5", "Plet", "", Decimal("0.00")),
     }
     rows: dict[str, dict[str, Decimal | str]] = {
         key: {
@@ -978,10 +997,14 @@ def _aggregate_detail_silver_rows(detail: PosDocumentDetailOut) -> list[dict[str
         Decimal("99.90"): "silver:2",
         Decimal("92.50"): "silver:3",
         Decimal("83.00"): "silver:4",
+        # Plet saflıksızdır (0.00); eski kayıtlardaki 80.00 de Plet'e eşlenir.
+        Decimal("0.00"): "silver:5",
         Decimal("80.00"): "silver:5",
     }
     for line in detail.lines:
         if str(line.metal_type or "").lower() != "silver":
+            continue
+        if str(line.product_type or "").lower() == "bar":
             continue
         key = purity_to_key.get(quantize_2(to_decimal(line.purity_percentage or 0)))
         if key is None:
@@ -996,6 +1019,31 @@ def _aggregate_detail_silver_rows(detail: PosDocumentDetailOut) -> list[dict[str
     return [rows[key] for key in AFG_SILVER_ROW_KEYS]
 
 
+def _aggregate_detail_bar_rows(detail: PosDocumentDetailOut) -> list[dict[str, Decimal | str]]:
+    rows: dict[str, dict[str, Decimal | str]] = {
+        bar_type: {
+            "bar_type": bar_type,
+            "gram": Decimal("0.00"),
+            "avance_percent": Decimal("0.00"),
+            "unit_price_dkk": Decimal("0.00"),
+            "line_total_dkk": Decimal("0.00"),
+        }
+        for bar_type in ("gold", "silver")
+    }
+    for line in detail.lines:
+        if str(line.product_type or "").lower() != "bar":
+            continue
+        bar_type = "gold" if str(line.metal_type or "").lower() == "yellow_gold" else "silver"
+        row = rows[bar_type]
+        gram = to_decimal(line.weight_grams or 0)
+        line_total = to_decimal(line.line_total_dkk or 0)
+        row["gram"] = quantize_2(to_decimal(row["gram"]) + gram)
+        row["line_total_dkk"] = quantize_2(to_decimal(row["line_total_dkk"]) + line_total)
+        row["unit_price_dkk"] = quantize_2(line_total / gram) if gram > 0 else to_decimal(row["unit_price_dkk"])
+        row["avance_percent"] = quantize_2(to_decimal(line.margin_percent or 0))
+    return [rows["gold"], rows["silver"]]
+
+
 def _apply_afg_customer_cells(
     sheet,
     *,
@@ -1008,17 +1056,76 @@ def _apply_afg_customer_cells(
     email: str | None,
     identity_doc: str | None = None,
 ) -> None:
-    address_line = _compose_afg_address_line(address, city)
-    sheet["C16"] = name or "—"
-    sheet["F16"] = cpr_number or "—"
-    sheet["C17"] = address_line or "—"
-    sheet["F17"] = identity_doc or "—"
-    sheet["C18"] = postal_code or "—"
-    sheet["F18"] = phone or "—"
-    sheet["F19"] = email or "—"
+    # Değerler etiketlerin SAĞINDAKİ hücrelere yazılır; C16-C18/F16-F19
+    # etiketleri (Navn:/Adresse:/Postnr.:/CPR nr./...) asla ezilmez.
+    # D17 yalnız sokak adresi, D18 "posta_kodu şehir" birlikte.
+    sheet["D16"] = name or "—"
+    # Veri minimizasyonu: belgeye yalnız CPR'nin doğum tarihi bölümü yazılır.
+    sheet["G16"] = cpr_birth_part(cpr_number) or "—"
+    sheet["D17"] = str(address or "").strip() or "—"
+    sheet["G17"] = identity_doc or "—"
+    sheet["D18"] = _compose_afg_postal_line(postal_code, city) or "—"
+    sheet["G18"] = phone or "—"
+    sheet["G19"] = email or "—"
+
+
+def _apply_afg_footer_cells(sheet) -> None:
+    """C53/C54 firma alt bilgisi — ayarlardan, 'Sero Guld' bölümü kalın.
+
+    Şablon C53'ü zaten rich-text taşır ama openpyxl rich_text=False ile
+    yüklerken düzleştirir; her üretimde açıkça yeniden yazarak bold korunur.
+    Global rich_text=True bilinçli olarak KULLANILMAZ (üç parser'da hücre
+    tipi denetimi gerektirir).
+    """
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+
+    settings = get_settings()
+    display_name = str(settings.invoice_seller_name or "Sero Guld").strip()
+    if display_name.lower().endswith(" aps"):
+        display_name = display_name[: -len(" aps")].strip()
+    address = str(settings.invoice_seller_address_line1 or "").strip()
+    postal_city = " ".join(
+        part for part in (str(settings.invoice_seller_postal_code or "").strip(), str(settings.invoice_seller_city or "").strip()) if part
+    )
+    country = str(settings.invoice_seller_country or "").strip()
+    cvr = str(settings.invoice_seller_cvr or "").strip()
+    line1_rest = " -  " + " - ".join(part for part in (address, postal_city, country, f"CVR-nr: {cvr}" if cvr else "") if part)
+
+    bold_font = InlineFont(b=True, sz=10, rFont="Calibri", family=2, scheme="minor")
+    plain_font = InlineFont(sz=10, rFont="Calibri", family=2, scheme="minor")
+    sheet["C53"] = CellRichText(TextBlock(bold_font, display_name), TextBlock(plain_font, line1_rest))
+
+    phone = str(settings.invoice_seller_phone or "").strip()
+    email = str(settings.invoice_seller_email or "").strip()
+    website = str(getattr(settings, "invoice_seller_website", "") or "").strip()
+    line2_parts = [f"Tlf.: {phone}" if phone else "", f"E-mail: {email}" if email else "", website]
+    sheet["C54"] = "         " + " - ".join(part for part in line2_parts if part)
+
+
+def _compose_afg_postal_line(postal_code: str | None, city: str | None) -> str | None:
+    postal_text = str(postal_code or "").strip()
+    city_text = str(city or "").strip()
+    if postal_text and city_text:
+        return f"{postal_text} {city_text}"
+    return postal_text or city_text or None
+
+
+def _split_afg_postal_line(value: object) -> tuple[str | None, str | None]:
+    """"2650 Hvidovre" → ("2650", "Hvidovre"); baştaki rakam bloğu posta kodudur."""
+    text = _clean_text(value)
+    if text is None:
+        return None, None
+    match = re.match(r"^(\d{3,4})\s+(.+)$", text)
+    if match:
+        return match.group(1), match.group(2).strip() or None
+    if text.isdigit():
+        return text, None
+    return None, text
 
 
 def _compose_afg_address_line(address: str | None, city: str | None) -> str | None:
+    # Eski (afg-v1) belgelerin adres satırı: "sokak · şehir".
     address_text = str(address or "").strip()
     city_text = str(city or "").strip()
     if address_text and city_text:
@@ -1055,18 +1162,19 @@ def _build_afg_market_rates_from_workspace(market_rates: PosWorkspaceMarketRates
             karat=to_decimal(key),
             type_code="1",
         )
-        for key, lodighed in (("8", "333"), ("14", "585"), ("18", "750"), ("21", "875"), ("21.6", "900"), ("22", "917"), ("24", "999"))
+        for key, lodighed in (("8", "333"), ("14", "585"), ("18", "750"), ("21", "875"), ("21.6", "900"), ("22", "916"), ("24", "999"))
     ]
+    plet_dkk = quantize_2(to_decimal(market_rates.plet_dkk))
     silver_matrix = [
         PosWorkspaceRateMatrixEntry(
             row_key=f"silver:{type_code}",
             label=label,
-            lodighed=lodighed,
-            dkk_per_gram=silver_rates_dkk.get(lodighed, Decimal("0.00")),
+            lodighed=lodighed or "—",
+            dkk_per_gram=silver_rates_dkk.get(lodighed, Decimal("0.00")) if lodighed else plet_dkk,
             karat=None,
             type_code=type_code,
         )
-        for type_code, label, lodighed in (("2", "Finsølv", "999"), ("3", "Sterling sølv", "925"), ("4", "3 tårnet sølv", "830"), ("5", "Sølv", "800"))
+        for type_code, label, lodighed in (("2", "Finsølv", "999"), ("3", "Sterling sølv", "925"), ("4", "3 tårnet sølv", "830"), ("5", "Plet", ""))
     ]
     return PosWorkspaceMarketRates(
         eur_dkk_fx=fx,
@@ -1074,6 +1182,9 @@ def _build_afg_market_rates_from_workspace(market_rates: PosWorkspaceMarketRates
         silver_rates_dkk=silver_rates_dkk,
         gold_24k_dkk=gold_24k_dkk,
         silver_dkk=silver_dkk,
+        plet_dkk=plet_dkk,
+        gold_bar_dkk=quantize_2(to_decimal(market_rates.gold_bar_dkk)),
+        silver_bar_dkk=quantize_2(to_decimal(market_rates.silver_bar_dkk)),
         gold_matrix=gold_matrix,
         silver_matrix=silver_matrix,
     )
@@ -1094,6 +1205,12 @@ def _apply_afg_market_rate_cells(vars_sheet, market_rates: PosWorkspaceMarketRat
     vars_sheet["C5"] = quantize_2(to_decimal(market_rates.silver_dkk))
     vars_sheet["C6"] = quantize_2(to_decimal(market_rates.silver_rates_dkk.get("925", 0)))
     vars_sheet["C7"] = quantize_2(to_decimal(market_rates.silver_rates_dkk.get("830", 0)))
+    # 'Variable værdier' VLOOKUP tablosu ($A$4:$B$12): Plet adı ve bar satırları.
+    vars_sheet["B8"] = "Plet"
+    vars_sheet["A9"] = 6
+    vars_sheet["B9"] = "Guldbarre"
+    vars_sheet["A10"] = 7
+    vars_sheet["B10"] = "Sølvbarre"
     vars_sheet["G2"] = "Kategori"
     vars_sheet["H2"] = "Beskrivelse"
     # I sütunundaki eski EUR aynası artık yazılmaz; kanonik birim DKK/g (J).
@@ -1106,12 +1223,14 @@ def _apply_afg_market_rate_cells(vars_sheet, market_rates: PosWorkspaceMarketRat
         ("gold", "Gold 18K", market_rates.gold_rates_dkk.get("18"), "750"),
         ("gold", "Gold 21K", market_rates.gold_rates_dkk.get("21"), "875"),
         ("gold", "Gold 21.6K", market_rates.gold_rates_dkk.get("21.6"), "900"),
-        ("gold", "Gold 22K", market_rates.gold_rates_dkk.get("22"), "917"),
+        ("gold", "Gold 22K", market_rates.gold_rates_dkk.get("22"), "916"),
         ("gold", "Gold 24K", market_rates.gold_rates_dkk.get("24"), "999"),
         ("silver", "Finsølv", market_rates.silver_rates_dkk.get("999"), "999"),
         ("silver", "Sterling sølv", market_rates.silver_rates_dkk.get("925"), "925"),
         ("silver", "3 tårnet sølv", market_rates.silver_rates_dkk.get("830"), "830"),
-        ("silver", "Sølv", market_rates.silver_rates_dkk.get("800"), "800"),
+        ("silver", "Plet", market_rates.plet_dkk, ""),
+        ("bar", "Guldbarre", market_rates.gold_bar_dkk, "999.9"),
+        ("bar", "Sølvbarre", market_rates.silver_bar_dkk, "999"),
     )
     for row, (kind, label, dkk_value, lodighed) in zip(AFG_VARIABLE_MATRIX_ROWS, values, strict=False):
         eur_cell, dkk_cell, meta_cell, _legacy_label, _legacy_lodighed = row
@@ -1198,7 +1317,12 @@ def _apply_afg_summary_cells(
     sheet["D44"] = note or None
 
 
-def _apply_afg_workspace_rows(sheet, gold_rows: Iterable[PosWorkspaceGoldRowOut], silver_rows: Iterable[PosWorkspaceSilverRowOut]) -> None:
+def _apply_afg_workspace_rows(
+    sheet,
+    gold_rows: Iterable[PosWorkspaceGoldRowOut],
+    silver_rows: Iterable[PosWorkspaceSilverRowOut],
+    bar_rows: Iterable["PosWorkspaceBarRowOut"] = (),
+) -> None:
     total_gold_grams = Decimal("0.00")
     total_gold_amount = Decimal("0.00")
     total_gold_pure = Decimal("0.00")
@@ -1234,6 +1358,29 @@ def _apply_afg_workspace_rows(sheet, gold_rows: Iterable[PosWorkspaceGoldRowOut]
         sheet[f"A{idx}"] = row.type_code
         sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
         sheet[f"C{idx}"] = row.label
+        sheet[f"E{idx}"] = row.lodighed if row.lodighed != "—" else None
+        sheet[f"F{idx}"] = gram
+        sheet[f"G{idx}"] = unit_price
+        sheet[f"H{idx}"] = line_total
+
+    for row in bar_rows:
+        idx = AFG_BAR_GOLD_ROW if row.bar_type == "gold" else AFG_BAR_SILVER_ROW
+        gram = quantize_2(to_decimal(row.gram))
+        unit_price = quantize_2(to_decimal(row.unit_price_dkk))
+        line_total = quantize_2(to_decimal(row.line_total_dkk))
+        pure = quantize_2(gram * (to_decimal(row.purity_percentage) / Decimal("100")))
+        if row.bar_type == "gold":
+            total_gold_grams += gram
+            total_gold_amount += line_total
+            total_gold_pure += pure
+        else:
+            total_silver_grams += gram
+            total_silver_amount += line_total
+            total_silver_pure += pure
+        sheet[f"A{idx}"] = 6 if row.bar_type == "gold" else 7
+        sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
+        sheet[f"C{idx}"] = row.label
+        sheet[f"D{idx}"] = Decimal("24") if row.bar_type == "gold" else None
         sheet[f"E{idx}"] = row.lodighed
         sheet[f"F{idx}"] = gram
         sheet[f"G{idx}"] = unit_price
@@ -1311,47 +1458,137 @@ def _apply_afg_factura_misc_sheet(
     sheet["C48"] = f"Not: {note}" if note else None
 
 
-def _apply_afg_detail_rows(sheet, gold_rows: Iterable[dict[str, Decimal | str]], silver_rows: Iterable[dict[str, Decimal | str]]) -> None:
+AFG_DETAIL_LAST_METAL_ROW = 37
+# Gizli hesap bloğu (74-88) metal kimliğiyle sabitlenmiştir; kompakt düzende
+# görünür satır pozisyonuna güvenen formüller (E79=+F22 vb.) backend'den
+# literal yazılır.
+_AFG_HIDDEN_GOLD_KARATS = ("8", "9", "10", "14", "18", "21", "21.6", "22", "24")
+_AFG_HIDDEN_GOLD_FACTORS = {
+    "8": Decimal("0.333"),
+    "9": Decimal("0.375"),
+    "10": Decimal("0.416"),
+    "14": Decimal("0.585"),
+    "18": Decimal("0.75"),
+    "21": Decimal("0.875"),
+    "21.6": Decimal("0.9"),
+    "22": Decimal("0.916"),
+    "24": Decimal("0.999"),
+}
+
+
+def _apply_afg_detail_rows(
+    sheet,
+    gold_rows: Iterable[dict[str, Decimal | str]],
+    silver_rows: Iterable[dict[str, Decimal | str]],
+    bar_rows: Iterable[dict[str, Decimal | str]] = (),
+) -> None:
+    """Nihai AFG kompakt yazılır: yalnız dolu satırlar, 22'den ardışık.
+
+    Tek 14K alış → tek metal satırı; kullanılmayan satırlar (şablonun
+    G30/G31/G32 hayalet literalleri dahil) 37'ye kadar temizlenir. Sıra:
+    altın 8→24, Guldbarre, Sølvbarre, gümüş Finsølv→Plet.
+    """
     total_gold_grams = Decimal("0.00")
     total_gold_amount = Decimal("0.00")
     total_gold_pure = Decimal("0.00")
     total_silver_grams = Decimal("0.00")
     total_silver_amount = Decimal("0.00")
     total_silver_pure = Decimal("0.00")
+    hidden_gold_grams: dict[str, Decimal] = {key: Decimal("0.00") for key in _AFG_HIDDEN_GOLD_KARATS}
+    hidden_silver_grams: dict[str, Decimal] = {"999": Decimal("0.00"), "925": Decimal("0.00"), "830": Decimal("0.00")}
 
-    for idx, row in enumerate(gold_rows, start=AFG_GOLD_ROW_START):
+    filled: list[dict[str, Decimal | str | int]] = []
+    for row in gold_rows:
         gram = quantize_2(to_decimal(row["gram"]))
-        unit_price = quantize_2(to_decimal(row["unit_price_dkk"]))
-        line_total = quantize_2(to_decimal(row["line_total_dkk"]))
+        if gram <= 0:
+            continue
         karat = to_decimal(row["karat"])
+        karat_key = str(row["karat"]).rstrip("0").rstrip(".") if "." in str(row["karat"]) else str(row["karat"])
+        line_total = quantize_2(to_decimal(row["line_total_dkk"]))
         pure = quantize_2(gram * (karat / Decimal("24")))
         total_gold_grams += gram
         total_gold_amount += line_total
         total_gold_pure += pure
-        sheet[f"A{idx}"] = 1
-        sheet[f"B{idx}"] = quantize_2(to_decimal(row["avance_percent"]) / Decimal("100"))
-        sheet[f"C{idx}"] = "Guld"
-        sheet[f"D{idx}"] = karat
-        sheet[f"E{idx}"] = row["lodighed"]
-        sheet[f"F{idx}"] = gram
-        sheet[f"G{idx}"] = unit_price
-        sheet[f"H{idx}"] = line_total
-
-    for idx, row in enumerate(silver_rows, start=AFG_SILVER_ROW_START):
+        if karat_key in hidden_gold_grams:
+            hidden_gold_grams[karat_key] += gram
+        filled.append(
+            {
+                "type_code": 1,
+                "avance": quantize_2(to_decimal(row["avance_percent"]) / Decimal("100")),
+                "label": "Guld",
+                "karat": karat,
+                "lodighed": row["lodighed"],
+                "gram": gram,
+                "unit_price": quantize_2(to_decimal(row["unit_price_dkk"])),
+                "line_total": line_total,
+            }
+        )
+    for row in bar_rows:
         gram = quantize_2(to_decimal(row["gram"]))
-        unit_price = quantize_2(to_decimal(row["unit_price_dkk"]))
+        if gram <= 0:
+            continue
         line_total = quantize_2(to_decimal(row["line_total_dkk"]))
-        pure = quantize_2(gram * (Decimal(str(row["lodighed"])) / Decimal("1000"))) if str(row["lodighed"]).isdigit() else Decimal("0.00")
+        is_gold = str(row.get("bar_type")) == "gold"
+        pure_factor = Decimal("0.9999") if is_gold else Decimal("0.999")
+        if is_gold:
+            total_gold_grams += gram
+            total_gold_amount += line_total
+            total_gold_pure += quantize_2(gram * pure_factor)
+        else:
+            total_silver_grams += gram
+            total_silver_amount += line_total
+            total_silver_pure += quantize_2(gram * pure_factor)
+        filled.append(
+            {
+                "type_code": 6 if is_gold else 7,
+                "avance": quantize_2(to_decimal(row.get("avance_percent") or 0) / Decimal("100")),
+                "label": "Guldbarre" if is_gold else "Sølvbarre",
+                "karat": Decimal("24") if is_gold else None,
+                "lodighed": "999.9" if is_gold else "999",
+                "gram": gram,
+                "unit_price": quantize_2(to_decimal(row["unit_price_dkk"])),
+                "line_total": line_total,
+            }
+        )
+    for row in silver_rows:
+        gram = quantize_2(to_decimal(row["gram"]))
+        if gram <= 0:
+            continue
+        line_total = quantize_2(to_decimal(row["line_total_dkk"]))
+        lodighed = str(row["lodighed"])
+        pure = quantize_2(gram * (Decimal(lodighed) / Decimal("1000"))) if lodighed.isdigit() else Decimal("0.00")
         total_silver_grams += gram
         total_silver_amount += line_total
         total_silver_pure += pure
-        sheet[f"A{idx}"] = row["type_code"]
-        sheet[f"B{idx}"] = quantize_2(to_decimal(row["avance_percent"]) / Decimal("100"))
-        sheet[f"C{idx}"] = row["label"]
-        sheet[f"E{idx}"] = row["lodighed"]
-        sheet[f"F{idx}"] = gram
-        sheet[f"G{idx}"] = unit_price
-        sheet[f"H{idx}"] = line_total
+        if lodighed in hidden_silver_grams:
+            hidden_silver_grams[lodighed] += gram
+        filled.append(
+            {
+                "type_code": row["type_code"],
+                "avance": quantize_2(to_decimal(row["avance_percent"]) / Decimal("100")),
+                "label": row["label"],
+                "karat": None,
+                "lodighed": lodighed if lodighed.isdigit() else None,
+                "gram": gram,
+                "unit_price": quantize_2(to_decimal(row["unit_price_dkk"])),
+                "line_total": line_total,
+            }
+        )
+
+    idx = AFG_GOLD_ROW_START
+    for entry in filled:
+        sheet[f"A{idx}"] = entry["type_code"]
+        sheet[f"B{idx}"] = entry["avance"]
+        sheet[f"C{idx}"] = entry["label"]
+        sheet[f"D{idx}"] = entry["karat"]
+        sheet[f"E{idx}"] = entry["lodighed"]
+        sheet[f"F{idx}"] = entry["gram"]
+        sheet[f"G{idx}"] = entry["unit_price"]
+        sheet[f"H{idx}"] = entry["line_total"]
+        idx += 1
+    for blank_idx in range(idx, AFG_DETAIL_LAST_METAL_ROW + 1):
+        for column in "ABCDEFGH":
+            sheet[f"{column}{blank_idx}"] = None
 
     sheet["D75"] = total_gold_grams
     sheet["E75"] = total_gold_amount
@@ -1359,6 +1596,24 @@ def _apply_afg_detail_rows(sheet, gold_rows: Iterable[dict[str, Decimal | str]],
     sheet["G75"] = total_silver_grams
     sheet["H75"] = total_silver_amount
     sheet["I75"] = total_silver_pure
+    fine_gold_total = Decimal("0.00")
+    for offset, karat_key in enumerate(_AFG_HIDDEN_GOLD_KARATS):
+        row_idx = 79 + offset
+        gram = hidden_gold_grams[karat_key]
+        fine = quantize_2(gram * _AFG_HIDDEN_GOLD_FACTORS[karat_key])
+        fine_gold_total += fine
+        sheet[f"E{row_idx}"] = gram
+        sheet[f"F{row_idx}"] = fine
+    fine_silver_total = Decimal("0.00")
+    for offset, lodighed in enumerate(("999", "925", "830")):
+        row_idx = 79 + offset
+        gram = hidden_silver_grams[lodighed]
+        fine = quantize_2(gram * (Decimal(lodighed) / Decimal("1000")))
+        fine_silver_total += fine
+        sheet[f"I{row_idx}"] = gram
+        sheet[f"J{row_idx}"] = fine
+    sheet["J82"] = fine_silver_total
+    sheet["F88"] = fine_gold_total
 
 
 def _build_afg_workbook_bytes_from_workspace(workspace: PosWorkspaceOut, *, sync_context: ArtifactSyncContext) -> bytes:

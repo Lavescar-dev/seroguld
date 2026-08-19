@@ -37,6 +37,19 @@ export type EditableSilverRow = {
   line_total_dkk: string;
 };
 
+export type EditableBarRow = {
+  row_key: string;
+  bar_type: 'gold' | 'silver';
+  label: string;
+  lodighed: string;
+  purity_percentage: string;
+  gram: string;
+  avance_percent: string;
+  rate_dkk: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+};
+
 export type PaymentMethod = 'bank';
 export type CompanionMode = 'auto' | 'manual';
 export type WorkspaceSurfaceView = 'system' | 'excel';

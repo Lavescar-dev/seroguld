@@ -359,8 +359,17 @@ function AlisStartPanel({ state, onStart, onResume, onOpenHistory }: { state: Mo
 }
 
 function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, displayLabel, layoutMode, expandedGroups, onToggleGroup, onOpenTool, onCancel }: { state: ModernAlisState; workspace: NonNullable<ModernAlisState['workspace']>; hasSelectedCustomer: boolean; displayBridge?: ModernAlisDisplayBridge; displayLabel: string; layoutMode: AlisLayoutMode; expandedGroups: Set<'gold' | 'silver'>; onToggleGroup: (group: 'gold' | 'silver') => void; onOpenTool: (tool: Exclude<ModernAlisTool, null>) => void; onCancel: () => void }) {
-  const goldRows: ModernAlisRow[] = state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Altın', type: 'Altın', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
-  const silverRows: ModernAlisRow[] = state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Gümüş', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const barRowsAll = state.barRows || [];
+  const goldBarRows: ModernAlisRow[] = barRowsAll.filter((row) => row.bar_type === 'gold').map((row) => ({ key: row.row_key, name: row.label, type: 'Bar', purity: row.purity_percentage, karat: '24', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const silverBarRows: ModernAlisRow[] = barRowsAll.filter((row) => row.bar_type === 'silver').map((row) => ({ key: row.row_key, name: row.label, type: 'Bar', purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  const goldRows: ModernAlisRow[] = [
+    ...state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Altın', type: 'Altın', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk })),
+    ...goldBarRows,
+  ];
+  const silverRows: ModernAlisRow[] = [
+    ...state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Gümüş', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk })),
+    ...silverBarRows,
+  ];
   const totalGram = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
   const totalOffer = [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.total), 0);
   const vatAmount = state.purchaseVatEnabled ? Math.round(totalOffer * 0.25 * 100) / 100 : 0;
@@ -385,8 +394,8 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
             <div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">AFG satırları</p><p className="mt-1 text-sm text-sg-text-soft">Gram ve avance alanlarını düzenleyin; fiyatlar oranlardan hesaplanır.</p></div>
             <button type="button" onClick={() => onOpenTool('calculator')} className={shellButtonClass('ghost')}><Calculator className="h-4 w-4" />Hesaplayıcı</button>
           </div>
-          <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => state.onUpdateGoldRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdateGoldRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
-          <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => state.onUpdateSilverRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdateSilverRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
+          <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateGoldRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateGoldRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
+          <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateSilverRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateSilverRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
           <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border bg-sg-surface/95 px-4 py-3 backdrop-blur">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm"><span><span className="text-sg-text-soft">Gram </span><strong className="text-sg-text">{formatNumber(totalGram, ' g')}</strong></span><span><span className="text-sg-text-soft">Net </span><strong className="text-sg-text">{formatMoney(String(totalOffer))}</strong></span>{state.purchaseVatEnabled ? <span><span className="text-sg-text-soft">KDV (tarihsel) </span><strong className="text-sg-text">{formatMoney(String(vatAmount))}</strong></span> : null}<span><span className="text-sg-text-soft">Ödenecek </span><strong className="text-sg-accent">{formatMoney(String(grossOffer))}</strong></span></div>
             <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Kesinleştirmek için önce müşteri seçin veya oluşturun' : undefined} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
@@ -670,7 +679,7 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
       <ModernRatesPanel state={state} />
       <div className="mt-4 grid gap-3 xl:grid-cols-2">
         <ModernCalculatorPanel
-          title="Altın hesaplayıcı"
+          title="Kniv beregner"
           kind="gold_rows"
           rows={state.calculators.gold_rows}
           targets={GOLD_MATRIX_ROWS.map((row) => ({ value: `gold:${row.key}`, label: row.label }))}
@@ -678,7 +687,7 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
           onApply={(rowKey, total) => state.onUpdateGoldRow(rowKey, 'gram', total)}
         />
         <ModernCalculatorPanel
-          title="Gümüş hesaplayıcı"
+          title="Beregner"
           kind="silver_rows"
           rows={state.calculators.silver_rows}
           targets={SILVER_MATRIX_ROWS.map((row) => ({ value: `silver:${row.key}`, label: row.label }))}

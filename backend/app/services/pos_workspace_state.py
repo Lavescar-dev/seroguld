@@ -150,6 +150,7 @@ def _default_silver_rate_map(*, silver_999_dkk: Decimal) -> dict[str, Decimal]:
             silver_999 * (to_decimal(item["purity_percentage"]) / Decimal("99.90"))
         )
         for item in core.SILVER_WORKSPACE_ROWS
+        if str(item["lodighed"])  # Plet matrise girmez; fiyatı plet_dkk skaleridir
     }
 
 
@@ -158,6 +159,9 @@ def _build_workspace_market_rates(
     eur_dkk_fx: Decimal,
     gold_rates_dkk: dict[str, Decimal],
     silver_rates_dkk: dict[str, Decimal],
+    plet_dkk: Decimal = Decimal("0"),
+    gold_bar_dkk: Decimal = Decimal("0"),
+    silver_bar_dkk: Decimal = Decimal("0"),
 ) -> PosWorkspaceMarketRates:
     core = _core()
     fx = quantize_2(to_decimal(eur_dkk_fx or core.DEFAULT_EUR_DKK_FX))
@@ -181,8 +185,8 @@ def _build_workspace_market_rates(
             {
                 "row_key": str(definition["row_key"]),
                 "label": str(definition["label"]),
-                "lodighed": rate_key,
-                "dkk_per_gram": quantize_2(silver_rates_dkk.get(rate_key)),
+                "lodighed": rate_key or "—",
+                "dkk_per_gram": quantize_2(silver_rates_dkk.get(rate_key)) if rate_key else quantize_2(plet_dkk),
                 "karat": None,
                 "type_code": str(definition["type_code"]),
             }
@@ -193,6 +197,9 @@ def _build_workspace_market_rates(
         silver_rates_dkk={key: quantize_2(value) for key, value in silver_rates_dkk.items()},
         gold_24k_dkk=quantize_2(gold_rates_dkk.get("24")),
         silver_dkk=quantize_2(silver_rates_dkk.get("999")),
+        plet_dkk=quantize_2(plet_dkk),
+        gold_bar_dkk=quantize_2(gold_bar_dkk),
+        silver_bar_dkk=quantize_2(silver_bar_dkk),
         gold_matrix=gold_matrix,
         silver_matrix=silver_matrix,
     )
@@ -235,10 +242,26 @@ def _market_rate_payload_to_workspace(
         key: _workspace_positive_decimal(raw_silver_dkk.get(key), silver_fallback_map[key])
         for key in core.SILVER_RATE_KEYS
     }
+
+    # Plet ve bar skalerleri: payload → eski "800" gümüş anahtarı → global profil.
+    profile = get_effective_market_rate_profile_cached()
+    plet_raw = market_payload.get("plet_dkk")
+    if plet_raw is None and raw_silver_dkk.get("800") is not None:
+        plet_raw = raw_silver_dkk.get("800")
+    plet_dkk = _workspace_positive_decimal(plet_raw, to_decimal(profile.get("plet_dkk", "0.02")))
+    gold_bar_dkk = _workspace_positive_decimal(
+        market_payload.get("gold_bar_dkk"), to_decimal(profile.get("gold_bar_dkk", fallback_gold_24k_dkk))
+    )
+    silver_bar_dkk = _workspace_positive_decimal(
+        market_payload.get("silver_bar_dkk"), to_decimal(profile.get("silver_bar_dkk", fallback_silver_dkk))
+    )
     return _build_workspace_market_rates(
         eur_dkk_fx=fx,
         gold_rates_dkk=gold_rates_dkk,
         silver_rates_dkk=silver_rates_dkk,
+        plet_dkk=plet_dkk,
+        gold_bar_dkk=gold_bar_dkk,
+        silver_bar_dkk=silver_bar_dkk,
     )
 
 
@@ -270,10 +293,20 @@ def _serialize_workspace_market_rates_payload(
         "silver_rates_dkk": {key: str(quantize_2(value)) for key, value in workspace_rates.silver_rates_dkk.items()},
         "gold_24k_dkk": str(quantize_2(workspace_rates.gold_24k_dkk)),
         "silver_dkk": str(quantize_2(workspace_rates.silver_dkk)),
+        "plet_dkk": str(quantize_2(workspace_rates.plet_dkk)),
+        "gold_bar_dkk": str(quantize_2(workspace_rates.gold_bar_dkk)),
+        "silver_bar_dkk": str(quantize_2(workspace_rates.silver_bar_dkk)),
     }
 
 
 def _workspace_market_rate_dkk(market_rates: PosWorkspaceMarketRates, row_key: str) -> Decimal:
+    if row_key == "bar:gold":
+        return quantize_2(market_rates.gold_bar_dkk)
+    if row_key == "bar:silver":
+        return quantize_2(market_rates.silver_bar_dkk)
+    if row_key == "silver:5":
+        # Plet: saflık matrisi değil, global skaler fiyat.
+        return quantize_2(market_rates.plet_dkk)
     if row_key.startswith("gold:"):
         key = row_key.split(":", 1)[1]
         return quantize_2(market_rates.gold_rates_dkk.get(key))

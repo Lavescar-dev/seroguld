@@ -168,8 +168,8 @@ def test_afg_reference_workbook_parses_without_sync_metadata():
     )
     sheet = workbook["Afregningsbilag"]
     vars_sheet = workbook["Variable værdier"]
-    sheet["C16"] = "Denis Thor Chrisistensen"
-    sheet["F18"] = "+45 22 25 55 04"
+    sheet["D16"] = "Denis Thor Chrisistensen"
+    sheet["G18"] = "+45 22 25 55 04"
     sheet["C40"] = "Overførsel"
     sheet["D41"] = "5512"
     sheet["D42"] = "0725397984"

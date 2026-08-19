@@ -473,6 +473,43 @@ async def replace_purchase_workspace_sections(
         session.add(line)
         next_line_no += 1
 
+    for row in payload.bar_rows:
+        gram = core.quantize_2(core.to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        definition = next(
+            (item for item in core.BAR_WORKSPACE_ROWS if str(item["bar_type"]) == row.bar_type),
+            None,
+        )
+        if definition is None:
+            continue
+        margin = core.quantize_2(core.to_decimal(row.avance_percent))
+        rate = core._workspace_market_rate_dkk(market_rates, str(definition["row_key"]))
+        unit_price = core._workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=margin)
+        line = PosSessionLine(
+            pos_session_id=pos_session.id,
+            line_no=next_line_no,
+            # Barlar depoya BAR ürün türüyle akar (kulce / gumus-barrer kategorileri).
+            product_type=ProductTypeEnum.BAR,
+            metal_type=MetalTypeEnum.YELLOW_GOLD if row.bar_type == "gold" else MetalTypeEnum.SILVER,
+            weight_grams=gram,
+            purity_karat=(str(definition["label"]) if row.bar_type == "gold" else None),
+            purity_percentage=core.quantize_2(core.to_decimal(definition["purity_percentage"])),
+            rate_dkk=rate,
+            margin_percent_internal=margin,
+            line_offer_dkk=core._workspace_row_line_total(unit_price_dkk=unit_price, gram=gram),
+            notes=json.dumps(
+                {
+                    "source": "purchase_workspace",
+                    "row_key": str(definition["row_key"]),
+                    "type_label": str(definition["label"]),
+                },
+                ensure_ascii=True,
+            ),
+        )
+        session.add(line)
+        next_line_no += 1
+
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     gold_24k_dkk = core.quantize_2(core.to_decimal(market_rates.gold_24k_dkk))
     if market_rates_changed:

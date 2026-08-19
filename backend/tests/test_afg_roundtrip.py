@@ -337,9 +337,9 @@ def test_afg_workspace_shadow_customer_round_trip_without_linked_customer():
             )
             workbook = load_workbook(io.BytesIO(workbook_bytes), keep_vba=True)
             sheet = workbook["Afregningsbilag"]
-            sheet["C16"] = "Ada Lovelace"
-            sheet["F17"] = "ZXCV-9876"
-            sheet["F18"] = "+45 33 44 55 66"
+            sheet["D16"] = "Ada Lovelace"
+            sheet["G17"] = "ZXCV-9876"
+            sheet["G18"] = "+45 33 44 55 66"
             updated_workspace = await _apply_afg_workspace_artifact_inputs(
                 session,
                 pos_session=pos_session,
@@ -661,9 +661,9 @@ def test_blank_afg_callback_workbook_does_not_clear_existing_workspace():
             )
             workbook = load_workbook(io.BytesIO(workbook_bytes), keep_vba=True, data_only=False)
             sheet = workbook["Afregningsbilag"]
-            for row_idx in range(22, 34):
+            for row_idx in range(22, 35):
                 sheet[f"F{row_idx}"] = 0
-            for cell_ref in ["C16", "F16", "C17", "F17", "C18", "F18", "F19", "D41", "D42"]:
+            for cell_ref in ["D16", "G16", "D17", "G17", "D18", "G18", "G19", "D41", "D42"]:
                 sheet[cell_ref] = None
             factura_gold_sheet = workbook[AFG_FACTURA_GOLD_SHEET]
             for row_idx in range(AFG_FACTURA_GOLD_ROW_START, AFG_FACTURA_GOLD_ROW_END + 1):

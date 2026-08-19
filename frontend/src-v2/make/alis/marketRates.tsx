@@ -10,7 +10,7 @@ export const GOLD_MATRIX_ROWS = [
   { key: '18', label: '18K', lodighed: '750' },
   { key: '21', label: '21K', lodighed: '875' },
   { key: '21.6', label: '21.6K', lodighed: '900' },
-  { key: '22', label: '22K', lodighed: '917' },
+  { key: '22', label: '22K', lodighed: '916' },
   { key: '24', label: '24K', lodighed: '999' },
 ] as const;
 
@@ -18,7 +18,7 @@ export const SILVER_MATRIX_ROWS = [
   { key: '999', label: 'Finsølv', lodighed: '999' },
   { key: '925', label: 'Sterling sølv', lodighed: '925' },
   { key: '830', label: '3 tårnet sølv', lodighed: '830' },
-  { key: '800', label: 'Sølv', lodighed: '800' },
+  { key: '800', label: 'Plet', lodighed: '—' },
 ] as const;
 
 const GOLD_RATE_ORDER = ['8', '14', '18', '21', '21.6', '22', '24'] as const;
@@ -81,6 +81,7 @@ export function syncMarketRateState(
       formatDecimalFixed(overrides?.silver_rates_dkk?.[key] ?? current.silver_rates_dkk?.[key] ?? '0'),
     ]),
   ) as Record<string, string>;
+  const pletDkk = formatDecimalFixed(current.plet_dkk ?? '0.02');
   return {
     ...current,
     eur_dkk_fx,
@@ -88,6 +89,9 @@ export function syncMarketRateState(
     silver_rates_dkk: silverRates,
     gold_24k_dkk: goldRates['24'],
     silver_dkk: silverRates['999'],
+    plet_dkk: pletDkk,
+    gold_bar_dkk: formatDecimalFixed(current.gold_bar_dkk ?? goldRates['24']),
+    silver_bar_dkk: formatDecimalFixed(current.silver_bar_dkk ?? silverRates['999']),
     gold_matrix: GOLD_MATRIX_ROWS.map((row) => ({
       row_key: `gold:${row.key}`,
       label: row.label,
@@ -100,7 +104,8 @@ export function syncMarketRateState(
       row_key: `silver:${index + 2}`,
       label: row.label,
       lodighed: row.lodighed,
-      dkk_per_gram: silverRates[row.key],
+      // Plet (silver:5) matristen değil global skaler fiyattan beslenir.
+      dkk_per_gram: row.key === '800' ? pletDkk : silverRates[row.key],
       karat: null,
       type_code: String(index + 2),
     })),

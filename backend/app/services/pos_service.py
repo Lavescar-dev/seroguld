@@ -61,6 +61,7 @@ from app.schemas.pos import (
     PosWorkspaceCustomerUpdate,
     PosWorkspaceFinalizeRequest,
     PosWorkspaceFinalizeResponse,
+    PosWorkspaceBarRowOut,
     PosWorkspaceGoldRowOut,
     PosWorkspaceInvoiceGoldRowOut,
     PosWorkspaceInvoiceGoldSheetOut,
@@ -134,7 +135,8 @@ GOLD_WORKSPACE_ROWS: tuple[dict[str, str | Decimal], ...] = (
     {"row_key": "gold:18", "karat": Decimal("18.0"), "label": "18k", "lodighed": "750", "purity_percentage": Decimal("75.00")},
     {"row_key": "gold:21", "karat": Decimal("21.0"), "label": "21k", "lodighed": "875", "purity_percentage": Decimal("87.50")},
     {"row_key": "gold:21.6", "karat": Decimal("21.6"), "label": "21.6k", "lodighed": "900", "purity_percentage": Decimal("90.00")},
-    {"row_key": "gold:22", "karat": Decimal("22.0"), "label": "22k", "lodighed": "917", "purity_percentage": Decimal("91.70")},
+    # 22K lødighed şablonun kendi formülüyle (CEILING) uyumlu: 916, 917 değil.
+    {"row_key": "gold:22", "karat": Decimal("22.0"), "label": "22k", "lodighed": "916", "purity_percentage": Decimal("91.60")},
     {"row_key": "gold:24", "karat": Decimal("24.0"), "label": "24k", "lodighed": "999", "purity_percentage": Decimal("99.90")},
 )
 
@@ -142,7 +144,15 @@ SILVER_WORKSPACE_ROWS: tuple[dict[str, str | Decimal], ...] = (
     {"row_key": "silver:2", "type_code": "2", "label": "Finsølv", "lodighed": "999", "purity_percentage": Decimal("99.90")},
     {"row_key": "silver:3", "type_code": "3", "label": "Sterling sølv", "lodighed": "925", "purity_percentage": Decimal("92.50")},
     {"row_key": "silver:4", "type_code": "4", "label": "3 tårnet sølv", "lodighed": "830", "purity_percentage": Decimal("83.00")},
-    {"row_key": "silver:5", "type_code": "5", "label": "Sølv", "lodighed": "800", "purity_percentage": Decimal("80.00")},
+    # Plet saflık oranıyla hesaplanmaz; fiyatı global plet_dkk skaleridir.
+    {"row_key": "silver:5", "type_code": "5", "label": "Plet", "lodighed": "", "purity_percentage": Decimal("0.00")},
+)
+
+# Barlar bağımsız global fiyatlı ayrı satır türleridir; depoya BAR ürün
+# türüyle aktarılırlar. row_key şeması "bar:" — altın karat-parse yoluna girmez.
+BAR_WORKSPACE_ROWS: tuple[dict[str, str | Decimal], ...] = (
+    {"row_key": "bar:gold", "bar_type": "gold", "type_code": "6", "label": "Guldbarre", "karat": Decimal("24.0"), "lodighed": "999.9", "purity_percentage": Decimal("99.99")},
+    {"row_key": "bar:silver", "bar_type": "silver", "type_code": "7", "label": "Sølvbarre", "karat": None, "lodighed": "999", "purity_percentage": Decimal("99.90")},
 )
 
 INVOICE_GOLD_ROW_COUNT = 12
@@ -154,22 +164,31 @@ INVOICE_GOLD_CODE_LABELS: dict[str, str] = {
     "2": "Finsølv",
     "3": "Sterling sølv",
     "4": "3 tårnet sølv",
-    "5": "Sølv",
+    "5": "Plet",
+    "6": "Guldbarre",
+    "7": "Sølvbarre",
 }
 INVOICE_GOLD_DEFAULT_LODIGHED: dict[str, str] = {
     "2": "999",
     "3": "925",
     "4": "830",
-    "5": "800",
+    "5": "",
+    "6": "999.9",
+    "7": "999",
 }
 GOLD_RATE_KEYS: tuple[str, ...] = tuple(str(item["row_key"]).split(":", 1)[1] for item in GOLD_WORKSPACE_ROWS)
-SILVER_RATE_KEYS: tuple[str, ...] = tuple(str(item["lodighed"]) for item in SILVER_WORKSPACE_ROWS)
+# Plet matristen çıktı (global skaler); oran matrisi anahtarları yalnız
+# saflık bazlı gümüş satırlarıdır.
+SILVER_RATE_KEYS: tuple[str, ...] = tuple(
+    str(item["lodighed"]) for item in SILVER_WORKSPACE_ROWS if str(item["lodighed"])
+)
 DEFAULT_GOLD_CALCULATOR_ROWS: tuple[dict[str, Any], ...] = (
-    {"row_key": "calc_gold:1", "unit_weight": Decimal("10"), "count": Decimal("0"), "target_row_key": "gold:8"},
-    {"row_key": "calc_gold:2", "unit_weight": Decimal("13"), "count": Decimal("0"), "target_row_key": "gold:14"},
-    {"row_key": "calc_gold:3", "unit_weight": Decimal("16"), "count": Decimal("0"), "target_row_key": "gold:18"},
-    {"row_key": "calc_gold:4", "unit_weight": Decimal("17"), "count": Decimal("0"), "target_row_key": "gold:21"},
-    {"row_key": "calc_gold:5", "unit_weight": Decimal("20"), "count": Decimal("0"), "target_row_key": "gold:21.6"},
+    # Kniv beregner başlangıç ağırlıkları güncel şablona göre: 4, 6, 8, 10.
+    {"row_key": "calc_gold:1", "unit_weight": Decimal("4"), "count": Decimal("0"), "target_row_key": "gold:8"},
+    {"row_key": "calc_gold:2", "unit_weight": Decimal("6"), "count": Decimal("0"), "target_row_key": "gold:14"},
+    {"row_key": "calc_gold:3", "unit_weight": Decimal("8"), "count": Decimal("0"), "target_row_key": "gold:18"},
+    {"row_key": "calc_gold:4", "unit_weight": Decimal("10"), "count": Decimal("0"), "target_row_key": "gold:21"},
+    {"row_key": "calc_gold:5", "unit_weight": Decimal("0"), "count": Decimal("0"), "target_row_key": None},
 )
 DEFAULT_SILVER_CALCULATOR_ROWS: tuple[dict[str, Any], ...] = (
     {"row_key": "calc_silver:1", "unit_weight": Decimal("1.75"), "count": Decimal("0"), "target_row_key": "silver:2"},
@@ -993,6 +1012,10 @@ async def list_pos_session_lines(
 
 
 def _infer_workspace_row_key(line: PosSessionLine) -> str | None:
+    # Bar satırları notlarında explicit row_key taşır; saflık eşleşmesiyle
+    # normal satırlara karışmasınlar (Sølvbarre 99.90 Finsølv ile aynı).
+    if line.product_type == ProductTypeEnum.BAR:
+        return "bar:gold" if line.metal_type == MetalTypeEnum.YELLOW_GOLD else "bar:silver"
     purity_value = quantize_2(to_decimal(line.purity_percentage))
     if line.metal_type == MetalTypeEnum.SILVER:
         for definition in SILVER_WORKSPACE_ROWS:
@@ -1307,6 +1330,50 @@ async def build_purchase_workspace(
             )
         )
 
+    bar_rows: list[PosWorkspaceBarRowOut] = []
+    for definition in BAR_WORKSPACE_ROWS:
+        row_key = str(definition["row_key"])
+        line = line_by_row_key.get(row_key)
+        gram = quantize_2(to_decimal(line.weight_grams if line is not None else 0))
+        avance = quantize_2(to_decimal(line.margin_percent_internal if line is not None else 0))
+        rate = _workspace_market_rate_dkk(market_rates, row_key)
+        purity = quantize_2(to_decimal(definition["purity_percentage"]))
+        unit_price = (
+            quantize_2(to_decimal(line.line_offer_dkk) / gram)
+            if line is not None and line.line_offer_dkk is not None and gram > 0
+            else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        )
+        line_total = (
+            quantize_2(to_decimal(line.line_offer_dkk))
+            if line is not None and line.line_offer_dkk is not None
+            else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
+        )
+        if gram > 0:
+            active_line_count += 1
+            total_weight += gram
+            if str(definition["bar_type"]) == "gold":
+                gold_weight += gram
+            else:
+                silver_weight += gram
+            total_pure += quantize_2(gram * (purity / Decimal("100")))
+            total_amount += line_total
+        bar_rows.append(
+            PosWorkspaceBarRowOut(
+                row_key=row_key,
+                line_id=(line.id if line is not None else None),
+                line_no=(line.line_no if line is not None else None),
+                bar_type=str(definition["bar_type"]),
+                label=str(definition["label"]),
+                lodighed=str(definition["lodighed"]),
+                purity_percentage=purity,
+                gram=gram,
+                avance_percent=avance,
+                rate_dkk=rate,
+                unit_price_dkk=unit_price,
+                line_total_dkk=line_total,
+            )
+        )
+
     invoice_gold = (
         _invoice_gold_auto_sheet_from_workspace_rows(
             gold_rows=gold_rows,
@@ -1349,6 +1416,7 @@ async def build_purchase_workspace(
         invoice_gold_mode=invoice_gold_mode,
         gold_rows=gold_rows,
         silver_rows=silver_rows,
+        bar_rows=bar_rows,
         invoice_gold=invoice_gold,
         invoice_misc_mode=invoice_misc_mode,
         invoice_misc=invoice_misc,

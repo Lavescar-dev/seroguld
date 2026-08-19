@@ -25,6 +25,16 @@ def normalize_cpr(value: str | None) -> str:
     return re.sub(r"\D", "", value)
 
 
+def cpr_birth_part(value: str | None) -> str:
+    """CPR'nin yalnız doğum tarihi bölümü (ilk 6 hane).
+
+    Veri minimizasyonu: workbook/PDF çıktılarına tam CPR yazılmaz; tire ve
+    son dört hane hiçbir belgeye aktarılmaz. 6 haneden az veri varsa eldeki
+    haneler döner (uydurma yok).
+    """
+    return normalize_cpr(value)[:6]
+
+
 def _decode_birthdate(digits10: str) -> date | None:
     if len(digits10) != 10:
         return None

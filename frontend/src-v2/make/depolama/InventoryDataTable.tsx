@@ -42,7 +42,7 @@ const SILVER_PURITIES = [
   { label: 'Finsølv 999', saflik: 0.999 },
   { label: 'Sterling 925', saflik: 0.925 },
   { label: '3-tårnet 830', saflik: 0.83 },
-  { label: 'Sølv 800', saflik: 0.8 },
+  { label: 'Plet', saflik: 0.8 },
   { label: 'Sølv 600', saflik: 0.6 },
   { label: 'Sølv 400', saflik: 0.4 },
 ] as const;

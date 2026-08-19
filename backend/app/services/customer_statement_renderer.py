@@ -8,6 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.utils.cpr import cpr_birth_part
 from app.services.pos_receipt_renderer import _ensure_pdf_font_names
 
 
@@ -22,7 +23,8 @@ def render_customer_statement_pdf(*, customer: Any, rows: list[dict[str, str]], 
         Paragraph("SERO GULD - Müşteri Hesap Özeti", styles["Title"]),
         Spacer(1, 10),
         Paragraph(f"Müşteri: {customer.name}", styles["Normal"]),
-        Paragraph(f"CPR: {customer.cpr_number or '-'}", styles["Normal"]),
+        # Veri minimizasyonu: PDF'ye tam CPR yazılmaz, yalnız doğum tarihi bölümü.
+        Paragraph(f"CPR: {cpr_birth_part(customer.cpr_number) or '-'}", styles["Normal"]),
         Paragraph(f"Dönem: {period}", styles["Normal"]),
         Spacer(1, 14),
     ]

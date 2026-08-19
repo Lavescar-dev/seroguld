@@ -33,6 +33,7 @@ import type {
   PosWorkspaceCalculatorRow,
   PosWorkspaceCalculators,
   PosWorkspaceFinalizeResponse,
+  PosWorkspaceBarRow,
   PosWorkspaceGoldRow,
   PosWorkspaceInvoiceGoldRow,
   PosWorkspaceInvoiceMiscRow,
@@ -46,6 +47,7 @@ import type {
   CompanionMode,
   EditableCustomer,
   EditableCalculatorRow,
+  EditableBarRow,
   EditableGoldRow,
   EditableInvoiceGoldRow,
   EditableInvoiceMiscRow,
@@ -121,6 +123,9 @@ function buildDefaultMarketRates(gold24Dkk: string, silverDkk: string, fx = DEFA
     eur_dkk_fx: fx,
     gold_24k_dkk: gold24Dkk,
     silver_dkk: silverDkk,
+    plet_dkk: '0.02',
+    gold_bar_dkk: gold24Dkk,
+    silver_bar_dkk: silverDkk,
     gold_rates_dkk: Object.fromEntries(Object.entries(goldRates).map(([key, value]) => [key, value.toFixed(2)])),
     silver_rates_dkk: Object.fromEntries(Object.entries(silverRates).map(([key, value]) => [key, value.toFixed(2)])),
     gold_matrix: [
@@ -129,14 +134,14 @@ function buildDefaultMarketRates(gold24Dkk: string, silverDkk: string, fx = DEFA
       { row_key: 'gold:18', label: '18K', lodighed: '750', dkk_per_gram: goldRates['18'].toFixed(2), karat: '18.00', type_code: '1' },
       { row_key: 'gold:21', label: '21K', lodighed: '875', dkk_per_gram: goldRates['21'].toFixed(2), karat: '21.00', type_code: '1' },
       { row_key: 'gold:21.6', label: '21.6K', lodighed: '900', dkk_per_gram: goldRates['21.6'].toFixed(2), karat: '21.60', type_code: '1' },
-      { row_key: 'gold:22', label: '22K', lodighed: '917', dkk_per_gram: goldRates['22'].toFixed(2), karat: '22.00', type_code: '1' },
+      { row_key: 'gold:22', label: '22K', lodighed: '916', dkk_per_gram: goldRates['22'].toFixed(2), karat: '22.00', type_code: '1' },
       { row_key: 'gold:24', label: '24K', lodighed: '999', dkk_per_gram: goldRates['24'].toFixed(2), karat: '24.00', type_code: '1' },
     ],
     silver_matrix: [
       { row_key: 'silver:2', label: 'Finsølv', lodighed: '999', dkk_per_gram: silverRates['999'].toFixed(2), karat: null, type_code: '2' },
       { row_key: 'silver:3', label: 'Sterling sølv', lodighed: '925', dkk_per_gram: silverRates['925'].toFixed(2), karat: null, type_code: '3' },
       { row_key: 'silver:4', label: '3 tårnet sølv', lodighed: '830', dkk_per_gram: silverRates['830'].toFixed(2), karat: null, type_code: '4' },
-      { row_key: 'silver:5', label: 'Sølv', lodighed: '800', dkk_per_gram: silverRates['800'].toFixed(2), karat: null, type_code: '5' },
+      { row_key: 'silver:5', label: 'Plet', lodighed: '—', dkk_per_gram: '0.02', karat: null, type_code: '5' },
     ],
   };
 }
@@ -196,6 +201,7 @@ function workspaceRowsPayload(
   invoiceGoldFooterLines: string[],
   invoiceMiscMode: CompanionMode,
   invoiceMiscRows: EditableInvoiceMiscRow[],
+  barRows: EditableBarRow[] = [],
 ) {
   return {
     gold_rows: goldRows.map((row) => ({
@@ -205,6 +211,11 @@ function workspaceRowsPayload(
     })),
     silver_rows: silverRows.map((row) => ({
       type_code: row.type_code,
+      gram: Number(normalizeTextInput(row.gram || '0')),
+      avance_percent: Number(normalizeTextInput(row.avance_percent || '0')),
+    })),
+    bar_rows: barRows.map((row) => ({
+      bar_type: row.bar_type,
       gram: Number(normalizeTextInput(row.gram || '0')),
       avance_percent: Number(normalizeTextInput(row.avance_percent || '0')),
     })),
@@ -222,6 +233,9 @@ function workspaceRowsPayload(
       silver_rates_dkk: Object.fromEntries(
         Object.entries(marketRates.silver_rates_dkk || {}).map(([key, value]) => [key, Number(normalizeTextInput(value || '0'))]),
       ),
+      plet_dkk: Number(normalizeTextInput(marketRates.plet_dkk || '0.02')),
+      gold_bar_dkk: Number(normalizeTextInput(marketRates.gold_bar_dkk || '0')),
+      silver_bar_dkk: Number(normalizeTextInput(marketRates.silver_bar_dkk || '0')),
     },
     afg_note: afgNote.trim() || null,
     purchase_vat_enabled: purchaseVatEnabled,
@@ -342,6 +356,21 @@ function toEditableGoldRows(rows: PosWorkspaceGoldRow[]): EditableGoldRow[] {
   return rows.map((row) => ({
     row_key: row.row_key,
     karat: row.karat,
+    label: row.label,
+    lodighed: row.lodighed,
+    purity_percentage: row.purity_percentage,
+    gram: row.gram,
+    avance_percent: row.avance_percent,
+    rate_dkk: row.rate_dkk,
+    unit_price_dkk: row.unit_price_dkk,
+    line_total_dkk: row.line_total_dkk,
+  }));
+}
+
+function toEditableBarRows(rows: PosWorkspaceBarRow[] | undefined): EditableBarRow[] {
+  return (rows || []).map((row) => ({
+    row_key: row.row_key,
+    bar_type: row.bar_type,
     label: row.label,
     lodighed: row.lodighed,
     purity_percentage: row.purity_percentage,
@@ -586,6 +615,7 @@ export function useAlisMakeState(): AlisPageProps {
   const [newCustomer, setNewCustomer] = useState<EditableCustomer>(EMPTY_CUSTOMER);
   const [customerForm, setCustomerForm] = useState<EditableCustomer>(EMPTY_CUSTOMER);
   const [goldRows, setGoldRows] = useState<EditableGoldRow[]>([]);
+  const [barRows, setBarRows] = useState<EditableBarRow[]>([]);
   const [silverRows, setSilverRows] = useState<EditableSilverRow[]>([]);
   const [activeWorkspaceView, setActiveWorkspaceViewState] = useState<WorkspaceSurfaceView>('system');
   const [numbering, setNumbering] = useState<EditableWorkspaceNumbering>({
@@ -612,6 +642,7 @@ export function useAlisMakeState(): AlisPageProps {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank');
   const [priceOpen, setPriceOpen] = useState(false);
   const goldRowsRef = useRef<EditableGoldRow[]>([]);
+  const barRowsRef = useRef<EditableBarRow[]>([]);
   const silverRowsRef = useRef<EditableSilverRow[]>([]);
 
   const autosaveKeyRef = useRef('');
@@ -750,6 +781,7 @@ export function useAlisMakeState(): AlisPageProps {
         invoiceGoldFooterLines,
         invoiceMiscMode,
         invoiceMiscRows,
+        barRowsRef.current,
       ),
       customer,
     });
@@ -770,6 +802,7 @@ export function useAlisMakeState(): AlisPageProps {
     setCustomerForm(editableCustomer);
     setNewCustomer(hasDraftCustomerShadow ? editableCustomer : EMPTY_CUSTOMER);
     setGoldRows(toEditableGoldRows(data.gold_rows));
+    setBarRows(toEditableBarRows(data.bar_rows));
     setSilverRows(toEditableSilverRows(data.silver_rows));
     setNumbering(toEditableNumbering(data.numbering_preview));
     setInvoiceGoldMode(data.invoice_gold_mode);
@@ -804,6 +837,7 @@ export function useAlisMakeState(): AlisPageProps {
       [...data.invoice_gold.footer_lines, '', '', ''].slice(0, 3),
       data.invoice_misc_mode,
       toEditableInvoiceMiscRows(data.invoice_misc.rows),
+      toEditableBarRows(data.bar_rows),
     );
     // Legacy drafts with grams but zero persisted pricing are rendered from
     // the resolved rate matrix, then persisted through the normal revisioned
@@ -1103,6 +1137,7 @@ export function useAlisMakeState(): AlisPageProps {
         invoiceGoldFooterLines,
         invoiceMiscMode,
         invoiceMiscRows,
+        barRowsRef.current,
       );
       if (JSON.stringify(currentSectionsPayload) !== JSON.stringify(payload)) {
         workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
@@ -1112,6 +1147,7 @@ export function useAlisMakeState(): AlisPageProps {
       workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
       setWorkspace(data);
       setGoldRows(toEditableGoldRows(data.gold_rows));
+    setBarRows(toEditableBarRows(data.bar_rows));
       setSilverRows(toEditableSilverRows(data.silver_rows));
       setNumbering(toEditableNumbering(data.numbering_preview));
       setInvoiceGoldMode(data.invoice_gold_mode);
@@ -1550,6 +1586,10 @@ export function useAlisMakeState(): AlisPageProps {
   }, [goldRows]);
 
   useEffect(() => {
+    barRowsRef.current = barRows;
+  }, [barRows]);
+
+  useEffect(() => {
     silverRowsRef.current = silverRows;
   }, [silverRows]);
 
@@ -1570,6 +1610,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceGoldFooterLines,
       invoiceMiscMode,
       invoiceMiscRows,
+      barRowsRef.current,
     );
     const serialized = JSON.stringify(payload);
     if (serialized === autosaveKeyRef.current) {
@@ -1896,6 +1937,15 @@ export function useAlisMakeState(): AlisPageProps {
     }
   }
 
+  function updateBarRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+    markLocalWorkspaceEdit();
+    const nextRows = barRowsRef.current.map((row) =>
+      row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
+    );
+    barRowsRef.current = nextRows;
+    setBarRows(nextRows);
+  }
+
   function updateNumbering(field: keyof EditableWorkspaceNumbering, value: string) {
     markLocalWorkspaceEdit();
     setNumbering((current) => ({
@@ -2021,6 +2071,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceGoldFooterLines,
       invoiceMiscMode,
       invoiceMiscRows,
+      barRowsRef.current,
     );
     if (JSON.stringify(nextSectionsPayload) !== autosaveKeyRef.current) {
       queuedSectionsPayloadRef.current = nextSectionsPayload;
@@ -2131,6 +2182,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceGoldFooterLines,
       invoiceMiscMode,
       invoiceMiscRows,
+      barRowsRef.current,
     );
     if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
 
@@ -2172,6 +2224,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceGoldFooterLines,
       invoiceMiscMode,
       invoiceMiscRows,
+      barRowsRef.current,
     );
     if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
 
@@ -2199,6 +2252,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceGoldFooterLines,
       invoiceMiscMode,
       invoiceMiscRows,
+      barRowsRef.current,
     );
     const customer = workspace?.customer.customer_id
       ? customerForm
@@ -2425,6 +2479,8 @@ export function useAlisMakeState(): AlisPageProps {
     goldRows,
     silverRows,
     onUpdateGoldRow: updateGoldRow,
+    barRows,
+    onUpdateBarRow: updateBarRow,
     onUpdateSilverRow: updateSilverRow,
     activeWorkspaceView,
     setActiveWorkspaceView: handleWorkspaceViewChange,

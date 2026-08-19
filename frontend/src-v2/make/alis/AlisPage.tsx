@@ -49,6 +49,7 @@ import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor }
 import type {
   CompanionMode,
   EditableCustomer,
+  EditableBarRow,
   EditableGoldRow,
   EditableInvoiceGoldRow,
   EditableInvoiceMiscRow,
@@ -259,8 +260,10 @@ export type AlisPageProps = {
   setCustomerForm: Dispatch<SetStateAction<EditableCustomer>>;
   onCustomerBlur: () => void;
   goldRows: EditableGoldRow[];
+  barRows: EditableBarRow[];
   silverRows: EditableSilverRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -362,8 +365,10 @@ export function AlisPage(props: AlisPageProps) {
     onCustomerBlur,
     goldRows,
     silverRows,
+    barRows,
     onUpdateGoldRow,
     onUpdateSilverRow,
+    onUpdateBarRow,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -471,7 +476,9 @@ export function AlisPage(props: AlisPageProps) {
           onCustomerBlur={onCustomerBlur}
           goldRows={goldRows}
           silverRows={silverRows}
+          barRows={barRows}
           onUpdateGoldRow={onUpdateGoldRow}
+          onUpdateBarRow={onUpdateBarRow}
           onUpdateSilverRow={onUpdateSilverRow}
           activeWorkspaceView={activeWorkspaceView}
           setActiveWorkspaceView={setActiveWorkspaceView}
@@ -560,8 +567,10 @@ function ActiveWorkspaceView(props: {
   setCustomerForm: Dispatch<SetStateAction<EditableCustomer>>;
   onCustomerBlur: () => void;
   goldRows: EditableGoldRow[];
+  barRows: EditableBarRow[];
   silverRows: EditableSilverRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -622,8 +631,10 @@ function ActiveWorkspaceView(props: {
     onCustomerBlur,
     goldRows,
     silverRows,
+    barRows,
     onUpdateGoldRow,
     onUpdateSilverRow,
+    onUpdateBarRow,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -1075,8 +1086,10 @@ function ActiveWorkspaceView(props: {
             customerForm={customerForm}
             goldRows={goldRows}
             silverRows={silverRows}
+            barRows={barRows}
             onUpdateGoldRow={onUpdateGoldRow}
             onUpdateSilverRow={onUpdateSilverRow}
+            onUpdateBarRow={onUpdateBarRow}
             bankInfo={bankInfo}
             setBankInfo={setBankInfo}
             paymentMethod={paymentMethod}
@@ -2178,7 +2191,14 @@ function SavedPurchaseDetailModal({
   ]
     .filter(Boolean)
     .join(', ');
-  const customerCpr = detail?.customer_cpr || source?.customer_cpr || detail?.customer_cpr_masked || source?.customer_cpr_masked || '—';
+  // Veri minimizasyonu: modalda tam CPR gösterilmez; yalnız doğum tarihi
+  // bölümü (ilk 6 hane) ya da maskeli değer.
+  const cprBirthPart = (value?: string | null) => (value || '').replace(/\D/g, '').slice(0, 6);
+  const customerCpr =
+    cprBirthPart(detail?.customer_cpr || source?.customer_cpr) ||
+    detail?.customer_cpr_masked ||
+    source?.customer_cpr_masked ||
+    '—';
   const customerIdentity =
     detail?.customer_identity_doc_number ||
     source?.customer_identity_doc_number ||

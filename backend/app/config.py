@@ -111,14 +111,16 @@ class Settings(BaseSettings):
     invoice_number_prefix: str = "SG"
     invoice_default_currency: str = "DKK"
     invoice_sale_vat_rate_percent: Decimal = Decimal("0")
+    # Varsayılanlar AFG şablonundaki resmi footer metniyle eşleşir.
     invoice_seller_name: str = "Sero Guld ApS"
     invoice_seller_address_line1: str = "Valby Langgade 84"
     invoice_seller_postal_code: str = "2500"
-    invoice_seller_city: str = "København"
-    invoice_seller_country: str = "DK"
-    invoice_seller_cvr: str = "34 09 30 83"
-    invoice_seller_email: str = ""
-    invoice_seller_phone: str = ""
+    invoice_seller_city: str = "Valby"
+    invoice_seller_country: str = "Danmark"
+    invoice_seller_cvr: str = "DK34093083"
+    invoice_seller_email: str = "info@seroguld.dk"
+    invoice_seller_phone: str = "22255504"
+    invoice_seller_website: str = "www.seroguld.dk"
 
     pos_reference_start: int = 9600
     pos_reference_scan_window: int = 5000

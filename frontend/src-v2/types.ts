@@ -908,6 +908,10 @@ export interface PosWorkspaceMarketRates {
   silver_rates_dkk: Record<string, string>;
   gold_24k_dkk: string;
   silver_dkk: string;
+  // Plet ve bar fiyatları saflık matrisinden bağımsız global skalerlerdir.
+  plet_dkk?: string;
+  gold_bar_dkk?: string;
+  silver_bar_dkk?: string;
   gold_matrix: PosWorkspaceRateMatrixEntry[];
   silver_matrix: PosWorkspaceRateMatrixEntry[];
 }
@@ -1016,6 +1020,21 @@ export interface PosWorkspaceGoldRow {
   line_total_dkk: string;
 }
 
+export interface PosWorkspaceBarRow {
+  row_key: string;
+  line_id?: string | null;
+  line_no?: number | null;
+  bar_type: 'gold' | 'silver';
+  label: string;
+  lodighed: string;
+  purity_percentage: string;
+  gram: string;
+  avance_percent: string;
+  rate_dkk: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+}
+
 export interface PosWorkspaceSilverRow {
   row_key: string;
   line_id?: string | null;
@@ -1075,6 +1094,7 @@ export interface PosWorkspace {
   invoice_gold_mode: 'auto' | 'manual';
   gold_rows: PosWorkspaceGoldRow[];
   silver_rows: PosWorkspaceSilverRow[];
+  bar_rows?: PosWorkspaceBarRow[];
   invoice_gold: PosWorkspaceInvoiceGoldSheet;
   invoice_misc_mode: 'auto' | 'manual';
   invoice_misc: PosWorkspaceInvoiceMiscSheet;
