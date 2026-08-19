@@ -139,6 +139,14 @@ def test_publish_orders_primary_photo_first_and_collects_warnings(
         purity_karat="22K",
         weight_grams="19.65",
         woocommerce_product_id=None,
+        inventory_category="taki",
+        inventory_subcategory=None,
+        purity_percentage=None,
+        length_cm=None,
+        width_mm=None,
+        thickness_mm=None,
+        diameter_mm=None,
+        producer=None,
         ai_description=(
             "SEO_TITLE: Guldarmbånd\nSHORT_DESCRIPTION: Kort\n"
             "LONG_DESCRIPTION_HTML: <p>Lang</p>\nMETA_DESCRIPTION: Meta\nURL_SLUG: guld-armbaand-test"

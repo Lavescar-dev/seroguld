@@ -188,6 +188,380 @@ def missing_required_seo_fields(text: str) -> list[str]:
     return missing
 
 
+# Takı ürünlerinin uzun açıklamasının sonuna eklenen sabit blok (kullanıcı
+# dokümanındaki tam metin). Settings > WooCommerce Eşlemeleri'nden override
+# edilebilir; marker'lar çift eklemeyi önler.
+DESC_FOOTER_MARKER_START = "<!-- sg-footer -->"
+DESC_FOOTER_MARKER_END = "<!-- /sg-footer -->"
+DESC_FOOTER_DA_DEFAULT = (
+    "<h3>Vi garanterer altid p\u00e6ne varer</h3>"
+    "<p>Hos Sero Guld kan du altid regne med at f\u00e5 rene og fine smykker hjem til d\u00f8ren, "
+    "som er poleret og ultralydsrenset. Ved polering fjerner vi de v\u00e6rste m\u00e6rker og ridser "
+    "p\u00e5 smykkerne, s\u00e5 smykkerne st\u00e5r p\u00e6ne igen - n\u00e6sten som helt nye. Efter poleringen "
+    "bliver smykkerne ultralydsrenset og f\u00e5r dermed det sidste finish. Ved k\u00f8b af et smykke, "
+    "giver vi en fin lille guldpose til smykket gratis.</p>"
+    "<p>Alle vores smykker er testet med vores X-Ray maskine, hvorved karaten er pr\u00e6ciseret.</p>"
+    "<h3>St\u00f8rrelsesguide</h3>"
+    "<p>Nedenfor kan du l\u00e6se lidt om de forskellige st\u00f8rrelser der findes p\u00e5 de forskellige "
+    "smykker. Er du i tvivl om en st\u00f8rrelse, eller \u00f8nsker at pr\u00f8ve smykket f\u00f8r du k\u00f8ber det, "
+    "er du velkommen til at booke en tid hos os, og komme ned og pr\u00f8ve det inden du k\u00f8ber det.</p>"
+    "<p><strong>Armb\u00e5nd:</strong> Typisk l\u00e6ngdem\u00e5l er 18 eller 19 cm. Nogle armb\u00e5nd er da "
+    "mindre eller st\u00f8rre.</p>"
+    "<p><strong>Armringe:</strong> Armringe m\u00e5les i diameter.</p>"
+    "<p><strong>Halsk\u00e6der:</strong> En halsk\u00e6des l\u00e6ngde er meget varierende. Standart m\u00e5l p\u00e5 "
+    "halsk\u00e6der er; 38cm for b\u00f8rn, 42 og 45cm for kvinder og 50cm for m\u00e6nd. Lange k\u00e6der er "
+    "typisk: 60, 70, 80, 90, 100, 110 eller 120 cm. Vi har et stort udvalg af halsk\u00e6der i "
+    "forskellige l\u00e6ngder. Halsk\u00e6dens l\u00e6ngde kan l\u00e6ses under specifikationer.</p>"
+    "<p><strong>Dameringe:</strong> De findes typisk i st\u00f8rrelser fra 47-60 og herreringe mellem "
+    "60-70.</p>"
+    "<h3>F\u00e5 hj\u00e6lp</h3>"
+    "<p>Ud over dette smykke tilbyder vi et fint udvalg af guldsmykker i forskellig designs. "
+    "Vi garanterer altid kvalitet hos Sero Guld, og st\u00e5r gerne til r\u00e5dighed og vejleder gerne "
+    "ved sp\u00f8rgsm\u00e5l.</p>"
+)
+
+
+def _load_json_setting(raw: str) -> dict[str, Any]:
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _danish_number(value: Any) -> str:
+    text = str(value).strip()
+    return text.replace(".", ",")
+
+
+def _metal_group(product: Product) -> str:
+    metal = getattr(product.metal_type, "value", str(product.metal_type))
+    if metal in {"yellow_gold", "white_gold"}:
+        return "gold"
+    return metal  # silver / platinum / palladium
+
+
+def _karat_number(product: Product) -> str:
+    raw = str(product.purity_karat or "").upper().replace("K", "").strip()
+    return raw
+
+
+def _product_inventory_category(product: Product) -> str:
+    if product.inventory_category:
+        return str(product.inventory_category)
+    from app.services.product_service import infer_inventory_categories
+
+    return infer_inventory_categories(product.metal_type, product.product_type)[0]
+
+
+def _resolve_categories(
+    product: Product, category_map: dict[str, Any]
+) -> tuple[list[dict[str, int]], int | None, list[str]]:
+    """Sitenin GERÇEK kategori ID'lerine çözer; kategori YARATMAZ.
+
+    Harita boş/eksikse kategori gönderilmez ve uyarı üretilir (eski davranış
+    isimle arayıp bulamayınca 'Gult Guld' gibi çöp kategoriler yaratıyordu).
+    """
+    warnings: list[str] = []
+    if not category_map:
+        return [], None, ["Kategori haritası boş — kategori gönderilmedi (probe aracıyla doldurun)."]
+
+    inventory_category = _product_inventory_category(product)
+    metal_group = _metal_group(product)
+    primary_section = category_map.get("primary") or {}
+    per_category = primary_section.get(inventory_category) or {}
+    primary_id = per_category.get(metal_group)
+    if primary_id is None and metal_group in {"platinum", "palladium"}:
+        primary_id = per_category.get("platinum_pd") or per_category.get("platin_pd")
+
+    categories: list[dict[str, int]] = []
+    if primary_id is None:
+        warnings.append(
+            f"Kategori haritasında '{inventory_category}/{metal_group}' için ID yok — kategori gönderilmedi."
+        )
+    else:
+        categories.append({"id": int(primary_id)})
+
+    # Karat kategorisi yalnız altın takıda ("14 kt. guld" vb.).
+    if inventory_category == "taki" and metal_group == "gold":
+        karat = _karat_number(product)
+        karat_map = category_map.get("karat") or {}
+        karat_id = karat_map.get(karat)
+        if karat_id is not None:
+            categories.append({"id": int(karat_id)})
+        elif karat:
+            warnings.append(f"Karat kategorisi haritada yok: {karat} — yalnız primer kategori gönderildi.")
+
+    primary_int = int(primary_id) if primary_id is not None else None
+    return categories, primary_int, warnings
+
+
+def _build_attributes(product: Product) -> list[dict[str, Any]]:
+    """Sitedeki 'Yderligere information' spec tablosunu besleyen attribute'lar.
+
+    Boş alan atlanır; sayılar Danca ondalık virgülle yazılır.
+    """
+    entries: list[tuple[str, str]] = []
+    karat = _karat_number(product)
+    if karat:
+        entries.append(("Karat", f"{karat} karat"))
+    if product.purity_percentage is not None:
+        fraction = (Decimal(str(product.purity_percentage)) / Decimal("100")).quantize(Decimal("0.001"))
+        entries.append(("Renhed", _danish_number(fraction)))
+    if product.weight_grams is not None:
+        entries.append(("V\u00e6gt", f"{_danish_number(quantize_2(product.weight_grams))} g"))
+    if getattr(product, "length_cm", None):
+        entries.append(("L\u00e6ngde", str(product.length_cm)))
+    if getattr(product, "width_mm", None) is not None:
+        entries.append(("Bredde", f"{_danish_number(quantize_2(product.width_mm))} mm"))
+    if getattr(product, "thickness_mm", None) is not None:
+        entries.append(("Tykkelse", f"{_danish_number(quantize_2(product.thickness_mm))} mm"))
+    if getattr(product, "diameter_mm", None) is not None:
+        entries.append(("Diameter", f"{_danish_number(quantize_2(product.diameter_mm))} mm"))
+    if getattr(product, "producer", None):
+        entries.append(("Producent", str(product.producer)))
+    reference = (product.reference_number or product.product_number or "").strip()
+    if reference:
+        entries.append(("Vare nr.", reference))
+
+    return [
+        {"name": name, "visible": True, "options": [value]}
+        for name, value in entries
+    ]
+
+
+_STONEX_LOGICAL_FIELDS = {
+    "metal_type",
+    "metal_weight",
+    "metal_purity",
+    "length",
+    "width",
+    "thickness",
+    "diameter",
+    "producer",
+    "reference",
+}
+
+
+def _stonex_logical_value(product: Product, logical: str) -> str | None:
+    if logical == "metal_type":
+        return METAL_TYPE_DA.get(getattr(product.metal_type, "value", str(product.metal_type)))
+    if logical == "metal_weight":
+        return _danish_number(quantize_2(product.weight_grams)) if product.weight_grams is not None else None
+    if logical == "metal_purity":
+        karat = _karat_number(product)
+        return f"{karat} karat" if karat else None
+    if logical == "length":
+        return str(product.length_cm) if getattr(product, "length_cm", None) else None
+    if logical == "width":
+        return _danish_number(quantize_2(product.width_mm)) if getattr(product, "width_mm", None) is not None else None
+    if logical == "thickness":
+        return _danish_number(quantize_2(product.thickness_mm)) if getattr(product, "thickness_mm", None) is not None else None
+    if logical == "diameter":
+        return _danish_number(quantize_2(product.diameter_mm)) if getattr(product, "diameter_mm", None) is not None else None
+    if logical == "producer":
+        return str(product.producer) if getattr(product, "producer", None) else None
+    if logical == "reference":
+        reference = (product.reference_number or product.product_number or "").strip()
+        return reference or None
+    return None
+
+
+def _build_stonex_meta(product: Product, stonex_map: dict[str, Any]) -> tuple[list[dict[str, str]], list[str]]:
+    if not stonex_map:
+        return [], ["StoneX meta haritası boş — sitenin spot fiyat alanları doldurulmadı (probe aracıyla doldurun)."]
+    meta: list[dict[str, str]] = []
+    warnings: list[str] = []
+    for logical, meta_key in stonex_map.items():
+        if logical not in _STONEX_LOGICAL_FIELDS:
+            warnings.append(f"StoneX haritasında bilinmeyen alan: {logical} — atlandı.")
+            continue
+        value = _stonex_logical_value(product, str(logical))
+        if value is None:
+            continue
+        meta.append({"key": str(meta_key), "value": value})
+    return meta, warnings
+
+
+def _build_badge_meta(badge_config: dict[str, Any], *, now=None) -> tuple[list[dict[str, Any]], list[str]]:
+    entries = badge_config.get("entries") if isinstance(badge_config, dict) else None
+    if not entries:
+        return [], []
+    now = now or utc_now()
+    meta: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("key"):
+            warnings.append("Badge tanımında key'siz kayıt atlandı.")
+            continue
+        kind = str(entry.get("value_kind") or "static")
+        if kind == "static":
+            meta.append({"key": str(entry["key"]), "value": entry.get("value", "")})
+            continue
+        if kind == "publish_date":
+            moment = now
+        elif kind == "publish_date_plus_days":
+            from datetime import timedelta
+
+            moment = now + timedelta(days=int(entry.get("days") or 0))
+        else:
+            warnings.append(f"Badge tanımında bilinmeyen value_kind: {kind} — atlandı.")
+            continue
+        fmt = str(entry.get("format") or "iso_date")
+        if fmt == "iso_datetime":
+            value: Any = moment.isoformat()
+        elif fmt == "epoch":
+            value = str(int(moment.timestamp()))
+        else:
+            value = moment.date().isoformat()
+        meta.append({"key": str(entry["key"]), "value": value})
+    return meta, warnings
+
+
+def _apply_description_footer(description: str, footer_html: str) -> str:
+    """Footer'ı idempotent marker'la ekler; mevcut marker bloğu önce sökülür."""
+    base = description or ""
+    start = base.find(DESC_FOOTER_MARKER_START)
+    if start >= 0:
+        end = base.find(DESC_FOOTER_MARKER_END)
+        if end >= 0:
+            base = base[:start] + base[end + len(DESC_FOOTER_MARKER_END):]
+        else:
+            base = base[:start]
+    base = base.rstrip()
+    return f"{base}\n{DESC_FOOTER_MARKER_START}{footer_html}{DESC_FOOTER_MARKER_END}"
+
+
+def _default_name_for(product: Product) -> str:
+    product_type = PRODUCT_TYPE_DA.get(getattr(product.product_type, "value", str(product.product_type)), "Smykke")
+    metal_type = METAL_TYPE_DA.get(getattr(product.metal_type, "value", str(product.metal_type)), "\u00c6delmetal")
+    return f"{product_type} - {metal_type} #{product.product_number}"
+
+
+def _default_slug_for(product: Product) -> str:
+    product_type_key = getattr(product.product_type, "value", str(product.product_type))
+    metal_type_key = getattr(product.metal_type, "value", str(product.metal_type))
+    product_token = PRODUCT_TYPE_SLUG_DA.get(product_type_key, "smykke")
+    metal_token = METAL_TYPE_SLUG_DA.get(metal_type_key, "aedelmetal")
+    karat_token = _sanitize_slug(str(product.purity_karat or "").replace(" ", ""))
+
+    weight_token = ""
+    if getattr(product, "weight_grams", None) is not None:
+        weight_token = f"{str(product.weight_grams).replace('.', '-') }g"
+        weight_token = _sanitize_slug(weight_token)
+
+    ref = (product.reference_number or product.product_number or "").strip()
+    ref_token = _sanitize_slug(f"ref-{ref}") if ref else ""
+
+    parts = [metal_token, product_token, karat_token, weight_token, ref_token]
+    slug = "-".join(part for part in parts if part)
+    return _sanitize_slug(slug)
+
+
+def _slug_consistent(slug: str, product: Product) -> bool:
+    product_type_key = getattr(product.product_type, "value", str(product.product_type))
+    expected_token = PRODUCT_TYPE_SLUG_DA.get(product_type_key, "")
+    if not expected_token:
+        return True
+    return expected_token in slug
+
+
+def build_publish_payload(
+    *,
+    product: Product,
+    regular_price_dkk: Decimal,
+    name: str | None,
+    images: list[dict[str, Any]],
+    settings,
+) -> tuple[dict[str, Any], list[str]]:
+    """Ağ erişimi olmayan saf payload kurulumu (golden-test edilebilir).
+
+    Kategori/StoneX/badge eşlemeleri Settings JSON haritalarından gelir;
+    boş harita ilgili özelliği atlar ve uyarı üretir (graceful degrade).
+    """
+    warnings: list[str] = []
+
+    category_map = _load_json_setting(settings.woocommerce_category_map_json)
+    stonex_map = _load_json_setting(settings.woocommerce_stonex_meta_map_json)
+    badge_config = _load_json_setting(settings.woocommerce_badge_meta_json)
+
+    categories, primary_category_id, category_warnings = _resolve_categories(product, category_map)
+    warnings.extend(category_warnings)
+
+    ai_text = (product.ai_description or "").strip()
+    seo_bundle = _parse_ai_description_seo_bundle(ai_text)
+    description_value = seo_bundle.get("long_description_html") or ai_text
+    short_description_value = seo_bundle.get("short_description")
+    slug_value = seo_bundle.get("url_slug")
+    meta_description_value = seo_bundle.get("meta_description")
+    seo_title_value = seo_bundle.get("seo_title")
+    if not slug_value or not _slug_consistent(slug_value, product):
+        slug_value = _default_slug_for(product)
+
+    # Sabit Danca blok yalnız TAKI ürünlerinde; DB'deki ai_description'a asla
+    # yazılmaz, yalnız giden payload'da birleştirilir.
+    if (
+        settings.woocommerce_desc_footer_enabled
+        and _product_inventory_category(product) == "taki"
+    ):
+        footer_html = (settings.woocommerce_desc_footer_html or "").strip() or DESC_FOOTER_DA_DEFAULT
+        description_value = _apply_description_footer(description_value, footer_html)
+
+    resolved_name = name.strip() if name and name.strip() else (seo_title_value or _default_name_for(product))
+    payload: dict[str, Any] = {
+        "name": resolved_name,
+        "description": description_value,
+        "regular_price": str(quantize_2(regular_price_dkk)),
+        "categories": categories,
+        "status": "publish",
+        "meta_data": [{"key": "crm_product_id", "value": str(product.id)}],
+    }
+
+    attributes = _build_attributes(product)
+    if attributes:
+        payload["attributes"] = attributes
+
+    if short_description_value:
+        payload["short_description"] = short_description_value
+    if slug_value:
+        payload["slug"] = slug_value
+    if seo_title_value:
+        payload["meta_data"].extend(
+            [
+                {"key": "_yoast_wpseo_title", "value": seo_title_value},
+                {"key": "rank_math_title", "value": seo_title_value},
+            ]
+        )
+    if meta_description_value:
+        payload["meta_data"].extend(
+            [
+                {"key": "_yoast_wpseo_metadesc", "value": meta_description_value},
+                {"key": "rank_math_description", "value": meta_description_value},
+                {"key": "crm_meta_description", "value": meta_description_value},
+            ]
+        )
+    if primary_category_id is not None and settings.woocommerce_primary_term_meta_key:
+        payload["meta_data"].append(
+            {"key": settings.woocommerce_primary_term_meta_key, "value": str(primary_category_id)}
+        )
+
+    stonex_meta, stonex_warnings = _build_stonex_meta(product, stonex_map)
+    payload["meta_data"].extend(stonex_meta)
+    warnings.extend(stonex_warnings)
+
+    badge_meta, badge_warnings = _build_badge_meta(badge_config)
+    payload["meta_data"].extend(badge_meta)
+    warnings.extend(badge_warnings)
+
+    if images:
+        payload["images"] = images
+
+    return payload, warnings
+
+
 class WooCommerceService:
     def __init__(self) -> None:
         settings = get_settings()
@@ -279,16 +653,6 @@ class WooCommerceService:
 
         return response
 
-    async def _ensure_category(self, name: str) -> int:
-        existing = await self._wc_request("GET", "/products/categories", params={"search": name, "per_page": 100})
-        if isinstance(existing, list):
-            for item in existing:
-                if str(item.get("name", "")).strip().lower() == name.lower():
-                    return int(item["id"])
-
-        created = await self._wc_request("POST", "/products/categories", json_payload={"name": name})
-        return int(created["id"])
-
     async def _load_photo_bytes(self, photo_url: str) -> tuple[bytes, str]:
         if photo_url.startswith("http://") or photo_url.startswith("https://"):
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -374,35 +738,13 @@ class WooCommerceService:
         return {"id": int(media_id)}, None
 
     def _default_name(self, product: Product) -> str:
-        product_type = PRODUCT_TYPE_DA.get(getattr(product.product_type, "value", str(product.product_type)), "Smykke")
-        metal_type = METAL_TYPE_DA.get(getattr(product.metal_type, "value", str(product.metal_type)), "Ædelmetal")
-        return f"{product_type} - {metal_type} #{product.product_number}"
+        return _default_name_for(product)
 
     def _default_slug(self, product: Product) -> str:
-        product_type_key = getattr(product.product_type, "value", str(product.product_type))
-        metal_type_key = getattr(product.metal_type, "value", str(product.metal_type))
-        product_token = PRODUCT_TYPE_SLUG_DA.get(product_type_key, "smykke")
-        metal_token = METAL_TYPE_SLUG_DA.get(metal_type_key, "aedelmetal")
-        karat_token = _sanitize_slug(str(product.purity_karat or "").replace(" ", ""))
-
-        weight_token = ""
-        if getattr(product, "weight_grams", None) is not None:
-            weight_token = f"{str(product.weight_grams).replace('.', '-') }g"
-            weight_token = _sanitize_slug(weight_token)
-
-        ref = (product.reference_number or product.product_number or "").strip()
-        ref_token = _sanitize_slug(f"ref-{ref}") if ref else ""
-
-        parts = [metal_token, product_token, karat_token, weight_token, ref_token]
-        slug = "-".join(part for part in parts if part)
-        return _sanitize_slug(slug)
+        return _default_slug_for(product)
 
     def _is_slug_consistent(self, slug: str, product: Product) -> bool:
-        product_type_key = getattr(product.product_type, "value", str(product.product_type))
-        expected_token = PRODUCT_TYPE_SLUG_DA.get(product_type_key, "")
-        if not expected_token:
-            return True
-        return expected_token in slug
+        return _slug_consistent(slug, product)
 
     async def publish_product(
         self,
@@ -412,11 +754,6 @@ class WooCommerceService:
         name: str | None = None,
     ) -> tuple[dict[str, Any], list[str]]:
         warnings: list[str] = []
-        category_names = [
-            METAL_TYPE_DA.get(getattr(product.metal_type, "value", str(product.metal_type)), "Ædelmetal"),
-            PRODUCT_TYPE_DA.get(getattr(product.product_type, "value", str(product.product_type)), "Smykke"),
-        ]
-        category_ids = [await self._ensure_category(cat_name) for cat_name in category_names]
 
         # is_primary önce → Woo images[0] öne çıkan görsel olur.
         photos = sorted_photos_for_publish(product)
@@ -435,38 +772,14 @@ class WooCommerceService:
         if photos and not images and self._can_upload_media():
             warnings.append("Hiçbir fotoğraf yüklenemedi — ürün görselsiz yayınlandı.")
 
-        ai_text = (product.ai_description or "").strip()
-        seo_bundle = _parse_ai_description_seo_bundle(ai_text)
-        description_value = seo_bundle.get("long_description_html") or ai_text
-        short_description_value = seo_bundle.get("short_description")
-        slug_value = seo_bundle.get("url_slug")
-        meta_description_value = seo_bundle.get("meta_description")
-        seo_title_value = seo_bundle.get("seo_title")
-        if not slug_value or not self._is_slug_consistent(slug_value, product):
-            slug_value = self._default_slug(product)
-
-        payload: dict[str, Any] = {
-            "name": name.strip() if name and name.strip() else (seo_title_value or self._default_name(product)),
-            "description": description_value,
-            "regular_price": str(quantize_2(regular_price_dkk)),
-            "categories": [{"id": category_id} for category_id in category_ids],
-            "status": "publish",
-            "meta_data": [{"key": "crm_product_id", "value": str(product.id)}],
-        }
-        if short_description_value:
-            payload["short_description"] = short_description_value
-        if slug_value:
-            payload["slug"] = slug_value
-        if meta_description_value:
-            payload["meta_data"].extend(
-                [
-                    {"key": "_yoast_wpseo_metadesc", "value": meta_description_value},
-                    {"key": "rank_math_description", "value": meta_description_value},
-                    {"key": "crm_meta_description", "value": meta_description_value},
-                ]
-            )
-        if images:
-            payload["images"] = images
+        payload, payload_warnings = build_publish_payload(
+            product=product,
+            regular_price_dkk=regular_price_dkk,
+            name=name,
+            images=images,
+            settings=get_settings(),
+        )
+        warnings.extend(payload_warnings)
 
         try:
             if product.woocommerce_product_id:
