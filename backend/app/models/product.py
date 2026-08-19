@@ -75,6 +75,7 @@ class Product(Base):
     length_cm: Mapped[str | None] = mapped_column(String(30), nullable=True)
     width_mm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     thickness_mm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    diameter_mm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     producer: Mapped[str | None] = mapped_column(String(120), nullable=True)
     inventory_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
     inventory_subcategory: Mapped[str | None] = mapped_column(String(30), nullable=True)
