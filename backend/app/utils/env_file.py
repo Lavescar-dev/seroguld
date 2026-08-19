@@ -15,7 +15,10 @@ def _quote_env_value(value: str) -> str:
 
 def upsert_env_values(path: Path, updates: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    # utf-8-sig: BOM'lu dosyada ilk anahtarın "\ufeffKEY" okunup dosya sonuna
+    # ikinci kez eklenmesini önler (Notepad/PS 5.1 Set-Content -Encoding UTF8
+    # BOM'lu yazar).
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
 
     key_to_idx: dict[str, int] = {}
     for idx, line in enumerate(lines):
@@ -46,3 +49,11 @@ def upsert_env_values(path: Path, updates: dict[str, str]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+    # Paketli çalışmada runtime.env açılışta os.environ'a kopyalanır ve
+    # pydantic-settings'te env-var > dosya önceliği vardır: yalnız dosyayı
+    # güncellemek, süreç yeniden başlatılana kadar ESKİ değerin görünmesine
+    # yol açıyordu (hedefte firma adı mojibake'inin "yapışkan" kalma nedeni).
+    # Yazılan anahtarlar süreç ortamına da uygulanır.
+    for key, value in updates.items():
+        os.environ[key] = value

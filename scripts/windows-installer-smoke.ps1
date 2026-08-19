@@ -14,7 +14,9 @@ function Assert-Smoke {
 function Write-SmokeFile {
   param([string]$Path, [string]$Content)
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
-  Set-Content -LiteralPath $Path -Value $Content -Encoding UTF8
+  # BOM'suz UTF-8: PS 5.1 Set-Content -Encoding UTF8 BOM yazar; ilk satiri
+  # gercek bir anahtar olan env fixture'larinda BOM anahtari bozardi.
+  [System.IO.File]::WriteAllText($Path, ($Content + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
 function Get-ConsoleUserSid {
