@@ -1760,6 +1760,44 @@ def _open_managed_excel_workbook(
     return excel, event_sink, workbook
 
 
+def excel_probe() -> int:
+    """Gerçek COM tespiti: gizli bir Excel örneği başlatıp hemen kapatır.
+
+    Stdout'a tek satır JSON verdict yazar; registry sezgisinin aksine
+    'kayıtlı ama bozuk' Office kurulumlarını da yakalar. Exit: 0 = Excel
+    kullanılabilir, 3 = kullanılamaz, 2 = platform desteklenmiyor.
+    """
+    if os.name != "nt":
+        print(json.dumps({"available": False, "version": None, "error": "unsupported-platform"}))
+        return 2
+    excel = None
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.DisplayAlerts = False
+            excel.Visible = False
+            version = str(getattr(excel, "Version", "") or "")
+            print(json.dumps({"available": True, "version": version, "error": None}))
+            return 0
+        finally:
+            if excel is not None:
+                try:
+                    excel.Quit()
+                except Exception:
+                    pass
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"available": False, "version": None, "error": str(exc)[:300]}))
+        return 3
+
+
 def excel_bridge() -> int:
     if os.name != "nt":
         raise RuntimeError("Microsoft Excel bridge yalnız Windows üzerinde çalışır")
@@ -2027,10 +2065,10 @@ def excel_bridge() -> int:
 def main(argv: list[str] | None = None) -> int:
     arguments = list(argv if argv is not None else sys.argv[1:])
     mode = arguments[0].strip().lower() if arguments else "serve"
-    if mode not in {"migrate", "serve", "excel-bridge"}:
+    if mode not in {"migrate", "serve", "excel-bridge", "excel-probe"}:
         try:
             if sys.stderr is not None:
-                print("Kullanım: seroguld-runtime.exe [migrate|serve|excel-bridge]", file=sys.stderr)
+                print("Kullanım: seroguld-runtime.exe [migrate|serve|excel-bridge|excel-probe]", file=sys.stderr)
         except Exception:
             pass
         return 2
@@ -2042,6 +2080,8 @@ def main(argv: list[str] | None = None) -> int:
             return migrate(paths)
         if mode == "serve":
             return serve()
+        if mode == "excel-probe":
+            return excel_probe()
         return excel_bridge()
     except Exception:
         try:

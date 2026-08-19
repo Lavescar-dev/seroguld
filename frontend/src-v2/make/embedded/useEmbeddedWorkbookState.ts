@@ -10,6 +10,7 @@ import {
   getExcelAvailability,
   isTauriRuntime,
   launchExcelBridge,
+  probeExcelComAvailability,
 } from '@/lib/desktop';
 import { getLocale, t } from '@/lib/locale';
 import { isPendingSaveDiscarded, registerPendingSaveHandler } from '@/lib/saveCoordinator';
@@ -145,13 +146,45 @@ export function useEmbeddedWorkbookState(
         active = false;
       };
     }
-    void getExcelAvailability().then((availability) => {
-      if (active) setExcelAvailable(availability?.available ?? false);
+    // Katmanlı tespit: registry anında yanıt verir; olumsuzsa (veya IPC
+    // hatasıysa) gerçek COM probe'u kesin kararı verir — 'kayıtlı ama bozuk'
+    // Office kurulumları da böyle yakalanır.
+    void getExcelAvailability().then(async (availability) => {
+      if (!active) return;
+      if (availability?.available) {
+        setExcelAvailable(true);
+        return;
+      }
+      const verdict = await probeExcelComAvailability();
+      if (!active) return;
+      if (verdict?.confidence === 'ipc-error') {
+        // IPC hatası 'Excel yok' demek değildir; kullanıcıyı yanlış kilitleme.
+        setExcelAvailable(availability?.ipc_error ? null : availability?.available ?? null);
+        return;
+      }
+      setExcelAvailable(verdict?.available ?? false);
     });
     return () => {
       active = false;
     };
   }, []);
+
+  const onRetryExcelProbe = async () => {
+    if (!isTauriRuntime()) return;
+    setExcelMessage(t('workbook.excelOpening', getLocale()));
+    const verdict = await probeExcelComAvailability(true);
+    if (verdict?.available) {
+      setExcelAvailable(true);
+      setExcelMessage(null);
+    } else {
+      setExcelAvailable(false);
+      setExcelMessage(
+        verdict?.error
+          ? `${t('workbook.excelBridgeFailed', getLocale())}: ${verdict.error}`
+          : t('workbook.excelMissing', getLocale()),
+      );
+    }
+  };
 
   const patchMutation = useMutation({
     mutationFn: (request: PatchRequest) =>
@@ -471,6 +504,7 @@ export function useEmbeddedWorkbookState(
     saveState,
     cellErrors,
     excelAvailable,
+    onRetryExcelProbe,
     excelMessage,
     excelConflict,
     isOpeningExcel,

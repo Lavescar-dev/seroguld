@@ -135,6 +135,15 @@ export type ExcelAvailability = {
   available: boolean;
   executable?: string | null;
   reason?: string | null;
+  // IPC hatası 'Excel yok' ile aynı şey değildir; ayrık işaretlenir.
+  ipc_error?: boolean;
+};
+
+export type ExcelComProbeResult = {
+  available: boolean;
+  version?: string | null;
+  error?: string | null;
+  confidence: string;
 };
 
 export type ExcelBridgeRequest = {
@@ -599,7 +608,22 @@ export async function getExcelAvailability(): Promise<ExcelAvailability | null> 
   try {
     return await invokeDesktop<ExcelAvailability>('get_excel_availability');
   } catch {
-    return null;
+    // IPC hatasını 'kurulu değil' sanma: çağıran ayrık ele alabilsin.
+    return { available: false, reason: 'ipc-error', ipc_error: true };
+  }
+}
+
+export async function probeExcelComAvailability(force = false): Promise<ExcelComProbeResult | null> {
+  if (!isTauriRuntime()) return null;
+  try {
+    return await invokeDesktop<ExcelComProbeResult>('probe_excel_com_availability', { force });
+  } catch (error) {
+    return {
+      available: false,
+      version: null,
+      error: error instanceof Error ? error.message : String(error),
+      confidence: 'ipc-error',
+    };
   }
 }
 

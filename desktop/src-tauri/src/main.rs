@@ -377,6 +377,7 @@ struct RuntimeSupervisor {
     paths: Mutex<Option<DesktopPaths>>,
     status: Mutex<RuntimeStatus>,
     excel_operation: Mutex<()>,
+    excel_probe_cache: Mutex<Option<ExcelComProbeResult>>,
     start_in_progress: AtomicBool,
     excel_launch_in_progress: AtomicBool,
     close_request_pending: AtomicBool,
@@ -404,6 +405,7 @@ impl RuntimeSupervisor {
                 excel_close_error: None,
             }),
             excel_operation: Mutex::new(()),
+            excel_probe_cache: Mutex::new(None),
             start_in_progress: AtomicBool::new(false),
             excel_launch_in_progress: AtomicBool::new(false),
             close_request_pending: AtomicBool::new(false),
@@ -1366,6 +1368,85 @@ struct ExcelBridgeStatus {
     running: bool,
     pid: Option<u32>,
     message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ExcelComProbeResult {
+    available: bool,
+    version: Option<String>,
+    error: Option<String>,
+    confidence: String,
+}
+
+impl RuntimeSupervisor {
+    /// Gerçek COM tespiti: runtime'ı `excel-probe` modunda çalıştırır.
+    /// Registry sezgisinin aksine "kayıtlı ama bozuk" Office kurulumlarını
+    /// da yakalar. Soğuk COM başlangıcı saniyeler sürebilir; 15 sn bekler.
+    fn probe_excel_com(&self, app: &AppHandle) -> Result<ExcelComProbeResult, String> {
+        let _operation = self
+            .excel_operation
+            .lock()
+            .map_err(|_| "Excel işlemi kilitlendi".to_string())?;
+        let runtime = self
+            .runtime_path(app)
+            .ok_or_else(|| format!("Paketlenmiş runtime bulunamadı: {RUNTIME_RELATIVE_PATH}"))?;
+        let paths = self.paths()?;
+        self.ensure_job()?;
+        let mut command = Command::new(&runtime);
+        command
+            .arg("excel-probe")
+            .current_dir(&paths.root)
+            .env("SEROGULD_PROGRAM_DATA", &paths.root)
+            .env("PYTHONUNBUFFERED", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("excel-probe başlatılamadı: {error}"))?;
+        if let Some(job) = self
+            .job
+            .lock()
+            .map_err(|_| "Runtime Job Object kilitlendi".to_string())?
+            .as_ref()
+        {
+            let _ = job.assign(&child);
+        }
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_status)) => break,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("Excel COM tespiti zaman aşımına uğradı".to_string());
+                    }
+                    sleep(Duration::from_millis(150));
+                }
+                Err(error) => return Err(format!("excel-probe izlenemedi: {error}")),
+            }
+        }
+        let mut output = String::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            use std::io::Read;
+            let _ = stdout.read_to_string(&mut output);
+        }
+        let line = output
+            .lines()
+            .rev()
+            .find(|line| line.trim_start().starts_with('{'))
+            .ok_or_else(|| "excel-probe çıktı vermedi".to_string())?;
+        let mut verdict: ExcelComProbeResult = serde_json::from_str(line.trim())
+            .map_err(|error| format!("excel-probe çıktısı çözümlenemedi: {error}"))?;
+        verdict.confidence = "com".to_string();
+        if let Ok(mut cache) = self.excel_probe_cache.lock() {
+            *cache = Some(verdict.clone());
+        }
+        Ok(verdict)
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3040,6 +3121,35 @@ fn open_runtime_diagnostics(state: State<'_, RuntimeSupervisor>) -> Result<Strin
 }
 
 #[tauri::command]
+fn probe_excel_com_availability(
+    app: AppHandle,
+    state: State<'_, RuntimeSupervisor>,
+    force: Option<bool>,
+) -> Result<ExcelComProbeResult, String> {
+    if !force.unwrap_or(false) {
+        if let Ok(cache) = state.excel_probe_cache.lock() {
+            if let Some(cached) = cache.as_ref() {
+                return Ok(cached.clone());
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return state.probe_excel_com(&app);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Ok(ExcelComProbeResult {
+            available: false,
+            version: None,
+            error: Some("Excel bridge yalnızca Windows üzerinde desteklenir".to_string()),
+            confidence: "unsupported".to_string(),
+        })
+    }
+}
+
+#[tauri::command]
 fn get_excel_availability() -> ExcelAvailability {
     excel_available()
 }
@@ -3416,6 +3526,7 @@ fn main() {
             retry_desktop_startup,
             open_runtime_diagnostics,
             get_excel_availability,
+            probe_excel_com_availability,
             launch_excel_bridge,
             show_managed_excel_session,
             focus_managed_excel_session,

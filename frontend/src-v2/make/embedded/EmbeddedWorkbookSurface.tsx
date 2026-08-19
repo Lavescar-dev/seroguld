@@ -20,6 +20,7 @@ export type EmbeddedWorkbookSurfaceProps = {
   saveState: EmbeddedSaveState;
   cellErrors: Record<string, EmbeddedCellError>;
   excelAvailable: boolean | null;
+  onRetryExcelProbe?: () => void | Promise<void>;
   excelMessage: string | null;
   excelConflict: boolean;
   isOpeningExcel: boolean;
@@ -80,6 +81,7 @@ export function EmbeddedWorkbookSurface({
   saveState,
   cellErrors,
   excelAvailable,
+  onRetryExcelProbe,
   excelMessage,
   excelConflict,
   isOpeningExcel,
@@ -208,7 +210,18 @@ export function EmbeddedWorkbookSurface({
             </span>
           ) : null}
               {excelMessage || excelAvailable === false ? (
-                <span className="text-sky-800">{excelMessage || t('workbook.excelMissing', locale)}</span>
+                <span className="text-sky-800">
+                  {excelMessage || t('workbook.excelMissing', locale)}
+                  {excelAvailable === false && onRetryExcelProbe ? (
+                    <button
+                      type="button"
+                      onClick={() => void onRetryExcelProbe()}
+                      className="ml-2 underline decoration-dotted underline-offset-2 hover:opacity-80"
+                    >
+                      Yeniden dene
+                    </button>
+                  ) : null}
+                </span>
               ) : null}
         </div>
         {excelConflict ? (

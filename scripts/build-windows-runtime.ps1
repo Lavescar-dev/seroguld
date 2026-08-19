@@ -358,6 +358,24 @@ function Start-RuntimeProcess {
   return [System.Diagnostics.Process]::Start($info)
 }
 
+function Invoke-ExcelProbeSmoke {
+  param([string]$RuntimeExe, [string]$ProgramDataRoot)
+  # excel-probe tek satir JSON verdict yazmali ve makinede Excel yoksa bile
+  # kontrollu bir exit koduyla (0/3) donmelidir.
+  $env:SEROGULD_PROGRAM_DATA = $ProgramDataRoot
+  $output = & $RuntimeExe excel-probe 2>$null
+  $exit = $LASTEXITCODE
+  Remove-Item Env:SEROGULD_PROGRAM_DATA -ErrorAction SilentlyContinue
+  if ($exit -ne 0 -and $exit -ne 3) {
+    throw "excel-probe beklenmeyen exit kodu: $exit"
+  }
+  $line = ($output | Where-Object { $_ -match '^\s*\{' } | Select-Object -Last 1)
+  if (-not $line) { throw "excel-probe JSON verdict yazmadi" }
+  $verdict = $line | ConvertFrom-Json
+  if ($null -eq $verdict.available) { throw "excel-probe verdict 'available' alani eksik" }
+  Write-Host ("excel-probe smoke OK (available=" + $verdict.available + ")")
+}
+
 function Invoke-ExcelBridgeProtocolSmoke {
   param([string]$Executable, [string]$ProgramDataRoot)
   $info = New-Object System.Diagnostics.ProcessStartInfo
@@ -478,6 +496,7 @@ try {
       if (-not $migrate.WaitForExit(120000)) { $migrate.Kill(); throw "Packaged runtime migration timeout" }
       if ($migrate.ExitCode -ne 0) { throw "Packaged runtime migration başarısız oldu: $($migrate.ExitCode)" }
       Invoke-ExcelBridgeProtocolSmoke -Executable $builtRuntimeExe -ProgramDataRoot $smokeRoot
+      Invoke-ExcelProbeSmoke -RuntimeExe $builtRuntimeExe -ProgramDataRoot $smokeRoot
 
       $serve = Start-RuntimeProcess -Executable $builtRuntimeExe -Mode "serve" -ProgramDataRoot $smokeRoot -SmokePort $smokePort
       try {
