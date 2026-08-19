@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Check, Eye, Pencil, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 import type { ModernCustomersViewModel } from '@/modern/adapters/customers';
@@ -68,6 +69,12 @@ function CustomerDraftForm({
 export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomersViewModel }) {
   const { state } = viewModel;
   const selected = state.selectedCustomer;
+  const selectedPanelRef = useRef<HTMLDivElement | null>(null);
+  const selectedId = state.selectedId ?? null;
+  useEffect(() => {
+    // "Seç" panele odak: seçim küçük ekranlarda görünmeden değişebiliyordu.
+    if (selectedId) selectedPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [selectedId]);
 
   return (
     <ModernModuleShell
@@ -198,6 +205,7 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
         </ModernSection>
 
         <ModernSection title="Seçili Müşteri" subtitle="AFG geçmişi ve önizleme işlemleri bu panelde tutulur.">
+          <div ref={selectedPanelRef} />
           {!selected ? (
             <EmptyState title="Müşteri Seçilmedi" message="Listeden bir müşteri seçildiğinde geçmiş belgeler ve detay özetleri burada görünür." />
           ) : (

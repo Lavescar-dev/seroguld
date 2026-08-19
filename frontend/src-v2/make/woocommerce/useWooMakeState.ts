@@ -360,7 +360,6 @@ function mapDurum(row: InventoryGridRow): string {
   if (row.status === 'for_sale') return 'Satışta';
   if (row.status === 'draft') return 'Taslak';
   if (row.status === 'sold') return 'Satıldı';
-  if (row.status === 'hidden') return 'Yayından Kaldırıldı';
   return row.status;
 }
 

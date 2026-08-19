@@ -1099,6 +1099,8 @@ export function useAlisMakeState(): AlisPageProps {
     }
     const next = new URLSearchParams(searchParams);
     next.delete('customer');
+    // 'Yeni alış başlat' butonunun eklediği start bayrağı da URL'de kalmasın.
+    next.delete('start');
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace?.session.id]);
