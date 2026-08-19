@@ -689,12 +689,12 @@ function ActiveWorkspaceView(props: {
   } = props;
   const hasSelectedCustomer = Boolean(workspace.customer.customer_id);
   const liveTotalWeight = useMemo(
-    () => [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0),
-    [goldRows, silverRows],
+    () => [...goldRows, ...silverRows, ...barRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0),
+    [goldRows, silverRows, barRows, ptpdRows],
   );
   const liveTotalAmount = useMemo(
-    () => [...goldRows, ...silverRows].reduce((sum, row) => sum + parseDecimalValue(row.line_total_dkk), 0),
-    [goldRows, silverRows],
+    () => [...goldRows, ...silverRows, ...barRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.line_total_dkk), 0),
+    [goldRows, silverRows, barRows, ptpdRows],
   );
   const liveVatAmount = purchaseVatEnabled ? Math.round(liveTotalAmount * 0.25 * 100) / 100 : 0;
   const liveGrossAmount = Math.round((liveTotalAmount + liveVatAmount) * 100) / 100;

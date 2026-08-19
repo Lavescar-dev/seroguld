@@ -937,6 +937,8 @@ def _invoice_gold_auto_sheet_from_workspace_rows(
     *,
     gold_rows: list[PosWorkspaceGoldRowOut],
     silver_rows: list[PosWorkspaceSilverRowOut],
+    bar_rows: list[Any] = (),
+    ptpd_rows: list[Any] = (),
     market_rates: PosWorkspaceMarketRates,
 ) -> PosWorkspaceInvoiceGoldSheetOut:
     generated_rows: list[PosWorkspaceInvoiceGoldRowOut] = []
@@ -956,6 +958,22 @@ def _invoice_gold_auto_sheet_from_workspace_rows(
                 line_total_dkk=quantize_2(to_decimal(row.line_total_dkk)),
             )
         )
+    for row in bar_rows:
+        gram = quantize_2(to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        generated_rows.append(
+            PosWorkspaceInvoiceGoldRowOut(
+                row_key="",
+                code="6" if str(row.bar_type) == "gold" else "7",
+                label=str(row.label),
+                fineness=str(row.lodighed),
+                lodighed=str(row.lodighed),
+                gram=gram,
+                unit_price_dkk=quantize_2(to_decimal(row.unit_price_dkk)),
+                line_total_dkk=quantize_2(to_decimal(row.line_total_dkk)),
+            )
+        )
     for row in silver_rows:
         gram = quantize_2(to_decimal(row.gram))
         if gram <= 0:
@@ -964,6 +982,22 @@ def _invoice_gold_auto_sheet_from_workspace_rows(
             PosWorkspaceInvoiceGoldRowOut(
                 row_key="",
                 code=str(row.type_code),
+                label=str(row.label),
+                fineness=str(row.lodighed),
+                lodighed=str(row.lodighed),
+                gram=gram,
+                unit_price_dkk=quantize_2(to_decimal(row.unit_price_dkk)),
+                line_total_dkk=quantize_2(to_decimal(row.line_total_dkk)),
+            )
+        )
+    for row in ptpd_rows:
+        gram = quantize_2(to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        generated_rows.append(
+            PosWorkspaceInvoiceGoldRowOut(
+                row_key="",
+                code="8" if str(row.metal) == "platinum" else "9",
                 label=str(row.label),
                 fineness=str(row.lodighed),
                 lodighed=str(row.lodighed),

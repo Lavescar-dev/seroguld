@@ -114,6 +114,8 @@ class PosRealtimePreview(AppBaseModel):
     manual_rate_dkk: Decimal | None = Field(default=None, ge=0)
     preview_gold_rows: list["PosWorkspaceGoldRowOut"] | None = None
     preview_silver_rows: list["PosWorkspaceSilverRowOut"] | None = None
+    preview_bar_rows: list["PosWorkspaceBarRowOut"] | None = None
+    preview_ptpd_rows: list["PosWorkspacePtPdRowOut"] | None = None
     preview_lines: list["PosRealtimePreviewLine"] | None = None
 
 

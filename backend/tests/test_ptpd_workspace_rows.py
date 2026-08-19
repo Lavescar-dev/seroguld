@@ -81,3 +81,51 @@ def test_infer_workspace_row_key_routes_ptpd_before_karat_parse() -> None:
     )
     assert _infer_workspace_row_key(platinum_line) == "ptpd:platinum"
     assert _infer_workspace_row_key(palladium_line) == "ptpd:palladium"
+
+
+def test_invoice_gold_auto_sheet_includes_bar_and_ptpd_rows() -> None:
+    """Faktura Guld auto sheet'i 0.3.7'de bar/ptpd satırlarını hiç yazmıyordu."""
+    from decimal import Decimal as D
+
+    from app.schemas.pos import (
+        PosWorkspaceBarRowOut,
+        PosWorkspaceGoldRowOut,
+        PosWorkspaceMarketRates,
+        PosWorkspacePtPdRowOut,
+    )
+    from app.services.pos_workspace_state import _invoice_gold_auto_sheet_from_workspace_rows
+
+    market_rates = PosWorkspaceMarketRates(
+        eur_dkk_fx=D("7.45"),
+        gold_rates_dkk={"14": D("359.04")},
+        silver_rates_dkk={"999": D("7.80")},
+        gold_24k_dkk=D("615.50"),
+        silver_dkk=D("7.80"),
+    )
+    gold = [PosWorkspaceGoldRowOut(
+        row_key="gold:14", karat=D("14.0"), label="14k", lodighed="585",
+        purity_percentage=D("58.50"), gram=D("44.00"), avance_percent=D("0"),
+        rate_dkk=D("1662.50"), unit_price_dkk=D("1662.50"), line_total_dkk=D("73150.00"),
+    )]
+    bars = [PosWorkspaceBarRowOut(
+        row_key="bar:gold", bar_type="gold", label="Guldbarre", lodighed="999.9",
+        purity_percentage=D("99.99"), gram=D("22.00"), avance_percent=D("0"),
+        rate_dkk=D("615.50"), unit_price_dkk=D("615.50"), line_total_dkk=D("13541.00"),
+    )]
+    ptpd = [PosWorkspacePtPdRowOut(
+        row_key="ptpd:platinum", metal="platinum", label="Platin", lodighed="950",
+        purity_percentage=D("95.00"), gram=D("33.00"), avance_percent=D("0"),
+        rate_dkk=D("280.00"), unit_price_dkk=D("280.00"), line_total_dkk=D("9240.00"),
+    )]
+
+    sheet = _invoice_gold_auto_sheet_from_workspace_rows(
+        gold_rows=gold, silver_rows=[], bar_rows=bars, ptpd_rows=ptpd, market_rates=market_rates,
+    )
+    filled = [row for row in sheet.rows if row.gram and row.gram > 0]
+    assert [(row.code, row.label) for row in filled] == [
+        ("1", "Guld"),
+        ("6", "Guldbarre"),
+        ("8", "Platin"),
+    ]
+    assert sheet.total_grams == D("99.00")
+    assert sheet.total_amount_dkk == D("95931.00")

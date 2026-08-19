@@ -176,6 +176,8 @@ INVOICE_GOLD_CODE_LABELS: dict[str, str] = {
     "5": "Plet",
     "6": "Guldbarre",
     "7": "Sølvbarre",
+    "8": "Platin",
+    "9": "Palladium",
 }
 INVOICE_GOLD_DEFAULT_LODIGHED: dict[str, str] = {
     "2": "999",
@@ -184,6 +186,8 @@ INVOICE_GOLD_DEFAULT_LODIGHED: dict[str, str] = {
     "5": "",
     "6": "999.9",
     "7": "999",
+    "8": "950",
+    "9": "500",
 }
 GOLD_RATE_KEYS: tuple[str, ...] = tuple(str(item["row_key"]).split(":", 1)[1] for item in GOLD_WORKSPACE_ROWS)
 # Plet matristen çıktı (global skaler); oran matrisi anahtarları yalnız
@@ -1091,11 +1095,15 @@ def _invoice_gold_auto_sheet_from_workspace_rows(
     *,
     gold_rows: list[PosWorkspaceGoldRowOut],
     silver_rows: list[PosWorkspaceSilverRowOut],
+    bar_rows: list[PosWorkspaceBarRowOut] | tuple = (),
+    ptpd_rows: list[PosWorkspacePtPdRowOut] | tuple = (),
     market_rates: PosWorkspaceMarketRates,
 ) -> PosWorkspaceInvoiceGoldSheetOut:
     return pos_workspace_state._invoice_gold_auto_sheet_from_workspace_rows(
         gold_rows=gold_rows,
         silver_rows=silver_rows,
+        bar_rows=bar_rows,
+        ptpd_rows=ptpd_rows,
         market_rates=market_rates,
     )
 
@@ -1431,6 +1439,8 @@ async def build_purchase_workspace(
         _invoice_gold_auto_sheet_from_workspace_rows(
             gold_rows=gold_rows,
             silver_rows=silver_rows,
+            bar_rows=bar_rows,
+            ptpd_rows=ptpd_rows,
             market_rates=market_rates,
         )
         if invoice_gold_mode == COMPANION_MODE_AUTO

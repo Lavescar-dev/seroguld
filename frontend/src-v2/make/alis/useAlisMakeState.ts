@@ -486,6 +486,8 @@ function buildAutoInvoiceGoldRows(
   goldRows: EditableGoldRow[],
   silverRows: EditableSilverRow[],
   existingRows: EditableInvoiceGoldRow[] = [],
+  barRows: EditableBarRow[] = [],
+  ptpdRows: EditablePtPdRow[] = [],
 ): EditableInvoiceGoldRow[] {
   const defaults = (existingRows.length > 0 ? existingRows : buildDefaultInvoiceGoldRows()).map((row) => ({
     ...row,
@@ -509,10 +511,31 @@ function buildAutoInvoiceGoldRows(
       gram: quantize2(toNumeric(row.gram)),
     });
   }
+  // Sunucu sırasıyla aynı: altın → bar → gümüş → Pt/Pd.
+  for (const row of barRows) {
+    if (toNumeric(row.gram) <= 0) continue;
+    generated.push({
+      code: row.bar_type === 'gold' ? '6' : '7',
+      label: row.label,
+      fineness: row.lodighed,
+      lodighed: row.lodighed,
+      gram: quantize2(toNumeric(row.gram)),
+    });
+  }
   for (const row of silverRows) {
     if (toNumeric(row.gram) <= 0) continue;
     generated.push({
       code: row.type_code,
+      label: row.label,
+      fineness: row.lodighed,
+      lodighed: row.lodighed,
+      gram: quantize2(toNumeric(row.gram)),
+    });
+  }
+  for (const row of ptpdRows) {
+    if (toNumeric(row.gram) <= 0) continue;
+    generated.push({
+      code: row.metal === 'platinum' ? '8' : '9',
       label: row.label,
       fineness: row.lodighed,
       lodighed: row.lodighed,
@@ -558,6 +581,52 @@ function previewSilverRowsPayload(rows: EditableSilverRow[]) {
     unit_price_dkk: normalizeTextInput(row.unit_price_dkk || '0'),
     line_total_dkk: normalizeTextInput(row.line_total_dkk || '0'),
   }));
+}
+
+function computedPreviewBarRowsPayload(rows: EditableBarRow[], marketRates: PosWorkspaceMarketRates) {
+  return rows.map((row) => {
+    const liveRate = toNumeric(
+      row.bar_type === 'gold' ? marketRates.gold_bar_dkk : marketRates.silver_bar_dkk,
+    );
+    const gram = toNumeric(row.gram);
+    const avance = toNumeric(row.avance_percent);
+    const unitPrice = liveRate * (1 - avance / 100);
+    return {
+      row_key: row.row_key,
+      bar_type: row.bar_type,
+      label: row.label,
+      lodighed: row.lodighed,
+      purity_percentage: normalizeTextInput(row.purity_percentage || '0'),
+      gram: normalizeTextInput(row.gram || '0'),
+      avance_percent: normalizeTextInput(row.avance_percent || '0'),
+      rate_dkk: quantize2(liveRate),
+      unit_price_dkk: quantize2(unitPrice),
+      line_total_dkk: quantize2(unitPrice * gram),
+    };
+  });
+}
+
+function computedPreviewPtPdRowsPayload(rows: EditablePtPdRow[], marketRates: PosWorkspaceMarketRates) {
+  return rows.map((row) => {
+    const liveRate = toNumeric(
+      row.metal === 'platinum' ? marketRates.platinum_dkk : marketRates.palladium_dkk,
+    );
+    const gram = toNumeric(row.gram);
+    const avance = toNumeric(row.avance_percent);
+    const unitPrice = liveRate * (1 - avance / 100);
+    return {
+      row_key: row.row_key,
+      metal: row.metal,
+      label: row.label,
+      lodighed: row.lodighed,
+      purity_percentage: normalizeTextInput(row.purity_percentage || '0'),
+      gram: normalizeTextInput(row.gram || '0'),
+      avance_percent: normalizeTextInput(row.avance_percent || '0'),
+      rate_dkk: quantize2(liveRate),
+      unit_price_dkk: quantize2(unitPrice),
+      line_total_dkk: quantize2(unitPrice * gram),
+    };
+  });
 }
 
 function toNumeric(value: string | number | null | undefined) {
@@ -669,6 +738,9 @@ export function useAlisMakeState(): AlisPageProps {
   const [priceOpen, setPriceOpen] = useState(false);
   const goldRowsRef = useRef<EditableGoldRow[]>([]);
   const barRowsRef = useRef<EditableBarRow[]>([]);
+  // Finalize sürerken autosave/auto-regen PUT'ları susturulur; yarışan geç
+  // PUT'ların 409/400 toast'ları ("3 hata" gözlemi) bu kaynaktan geliyordu.
+  const finalizeInFlightRef = useRef(false);
   const ptpdRowsRef = useRef<EditablePtPdRow[]>([]);
   const silverRowsRef = useRef<EditableSilverRow[]>([]);
 
@@ -1180,8 +1252,8 @@ export function useAlisMakeState(): AlisPageProps {
       workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
       setWorkspace(data);
       setGoldRows(toEditableGoldRows(data.gold_rows));
-    setBarRows(toEditableBarRows(data.bar_rows));
-    setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
+      setBarRows(toEditableBarRows(data.bar_rows));
+      setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
       setSilverRows(toEditableSilverRows(data.silver_rows));
       setNumbering(toEditableNumbering(data.numbering_preview));
       setInvoiceGoldMode(data.invoice_gold_mode);
@@ -1363,6 +1435,8 @@ export function useAlisMakeState(): AlisPageProps {
   function buildPreviewPayload(options?: {
     goldRows?: EditableGoldRow[];
     silverRows?: EditableSilverRow[];
+    barRows?: EditableBarRow[];
+    ptpdRows?: EditablePtPdRow[];
     customerForm?: EditableCustomer;
     newCustomer?: EditableCustomer;
     customerMode?: 'existing' | 'new' | null;
@@ -1394,10 +1468,15 @@ export function useAlisMakeState(): AlisPageProps {
       customer_identity_doc_number: previewCustomer.identity_doc_number || '',
       preview_gold_rows: computedPreviewGoldRowsPayload(options?.goldRows ?? goldRowsRef.current, marketRates),
       preview_silver_rows: computedPreviewSilverRowsPayload(options?.silverRows ?? silverRowsRef.current, marketRates),
+      preview_bar_rows: computedPreviewBarRowsPayload(options?.barRows ?? barRowsRef.current, marketRates),
+      preview_ptpd_rows: computedPreviewPtPdRowsPayload(options?.ptpdRows ?? ptpdRowsRef.current, marketRates),
     };
   }
 
   const finalizeMutation = useMutation({
+    onSettled: () => {
+      finalizeInFlightRef.current = false;
+    },
     mutationFn: () =>
       apiRequest<PosWorkspaceFinalizeResponse>(`/api/v2/alis/workspace/${workspace?.session.id}/finalize`, {
         method: 'POST',
@@ -1495,9 +1574,10 @@ export function useAlisMakeState(): AlisPageProps {
 
   useEffect(() => {
     if (!workspace?.session.id || invoiceGoldMode !== 'auto') return;
-    setInvoiceGoldRows((current) => buildAutoInvoiceGoldRows(goldRows, silverRows, current));
+    if (finalizeInFlightRef.current) return;
+    setInvoiceGoldRows((current) => buildAutoInvoiceGoldRows(goldRows, silverRows, current, barRows, ptpdRows));
     setInvoiceGoldFooterLines(['', '', '']);
-  }, [workspace?.session.id, goldRows, silverRows, invoiceGoldMode]);
+  }, [workspace?.session.id, goldRows, silverRows, barRows, ptpdRows, invoiceGoldMode]);
 
   useEffect(() => {
     if (!workspace?.session.id || invoiceMiscMode !== 'auto') return;
@@ -1632,6 +1712,7 @@ export function useAlisMakeState(): AlisPageProps {
 
   useEffect(() => {
     if (!workspace?.session.id || initializedSessionRef.current !== workspace.session.id) return;
+    if (finalizeInFlightRef.current) return;
     const payload = workspaceRowsPayload(
       goldRows,
       silverRows,
@@ -1647,8 +1728,8 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceGoldFooterLines,
       invoiceMiscMode,
       invoiceMiscRows,
-      barRowsRef.current,
-      ptpdRowsRef.current,
+      barRows,
+      ptpdRows,
     );
     const serialized = JSON.stringify(payload);
     if (serialized === autosaveKeyRef.current) {
@@ -1659,10 +1740,15 @@ export function useAlisMakeState(): AlisPageProps {
       queueSectionsSave(payload);
     }, AUTOSAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
+    // 0.3.6/0.3.7 dersi: payload REF'ten okunup diziler deps dışında kalınca
+    // bar/ptpd düzenlemeleri hiç PUT edilmiyordu (TOPLAM 0, müşteri ekranı boş).
+    // Artık TÜM satır bölümleri state olarak hem payload'a hem deps'e girer.
   }, [
     workspace?.session.id,
     goldRows,
     silverRows,
+    barRows,
+    ptpdRows,
     bankInfo,
     marketRates,
     paymentMethod,
@@ -1949,48 +2035,61 @@ export function useAlisMakeState(): AlisPageProps {
     });
   }
 
-  function updateGoldRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+  // Satır bölümü kayıt defteri: state + ref + set + preview anahtarı TEK yerde.
+  // 0.3.6/0.3.7'de bar/ptpd için update fonksiyonları kopyalanırken preview
+  // çağrısı unutulmuştu; registry ile yeni bölüm eklemek tek girdi demek ve
+  // preview/autosave zinciri yapısal olarak atlanamaz.
+  type SectionKey = 'gold' | 'silver' | 'bar' | 'ptpd';
+  function updateSectionRow(section: SectionKey, rowKey: string, field: 'gram' | 'avance_percent', value: string) {
     markLocalWorkspaceEdit();
-    const nextRows = goldRowsRef.current.map((row) =>
-      row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
-    );
-    goldRowsRef.current = nextRows;
-    setGoldRows(nextRows);
-    const payload = buildPreviewPayload({ goldRows: nextRows });
-    if (payload) {
-      sendClerkPreview(payload);
+    const normalized = normalizeTextInput(value);
+    const apply = <T extends { row_key: string }>(rows: T[]): T[] =>
+      rows.map((row) => (row.row_key === rowKey ? { ...row, [field]: normalized } : row));
+    if (section === 'gold') {
+      const nextRows = apply(goldRowsRef.current);
+      goldRowsRef.current = nextRows;
+      setGoldRows(nextRows);
+      const payload = buildPreviewPayload({ goldRows: nextRows });
+      if (payload) sendClerkPreview(payload);
+      return;
     }
+    if (section === 'silver') {
+      const nextRows = apply(silverRowsRef.current);
+      silverRowsRef.current = nextRows;
+      setSilverRows(nextRows);
+      const payload = buildPreviewPayload({ silverRows: nextRows });
+      if (payload) sendClerkPreview(payload);
+      return;
+    }
+    if (section === 'bar') {
+      const nextRows = apply(barRowsRef.current);
+      barRowsRef.current = nextRows;
+      setBarRows(nextRows);
+      const payload = buildPreviewPayload({ barRows: nextRows });
+      if (payload) sendClerkPreview(payload);
+      return;
+    }
+    const nextRows = apply(ptpdRowsRef.current);
+    ptpdRowsRef.current = nextRows;
+    setPtpdRows(nextRows);
+    const payload = buildPreviewPayload({ ptpdRows: nextRows });
+    if (payload) sendClerkPreview(payload);
+  }
+
+  function updateGoldRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+    updateSectionRow('gold', rowKey, field, value);
   }
 
   function updateSilverRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
-    markLocalWorkspaceEdit();
-    const nextRows = silverRowsRef.current.map((row) =>
-      row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
-    );
-    silverRowsRef.current = nextRows;
-    setSilverRows(nextRows);
-    const payload = buildPreviewPayload({ silverRows: nextRows });
-    if (payload) {
-      sendClerkPreview(payload);
-    }
+    updateSectionRow('silver', rowKey, field, value);
   }
 
   function updateBarRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
-    markLocalWorkspaceEdit();
-    const nextRows = barRowsRef.current.map((row) =>
-      row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
-    );
-    barRowsRef.current = nextRows;
-    setBarRows(nextRows);
+    updateSectionRow('bar', rowKey, field, value);
   }
 
   function updatePtPdRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
-    markLocalWorkspaceEdit();
-    const nextRows = ptpdRowsRef.current.map((row) =>
-      row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
-    );
-    ptpdRowsRef.current = nextRows;
-    setPtpdRows(nextRows);
+    updateSectionRow('ptpd', rowKey, field, value);
   }
 
   function updateNumbering(field: keyof EditableWorkspaceNumbering, value: string) {
@@ -2156,7 +2255,7 @@ export function useAlisMakeState(): AlisPageProps {
 
   function handleResetInvoiceGoldToAuto() {
     setInvoiceGoldMode('auto');
-    setInvoiceGoldRows((current) => buildAutoInvoiceGoldRows(goldRowsRef.current, silverRowsRef.current, current));
+    setInvoiceGoldRows((current) => buildAutoInvoiceGoldRows(goldRowsRef.current, silverRowsRef.current, current, barRowsRef.current, ptpdRowsRef.current));
     setInvoiceGoldFooterLines(['', '', '']);
   }
 
@@ -2569,8 +2668,25 @@ export function useAlisMakeState(): AlisPageProps {
     onOpenWorkspaceExcelPreview: handleOpenWorkspaceExcelPreview,
     onCancelWorkspace: () => cancelMutation.mutate(),
     onFinalizeWorkspace: async () => {
-      await flushPendingWorkspaceSync();
-      if (!hasPendingWorkspaceSync()) finalizeMutation.mutate();
+      finalizeInFlightRef.current = true;
+      try {
+        await flushPendingWorkspaceSync();
+        if (hasPendingWorkspaceSync()) {
+          // Kısa bekleme + tek tekrar; hâlâ bekleyen varsa SESSİZCE dönme —
+          // kullanıcıya durumu söyle (eski davranış: buton hiçbir şey yapmıyordu).
+          await new Promise((resolve) => window.setTimeout(resolve, 400));
+          await flushPendingWorkspaceSync();
+        }
+        if (hasPendingWorkspaceSync()) {
+          finalizeInFlightRef.current = false;
+          toast.warning('Taslak hâlâ kaydediliyor', 'Değişiklikler sunucuya yazılamadı; bağlantıyı kontrol edip tekrar deneyin.');
+          return;
+        }
+        finalizeMutation.mutate();
+      } catch (error) {
+        finalizeInFlightRef.current = false;
+        toast.error('Alış tamamlanamadı', error instanceof Error ? error.message : 'Taslak kaydedilemedi.');
+      }
     },
     customerPending: updateCustomerMutation.isPending || updateDraftCustomerMutation.isPending,
     customerSelecting: selectCustomerMutation.isPending,

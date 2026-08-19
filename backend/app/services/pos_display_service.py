@@ -138,6 +138,8 @@ def _preview_workspace_totals(
     *,
     gold_rows: list[Any],
     silver_rows: list[Any],
+    bar_rows: list[Any] = (),
+    ptpd_rows: list[Any] = (),
 ) -> tuple[int, Decimal, Decimal, Decimal]:
     core = _core()
     active_line_count = 0
@@ -145,7 +147,7 @@ def _preview_workspace_totals(
     total_weight = Decimal("0.00")
     total_pure = Decimal("0.00")
 
-    for row in [*gold_rows, *silver_rows]:
+    for row in [*gold_rows, *silver_rows, *bar_rows, *ptpd_rows]:
         gram = core.to_decimal(row.gram or Decimal("0"))
         line_total = core.to_decimal(row.line_total_dkk or Decimal("0"))
         purity_percentage = core.to_decimal(row.purity_percentage or Decimal("0"))
@@ -270,7 +272,14 @@ async def build_realtime_display_snapshot(
 
     preview_gold_rows = list(payload.preview_gold_rows or [])
     preview_silver_rows = list(payload.preview_silver_rows or [])
-    preview_has_workspace_rows = payload.preview_gold_rows is not None or payload.preview_silver_rows is not None
+    preview_bar_rows = list(payload.preview_bar_rows or [])
+    preview_ptpd_rows = list(payload.preview_ptpd_rows or [])
+    preview_has_workspace_rows = (
+        payload.preview_gold_rows is not None
+        or payload.preview_silver_rows is not None
+        or payload.preview_bar_rows is not None
+        or payload.preview_ptpd_rows is not None
+    )
 
     final_offer = core._calculate_offer(
         weight_grams=(core.to_decimal(weight_grams) if weight_grams is not None else None),
@@ -341,6 +350,8 @@ async def build_realtime_display_snapshot(
         line_count, lines_total, total_weight, total_pure = _preview_workspace_totals(
             gold_rows=preview_gold_rows,
             silver_rows=preview_silver_rows,
+            bar_rows=preview_bar_rows,
+            ptpd_rows=preview_ptpd_rows,
         )
     document_meta = await core._display_document_meta(session, pos_session.id)
     if not document_meta["document_number"]:
@@ -428,12 +439,21 @@ async def build_realtime_display_snapshot(
         updated_at=core.utc_now(),
     )
     if preview_has_workspace_rows:
-        snapshot = snapshot.model_copy(
-            update={
-                "gold_rows": preview_gold_rows,
-                "silver_rows": preview_silver_rows,
-            }
-        )
+        # "Preview asla silmez": snapshot önce sunucudaki tüm bölümlerle
+        # (bar/ptpd/kniv dahil) doldurulur; payload'da GELEN bölümler üzerine
+        # yazılır, gelmeyenler sunucu değerini korur. Eski davranış yalnız
+        # gold/silver yazıp bar/ptpd'yi boş bırakıyordu (AFVENTER VARELINJER).
+        snapshot = await _attach_display_workspace_rows(session, pos_session=pos_session, snapshot=snapshot)
+        overlay: dict[str, Any] = {}
+        if payload.preview_gold_rows is not None:
+            overlay["gold_rows"] = preview_gold_rows
+        if payload.preview_silver_rows is not None:
+            overlay["silver_rows"] = preview_silver_rows
+        if payload.preview_bar_rows is not None:
+            overlay["bar_rows"] = preview_bar_rows
+        if payload.preview_ptpd_rows is not None:
+            overlay["ptpd_rows"] = preview_ptpd_rows
+        snapshot = snapshot.model_copy(update=overlay)
     elif not payload.preview_lines:
         snapshot = await _attach_display_workspace_rows(session, pos_session=pos_session, snapshot=snapshot)
     return _customer_safe_snapshot(snapshot)
