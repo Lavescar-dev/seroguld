@@ -16,6 +16,12 @@ type PreviewItem = {
   line_count: number;
   total_weight_grams: string;
   total_amount_dkk: string;
+  template_profile?: string;
+  source_net_amount_dkk?: string | null;
+  source_vat_amount_dkk?: string | null;
+  source_gross_amount_dkk?: string | null;
+  birth_date_text?: string | null;
+  is_company?: boolean;
   warnings: string[];
   errors: string[];
 };
@@ -27,7 +33,19 @@ type PreviewResponse = {
   already_imported_count: number;
 };
 
+type ApplyItem = {
+  source_hash: string;
+  file_name: string;
+  status: 'imported' | 'skipped' | 'failed' | string;
+  legacy_document_number?: string | null;
+  sequence_no?: number | null;
+  message?: string | null;
+  archive_path?: string | null;
+  errors?: string[];
+};
+
 type ApplyResponse = {
+  items: ApplyItem[];
   imported_count: number;
   skipped_count: number;
   failed_count: number;
@@ -69,6 +87,7 @@ export function HistoricalAfgImportDrawer({
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<'preview' | 'apply' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [applyItems, setApplyItems] = useState<ApplyItem[]>([]);
   const [messageTone, setMessageTone] = useState<'success' | 'danger' | null>(null);
 
   const selectedReadyCount = useMemo(
@@ -106,6 +125,7 @@ export function HistoricalAfgImportDrawer({
         method: 'POST',
         body: makeForm(files, [...selectedHashes]),
       });
+      setApplyItems(result.items || []);
       setMessage(
         String(result.imported_count) +
           ' belge içe aktarıldı. ' +
@@ -166,12 +186,34 @@ export function HistoricalAfgImportDrawer({
               setPreview(null);
               setSelectedHashes(new Set());
               setMessage(null);
+              setApplyItems([]);
             }}
             className="mt-3 block w-full text-sm text-sg-text-soft file:mr-4 file:rounded-sg-md file:border-0 file:bg-sg-accent-soft file:px-3 file:py-2 file:text-sm file:font-semibold file:text-sg-accent-dark"
           />
           {files.length ? <p className="mt-3 text-sm text-sg-text">{files.length} dosya seçildi.</p> : null}
         </ModernCard>
         {message && messageTone ? <ModernNotice tone={messageTone} title={messageTone === 'success' ? 'İçe aktarma tamamlandı' : 'İşlem tamamlanamadı'} description={message} /> : null}
+        {applyItems.length ? (
+          <section className="space-y-2">
+            {applyItems.map((item) => (
+              <div
+                key={`apply-${item.source_hash}`}
+                className={`rounded-sg-md border px-3 py-2 text-xs ${
+                  item.status === 'imported'
+                    ? 'border-sg-green/40 bg-sg-green-soft text-sg-green-strong'
+                    : item.status === 'skipped'
+                      ? 'border-sg-amber/40 bg-sg-amber-soft text-sg-amber'
+                      : 'border-sg-red/40 bg-sg-red-soft text-sg-red'
+                }`}
+              >
+                <span className="font-semibold">{item.file_name}</span>
+                {item.sequence_no ? ` → Belge #${item.sequence_no}` : ''}
+                {item.message ? ` — ${item.message}` : ''}
+                {item.errors && item.errors.length ? ` (${item.errors.join('; ')})` : ''}
+              </div>
+            ))}
+          </section>
+        ) : null}
         {preview ? (
           <section className="space-y-3">
             <div className="flex flex-wrap gap-2">
@@ -195,6 +237,14 @@ export function HistoricalAfgImportDrawer({
                       </p>
                       <p className="mt-1 text-xs text-sg-text-soft">
                         {item.line_count} satır · {formatNumber(item.total_weight_grams, ' g')} · {formatMoney(item.total_amount_dkk)} · Müşteri: {item.customer_action}
+                      </p>
+                      <p className="mt-1 text-xs text-sg-text-soft">
+                        {item.template_profile === 'legacy' ? 'Eski şablon' : 'Güncel şablon'}
+                        {item.is_company ? ' · Şirket (CVR)' : ''}
+                        {item.source_vat_amount_dkk && Number(item.source_vat_amount_dkk) > 0
+                          ? ` · Net ${formatMoney(item.source_net_amount_dkk || '0')} + KDV ${formatMoney(item.source_vat_amount_dkk)} = ${formatMoney(item.source_gross_amount_dkk || item.total_amount_dkk)}`
+                          : ''}
+                        {item.birth_date_text ? ` · Doğum: ${item.birth_date_text}` : ''}
                       </p>
                     </div>
                     <label className="flex shrink-0 items-center gap-2 text-sm font-medium text-sg-text">

@@ -19,6 +19,14 @@ class HistoricalAfgImportPreviewItemOut(AppBaseModel):
     line_count: int = 0
     total_weight_grams: Decimal = Decimal("0.00")
     total_amount_dkk: Decimal = Decimal("0.00")
+    # Hangi parser'ın çalıştığı ve belgedeki tamamlanmış tutar kırılımı —
+    # operatör uygulamadan önce net/KDV/brütü doğrulayabilir.
+    template_profile: str = "current"
+    source_net_amount_dkk: Decimal | None = None
+    source_vat_amount_dkk: Decimal | None = None
+    source_gross_amount_dkk: Decimal | None = None
+    birth_date_text: str | None = None
+    is_company: bool = False
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
@@ -38,6 +46,8 @@ class HistoricalAfgImportApplyItemOut(AppBaseModel):
     legacy_document_number: str | None = None
     sequence_no: int | None = None
     message: str | None = None
+    archive_path: str | None = None
+    errors: list[str] = Field(default_factory=list)
 
 
 class HistoricalAfgImportApplyOut(AppBaseModel):

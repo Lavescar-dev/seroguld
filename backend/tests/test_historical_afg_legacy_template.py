@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from decimal import Decimal
-from io import BytesIO
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -26,101 +25,97 @@ from app.services.historical_afg_import import (
     preview_historical_afg_import,
 )
 
+FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "historical_afg"
 REFERENCE_ROOT = Path(__file__).resolve().parents[2] / "referans"
 
 
-def _legacy_workbook_bytes() -> bytes:
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Afregningsbilag"
-
-    sheet["C5"] = "Afregningsnr."
-    sheet["D5"] = "A-1234"
-    sheet["C6"] = "Dato"
-    sheet["D6"] = datetime(2019, 5, 20)
-
-    sheet["C16"] = "Navn:"
-    sheet["D16"] = "Jens Hansen"
-    sheet["F16"] = "CPR nr."
-    sheet["G16"] = "200580-1234"
-    sheet["C17"] = "Adresse:"
-    sheet["D17"] = "Gammelvej 3"
-    sheet["F17"] = "Tlf."
-    sheet["G17"] = "+4512345678"
-    sheet["C18"] = "Postnr.:"
-    sheet["D18"] = "8000"
-    sheet["F18"] = "E-mail"
-    sheet["G18"] = "jens@example.com"
-
-    # Satırlar bilinçli olarak güncel şablonun sabit satır aralığının dışında:
-    # okuma hücre numarasından değil tür/ayar imzasından yapılmalı.
-    sheet["C25"] = "Guld 14 kt"
-    sheet["D25"] = 10
-    sheet["G25"] = 2500.00
-    sheet["C27"] = "Sterling sølv 925"
-    sheet["D27"] = 100
-    sheet["G27"] = 450.00
-
-    sheet["C30"] = "Subtotal"
-    sheet["D30"] = 2360.00
-    sheet["C31"] = "Moms 25%"
-    sheet["D31"] = 590.00
-    sheet["C32"] = "I alt"
-    sheet["D32"] = 2950.00
-
-    buffer = BytesIO()
-    workbook.save(buffer)
-    return buffer.getvalue()
+def _upload(name: str) -> HistoricalAfgUpload:
+    content = (FIXTURE_ROOT / name).read_bytes()
+    return HistoricalAfgUpload.from_content(filename=name, content=content)
 
 
 def test_legacy_template_is_detected_and_current_reference_is_not() -> None:
-    assert looks_like_legacy_afg_template(_legacy_workbook_bytes()) is True
+    assert looks_like_legacy_afg_template(_upload("TEST-AFREGNING-11001-2026-07-15-mads-jensen.xlsx").content) is True
+    # Boş referans şablonda etiketler var ama D/G değerleri yok → legacy değil.
     reference_bytes = (REFERENCE_ROOT / "Afregningsbilag ( alis frontumuz).xlsm").read_bytes()
     assert looks_like_legacy_afg_template(reference_bytes) is False
 
 
-def test_legacy_rows_parse_by_signature_and_totals_are_preserved() -> None:
-    upload = HistoricalAfgUpload.from_content(filename="eski-afg.xlsx", content=_legacy_workbook_bytes())
-    parsed = _parse_upload(upload)
-
+def test_individual_file_parses_with_exact_totals() -> None:
+    parsed = _parse_upload(_upload("TEST-AFREGNING-11001-2026-07-15-mads-jensen.xlsx"))
     assert parsed.template_profile == "legacy"
     assert parsed.errors == []
-    assert parsed.legacy_document_number == "A-1234"
-    assert parsed.issued_at is not None and parsed.issued_at.date().isoformat() == "2019-05-20"
+    assert parsed.legacy_document_number == "11001"
+    assert parsed.issued_at is not None and parsed.issued_at.date().isoformat() == "2026-07-15"
+    # Satırlar sabit hücre numarasından değil tür/ayar imzasından okunur:
+    # 8K (12.4g × 267.69), 14K (4.8g × 501.03 ≈ ...), Sterling (80g × 14.1).
+    assert [line.row_key for line in parsed.lines] == ["gold:8", "gold:14", "silver:3"]
+    assert parsed.lines[0].weight_grams == Decimal("12.40")
+    assert parsed.lines[0].rate_dkk == Decimal("267.69")
+    assert parsed.lines[2].line_total_dkk == Decimal("1128.00")
+    # Belgedeki tamamlanmış tutarlar birebir: yeniden değerleme yok.
+    assert parsed.total_amount_dkk == Decimal("6852.30")
+    assert parsed.vat_amount_dkk == Decimal("0.00")
+    # Müşteri alanları D/G değer hücrelerinden.
+    assert getattr(parsed.customer, "name") == "Mads Jensen"
+    assert getattr(parsed.customer, "phone") == "+45 20 00 10 01"
+    assert getattr(parsed.customer, "email") == "testkunde01@example.com"
+    # "2200 København N" doğru bölünür.
+    assert getattr(parsed.customer, "postal_code") == "2200"
+    assert getattr(parsed.customer, "city") == "København N"
+    # Tireli tam CPR normalize edilir; doğum tarihi bölümü ayrıca izlenir.
+    assert getattr(parsed.customer, "cpr_number") == "1503851001"
+    assert parsed.birth_date_text == "150385"
+    assert parsed.is_company is False
 
-    assert [line.row_key for line in parsed.lines] == ["gold:14", "silver:3"]
-    gold, silver = parsed.lines
-    assert gold.weight_grams == Decimal("10.00")
-    assert gold.purity_percentage == Decimal("58.50")
-    assert gold.line_total_dkk == Decimal("2500.00")
-    assert silver.weight_grams == Decimal("100.00")
-    assert silver.line_total_dkk == Decimal("450.00")
 
-    # Tarihsel tutarlar belgeden birebir; yeniden değerleme yok.
-    assert parsed.total_amount_dkk == Decimal("2950.00")
-    assert parsed.net_amount_dkk == Decimal("2360.00")
-    assert parsed.vat_amount_dkk == Decimal("590.00")
+def test_22k_916_and_plet_rows_are_recognized() -> None:
+    parsed = _parse_upload(_upload("TEST-AFREGNING-11016-2026-08-03-louise-hoejbjerg.xlsx"))
+    assert parsed.errors == []
+    row_keys = [line.row_key for line in parsed.lines]
+    assert "gold:22" in row_keys  # E27=916
+    assert "silver:5" in row_keys  # C33='Plet'
+    plet = next(line for line in parsed.lines if line.row_key == "silver:5")
+    assert plet.weight_grams == Decimal("900.00")
+    assert parsed.total_amount_dkk == Decimal("1889.07")
 
-    customer = parsed.customer
-    assert getattr(customer, "name") == "Jens Hansen"
-    assert getattr(customer, "cpr_number") == "200580-1234"
-    assert getattr(customer, "phone") == "+4512345678"
-    assert getattr(customer, "postal_code") == "8000"
+
+def test_company_file_keeps_vat_and_maps_cvr_identity() -> None:
+    parsed = _parse_upload(_upload("TEST-AFREGNING-11017-2026-08-05-nordisk-testhandel-aps.xlsx"))
+    assert parsed.errors == []
+    assert parsed.is_company is True
+    # CVR değeri CPR olarak KAYDEDİLMEZ; şirket kimliği ayrı alanda izlenir
+    # (belgede zaten kimlik varsa o korunur, CVR onu ezmez).
+    assert getattr(parsed.customer, "cpr_number", None) is None
+    assert getattr(parsed.customer, "identity_doc_number", None)
+    # Tarihsel %25 KDV birebir korunur.
+    assert parsed.vat_amount_dkk == Decimal("18603.67")
+    assert parsed.total_amount_dkk == Decimal("93018.34")
+    assert parsed.net_amount_dkk == Decimal("74414.67")
 
 
 @pytest.mark.asyncio
-async def test_same_legacy_file_cannot_be_imported_twice() -> None:
+async def test_preview_matches_apply_validation_and_blocks_duplicates() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-    content = _legacy_workbook_bytes()
-    upload = HistoricalAfgUpload.from_content(filename="eski-afg.xlsx", content=content)
+    upload = _upload("TEST-AFREGNING-11020-2026-08-09-oeresund-demo-design-aps.xlsx")
 
     async with Session() as db:
+        preview = await preview_historical_afg_import(db, uploads=[upload])
+        item = preview.items[0]
+        # Preview apply ile aynı doğrulamayı koşar → gerçek dosya 'ready'.
+        assert item.status == "ready"
+        assert item.template_profile == "legacy"
+        assert item.is_company is True
+        assert item.source_vat_amount_dkk == Decimal("10600.30")
+        assert item.source_gross_amount_dkk == Decimal("53001.50")
+
+        # Aynı hash daha önce içe aktarılmışsa ikinci import bloklanır.
         admin = User(
-            email="legacy-import-admin@example.com",
+            email="legacy-admin@example.com",
             password_hash="unused",
             name="Admin",
             role=RoleEnum.ADMIN,
@@ -143,10 +138,10 @@ async def test_same_legacy_file_cannot_be_imported_twice() -> None:
             PosDocument(
                 pos_session_id=pos_session.id,
                 document_type=PosDocumentTypeEnum.PURCHASE_RECEIPT,
-                issued_at=datetime(2019, 5, 20),
-                net_amount_dkk=Decimal("2360.00"),
-                vat_amount_dkk=Decimal("590.00"),
-                gross_amount_dkk=Decimal("2950.00"),
+                issued_at=datetime(2026, 8, 9),
+                net_amount_dkk=Decimal("42401.20"),
+                vat_amount_dkk=Decimal("10600.30"),
+                gross_amount_dkk=Decimal("53001.50"),
                 vat_rate_percent=Decimal("25.00"),
                 historical_import_hash=upload.source_hash,
             )
@@ -154,8 +149,30 @@ async def test_same_legacy_file_cannot_be_imported_twice() -> None:
         await db.commit()
 
     async with Session() as db:
-        preview = await preview_historical_afg_import(db, uploads=[upload])
-        assert preview.already_imported_count == 1
-        assert preview.items[0].status == "already_imported"
+        second = await preview_historical_afg_import(db, uploads=[upload])
+        assert second.items[0].status == "already_imported"
 
     await engine.dispose()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("HISTORICAL_AFG_SAMPLE_DIR"),
+    reason="Tam 20-dosya kabulü: HISTORICAL_AFG_SAMPLE_DIR ile manuel koşulur",
+)
+def test_manual_full_sample_acceptance() -> None:
+    sample_dir = Path(os.environ["HISTORICAL_AFG_SAMPLE_DIR"])
+    files = sorted(sample_dir.glob("TEST-AFREGNING-*.xlsx"))
+    assert len(files) >= 20
+    company_count = 0
+    for path in files:
+        parsed = _parse_upload(HistoricalAfgUpload.from_content(filename=path.name, content=path.read_bytes()))
+        assert parsed.errors == [], f"{path.name}: {parsed.errors}"
+        assert parsed.legacy_document_number
+        assert parsed.issued_at is not None
+        assert parsed.total_amount_dkk > 0
+        if parsed.is_company:
+            company_count += 1
+            assert parsed.vat_amount_dkk and parsed.vat_amount_dkk > 0
+        else:
+            assert parsed.vat_amount_dkk == Decimal("0.00")
+    assert company_count == 4
