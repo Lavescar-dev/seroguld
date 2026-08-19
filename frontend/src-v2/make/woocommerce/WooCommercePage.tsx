@@ -1,3 +1,4 @@
+import { buildMediaUrl } from '@/lib/media';
 import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -1245,7 +1246,7 @@ export function MakeWooCommercePage({
                     <div className="mb-3 grid grid-cols-4 gap-3">
                       {detail.photos.map((photo, index) => (
                         <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200">
-                          <img src={photo.avif_url || photo.url} alt={detail.display_name || secilen.urun} className="aspect-square w-full object-cover" />
+                          <img src={buildMediaUrl(photo.avif_url || photo.url)} alt={detail.display_name || secilen.urun} className="aspect-square w-full object-cover" />
                           {primaryPhotoLabel(index, photo.is_primary) ? (
                             <div className="absolute left-1 top-1 flex items-center gap-0.5 bg-amber-500 px-1 py-0.5">
                               <Star className="h-2.5 w-2.5 text-white" />
@@ -1253,7 +1254,7 @@ export function MakeWooCommercePage({
                             </div>
                           ) : null}
                           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100">
-                            <button type="button" onClick={() => openExternal(photo.original_url || photo.url)} className="border border-white/40 bg-white/20 p-1.5 hover:bg-white/40">
+                            <button type="button" onClick={() => openExternal(buildMediaUrl(photo.original_url || photo.url))} className="border border-white/40 bg-white/20 p-1.5 hover:bg-white/40">
                               <Eye className="h-3.5 w-3.5 text-white" />
                             </button>
                             {photo.id ? (

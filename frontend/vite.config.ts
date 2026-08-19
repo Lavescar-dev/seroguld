@@ -56,6 +56,14 @@ export default defineConfig(({ command }) => {
     server: {
       host: '127.0.0.1',
       port: 3300,
+      // Dev'de backend medyası: buildMediaUrl mutlak URL üretir ama göreli
+      // kalan eski yollar için de /media backend'e proxy'lenir.
+      proxy: {
+        '/media': {
+          target: 'http://127.0.0.1:8100',
+          changeOrigin: true,
+        },
+      },
     },
   };
 });

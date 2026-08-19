@@ -1,3 +1,4 @@
+import { buildMediaUrl } from '@/lib/media';
 import { type Dispatch, type FormEvent, type SetStateAction, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
@@ -683,7 +684,7 @@ function ProductPhotoSection({
         <div className="mt-2 grid grid-cols-3 gap-2">
           {product.photos.slice(0, 9).map((photo) => (
             <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200 bg-white">
-              <img src={photo.url} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
+              <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
               {photo.id ? (
                 <button
                   type="button"

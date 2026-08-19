@@ -83,6 +83,7 @@ export function HistoricalAfgImportDrawer({
   onImported: () => void;
 }) {
   const [files, setFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<'preview' | 'apply' | null>(null);
@@ -172,9 +173,26 @@ export function HistoricalAfgImportDrawer({
           title="Dış entegrasyonlar kapalı"
           description="Uniconta, WooCommerce, e-posta ve diğer harici sistemlere istek gönderilmez. Yalnız belge, işlem ve satır kayıtları oluşturulur."
         />
-        <ModernCard>
+        <ModernCard
+          data-testid="historical-afg-dropzone"
+          onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+          onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragActive(false);
+            if (busy) return;
+            const dropped = Array.from(event.dataTransfer?.files || []).filter((file) => /\.(xlsx|xlsm)$/i.test(file.name));
+            if (!dropped.length) return;
+            setFiles(dropped);
+            setPreview(null);
+            setSelectedHashes(new Set());
+            setMessage(null);
+            setApplyItems([]);
+          }}
+          className={dragActive ? 'ring-2 ring-sg-accent bg-sg-accent-soft/40' : undefined}
+        >
           <label htmlFor="historical-afg-files" className="block text-sm font-semibold text-sg-text">AFG Excel dosyaları</label>
-          <p className="mt-1 text-sm text-sg-text-soft">XLSX veya XLSM, en fazla 100 dosya. Dosyalar yalnız bu çekmece açıkken tarayıcı belleğinde tutulur.</p>
+          <p className="mt-1 text-sm text-sg-text-soft">{dragActive ? 'Dosyaları buraya bırakın' : 'XLSX veya XLSM, en fazla 100 dosya — sürükleyip bırakabilir veya seçebilirsiniz. Dosyalar yalnız bu çekmece açıkken tarayıcı belleğinde tutulur.'}</p>
           <input
             id="historical-afg-files"
             type="file"
