@@ -162,6 +162,8 @@ def _build_workspace_market_rates(
     plet_dkk: Decimal = Decimal("0"),
     gold_bar_dkk: Decimal = Decimal("0"),
     silver_bar_dkk: Decimal = Decimal("0"),
+    platinum_dkk: Decimal = Decimal("0"),
+    palladium_dkk: Decimal = Decimal("0"),
 ) -> PosWorkspaceMarketRates:
     core = _core()
     fx = quantize_2(to_decimal(eur_dkk_fx or core.DEFAULT_EUR_DKK_FX))
@@ -200,6 +202,8 @@ def _build_workspace_market_rates(
         plet_dkk=quantize_2(plet_dkk),
         gold_bar_dkk=quantize_2(gold_bar_dkk),
         silver_bar_dkk=quantize_2(silver_bar_dkk),
+        platinum_dkk=quantize_2(platinum_dkk),
+        palladium_dkk=quantize_2(palladium_dkk),
         gold_matrix=gold_matrix,
         silver_matrix=silver_matrix,
     )
@@ -255,6 +259,12 @@ def _market_rate_payload_to_workspace(
     silver_bar_dkk = _workspace_positive_decimal(
         market_payload.get("silver_bar_dkk"), to_decimal(profile.get("silver_bar_dkk", fallback_silver_dkk))
     )
+    platinum_dkk = _workspace_positive_decimal(
+        market_payload.get("platinum_dkk"), to_decimal(profile.get("platinum_dkk", "0"))
+    )
+    palladium_dkk = _workspace_positive_decimal(
+        market_payload.get("palladium_dkk"), to_decimal(profile.get("palladium_dkk", "0"))
+    )
     return _build_workspace_market_rates(
         eur_dkk_fx=fx,
         gold_rates_dkk=gold_rates_dkk,
@@ -262,6 +272,8 @@ def _market_rate_payload_to_workspace(
         plet_dkk=plet_dkk,
         gold_bar_dkk=gold_bar_dkk,
         silver_bar_dkk=silver_bar_dkk,
+        platinum_dkk=platinum_dkk,
+        palladium_dkk=palladium_dkk,
     )
 
 
@@ -296,6 +308,8 @@ def _serialize_workspace_market_rates_payload(
         "plet_dkk": str(quantize_2(workspace_rates.plet_dkk)),
         "gold_bar_dkk": str(quantize_2(workspace_rates.gold_bar_dkk)),
         "silver_bar_dkk": str(quantize_2(workspace_rates.silver_bar_dkk)),
+        "platinum_dkk": str(quantize_2(workspace_rates.platinum_dkk)),
+        "palladium_dkk": str(quantize_2(workspace_rates.palladium_dkk)),
     }
 
 
@@ -304,6 +318,10 @@ def _workspace_market_rate_dkk(market_rates: PosWorkspaceMarketRates, row_key: s
         return quantize_2(market_rates.gold_bar_dkk)
     if row_key == "bar:silver":
         return quantize_2(market_rates.silver_bar_dkk)
+    if row_key == "ptpd:platinum":
+        return quantize_2(market_rates.platinum_dkk)
+    if row_key == "ptpd:palladium":
+        return quantize_2(market_rates.palladium_dkk)
     if row_key == "silver:5":
         # Plet: saflık matrisi değil, global skaler fiyat.
         return quantize_2(market_rates.plet_dkk)

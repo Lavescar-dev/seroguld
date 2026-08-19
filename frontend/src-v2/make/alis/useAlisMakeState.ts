@@ -34,6 +34,7 @@ import type {
   PosWorkspaceCalculators,
   PosWorkspaceFinalizeResponse,
   PosWorkspaceBarRow,
+  PosWorkspacePtPdRow,
   PosWorkspaceGoldRow,
   PosWorkspaceInvoiceGoldRow,
   PosWorkspaceInvoiceMiscRow,
@@ -48,6 +49,7 @@ import type {
   EditableCustomer,
   EditableCalculatorRow,
   EditableBarRow,
+  EditablePtPdRow,
   EditableGoldRow,
   EditableInvoiceGoldRow,
   EditableInvoiceMiscRow,
@@ -202,6 +204,7 @@ function workspaceRowsPayload(
   invoiceMiscMode: CompanionMode,
   invoiceMiscRows: EditableInvoiceMiscRow[],
   barRows: EditableBarRow[] = [],
+  ptpdRows: EditablePtPdRow[] = [],
 ) {
   return {
     gold_rows: goldRows.map((row) => ({
@@ -216,6 +219,11 @@ function workspaceRowsPayload(
     })),
     bar_rows: barRows.map((row) => ({
       bar_type: row.bar_type,
+      gram: Number(normalizeTextInput(row.gram || '0')),
+      avance_percent: Number(normalizeTextInput(row.avance_percent || '0')),
+    })),
+    ptpd_rows: ptpdRows.map((row) => ({
+      metal: row.metal,
       gram: Number(normalizeTextInput(row.gram || '0')),
       avance_percent: Number(normalizeTextInput(row.avance_percent || '0')),
     })),
@@ -236,6 +244,8 @@ function workspaceRowsPayload(
       plet_dkk: Number(normalizeTextInput(marketRates.plet_dkk || '0.02')),
       gold_bar_dkk: Number(normalizeTextInput(marketRates.gold_bar_dkk || '0')),
       silver_bar_dkk: Number(normalizeTextInput(marketRates.silver_bar_dkk || '0')),
+      platinum_dkk: Number(normalizeTextInput(marketRates.platinum_dkk || '0')),
+      palladium_dkk: Number(normalizeTextInput(marketRates.palladium_dkk || '0')),
     },
     afg_note: afgNote.trim() || null,
     purchase_vat_enabled: purchaseVatEnabled,
@@ -371,6 +381,21 @@ function toEditableBarRows(rows: PosWorkspaceBarRow[] | undefined): EditableBarR
   return (rows || []).map((row) => ({
     row_key: row.row_key,
     bar_type: row.bar_type,
+    label: row.label,
+    lodighed: row.lodighed,
+    purity_percentage: row.purity_percentage,
+    gram: row.gram,
+    avance_percent: row.avance_percent,
+    rate_dkk: row.rate_dkk,
+    unit_price_dkk: row.unit_price_dkk,
+    line_total_dkk: row.line_total_dkk,
+  }));
+}
+
+function toEditablePtPdRows(rows: PosWorkspacePtPdRow[] | undefined): EditablePtPdRow[] {
+  return (rows || []).map((row) => ({
+    row_key: row.row_key,
+    metal: row.metal,
     label: row.label,
     lodighed: row.lodighed,
     purity_percentage: row.purity_percentage,
@@ -616,6 +641,7 @@ export function useAlisMakeState(): AlisPageProps {
   const [customerForm, setCustomerForm] = useState<EditableCustomer>(EMPTY_CUSTOMER);
   const [goldRows, setGoldRows] = useState<EditableGoldRow[]>([]);
   const [barRows, setBarRows] = useState<EditableBarRow[]>([]);
+  const [ptpdRows, setPtpdRows] = useState<EditablePtPdRow[]>([]);
   const [silverRows, setSilverRows] = useState<EditableSilverRow[]>([]);
   const [activeWorkspaceView, setActiveWorkspaceViewState] = useState<WorkspaceSurfaceView>('system');
   const [numbering, setNumbering] = useState<EditableWorkspaceNumbering>({
@@ -643,6 +669,7 @@ export function useAlisMakeState(): AlisPageProps {
   const [priceOpen, setPriceOpen] = useState(false);
   const goldRowsRef = useRef<EditableGoldRow[]>([]);
   const barRowsRef = useRef<EditableBarRow[]>([]);
+  const ptpdRowsRef = useRef<EditablePtPdRow[]>([]);
   const silverRowsRef = useRef<EditableSilverRow[]>([]);
 
   const autosaveKeyRef = useRef('');
@@ -782,6 +809,7 @@ export function useAlisMakeState(): AlisPageProps {
         invoiceMiscMode,
         invoiceMiscRows,
         barRowsRef.current,
+        ptpdRowsRef.current,
       ),
       customer,
     });
@@ -803,6 +831,7 @@ export function useAlisMakeState(): AlisPageProps {
     setNewCustomer(hasDraftCustomerShadow ? editableCustomer : EMPTY_CUSTOMER);
     setGoldRows(toEditableGoldRows(data.gold_rows));
     setBarRows(toEditableBarRows(data.bar_rows));
+    setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
     setSilverRows(toEditableSilverRows(data.silver_rows));
     setNumbering(toEditableNumbering(data.numbering_preview));
     setInvoiceGoldMode(data.invoice_gold_mode);
@@ -838,6 +867,7 @@ export function useAlisMakeState(): AlisPageProps {
       data.invoice_misc_mode,
       toEditableInvoiceMiscRows(data.invoice_misc.rows),
       toEditableBarRows(data.bar_rows),
+      toEditablePtPdRows(data.ptpd_rows),
     );
     // Legacy drafts with grams but zero persisted pricing are rendered from
     // the resolved rate matrix, then persisted through the normal revisioned
@@ -1138,6 +1168,7 @@ export function useAlisMakeState(): AlisPageProps {
         invoiceMiscMode,
         invoiceMiscRows,
         barRowsRef.current,
+        ptpdRowsRef.current,
       );
       if (JSON.stringify(currentSectionsPayload) !== JSON.stringify(payload)) {
         workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
@@ -1148,6 +1179,7 @@ export function useAlisMakeState(): AlisPageProps {
       setWorkspace(data);
       setGoldRows(toEditableGoldRows(data.gold_rows));
     setBarRows(toEditableBarRows(data.bar_rows));
+    setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
       setSilverRows(toEditableSilverRows(data.silver_rows));
       setNumbering(toEditableNumbering(data.numbering_preview));
       setInvoiceGoldMode(data.invoice_gold_mode);
@@ -1588,6 +1620,9 @@ export function useAlisMakeState(): AlisPageProps {
   useEffect(() => {
     barRowsRef.current = barRows;
   }, [barRows]);
+  useEffect(() => {
+    ptpdRowsRef.current = ptpdRows;
+  }, [ptpdRows]);
 
   useEffect(() => {
     silverRowsRef.current = silverRows;
@@ -1611,6 +1646,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscMode,
       invoiceMiscRows,
       barRowsRef.current,
+      ptpdRowsRef.current,
     );
     const serialized = JSON.stringify(payload);
     if (serialized === autosaveKeyRef.current) {
@@ -1946,6 +1982,15 @@ export function useAlisMakeState(): AlisPageProps {
     setBarRows(nextRows);
   }
 
+  function updatePtPdRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+    markLocalWorkspaceEdit();
+    const nextRows = ptpdRowsRef.current.map((row) =>
+      row.row_key === rowKey ? { ...row, [field]: normalizeTextInput(value) } : row,
+    );
+    ptpdRowsRef.current = nextRows;
+    setPtpdRows(nextRows);
+  }
+
   function updateNumbering(field: keyof EditableWorkspaceNumbering, value: string) {
     markLocalWorkspaceEdit();
     setNumbering((current) => ({
@@ -2072,6 +2117,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscMode,
       invoiceMiscRows,
       barRowsRef.current,
+      ptpdRowsRef.current,
     );
     if (JSON.stringify(nextSectionsPayload) !== autosaveKeyRef.current) {
       queuedSectionsPayloadRef.current = nextSectionsPayload;
@@ -2183,6 +2229,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscMode,
       invoiceMiscRows,
       barRowsRef.current,
+      ptpdRowsRef.current,
     );
     if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
 
@@ -2225,6 +2272,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscMode,
       invoiceMiscRows,
       barRowsRef.current,
+      ptpdRowsRef.current,
     );
     if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
 
@@ -2253,6 +2301,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscMode,
       invoiceMiscRows,
       barRowsRef.current,
+      ptpdRowsRef.current,
     );
     const customer = workspace?.customer.customer_id
       ? customerForm
@@ -2480,7 +2529,9 @@ export function useAlisMakeState(): AlisPageProps {
     silverRows,
     onUpdateGoldRow: updateGoldRow,
     barRows,
+    ptpdRows,
     onUpdateBarRow: updateBarRow,
+    onUpdatePtPdRow: updatePtPdRow,
     onUpdateSilverRow: updateSilverRow,
     activeWorkspaceView,
     setActiveWorkspaceView: handleWorkspaceViewChange,

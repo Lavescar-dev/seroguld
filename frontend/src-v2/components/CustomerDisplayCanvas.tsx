@@ -168,6 +168,7 @@ function GroupHeader({ title }: { title: string }) {
   return (
     <div className="flex shrink-0 items-center gap-6 px-10 py-3">
       <span
+        data-i18n-skip
         className="whitespace-nowrap text-[20px] font-bold uppercase tracking-[0.25em]"
         style={{ color: 'var(--display-accent)', fontFamily: FONT_STACK_SERIF }}
       >
@@ -208,9 +209,20 @@ function DisplayWaitingPanel({ title, subtitle }: { title: string; subtitle: str
   );
 }
 
+type DisplayRawRow = {
+  row_key: string;
+  label: string;
+  lodighed: string;
+  karat?: string | null;
+  gram: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+};
+
 type T5RowProps =
   | { kind: 'gold'; row: PosWorkspaceGoldRow }
-  | { kind: 'silver'; row: PosWorkspaceSilverRow };
+  | { kind: 'silver'; row: PosWorkspaceSilverRow }
+  | { kind: 'raw'; row: DisplayRawRow };
 
 function T5Row(props: T5RowProps) {
   const { t } = useAppTranslation();
@@ -219,7 +231,7 @@ function T5Row(props: T5RowProps) {
     kind === 'gold'
       ? [row.karat ? `${row.karat} K` : null, row.lodighed].filter(Boolean).join(' · ')
       : row.lodighed || '—';
-  const label = kind === 'gold' ? t('display.gold') : t('display.silver');
+  const label = kind === 'gold' ? t('display.gold') : kind === 'silver' ? t('display.silver') : '';
 
   return (
     <div
@@ -357,9 +369,27 @@ export function CustomerDisplayLiveView({
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const goldRows = useMemo(() => snapshot.gold_rows ?? [], [snapshot.gold_rows]);
   const silverRows = useMemo(() => snapshot.silver_rows ?? [], [snapshot.silver_rows]);
+  const barRows = useMemo(() => snapshot.bar_rows ?? [], [snapshot.bar_rows]);
+  const ptpdRows = useMemo(() => snapshot.ptpd_rows ?? [], [snapshot.ptpd_rows]);
+  const knivRows = useMemo(() => snapshot.kniv_rows ?? [], [snapshot.kniv_rows]);
   const goldFilled = useMemo(() => goldRows.filter((row) => hasWorksheetGram(row.gram)), [goldRows]);
   const silverFilled = useMemo(() => silverRows.filter((row) => hasWorksheetGram(row.gram)), [silverRows]);
-  const hasAnyRow = goldFilled.length > 0 || silverFilled.length > 0;
+  const goldBarFilled = useMemo(
+    () => barRows.filter((row) => row.bar_type === 'gold' && hasWorksheetGram(row.gram)),
+    [barRows],
+  );
+  const silverBarFilled = useMemo(
+    () => barRows.filter((row) => row.bar_type === 'silver' && hasWorksheetGram(row.gram)),
+    [barRows],
+  );
+  const ptpdFilled = useMemo(() => ptpdRows.filter((row) => hasWorksheetGram(row.gram)), [ptpdRows]);
+  const knivFilled = useMemo(() => knivRows.filter((row) => hasWorksheetGram(row.total_weight)), [knivRows]);
+  const hasAnyRow =
+    goldFilled.length > 0 ||
+    silverFilled.length > 0 ||
+    goldBarFilled.length > 0 ||
+    silverBarFilled.length > 0 ||
+    ptpdFilled.length > 0;
   const totalAmount = useMemo(() => {
     if (snapshot.lines_total_dkk) return snapshot.lines_total_dkk;
     const sum = [...goldRows, ...silverRows].reduce(
@@ -472,9 +502,9 @@ export function CustomerDisplayLiveView({
           </h1>
         </div>
 
-        {goldFilled.length > 0 && (
+        {(goldFilled.length > 0 || goldBarFilled.length > 0) && (
           <>
-            <GroupHeader title="GULD · ALTIN" />
+            <GroupHeader title="GULD" />
             <div
               className="flex flex-[8] flex-col"
               style={{ backgroundColor: 'var(--display-metal-gold-tint)' }}
@@ -482,13 +512,16 @@ export function CustomerDisplayLiveView({
               {goldFilled.map((row) => (
                 <T5Row key={row.row_key} kind="gold" row={row} />
               ))}
+              {goldBarFilled.map((row) => (
+                <T5Row key={row.row_key} kind="raw" row={row} />
+              ))}
             </div>
           </>
         )}
 
-        {silverFilled.length > 0 && (
+        {(silverFilled.length > 0 || silverBarFilled.length > 0) && (
           <>
-            <GroupHeader title="SØLV · GÜMÜŞ" />
+            <GroupHeader title="SØLV" />
             <div
               className="flex flex-[5] flex-col"
               style={{ backgroundColor: 'var(--display-metal-silver-tint)' }}
@@ -496,11 +529,44 @@ export function CustomerDisplayLiveView({
               {silverFilled.map((row) => (
                 <T5Row key={row.row_key} kind="silver" row={row} />
               ))}
+              {silverBarFilled.map((row) => (
+                <T5Row key={row.row_key} kind="raw" row={row} />
+              ))}
             </div>
           </>
         )}
 
-        {/* TODO: backend PosSessionDisplayOut.platinum_rows eklenince PLATIN bloğu aktive edilecek */}
+        {ptpdFilled.length > 0 && (
+          <>
+            <GroupHeader title="PLATIN" />
+            <div
+              className="flex flex-[3] flex-col"
+              style={{ backgroundColor: 'var(--display-metal-silver-tint)' }}
+            >
+              {ptpdFilled.map((row) => (
+                <T5Row key={row.row_key} kind="raw" row={row} />
+              ))}
+            </div>
+          </>
+        )}
+
+        {knivFilled.length > 0 && (
+          <>
+            <GroupHeader title="KNIV" />
+            <div className="flex shrink-0 flex-col px-10 pb-3">
+              {knivFilled.map((row) => (
+                <p
+                  key={row.row_key}
+                  data-i18n-skip
+                  className="tabular-nums py-1 text-[15px]"
+                  style={{ color: 'var(--display-ink-muted)' }}
+                >
+                  {`Kniv ${decimalLabel(row.unit_weight, ' g')} × ${Number(row.count)} = ${decimalLabel(row.total_weight, ' g')}`}
+                </p>
+              ))}
+            </div>
+          </>
+        )}
 
         {!hasAnyRow && (
           <div className="flex flex-1 items-center justify-center">

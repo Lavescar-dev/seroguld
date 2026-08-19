@@ -189,6 +189,10 @@ class PosSessionDisplayOut(AppBaseModel):
     document_number: str | None = None
     gold_rows: list["PosWorkspaceGoldRowOut"] = Field(default_factory=list)
     silver_rows: list["PosWorkspaceSilverRowOut"] = Field(default_factory=list)
+    bar_rows: list["PosWorkspaceBarRowOut"] = Field(default_factory=list)
+    ptpd_rows: list["PosWorkspacePtPdRowOut"] = Field(default_factory=list)
+    # Kniv beregner kırılımı: count>0 hesaplayıcı kalemleri (müşteri ekranı).
+    kniv_rows: list["PosWorkspaceCalculatorRowOut"] = Field(default_factory=list)
     lines: list["PosDisplayLineOut"] = Field(default_factory=list)
     updated_at: datetime
 
@@ -304,6 +308,8 @@ class PosWorkspaceMarketRates(AppBaseModel):
     plet_dkk: Decimal = Field(default=Decimal("0"), ge=0)
     gold_bar_dkk: Decimal = Field(default=Decimal("0"), ge=0)
     silver_bar_dkk: Decimal = Field(default=Decimal("0"), ge=0)
+    platinum_dkk: Decimal = Field(default=Decimal("0"), ge=0)
+    palladium_dkk: Decimal = Field(default=Decimal("0"), ge=0)
     gold_matrix: list[PosWorkspaceRateMatrixEntry] = Field(default_factory=list)
     silver_matrix: list[PosWorkspaceRateMatrixEntry] = Field(default_factory=list)
 
@@ -390,6 +396,27 @@ class PosWorkspaceBarRowOut(AppBaseModel):
     line_id: UUID | None = None
     line_no: int | None = None
     bar_type: str
+    label: str
+    lodighed: str
+    purity_percentage: Decimal
+    gram: Decimal
+    avance_percent: Decimal
+    rate_dkk: Decimal
+    unit_price_dkk: Decimal
+    line_total_dkk: Decimal
+
+
+class PosWorkspacePtPdRowInput(AppBaseModel):
+    metal: Literal["platinum", "palladium"]
+    gram: Decimal = Field(default=Decimal("0"), ge=0)
+    avance_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+
+
+class PosWorkspacePtPdRowOut(AppBaseModel):
+    row_key: str
+    line_id: UUID | None = None
+    line_no: int | None = None
+    metal: str
     label: str
     lodighed: str
     purity_percentage: Decimal
@@ -539,6 +566,7 @@ class PosWorkspaceSectionsUpdate(AppBaseModel):
     gold_rows: list[PosWorkspaceGoldRowInput] = Field(default_factory=list)
     silver_rows: list[PosWorkspaceSilverRowInput] = Field(default_factory=list)
     bar_rows: list[PosWorkspaceBarRowInput] = Field(default_factory=list)
+    ptpd_rows: list[PosWorkspacePtPdRowInput] = Field(default_factory=list)
     bank_info: PosWorkspaceBankInfo | None = None
     market_rates: PosWorkspaceMarketRates | None = None
     afg_note: str | None = Field(default=None, max_length=1000)
@@ -602,6 +630,7 @@ class PosWorkspaceOut(AppBaseModel):
     gold_rows: list[PosWorkspaceGoldRowOut] = Field(default_factory=list)
     silver_rows: list[PosWorkspaceSilverRowOut] = Field(default_factory=list)
     bar_rows: list[PosWorkspaceBarRowOut] = Field(default_factory=list)
+    ptpd_rows: list[PosWorkspacePtPdRowOut] = Field(default_factory=list)
     invoice_gold: PosWorkspaceInvoiceGoldSheetOut = Field(default_factory=PosWorkspaceInvoiceGoldSheetOut)
     invoice_misc_mode: str = Field(default="auto", pattern="^(auto|manual)$")
     invoice_misc: PosWorkspaceInvoiceMiscSheetOut = Field(default_factory=PosWorkspaceInvoiceMiscSheetOut)

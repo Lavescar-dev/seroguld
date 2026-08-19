@@ -17,6 +17,7 @@ from app.schemas.pos import (
     PosWorkspaceSilverRowInput,
     PosWorkspaceGoldRowInput,
     PosWorkspaceBarRowInput,
+    PosWorkspacePtPdRowInput,
 )
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ def build_afg_workbook_bytes_from_workspace(workspace: "PosWorkspaceOut", *, syn
         email=workspace.customer.email,
         identity_doc=workspace.customer.identity_doc_number,
     )
-    core._apply_afg_workspace_rows(sheet, core._afg_gold_rows_from_workspace(workspace), core._afg_silver_rows_from_workspace(workspace), workspace.bar_rows)
+    core._apply_afg_workspace_rows(sheet, core._afg_gold_rows_from_workspace(workspace), core._afg_silver_rows_from_workspace(workspace), workspace.bar_rows, workspace.ptpd_rows)
     core._apply_afg_footer_cells(sheet)
     core._apply_afg_calculator_cells(sheet, workspace.calculators)
     core._apply_afg_summary_cells(
@@ -122,7 +123,7 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
         email=detail.customer_email,
         identity_doc=detail.customer_identity_doc_number,
     )
-    core._apply_afg_detail_rows(sheet, core._aggregate_detail_gold_rows(detail), core._aggregate_detail_silver_rows(detail), core._aggregate_detail_bar_rows(detail))
+    core._apply_afg_detail_rows(sheet, core._aggregate_detail_gold_rows(detail), core._aggregate_detail_silver_rows(detail), core._aggregate_detail_bar_rows(detail), core._aggregate_detail_ptpd_rows(detail))
     core._apply_afg_footer_cells(sheet)
     core._apply_afg_summary_cells(
         sheet,
@@ -199,6 +200,12 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
     values[f"{core.AFG_VARIABLES_SHEET}!J14"] = core._fmt_decimal(workspace.market_rates.plet_dkk)
     values[f"{core.AFG_VARIABLES_SHEET}!J15"] = core._fmt_decimal(workspace.market_rates.gold_bar_dkk)
     values[f"{core.AFG_VARIABLES_SHEET}!J16"] = core._fmt_decimal(workspace.market_rates.silver_bar_dkk)
+    values[f"{core.AFG_VARIABLES_SHEET}!J17"] = core._fmt_decimal(workspace.market_rates.platinum_dkk)
+    values[f"{core.AFG_VARIABLES_SHEET}!J18"] = core._fmt_decimal(workspace.market_rates.palladium_dkk)
+    for row in workspace.ptpd_rows:
+        ptpd_idx = core.AFG_PTPD_PLATINUM_ROW if row.metal == "platinum" else core.AFG_PTPD_PALLADIUM_ROW
+        values[f"{core.AFG_PRIMARY_SHEET}!B{ptpd_idx}"] = core._fmt_decimal(row.avance_percent)
+        values[f"{core.AFG_PRIMARY_SHEET}!F{ptpd_idx}"] = core._fmt_decimal(row.gram)
     for row in workspace.bar_rows:
         bar_idx = core.AFG_BAR_GOLD_ROW if row.bar_type == "gold" else core.AFG_BAR_SILVER_ROW
         values[f"{core.AFG_PRIMARY_SHEET}!B{bar_idx}"] = core._fmt_decimal(row.avance_percent)
@@ -339,6 +346,14 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         )
         for bar_type, idx in (("gold", core.AFG_BAR_GOLD_ROW), ("silver", core.AFG_BAR_SILVER_ROW))
     ]
+    ptpd_rows = [
+        PosWorkspacePtPdRowInput(
+            metal=metal,
+            gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
+            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
+        )
+        for metal, idx in (("platinum", core.AFG_PTPD_PLATINUM_ROW), ("palladium", core.AFG_PTPD_PALLADIUM_ROW))
+    ]
 
     market_rates = None
     numbering = None
@@ -370,6 +385,8 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         plet_cell = core.quantize_2(_matrix_cell("J", 14) or (_matrix_cell("I", 14) * fx))
         gold_bar_cell = core.quantize_2(_matrix_cell("J", 15))
         silver_bar_cell = core.quantize_2(_matrix_cell("J", 16))
+        platinum_cell = core.quantize_2(_matrix_cell("J", 17))
+        palladium_cell = core.quantize_2(_matrix_cell("J", 18))
         has_matrix_values = any(value > 0 for value in [*gold_rate_cells.values(), *silver_rate_cells.values()])
         if has_matrix_values:
             gold_24k_dkk = (
@@ -392,6 +409,8 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
                     plet_dkk=plet_cell,
                     gold_bar_dkk=gold_bar_cell,
                     silver_bar_dkk=silver_bar_cell,
+                    platinum_dkk=platinum_cell,
+                    palladium_dkk=palladium_cell,
                 )
             )
         else:
@@ -493,6 +512,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
             gold_rows=gold_rows,
             silver_rows=silver_rows,
             bar_rows=bar_rows,
+            ptpd_rows=ptpd_rows,
             bank_info={
                 "reg_number": reg_number,
                 "account_number": account_number,

@@ -175,10 +175,18 @@ async def _attach_display_workspace_rows(
     except Exception:
         return snapshot
 
+    kniv_rows = [
+        row
+        for row in [*workspace.calculators.gold_rows, *workspace.calculators.silver_rows]
+        if row.count > 0 and row.total_weight > 0
+    ]
     return snapshot.model_copy(
         update={
             "gold_rows": workspace.gold_rows,
             "silver_rows": workspace.silver_rows,
+            "bar_rows": workspace.bar_rows,
+            "ptpd_rows": workspace.ptpd_rows,
+            "kniv_rows": kniv_rows,
         }
     )
 

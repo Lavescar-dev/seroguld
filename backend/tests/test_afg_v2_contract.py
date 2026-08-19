@@ -185,3 +185,95 @@ def test_calculator_defaults_are_knife_weights_and_old_notes_survive() -> None:
     row = next(r for r in merged.gold_rows if r.row_key == "calc_gold:2")
     assert str(row.unit_weight) == "13.00"
     assert str(row.total_weight) == "26.00"
+
+
+def test_compact_final_document_appends_ptpd_after_silver() -> None:
+    workbook, sheet = _template_sheet()
+    gold_rows = [
+        {"row_key": "gold:14", "label": "Guld 14k", "karat": Decimal("14"), "lodighed": "585",
+         "gram": Decimal("4.80"), "avance_percent": Decimal("0"), "unit_price_dkk": Decimal("501.03"),
+         "line_total_dkk": Decimal("2404.94")},
+    ]
+    silver_rows = []
+    bar_rows = []
+    ptpd_rows = [
+        {"metal": "platinum", "gram": Decimal("12.50"), "avance_percent": Decimal("5"),
+         "unit_price_dkk": Decimal("300.00"), "line_total_dkk": Decimal("3750.00")},
+        {"metal": "palladium", "gram": Decimal("0"), "avance_percent": Decimal("0"),
+         "unit_price_dkk": Decimal("0"), "line_total_dkk": Decimal("0")},
+    ]
+    _apply_afg_detail_rows(sheet, gold_rows, silver_rows, bar_rows, ptpd_rows)
+    content = _save_workbook_bytes(workbook)
+
+    reloaded = load_workbook(io.BytesIO(content), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    # Sıra: 14K altın (22), Platin (23); Palladium gramsız → yazılmaz.
+    assert out["C22"].value == "Guld"
+    assert out["C23"].value == "Platin"
+    assert int(out["A23"].value) == 8
+    assert out["E23"].value == "950"
+    assert float(out["F23"].value) == 12.5
+    assert float(out["H23"].value) == 3750.0
+    for idx in range(24, 38):
+        for column in "ABCDEFGH":
+            assert out[f"{column}{idx}"].value is None, f"{column}{idx} boş olmalı"
+    reloaded.close()
+
+
+def test_draft_writer_puts_ptpd_rows_on_35_36_and_backup_vlookup_rows() -> None:
+    from app.schemas.pos import PosWorkspaceMarketRates, PosWorkspacePtPdRowOut
+    from app.services.document_artifact_service import (
+        _apply_afg_market_rate_cells,
+        _apply_afg_workspace_rows,
+    )
+
+    workbook = _open_template(AFG_TEMPLATE_NAME, keep_vba=True)
+    sheet = workbook["Afregningsbilag"]
+    vars_sheet = workbook["Variable værdier"]
+
+    ptpd_rows = [
+        PosWorkspacePtPdRowOut(
+            row_key="ptpd:platinum", metal="platinum", label="Platin", lodighed="950",
+            purity_percentage=Decimal("95.00"), gram=Decimal("3.20"), avance_percent=Decimal("0"),
+            rate_dkk=Decimal("310.00"), unit_price_dkk=Decimal("310.00"), line_total_dkk=Decimal("992.00"),
+        ),
+        PosWorkspacePtPdRowOut(
+            row_key="ptpd:palladium", metal="palladium", label="Palladium", lodighed="500",
+            purity_percentage=Decimal("50.00"), gram=Decimal("7.00"), avance_percent=Decimal("10"),
+            rate_dkk=Decimal("250.00"), unit_price_dkk=Decimal("225.00"), line_total_dkk=Decimal("1575.00"),
+        ),
+    ]
+    _apply_afg_workspace_rows(sheet, [], [], [], ptpd_rows)
+    market_rates = PosWorkspaceMarketRates(
+        eur_dkk_fx=Decimal("7.45"),
+        gold_rates_dkk={"24": Decimal("615.50")},
+        silver_rates_dkk={"999": Decimal("7.80")},
+        gold_24k_dkk=Decimal("615.50"),
+        silver_dkk=Decimal("7.80"),
+        platinum_dkk=Decimal("310.00"),
+        palladium_dkk=Decimal("250.00"),
+    )
+    _apply_afg_market_rate_cells(vars_sheet, market_rates)
+    content = _save_workbook_bytes(workbook)
+
+    reloaded = load_workbook(io.BytesIO(content), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    variables = reloaded["Variable værdier"]
+    # Taslak satırları 35 (Platin) ve 36 (Palladium).
+    assert int(out["A35"].value) == 8 and out["C35"].value == "Platin"
+    assert float(out["F35"].value) == 3.2
+    assert int(out["A36"].value) == 9 and out["C36"].value == "Palladium"
+    assert float(out["H36"].value) == 1575.0
+    # VLOOKUP yedek satırları ($A$4:$B$12 aralığında) + J17/J18 oranları.
+    assert int(variables["A11"].value) == 8 and variables["B11"].value == "Platin"
+    assert int(variables["A12"].value) == 9 and variables["B12"].value == "Palladium"
+    assert float(variables["J17"].value) == 310.0
+    assert float(variables["J18"].value) == 250.0
+    reloaded.close()
+
+    # Parser taslaktan ptpd girişlerini geri okur.
+    parsed = parse_afg_workspace_inputs_from_workbook(content)
+    ptpd_inputs = {row.metal: row for row in parsed.sections.ptpd_rows}
+    assert float(ptpd_inputs["platinum"].gram) == 3.2
+    assert float(ptpd_inputs["palladium"].gram) == 7.0
+    assert float(ptpd_inputs["palladium"].avance_percent) == 10.0

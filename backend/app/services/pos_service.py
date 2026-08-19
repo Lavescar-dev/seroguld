@@ -62,6 +62,7 @@ from app.schemas.pos import (
     PosWorkspaceFinalizeRequest,
     PosWorkspaceFinalizeResponse,
     PosWorkspaceBarRowOut,
+    PosWorkspacePtPdRowOut,
     PosWorkspaceGoldRowOut,
     PosWorkspaceInvoiceGoldRowOut,
     PosWorkspaceInvoiceGoldSheetOut,
@@ -153,6 +154,14 @@ SILVER_WORKSPACE_ROWS: tuple[dict[str, str | Decimal], ...] = (
 BAR_WORKSPACE_ROWS: tuple[dict[str, str | Decimal], ...] = (
     {"row_key": "bar:gold", "bar_type": "gold", "type_code": "6", "label": "Guldbarre", "karat": Decimal("24.0"), "lodighed": "999.9", "purity_percentage": Decimal("99.99")},
     {"row_key": "bar:silver", "bar_type": "silver", "type_code": "7", "label": "Sølvbarre", "karat": None, "lodighed": "999", "purity_percentage": Decimal("99.90")},
+)
+
+# Platin/Palladyum alış satırları (0.3.7): row_key "ptpd:" — karat-parse yoluna
+# girmez; fiyat kaynağı global platinum_dkk/palladium_dkk (Metals.Dev canlı
+# meta'lı). Depoya metal_type üzerinden platin_pd kategorisiyle akarlar.
+PT_PD_WORKSPACE_ROWS: tuple[dict[str, str | Decimal | None], ...] = (
+    {"row_key": "ptpd:platinum", "metal": "platinum", "type_code": "8", "label": "Platin", "lodighed": "950", "purity_percentage": Decimal("95.00")},
+    {"row_key": "ptpd:palladium", "metal": "palladium", "type_code": "9", "label": "Palladium", "lodighed": "500", "purity_percentage": Decimal("50.00")},
 )
 
 INVOICE_GOLD_ROW_COUNT = 12
@@ -1016,6 +1025,10 @@ def _infer_workspace_row_key(line: PosSessionLine) -> str | None:
     # normal satırlara karışmasınlar (Sølvbarre 99.90 Finsølv ile aynı).
     if line.product_type == ProductTypeEnum.BAR:
         return "bar:gold" if line.metal_type == MetalTypeEnum.YELLOW_GOLD else "bar:silver"
+    if line.metal_type == MetalTypeEnum.PLATINUM:
+        return "ptpd:platinum"
+    if line.metal_type == MetalTypeEnum.PALLADIUM:
+        return "ptpd:palladium"
     purity_value = quantize_2(to_decimal(line.purity_percentage))
     if line.metal_type == MetalTypeEnum.SILVER:
         for definition in SILVER_WORKSPACE_ROWS:
@@ -1374,6 +1387,46 @@ async def build_purchase_workspace(
             )
         )
 
+    ptpd_rows: list[PosWorkspacePtPdRowOut] = []
+    for definition in PT_PD_WORKSPACE_ROWS:
+        row_key = str(definition["row_key"])
+        line = line_by_row_key.get(row_key)
+        gram = quantize_2(to_decimal(line.weight_grams if line is not None else 0))
+        avance = quantize_2(to_decimal(line.margin_percent_internal if line is not None else 0))
+        rate = _workspace_market_rate_dkk(market_rates, row_key)
+        purity = quantize_2(to_decimal(definition["purity_percentage"]))
+        unit_price = (
+            quantize_2(to_decimal(line.line_offer_dkk) / gram)
+            if line is not None and line.line_offer_dkk is not None and gram > 0
+            else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        )
+        line_total = (
+            quantize_2(to_decimal(line.line_offer_dkk))
+            if line is not None and line.line_offer_dkk is not None
+            else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
+        )
+        if gram > 0:
+            active_line_count += 1
+            total_weight += gram
+            total_pure += quantize_2(gram * (purity / Decimal("100")))
+            total_amount += line_total
+        ptpd_rows.append(
+            PosWorkspacePtPdRowOut(
+                row_key=row_key,
+                line_id=(line.id if line is not None else None),
+                line_no=(line.line_no if line is not None else None),
+                metal=str(definition["metal"]),
+                label=str(definition["label"]),
+                lodighed=str(definition["lodighed"]),
+                purity_percentage=purity,
+                gram=gram,
+                avance_percent=avance,
+                rate_dkk=rate,
+                unit_price_dkk=unit_price,
+                line_total_dkk=line_total,
+            )
+        )
+
     invoice_gold = (
         _invoice_gold_auto_sheet_from_workspace_rows(
             gold_rows=gold_rows,
@@ -1417,6 +1470,7 @@ async def build_purchase_workspace(
         gold_rows=gold_rows,
         silver_rows=silver_rows,
         bar_rows=bar_rows,
+        ptpd_rows=ptpd_rows,
         invoice_gold=invoice_gold,
         invoice_misc_mode=invoice_misc_mode,
         invoice_misc=invoice_misc,

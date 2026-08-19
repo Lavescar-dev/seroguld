@@ -74,6 +74,8 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     goldRows: [],
     silverRows: [],
     barRows: [],
+    ptpdRows: [],
+    onUpdatePtPdRow: () => {},
     onUpdateBarRow: () => undefined,
     onUpdateGoldRow: () => undefined,
     onUpdateSilverRow: () => undefined,

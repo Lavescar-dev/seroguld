@@ -881,6 +881,9 @@ export interface PosDisplaySnapshot {
   document_number?: string | null;
   gold_rows?: PosWorkspaceGoldRow[];
   silver_rows?: PosWorkspaceSilverRow[];
+  bar_rows?: PosWorkspaceBarRow[];
+  ptpd_rows?: PosWorkspacePtPdRow[];
+  kniv_rows?: PosWorkspaceCalculatorRow[];
   lines: PosDisplayLine[];
   updated_at: string;
 }
@@ -915,6 +918,8 @@ export interface PosWorkspaceMarketRates {
   plet_dkk?: string;
   gold_bar_dkk?: string;
   silver_bar_dkk?: string;
+  platinum_dkk?: string;
+  palladium_dkk?: string;
   gold_matrix: PosWorkspaceRateMatrixEntry[];
   silver_matrix: PosWorkspaceRateMatrixEntry[];
 }
@@ -1038,6 +1043,21 @@ export interface PosWorkspaceBarRow {
   line_total_dkk: string;
 }
 
+export interface PosWorkspacePtPdRow {
+  row_key: string;
+  line_id?: string | null;
+  line_no?: number | null;
+  metal: 'platinum' | 'palladium';
+  label: string;
+  lodighed: string;
+  purity_percentage: string;
+  gram: string;
+  avance_percent: string;
+  rate_dkk: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+}
+
 export interface PosWorkspaceSilverRow {
   row_key: string;
   line_id?: string | null;
@@ -1098,6 +1118,7 @@ export interface PosWorkspace {
   gold_rows: PosWorkspaceGoldRow[];
   silver_rows: PosWorkspaceSilverRow[];
   bar_rows?: PosWorkspaceBarRow[];
+  ptpd_rows?: PosWorkspacePtPdRow[];
   invoice_gold: PosWorkspaceInvoiceGoldSheet;
   invoice_misc_mode: 'auto' | 'manual';
   invoice_misc: PosWorkspaceInvoiceMiscSheet;

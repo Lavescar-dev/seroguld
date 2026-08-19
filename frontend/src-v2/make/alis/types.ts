@@ -50,6 +50,19 @@ export type EditableBarRow = {
   line_total_dkk: string;
 };
 
+export type EditablePtPdRow = {
+  row_key: string;
+  metal: 'platinum' | 'palladium';
+  label: string;
+  lodighed: string;
+  purity_percentage: string;
+  gram: string;
+  avance_percent: string;
+  rate_dkk: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+};
+
 export type PaymentMethod = 'bank';
 export type CompanionMode = 'auto' | 'manual';
 export type WorkspaceSurfaceView = 'system' | 'excel';

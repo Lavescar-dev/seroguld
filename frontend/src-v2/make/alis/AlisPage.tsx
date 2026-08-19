@@ -50,6 +50,7 @@ import type {
   CompanionMode,
   EditableCustomer,
   EditableBarRow,
+  EditablePtPdRow,
   EditableGoldRow,
   EditableInvoiceGoldRow,
   EditableInvoiceMiscRow,
@@ -261,9 +262,11 @@ export type AlisPageProps = {
   onCustomerBlur: () => void;
   goldRows: EditableGoldRow[];
   barRows: EditableBarRow[];
+  ptpdRows: EditablePtPdRow[];
   silverRows: EditableSilverRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -366,9 +369,11 @@ export function AlisPage(props: AlisPageProps) {
     goldRows,
     silverRows,
     barRows,
+    ptpdRows,
     onUpdateGoldRow,
     onUpdateSilverRow,
     onUpdateBarRow,
+    onUpdatePtPdRow,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -477,8 +482,10 @@ export function AlisPage(props: AlisPageProps) {
           goldRows={goldRows}
           silverRows={silverRows}
           barRows={barRows}
+          ptpdRows={ptpdRows}
           onUpdateGoldRow={onUpdateGoldRow}
           onUpdateBarRow={onUpdateBarRow}
+          onUpdatePtPdRow={onUpdatePtPdRow}
           onUpdateSilverRow={onUpdateSilverRow}
           activeWorkspaceView={activeWorkspaceView}
           setActiveWorkspaceView={setActiveWorkspaceView}
@@ -568,9 +575,11 @@ function ActiveWorkspaceView(props: {
   onCustomerBlur: () => void;
   goldRows: EditableGoldRow[];
   barRows: EditableBarRow[];
+  ptpdRows: EditablePtPdRow[];
   silverRows: EditableSilverRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -632,9 +641,11 @@ function ActiveWorkspaceView(props: {
     goldRows,
     silverRows,
     barRows,
+    ptpdRows,
     onUpdateGoldRow,
     onUpdateSilverRow,
     onUpdateBarRow,
+    onUpdatePtPdRow,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -1087,9 +1098,11 @@ function ActiveWorkspaceView(props: {
             goldRows={goldRows}
             silverRows={silverRows}
             barRows={barRows}
+            ptpdRows={ptpdRows}
             onUpdateGoldRow={onUpdateGoldRow}
             onUpdateSilverRow={onUpdateSilverRow}
             onUpdateBarRow={onUpdateBarRow}
+            onUpdatePtPdRow={onUpdatePtPdRow}
             bankInfo={bankInfo}
             setBankInfo={setBankInfo}
             paymentMethod={paymentMethod}

@@ -141,6 +141,8 @@ AFG_VARIABLE_EDITABLE_CELLS = (
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J14", "label": "Plet DKK/g", "input_kind": "decimal", "field": "market_rates:plet_dkk"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J15", "label": "Guldbarre DKK/g", "input_kind": "decimal", "field": "market_rates:gold_bar_dkk"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J16", "label": "Sølvbarre DKK/g", "input_kind": "decimal", "field": "market_rates:silver_bar_dkk"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J17", "label": "Platin DKK/g", "input_kind": "decimal", "field": "market_rates:platinum_dkk"},
+    {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "J18", "label": "Palladium DKK/g", "input_kind": "decimal", "field": "market_rates:palladium_dkk"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "C14", "label": "Afregningsnr.", "input_kind": "text", "field": "numbering:afregnings_number_next"},
     {"sheet": AFG_VARIABLES_SHEET, "cell_ref": "D14", "label": "Fakturanr.", "input_kind": "text", "field": "numbering:invoice_number_next"},
 )
@@ -159,12 +161,19 @@ AFG_VARIABLE_MATRIX_ROWS = (
     ("I14", "J14", "K14", "Plet", ""),
     ("I15", "J15", "K15", "Guldbarre", "999.9"),
     ("I16", "J16", "K16", "Sølvbarre", "999"),
+    ("I17", "J17", "K17", "Platin", "950"),
+    ("I18", "J18", "K18", "Palladium", "500"),
 )
 
 # Taslak workbook'ta bar giriş satırları: 29 (şablonda boş) ve 34 (ilk dolgu
 # satırı). Gümüş satırları 30-33'te kalır; SUM(F22:F37)/SUM(H22:H37) kapsar.
 AFG_BAR_GOLD_ROW = 29
 AFG_BAR_SILVER_ROW = 34
+
+# Pt/Pd giriş satırları: 35-36 (A-H kolonları şablonda boş; J/K/L kolonları
+# gümüş hesaplayıcıya ait — çakışma yok). SUM(F22:F37)/SUM(H22:H37) kapsar.
+AFG_PTPD_PLATINUM_ROW = 35
+AFG_PTPD_PALLADIUM_ROW = 36
 
 AFG_GOLD_CALCULATOR_ROWS = (
     ("calc_gold:1", "J22", "K22", "L22"),
@@ -198,6 +207,10 @@ def _afg_row_editable_cells() -> list[dict[str, str]]:
     rows.append({"cell_ref": f"F{AFG_BAR_GOLD_ROW}", "label": "Guldbarre Gram", "input_kind": "decimal", "field": "bar:gold:gram"})
     rows.append({"cell_ref": f"B{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Avance %", "input_kind": "percent", "field": "bar:silver:avance"})
     rows.append({"cell_ref": f"F{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Gram", "input_kind": "decimal", "field": "bar:silver:gram"})
+    rows.append({"cell_ref": f"B{AFG_PTPD_PLATINUM_ROW}", "label": "Platin Avance %", "input_kind": "percent", "field": "ptpd:platinum:avance"})
+    rows.append({"cell_ref": f"F{AFG_PTPD_PLATINUM_ROW}", "label": "Platin Gram", "input_kind": "decimal", "field": "ptpd:platinum:gram"})
+    rows.append({"cell_ref": f"B{AFG_PTPD_PALLADIUM_ROW}", "label": "Palladium Avance %", "input_kind": "percent", "field": "ptpd:palladium:avance"})
+    rows.append({"cell_ref": f"F{AFG_PTPD_PALLADIUM_ROW}", "label": "Palladium Gram", "input_kind": "decimal", "field": "ptpd:palladium:gram"})
     return rows
 
 
@@ -1044,6 +1057,31 @@ def _aggregate_detail_bar_rows(detail: PosDocumentDetailOut) -> list[dict[str, D
     return [rows["gold"], rows["silver"]]
 
 
+def _aggregate_detail_ptpd_rows(detail: PosDocumentDetailOut) -> list[dict[str, Decimal | str]]:
+    rows: dict[str, dict[str, Decimal | str]] = {
+        metal: {
+            "metal": metal,
+            "gram": Decimal("0.00"),
+            "avance_percent": Decimal("0.00"),
+            "unit_price_dkk": Decimal("0.00"),
+            "line_total_dkk": Decimal("0.00"),
+        }
+        for metal in ("platinum", "palladium")
+    }
+    for line in detail.lines:
+        metal = str(line.metal_type or "").lower()
+        if metal not in rows:
+            continue
+        row = rows[metal]
+        gram = to_decimal(line.weight_grams or 0)
+        line_total = to_decimal(line.line_total_dkk or 0)
+        row["gram"] = quantize_2(to_decimal(row["gram"]) + gram)
+        row["line_total_dkk"] = quantize_2(to_decimal(row["line_total_dkk"]) + line_total)
+        row["unit_price_dkk"] = quantize_2(line_total / gram) if gram > 0 else to_decimal(row["unit_price_dkk"])
+        row["avance_percent"] = quantize_2(to_decimal(line.margin_percent or 0))
+    return [rows["platinum"], rows["palladium"]]
+
+
 def _apply_afg_customer_cells(
     sheet,
     *,
@@ -1211,6 +1249,10 @@ def _apply_afg_market_rate_cells(vars_sheet, market_rates: PosWorkspaceMarketRat
     vars_sheet["B9"] = "Guldbarre"
     vars_sheet["A10"] = 7
     vars_sheet["B10"] = "Sølvbarre"
+    vars_sheet["A11"] = 8
+    vars_sheet["B11"] = "Platin"
+    vars_sheet["A12"] = 9
+    vars_sheet["B12"] = "Palladium"
     vars_sheet["G2"] = "Kategori"
     vars_sheet["H2"] = "Beskrivelse"
     # I sütunundaki eski EUR aynası artık yazılmaz; kanonik birim DKK/g (J).
@@ -1231,6 +1273,8 @@ def _apply_afg_market_rate_cells(vars_sheet, market_rates: PosWorkspaceMarketRat
         ("silver", "Plet", market_rates.plet_dkk, ""),
         ("bar", "Guldbarre", market_rates.gold_bar_dkk, "999.9"),
         ("bar", "Sølvbarre", market_rates.silver_bar_dkk, "999"),
+        ("ptpd", "Platin", market_rates.platinum_dkk, "950"),
+        ("ptpd", "Palladium", market_rates.palladium_dkk, "500"),
     )
     for row, (kind, label, dkk_value, lodighed) in zip(AFG_VARIABLE_MATRIX_ROWS, values, strict=False):
         eur_cell, dkk_cell, meta_cell, _legacy_label, _legacy_lodighed = row
@@ -1322,6 +1366,7 @@ def _apply_afg_workspace_rows(
     gold_rows: Iterable[PosWorkspaceGoldRowOut],
     silver_rows: Iterable[PosWorkspaceSilverRowOut],
     bar_rows: Iterable["PosWorkspaceBarRowOut"] = (),
+    ptpd_rows: Iterable["PosWorkspacePtPdRowOut"] = (),
 ) -> None:
     total_gold_grams = Decimal("0.00")
     total_gold_amount = Decimal("0.00")
@@ -1381,6 +1426,22 @@ def _apply_afg_workspace_rows(
         sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
         sheet[f"C{idx}"] = row.label
         sheet[f"D{idx}"] = Decimal("24") if row.bar_type == "gold" else None
+        sheet[f"E{idx}"] = row.lodighed
+        sheet[f"F{idx}"] = gram
+        sheet[f"G{idx}"] = unit_price
+        sheet[f"H{idx}"] = line_total
+
+    for row in ptpd_rows:
+        idx = AFG_PTPD_PLATINUM_ROW if row.metal == "platinum" else AFG_PTPD_PALLADIUM_ROW
+        gram = quantize_2(to_decimal(row.gram))
+        unit_price = quantize_2(to_decimal(row.unit_price_dkk))
+        line_total = quantize_2(to_decimal(row.line_total_dkk))
+        # Pt/Pd altın/gümüş toplam bloklarına (D75-I75) girmez; belge içi
+        # SUM(F22:F37)/SUM(H22:H37) satırları zaten kapsar.
+        sheet[f"A{idx}"] = 8 if row.metal == "platinum" else 9
+        sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
+        sheet[f"C{idx}"] = row.label
+        sheet[f"D{idx}"] = None
         sheet[f"E{idx}"] = row.lodighed
         sheet[f"F{idx}"] = gram
         sheet[f"G{idx}"] = unit_price
@@ -1481,12 +1542,13 @@ def _apply_afg_detail_rows(
     gold_rows: Iterable[dict[str, Decimal | str]],
     silver_rows: Iterable[dict[str, Decimal | str]],
     bar_rows: Iterable[dict[str, Decimal | str]] = (),
+    ptpd_rows: Iterable[dict[str, Decimal | str]] = (),
 ) -> None:
     """Nihai AFG kompakt yazılır: yalnız dolu satırlar, 22'den ardışık.
 
     Tek 14K alış → tek metal satırı; kullanılmayan satırlar (şablonun
     G30/G31/G32 hayalet literalleri dahil) 37'ye kadar temizlenir. Sıra:
-    altın 8→24, Guldbarre, Sølvbarre, gümüş Finsølv→Plet.
+    altın 8→24, Guldbarre, Sølvbarre, gümüş Finsølv→Plet, Platin, Palladium.
     """
     total_gold_grams = Decimal("0.00")
     total_gold_amount = Decimal("0.00")
@@ -1569,6 +1631,27 @@ def _apply_afg_detail_rows(
                 "label": row["label"],
                 "karat": None,
                 "lodighed": lodighed if lodighed.isdigit() else None,
+                "gram": gram,
+                "unit_price": quantize_2(to_decimal(row["unit_price_dkk"])),
+                "line_total": line_total,
+            }
+        )
+
+    for row in ptpd_rows:
+        gram = quantize_2(to_decimal(row["gram"]))
+        if gram <= 0:
+            continue
+        line_total = quantize_2(to_decimal(row["line_total_dkk"]))
+        is_platinum = str(row.get("metal")) == "platinum"
+        # Pt/Pd altın/gümüş toplam ve gizli saf-metal bloklarına girmez;
+        # belge toplamı SUM satırlarından gelir.
+        filled.append(
+            {
+                "type_code": 8 if is_platinum else 9,
+                "avance": quantize_2(to_decimal(row.get("avance_percent") or 0) / Decimal("100")),
+                "label": "Platin" if is_platinum else "Palladium",
+                "karat": None,
+                "lodighed": "950" if is_platinum else "500",
                 "gram": gram,
                 "unit_price": quantize_2(to_decimal(row["unit_price_dkk"])),
                 "line_total": line_total,

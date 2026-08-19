@@ -92,6 +92,10 @@ export function syncMarketRateState(
     plet_dkk: pletDkk,
     gold_bar_dkk: formatDecimalFixed(current.gold_bar_dkk ?? goldRates['24']),
     silver_bar_dkk: formatDecimalFixed(current.silver_bar_dkk ?? silverRates['999']),
+    // Pt/Pd oranları workspace'te taşınır (ptpd satırlarının fiyat kaynağı);
+    // 0 kalırsa backend profil değerine düşer.
+    platinum_dkk: formatDecimalFixed(current.platinum_dkk ?? '0'),
+    palladium_dkk: formatDecimalFixed(current.palladium_dkk ?? '0'),
     gold_matrix: GOLD_MATRIX_ROWS.map((row) => ({
       row_key: `gold:${row.key}`,
       label: row.label,
