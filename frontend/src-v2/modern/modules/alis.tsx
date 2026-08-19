@@ -48,8 +48,8 @@ const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?:
   { key: 'phone', label: 'Telefon' },
   { key: 'email', label: 'E-posta', type: 'email' },
   { key: 'address', label: 'Adres' },
-  { key: 'city', label: 'Şehir' },
   { key: 'postal_code', label: 'Posta kodu' },
+  { key: 'city', label: 'Şehir' },
 ];
 
 type ModernAlisDisplayBridge = Pick<AlisPageProps, 'desktopDisplayState' | 'expectedDisplayRoute' | 'routeMatches' | 'onOpenCustomerDisplay' | 'onCloseCustomerDisplay'>;

@@ -53,8 +53,8 @@ export function CustomerInfoTable({
     { label: 'Tlf.', key: 'phone', mono: true, type: 'text' },
     { label: 'E-mail', key: 'email', type: 'email' },
     { label: 'Adresse', key: 'address', type: 'text' },
-    { label: 'Şehir / By', key: 'city', type: 'text' },
     { label: 'Postnr.', key: 'postal_code', mono: true, type: 'text' },
+    { label: 'Şehir / By', key: 'city', type: 'text' },
   ];
   const [bankOpen, setBankOpen] = useState(false);
   const address = useAddressAutocomplete({ customer, setCustomer, onApplied: onBlur });
@@ -364,8 +364,8 @@ export function CustomerEditorTable({
     { label: 'Belge türü', key: 'identity_doc_type', placeholder: 'Belge türünü seçin' },
     { label: 'Belge ülkesi', key: 'identity_doc_country', placeholder: 'DNK', mono: true },
     { label: 'Adresse', key: 'address', placeholder: 'Sokak, No.' },
-    { label: 'Şehir / By', key: 'city', placeholder: 'Şehir' },
     { label: 'Postnr.', key: 'postal_code', placeholder: '0000', mono: true },
+    { label: 'Şehir / By', key: 'city', placeholder: 'Şehir' },
   ];
   const manualFields: Array<{ label: string; key: keyof EditableCustomer; placeholder: string; mono?: boolean }> = [
     { label: 'Tlf.', key: 'phone', placeholder: '+45 00 00 00 00', mono: true },
