@@ -275,6 +275,7 @@ def to_product_out(product: Product) -> ProductOut:
         width_mm=product.width_mm,
         thickness_mm=product.thickness_mm,
         producer=product.producer,
+        diameter_mm=product.diameter_mm,
         inventory_category=product.inventory_category,
         inventory_subcategory=product.inventory_subcategory,
         operation_destination=product.operation_destination,
@@ -358,6 +359,7 @@ async def create_product(session: AsyncSession, payload: ProductCreate, actor_id
                 length_cm=payload.length_cm,
                 width_mm=(quantize_2(payload.width_mm) if payload.width_mm is not None else None),
                 thickness_mm=(quantize_2(payload.thickness_mm) if payload.thickness_mm is not None else None),
+                diameter_mm=(quantize_2(payload.diameter_mm) if payload.diameter_mm is not None else None),
                 producer=payload.producer,
                 inventory_category=payload.inventory_category or _inferred_category,
                 inventory_subcategory=(
@@ -560,13 +562,25 @@ async def update_product(
         product.shop_price_dkk = quantize_2(payload.shop_price_dkk)
     if payload.shop_sync_status is not None:
         product.shop_sync_status = payload.shop_sync_status
-    if payload.length_cm is not None:
+    if payload.clear_length_cm:
+        product.length_cm = None
+    elif payload.length_cm is not None:
         product.length_cm = payload.length_cm
-    if payload.width_mm is not None:
+    if payload.clear_width_mm:
+        product.width_mm = None
+    elif payload.width_mm is not None:
         product.width_mm = quantize_2(payload.width_mm)
-    if payload.thickness_mm is not None:
+    if payload.clear_thickness_mm:
+        product.thickness_mm = None
+    elif payload.thickness_mm is not None:
         product.thickness_mm = quantize_2(payload.thickness_mm)
-    if payload.producer is not None:
+    if payload.clear_diameter_mm:
+        product.diameter_mm = None
+    elif payload.diameter_mm is not None:
+        product.diameter_mm = quantize_2(payload.diameter_mm)
+    if payload.clear_producer:
+        product.producer = None
+    elif payload.producer is not None:
         product.producer = payload.producer
     if payload.inventory_category is not None:
         product.inventory_category = payload.inventory_category

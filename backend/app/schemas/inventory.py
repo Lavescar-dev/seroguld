@@ -58,6 +58,7 @@ class InventoryGridRowOut(AppBaseModel):
     length_cm: str | None = None
     width_mm: Decimal | None = None
     thickness_mm: Decimal | None = None
+    diameter_mm: Decimal | None = None
     producer: str | None = None
     storage_location: str | None = None
     needs_cleaning: bool = False

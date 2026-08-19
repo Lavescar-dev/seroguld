@@ -345,39 +345,51 @@ function StokForm({
                 <option value="listelendi">Listelendi</option>
               </select>
             </div>
-            <div>
-              <label className={labelCls}>Uzunluk / Çap</label>
-              <input
-                type="text"
-                value={editing.olcuUzunluk || ''}
-                onChange={(event) => upd('olcuUzunluk', event.target.value)}
-                className={cellIn}
-                style={monoStyle}
-                placeholder="45cm / Dia. Ø63"
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Genişlik (mm)</label>
-              <CommittedNumericInput
-                value={editing.olcuGenislik}
-                rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
-                onCommit={(value) => upd('olcuGenislik', value ?? undefined)}
-                className={cellIn}
-                style={monoStyle}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Kalınlık (mm)</label>
-              <CommittedNumericInput
-                value={editing.olcuKalinlik}
-                rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
-                onCommit={(value) => upd('olcuKalinlik', value ?? undefined)}
-                className={cellIn}
-                style={monoStyle}
-              />
-            </div>
           </>
         ) : null}
+
+        <div>
+          <label className={labelCls}>Uzunluk</label>
+          <input
+            type="text"
+            value={editing.olcuUzunluk || ''}
+            onChange={(event) => upd('olcuUzunluk', event.target.value)}
+            className={cellIn}
+            style={monoStyle}
+            placeholder="45cm / 18-19cm"
+          />
+        </div>
+        <div>
+          <label className={labelCls}>Genişlik (mm)</label>
+          <CommittedNumericInput
+            value={editing.olcuGenislik}
+            rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+            onCommit={(value) => upd('olcuGenislik', value ?? undefined)}
+            className={cellIn}
+            style={monoStyle}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>Kalınlık (mm)</label>
+          <CommittedNumericInput
+            value={editing.olcuKalinlik}
+            rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+            onCommit={(value) => upd('olcuKalinlik', value ?? undefined)}
+            className={cellIn}
+            style={monoStyle}
+          />
+        </div>
+        <div>
+          <label className={labelCls}>Çap (mm)</label>
+          <CommittedNumericInput
+            value={editing.olcuCap}
+            rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+            onCommit={(value) => upd('olcuCap', value ?? undefined)}
+            className={cellIn}
+            style={monoStyle}
+            placeholder="Ø 6.23"
+          />
+        </div>
 
         <div className="col-span-2">
           <label className={labelCls}>Notlar</label>
@@ -1031,7 +1043,7 @@ function InventoryDetailDrawer({
               <DetailField label="Lokasyon" value={product.storage_location || '—'} />
               <DetailField label="Üretici" value={product.producer || '—'} />
               <DetailField label="Uzunluk" value={product.length_cm || '—'} mono />
-              <DetailField label="Genişlik / Kalınlık" value={[product.width_mm ? `${product.width_mm} mm` : null, product.thickness_mm ? `${product.thickness_mm} mm` : null].filter(Boolean).join(' · ') || '—'} mono />
+              <DetailField label="Genişlik / Kalınlık / Çap" value={[product.width_mm ? `${product.width_mm} mm` : null, product.thickness_mm ? `${product.thickness_mm} mm` : null, product.diameter_mm ? `Ø ${product.diameter_mm} mm` : null].filter(Boolean).join(' · ') || '—'} mono />
               <DetailField label="Temizlik" value={product.needs_cleaning ? 'Gerekli' : 'Temiz'} />
               <DetailField label="Operasyon sınıfı" value={product.operation_classification || '—'} />
             </section>

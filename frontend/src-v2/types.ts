@@ -204,6 +204,7 @@ export interface ProductOut {
   length_cm?: string | null;
   width_mm?: string | null;
   thickness_mm?: string | null;
+  diameter_mm?: string | null;
   producer?: string | null;
   inventory_category?: string | null;
   inventory_subcategory?: string | null;
@@ -621,6 +622,7 @@ export interface InventoryGridRow {
   length_cm?: string | null;
   width_mm?: string | null;
   thickness_mm?: string | null;
+  diameter_mm?: string | null;
   producer?: string | null;
   storage_location?: string | null;
   needs_cleaning: boolean;

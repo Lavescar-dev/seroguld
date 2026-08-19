@@ -143,3 +143,79 @@ def test_create_and_update_keep_inventory_category_column_authoritative():
         await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_update_clear_flags_reset_dimension_fields():
+    """None = 'dokunma'; clear_* = alanı sil. Boş bırakılan ölçü/üretici
+    değerinin silinememesi 0.3.6 öncesinden kalan pürüzdü."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.database import Base
+    from app.models.enums import RoleEnum
+    from app.models.user import User
+    from app.schemas.product import ProductUpdate
+    from app.services.product_service import create_product, get_product_or_404, update_product
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+        async with Session() as db:
+            admin = User(
+                email="dims-admin@example.com",
+                password_hash="unused",
+                name="Admin",
+                role=RoleEnum.ADMIN,
+                is_active=True,
+            )
+            db.add(admin)
+            await db.flush()
+
+            created = await create_product(
+                db,
+                ProductCreate(
+                    product_type=ProductTypeEnum.RING,
+                    metal_type=MetalTypeEnum.YELLOW_GOLD,
+                    weight_grams=Decimal("10"),
+                    purchase_price_dkk=Decimal("1000"),
+                    commission=Decimal("8"),
+                    length_cm="45cm",
+                    width_mm=Decimal("26.11"),
+                    thickness_mm=Decimal("2.32"),
+                    diameter_mm=Decimal("6.23"),
+                    producer="AUR",
+                ),
+                admin.id,
+            )
+            product = await get_product_or_404(db, created.id)
+            assert product.diameter_mm == Decimal("6.23")
+
+            # None → dokunma
+            await update_product(db, product, ProductUpdate(notes="x"), admin.id)
+            assert product.width_mm == Decimal("26.11")
+            assert product.producer == "AUR"
+
+            # clear_* → sil
+            await update_product(
+                db,
+                product,
+                ProductUpdate(
+                    clear_length_cm=True,
+                    clear_width_mm=True,
+                    clear_thickness_mm=True,
+                    clear_diameter_mm=True,
+                    clear_producer=True,
+                ),
+                admin.id,
+            )
+            assert product.length_cm is None
+            assert product.width_mm is None
+            assert product.thickness_mm is None
+            assert product.diameter_mm is None
+            assert product.producer is None
+
+        await engine.dispose()
+
+    asyncio.run(run())

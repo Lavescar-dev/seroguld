@@ -29,6 +29,7 @@ export interface StokItem {
   olcuUzunluk?: string;
   olcuGenislik?: number;
   olcuKalinlik?: number;
+  olcuCap?: number;
   uretici?: string;
   notlar?: string;
   storageLocation?: string;

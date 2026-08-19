@@ -56,6 +56,7 @@ class ProductCreate(AppBaseModel):
     length_cm: str | None = Field(default=None, max_length=30)
     width_mm: Decimal | None = Field(default=None, ge=0)
     thickness_mm: Decimal | None = Field(default=None, ge=0)
+    diameter_mm: Decimal | None = Field(default=None, ge=0)
     producer: str | None = Field(default=None, max_length=120)
     inventory_category: str | None = Field(default=None, max_length=30)
     inventory_subcategory: str | None = Field(default=None, max_length=30)
@@ -87,7 +88,15 @@ class ProductUpdate(AppBaseModel):
     length_cm: str | None = Field(default=None, max_length=30)
     width_mm: Decimal | None = Field(default=None, ge=0)
     thickness_mm: Decimal | None = Field(default=None, ge=0)
+    diameter_mm: Decimal | None = Field(default=None, ge=0)
     producer: str | None = Field(default=None, max_length=120)
+    # None = "dokunma"; ölçü/üretici alanını SİLMEK için clear bayrağı kullanılır
+    # (clear_notes kalıbı — boş string/None ayrımına girmeden).
+    clear_length_cm: bool = False
+    clear_width_mm: bool = False
+    clear_thickness_mm: bool = False
+    clear_diameter_mm: bool = False
+    clear_producer: bool = False
     inventory_category: str | None = Field(default=None, max_length=30)
     inventory_subcategory: str | None = Field(default=None, max_length=30)
     operation_destination: str | None = Field(default=None, max_length=30)
@@ -175,6 +184,7 @@ class ProductOut(AppBaseModel):
     length_cm: str | None = None
     width_mm: Decimal | None = None
     thickness_mm: Decimal | None = None
+    diameter_mm: Decimal | None = None
     producer: str | None = None
     inventory_category: str | None = None
     inventory_subcategory: str | None = None

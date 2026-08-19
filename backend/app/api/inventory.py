@@ -132,6 +132,7 @@ def _inventory_row(product: Product, prices: InventoryMarketPricesOut) -> Invent
         length_cm=product.length_cm,
         width_mm=(quantize_2(product.width_mm) if product.width_mm is not None else None),
         thickness_mm=(quantize_2(product.thickness_mm) if product.thickness_mm is not None else None),
+        diameter_mm=(quantize_2(product.diameter_mm) if product.diameter_mm is not None else None),
         producer=product.producer,
         storage_location=product.storage_location,
         needs_cleaning=bool(product.needs_cleaning),
