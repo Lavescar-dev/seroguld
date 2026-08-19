@@ -23,6 +23,7 @@ import {
 import type { ApiConfig } from '@/make/settings/types';
 import { PasswordChangeForm } from '@/components/PasswordChangeForm';
 import { BackupSettingsPanel } from '@/components/BackupSettingsPanel';
+import { WooMappingSettingsPanel } from '@/components/WooMappingSettingsPanel';
 import { deleteStoredLoginPassword } from '@/lib/desktop';
 import { getCurrentUser } from '@/lib/auth';
 import { getLocale, t } from '@/lib/locale';
@@ -412,6 +413,7 @@ export function SettingsWorkspace({
                       </span>
                     </div>
                     <div className="grid max-w-4xl gap-x-5 gap-y-5 sm:grid-cols-2">{selectedIntegration.fields.map(renderField)}</div>
+                    {selectedIntegration.key === 'woocommerce' ? <WooMappingSettingsPanel variant={variant} /> : null}
                   </section>
                 </div>
               ) : null}

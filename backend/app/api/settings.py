@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import require_admin
 from app.config import ROOT_ENV_FILE, get_settings
-from app.schemas.settings import AIModelOptionOut, AISettingsOut, AISettingsUpdateIn
+from app.schemas.settings import (
+    AIModelOptionOut,
+    AISettingsOut,
+    AISettingsUpdateIn,
+    WooMappingSettingsOut,
+    WooMappingSettingsUpdateIn,
+)
 from app.utils.env_file import upsert_env_values
 
 router = APIRouter()
@@ -120,3 +128,59 @@ async def update_ai_settings(
     upsert_env_values(ROOT_ENV_FILE, updates)
     get_settings.cache_clear()
     return _build_ai_settings_out()
+
+
+def _build_woo_mapping_settings_out() -> WooMappingSettingsOut:
+    settings = get_settings()
+    return WooMappingSettingsOut(
+        category_map_json=settings.woocommerce_category_map_json,
+        stonex_meta_map_json=settings.woocommerce_stonex_meta_map_json,
+        badge_meta_json=settings.woocommerce_badge_meta_json,
+        desc_footer_html=settings.woocommerce_desc_footer_html,
+        desc_footer_enabled=settings.woocommerce_desc_footer_enabled,
+        primary_term_meta_key=settings.woocommerce_primary_term_meta_key,
+    )
+
+
+def _validated_json_field(label: str, raw: str, expected: type) -> str:
+    text = raw.strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{label} geçerli JSON değil: {exc.msg} (satır {exc.lineno})",
+        ) from exc
+    if not isinstance(parsed, expected):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{label} bir JSON {'nesnesi' if expected is dict else 'listesi'} olmalı.",
+        )
+    # Env dosyası tek satır ister; doğrulanmış JSON kompakt yazılır.
+    return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+
+
+@router.get("/woocommerce", response_model=WooMappingSettingsOut)
+async def get_woo_mapping_settings(_: object = Depends(require_admin)) -> WooMappingSettingsOut:
+    return _build_woo_mapping_settings_out()
+
+
+@router.put("/woocommerce", response_model=WooMappingSettingsOut)
+async def update_woo_mapping_settings(
+    payload: WooMappingSettingsUpdateIn,
+    _: object = Depends(require_admin),
+) -> WooMappingSettingsOut:
+    updates = {
+        "WOOCOMMERCE_CATEGORY_MAP_JSON": _validated_json_field("Kategori haritası", payload.category_map_json, dict),
+        "WOOCOMMERCE_STONEX_META_MAP_JSON": _validated_json_field("StoneX meta haritası", payload.stonex_meta_map_json, dict),
+        "WOOCOMMERCE_BADGE_META_JSON": _validated_json_field("Badge meta tanımı", payload.badge_meta_json, dict),
+        # Env tek satır: çok satırlı HTML boşluğa indirgenir (görüntüde fark yaratmaz).
+        "WOOCOMMERCE_DESC_FOOTER_HTML": " ".join(payload.desc_footer_html.split()),
+        "WOOCOMMERCE_DESC_FOOTER_ENABLED": "true" if payload.desc_footer_enabled else "false",
+        "WOOCOMMERCE_PRIMARY_TERM_META_KEY": payload.primary_term_meta_key.strip() or "_yoast_wpseo_primary_product_cat",
+    }
+    upsert_env_values(ROOT_ENV_FILE, updates)
+    get_settings.cache_clear()
+    return _build_woo_mapping_settings_out()

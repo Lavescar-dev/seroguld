@@ -90,6 +90,17 @@ class Settings(BaseSettings):
     woocommerce_consumer_secret: str = ""
     woocommerce_webhook_secret: str = ""
     woocommerce_timeout_seconds: float = 20.0
+    # Site eşleme haritaları (JSON string; probe_woocommerce_site aracının
+    # çıktısı Settings > WooCommerce Eşlemeleri'nden yapıştırılır). Boş harita
+    # ilgili özelliği atlar — publish uyarıyla devam eder (graceful degrade).
+    woocommerce_category_map_json: str = ""
+    woocommerce_stonex_meta_map_json: str = ""
+    woocommerce_badge_meta_json: str = ""
+    # Takı ürünlerinin uzun açıklamasının sonuna eklenen sabit Danca blok;
+    # boş = koda gömülü varsayılan (DESC_FOOTER_DA_DEFAULT). Env tek satır.
+    woocommerce_desc_footer_html: str = ""
+    woocommerce_desc_footer_enabled: bool = True
+    woocommerce_primary_term_meta_key: str = "_yoast_wpseo_primary_product_cat"
 
     wordpress_base_url: str = ""
     wp_app_username: str = ""

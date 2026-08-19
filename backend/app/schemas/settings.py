@@ -29,3 +29,21 @@ class AISettingsUpdateIn(AppBaseModel):
     openai_model: str
     openai_timeout_seconds: float = Field(default=20.0, ge=5.0, le=120.0)
 
+
+
+class WooMappingSettingsOut(AppBaseModel):
+    category_map_json: str
+    stonex_meta_map_json: str
+    badge_meta_json: str
+    desc_footer_html: str
+    desc_footer_enabled: bool
+    primary_term_meta_key: str
+
+
+class WooMappingSettingsUpdateIn(AppBaseModel):
+    category_map_json: str = ""
+    stonex_meta_map_json: str = ""
+    badge_meta_json: str = ""
+    desc_footer_html: str = ""
+    desc_footer_enabled: bool = True
+    primary_term_meta_key: str = "_yoast_wpseo_primary_product_cat"
