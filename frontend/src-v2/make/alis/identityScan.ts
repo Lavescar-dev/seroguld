@@ -8,7 +8,7 @@ import {
 
 import type { EditableCustomer } from './types';
 
-export type IdentityFieldName = 'name' | 'identity_doc_number' | 'identity_doc_type' | 'identity_doc_country' | 'address' | 'postal_code' | 'city';
+export type IdentityFieldName = 'name' | 'identity_doc_number' | 'identity_doc_type' | 'identity_doc_country' | 'address' | 'postal_code' | 'city' | 'cpr_number';
 export type IdentityFieldReview = 'validated' | 'needs_review';
 
 export type ParsedIdentityField = {
@@ -17,7 +17,7 @@ export type ParsedIdentityField = {
 };
 
 export type IdentityParseResult = {
-  documentType: 'passport' | 'id_card' | 'driver_license' | 'unknown';
+  documentType: 'passport' | 'id_card' | 'driver_license' | 'health_card' | 'unknown';
   rawLines: string[];
   fields: Partial<Record<IdentityFieldName, ParsedIdentityField>>;
 };
@@ -74,12 +74,12 @@ function parseTd3(lines: string[]): IdentityParseResult | null {
   const documentNumber = second.slice(0, 9).replace(/</g, '');
   const documentValidated = hasValidMrzCheck(second.slice(0, 9), second[9]);
   const country = normalizeCountry(first.slice(2, 5));
-  const fields: IdentityParseResult['fields'] = {
-    name: parsedField(name, 'needs_review'),
-    identity_doc_number: parsedField(documentNumber, documentValidated ? 'validated' : 'needs_review'),
-    identity_doc_type: { value: 'passport', review: 'validated' },
-    identity_doc_country: parsedField(country, 'needs_review'),
-  };
+  const fields = definedFields([
+    ['name', parsedField(name, 'needs_review')],
+    ['identity_doc_number', parsedField(documentNumber, documentValidated ? 'validated' : 'needs_review')],
+    ['identity_doc_type', { value: 'passport', review: 'validated' as const }],
+    ['identity_doc_country', parsedField(country, 'needs_review')],
+  ]);
   return { documentType: 'passport', rawLines: [first, second], fields };
 }
 
@@ -92,18 +92,142 @@ function parseTd1(lines: string[]): IdentityParseResult | null {
   const [surnameRaw = '', givenRaw = ''] = third.split('<<', 2);
   const name = [cleanMrzField(givenRaw), cleanMrzField(surnameRaw)].filter(Boolean).join(' ');
   const country = normalizeCountry(first.slice(2, 5));
-  const fields: IdentityParseResult['fields'] = {
-    name: parsedField(name, 'needs_review'),
-    identity_doc_number: parsedField(documentNumber, documentValidated ? 'validated' : 'needs_review'),
-    identity_doc_type: { value: 'id_card', review: 'validated' },
-    identity_doc_country: parsedField(country, 'needs_review'),
-  };
+  const fields = definedFields([
+    ['name', parsedField(name, 'needs_review')],
+    ['identity_doc_number', parsedField(documentNumber, documentValidated ? 'validated' : 'needs_review')],
+    ['identity_doc_type', { value: 'id_card', review: 'validated' as const }],
+    ['identity_doc_country', parsedField(country, 'needs_review')],
+  ]);
   return { documentType: 'id_card', rawLines: [first, second, third], fields };
 }
 
 function valueAfterLabel(raw: string, label: string): string {
   const match = raw.match(new RegExp(`(?:^|\\n)\\s*${label}\\s*[.:]\\s*([^\\n]+)`, 'im'));
   return match?.[1]?.trim() || '';
+}
+
+// ---- Danca etiketli belgeler (gerçek Windows OCR çıktısına göre) -------------
+//
+// Windows.Media.Ocr, MRZ'yi güvenilir vermez: '<' işaretleri '«' okunur, araya
+// boşluk girer, satırlar kısmen kaybolur. Buna karşılık basılı Danca alan
+// etiketleri (Efternavn, Fornavn, Pasnr., CPR-nr., Postnr. og by ...) ayrı
+// satırlar halinde sağlam gelir. Bu dal, etiket satırını bulup İZLEYEN uygun
+// değer satırını alır; MRZ yalnız temiz geldiğinde (TD3/TD1 yolları) kazanır.
+// Basılı ad kanoniktir: MRZ'nin translitere adı (Æ→AE, Ø→OE, Å→AA) basılı adla
+// eşitlenmeye çalışılmaz.
+
+const IDENTITY_NOISE_LINE = /SPECIMEN|^FOTO$|^PLACE-?$|^HOLDER$|KONGERIGET|KINGDOM OF|^PAS\b.*PASSPORT|^DANMARK\b|IDENTITETSKORT|^SUNDHEDSKORT$|^REGION\s|Kortet er ikke|GYLDIGT/i;
+
+function definedFields(entries: Array<[IdentityFieldName, ParsedIdentityField | undefined]>): IdentityParseResult['fields'] {
+  // Yalnız dolu alanlar yazılır: merge sırasında undefined anahtarların önceki
+  // taramadan gelen değerleri ezmemesi için.
+  const fields: IdentityParseResult['fields'] = {};
+  for (const [key, value] of entries) {
+    if (value) fields[key] = value;
+  }
+  return fields;
+}
+
+function valueAfterLabelLine(
+  lines: string[],
+  label: RegExp,
+  labels: RegExp[],
+  accept: (line: string) => boolean,
+  window = 4,
+): string {
+  const start = lines.findIndex((line) => label.test(line));
+  if (start < 0) return '';
+  for (let index = start + 1; index <= start + window && index < lines.length; index += 1) {
+    const line = lines[index];
+    if (labels.some((candidate) => candidate.test(line))) return '';
+    if (IDENTITY_NOISE_LINE.test(line)) continue;
+    if (accept(line)) return line.trim();
+  }
+  return '';
+}
+
+const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔÛ '’-]{1,39}$/;
+
+function isPrintedNamePart(line: string): boolean {
+  return PRINTED_NAME_PART.test(line.trim()) && !/DANSK|DANISH|DNK\b/.test(line);
+}
+
+function cprFirstSix(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  return digits.length >= 6 ? digits.slice(0, 6) : '';
+}
+
+function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult | null {
+  const upper = raw.toUpperCase();
+
+  // Sundhedskort kimlik belgesi DEĞİLDİR ("Kortet er ikke et identitetsbevis"):
+  // belge türü/numarası doldurulmaz; ad, CPR ilk-6 ve adres alınır.
+  if (/SUNDHEDSKORT/.test(upper)) {
+    const labels = [/^Navn$/i, /CPR[-\s.]?n/i, /^Ad?resse$/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
+    const name = valueAfterLabelLine(lines, /^Navn$/i, labels, isPrintedNamePart);
+    const cprLine = valueAfterLabelLine(lines, /CPR[-\s.]?n/i, labels, (line) => /\d{6}/.test(line));
+    const street = valueAfterLabelLine(lines, /^Ad?resse$/i, labels, (line) => /\d/.test(line) || line.length > 4);
+    const postalLine = valueAfterLabelLine(lines, /r\.?\s*og\s*by/i, labels, (line) => /^\d{4}\s+\S/.test(line));
+    const postalMatch = postalLine.match(/^(\d{4})\s+(.+)$/);
+    const fields = definedFields([
+      ['name', parsedField(name, 'needs_review')],
+      // Kartta tam CPR basılıdır; kalıcı yüzeylere YALNIZ ilk 6 hane taşınır.
+      ['cpr_number', parsedField(cprFirstSix(cprLine), 'needs_review')],
+      ['address', parsedField(street, 'needs_review')],
+      ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
+      ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
+    ]);
+    return Object.keys(fields).length ? { documentType: 'health_card', rawLines: lines, fields } : null;
+  }
+
+  // Dansk kørekort: numaralı etiketler ayrı satırda, değer bir sonraki satırda.
+  if (/K[OØ0]REKORT/.test(upper)) {
+    const labels = [/^1[.:]/, /^2[.:]/, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
+    const surname = valueAfterLabelLine(lines, /^1[.:]/, labels, isPrintedNamePart);
+    const givenName = valueAfterLabelLine(lines, /^2[.:]/, labels, isPrintedNamePart);
+    const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()));
+    const name = [givenName, surname].filter(Boolean).join(' ');
+    const fields = definedFields([
+      ['name', parsedField(name, 'needs_review')],
+      ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
+      ['identity_doc_type', name || documentNumber ? { value: 'driver_license', review: 'validated' as const } : undefined],
+      ['identity_doc_country', parsedField(/DANMARK|\bDNK\b/.test(upper) ? 'DNK' : '', 'needs_review')],
+      // Dansk kørekort adres TAŞIMAZ; adres alanları bilinçli olarak boş kalır.
+    ]);
+    return Object.keys(fields).length ? { documentType: 'driver_license', rawLines: lines, fields } : null;
+  }
+
+  const isPas = /KONGERIGET|\bPAS\b|PASSPORT/.test(upper);
+  const isIdKort = /IDENTITETSKORT/.test(upper);
+  if (!isPas && !isIdKort) return null;
+
+  const labels = [
+    /^Type\b/i, /Kode\b|\/\s*Code/i, /ternavn|Surname/i, /Fornavn|Given names/i, /Nationalit/i,
+    /dselsdato|Date of birth/i, /Udstedt|Date of issue/i, /Pasnr|Passport No/i, /Kortnr|card No/i,
+    /^K[oø]n\b|\bSex\b/i, /Personnr|Personal No/i, /Udl[oø]ber|Date of expiry/i,
+  ];
+  const surname = valueAfterLabelLine(lines, /ternavn|Surname/i, labels, isPrintedNamePart);
+  const givenName = valueAfterLabelLine(lines, /Fornavn|Given names/i, labels, isPrintedNamePart);
+  const name = [givenName, surname].filter(Boolean).join(' ');
+  const documentNumber = isPas
+    ? valueAfterLabelLine(lines, /Pasnr|Passport No/i, labels, (line) => /^\d{7,9}$/.test(line.trim()))
+    : valueAfterLabelLine(lines, /Kortnr|card No/i, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()))
+      || (lines.find((line) => /^[A-Z]{2}\d{7}$/.test(line.trim()))?.trim() ?? '');
+  // Dansk pasta 'Personnr.' alanı zaten yalnız CPR'nin ilk 6 hanesidir.
+  const personnr = isPas
+    ? valueAfterLabelLine(lines, /Personnr|Personal No/i, labels, (line) => /^\d{6}$/.test(line.trim()))
+    : '';
+  const country = valueAfterLabelLine(lines, /Kode\b|\/\s*Code/i, labels, (line) => /^[A-Z]{3}$/.test(line.trim()))
+    || (lines.some((line) => /^DNK$/.test(line.trim())) ? 'DNK' : '');
+  const documentType = isPas ? 'passport' as const : 'id_card' as const;
+  const fields = definedFields([
+    ['name', parsedField(name, 'needs_review')],
+    ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
+    ['identity_doc_type', name || documentNumber ? { value: documentType, review: 'validated' as const } : undefined],
+    ['identity_doc_country', parsedField(normalizeCountry(country), 'needs_review')],
+    ['cpr_number', parsedField(cprFirstSix(personnr), 'needs_review')],
+  ]);
+  return Object.keys(fields).length ? { documentType, rawLines: lines, fields } : null;
 }
 
 function parseDriverLicense(raw: string, lines: string[]): IdentityParseResult | null {
@@ -120,15 +244,15 @@ function parseDriverLicense(raw: string, lines: string[]): IdentityParseResult |
   const countryMatch = upper.match(/\b(DNK|DK|DENMARK|DANMARK|SWE|NOR|DEU|GER|FRA|FIN|NLD)\b/);
   const countryMap: Record<string, string> = { DK: 'DNK', DENMARK: 'DNK', DANMARK: 'DNK', GER: 'DEU' };
   const country = countryMatch ? countryMap[countryMatch[1]] || countryMatch[1] : '';
-  const fields: IdentityParseResult['fields'] = {
-    name: parsedField(name, 'needs_review'),
-    identity_doc_number: parsedField(documentNumber, 'needs_review'),
-    identity_doc_type: { value: 'driver_license', review: 'needs_review' },
-    identity_doc_country: parsedField(normalizeCountry(country), 'needs_review'),
-    address: parsedField(addressLine.replace(/\b\d{4}\s+.*$/, '').replace(/[,-]\s*$/, ''), 'needs_review'),
-    postal_code: parsedField(postalMatch?.[1] || '', 'needs_review'),
-    city: parsedField(postalMatch?.[2] || '', 'needs_review'),
-  };
+  const fields = definedFields([
+    ['name', parsedField(name, 'needs_review')],
+    ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
+    ['identity_doc_type', { value: 'driver_license', review: 'needs_review' as const }],
+    ['identity_doc_country', parsedField(normalizeCountry(country), 'needs_review')],
+    ['address', parsedField(addressLine.replace(/\b\d{4}\s+.*$/, '').replace(/[,-]\s*$/, ''), 'needs_review')],
+    ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
+    ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
+  ]);
   return { documentType: 'driver_license', rawLines: lines, fields };
 }
 
@@ -143,6 +267,8 @@ export function parseIdentityScan(raw: string): IdentityParseResult {
   if (td3) return td3;
   const td1 = parseTd1(mrzLines.filter((line) => line.length === 30).slice(0, 3));
   if (td1) return td1;
+  const labeled = parseDanishLabeled(raw, lines);
+  if (labeled) return labeled;
   const license = parseDriverLicense(raw, lines);
   if (license) return license;
   return { documentType: 'unknown', rawLines: lines, fields: {} };

@@ -2127,7 +2127,7 @@ try {
   $item = $device.Items.Item(1)
   $image = $dialog.ShowTransfer($item)
   if ($null -eq $image) { exit 2 }
-  $image.SaveFile($args[0])
+  $image.SaveFile($env:SEROGULD_SCAN_PATH)
   exit 0
 } catch {
   exit 1
@@ -2143,19 +2143,27 @@ try {
   $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
   $null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime]
 
-  function Await-WinRt($operation) {
-    $task = [System.WindowsRuntimeSystemExtensions]::AsTask($operation)
-    $task.Wait()
+  # AsTask($op) dogrudan cagrisi PowerShell 5.1'de generic overload'u cozemeyip
+  # MethodCountCouldNotFindBest ile patlayabiliyor (gercek makinede dogrulandi);
+  # bu yuzden AsTask, MakeGenericMethod ile reflection uzerinden baglanir.
+  $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+      $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+      $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
+    })[0]
+
+  function Await-WinRt($operation, [Type]$resultType) {
+    $task = $asTaskGeneric.MakeGenericMethod($resultType).Invoke($null, @($operation))
+    $task.Wait() | Out-Null
     return $task.Result
   }
 
-  $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($args[0]))
-  $stream = Await-WinRt ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read))
-  $decoder = Await-WinRt ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream))
-  $bitmap = Await-WinRt ($decoder.GetSoftwareBitmapAsync())
+  $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($env:SEROGULD_SCAN_PATH)) ([Windows.Storage.StorageFile])
+  $stream = Await-WinRt ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  $decoder = Await-WinRt ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap = Await-WinRt ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
   $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
   if ($null -eq $engine) { exit 3 }
-  $result = Await-WinRt ($engine.RecognizeAsync($bitmap))
+  $result = Await-WinRt ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
   $lines = @($result.Lines | ForEach-Object { $_.Text })
   $json = $lines | ConvertTo-Json -Compress
   [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -2239,7 +2247,9 @@ fn run_windows_powershell(
             "-Command",
             script,
         ])
-        .arg(path)
+        // -Command sonrasındaki token'lar $args'a BAĞLANMAZ; komut metnine
+        // yapıştırılır. Yol bu yüzden argüman yerine env değişkeniyle geçer.
+        .env("SEROGULD_SCAN_PATH", path)
         // WIA/OCR are implementation details of the scanner.  Neither
         // PowerShell nor its transient script window may flash above the
         // customer-facing desktop.

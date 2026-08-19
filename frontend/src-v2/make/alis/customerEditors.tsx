@@ -323,6 +323,7 @@ function identityFieldLabel(field: IdentityFieldName) {
     address: 'Adresse',
     postal_code: 'Postnr.',
     city: 'Şehir / By',
+    cpr_number: 'CPR (ilk 6 hane)',
   }[field];
 }
 

@@ -629,7 +629,7 @@ function ModernIdentityScanner({
 }
 
 function modernIdentityFieldLabel(field: IdentityFieldName): string {
-  return { name: 'Ad', identity_doc_number: 'Belge no', identity_doc_type: 'Belge türü', identity_doc_country: 'Ülke', address: 'Adres', postal_code: 'Posta kodu', city: 'Şehir' }[field];
+  return { name: 'Ad', identity_doc_number: 'Belge no', identity_doc_type: 'Belge türü', identity_doc_country: 'Ülke', address: 'Adres', postal_code: 'Posta kodu', city: 'Şehir', cpr_number: 'CPR (ilk 6)' }[field];
 }
 
 function ModernAddressSuggestions({ address }: { address: ReturnType<typeof useAddressAutocomplete> }) {

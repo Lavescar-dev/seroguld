@@ -1,0 +1,592 @@
+{
+  "generated_for": "Sero Guld CRM 0.3.5 — OCR kabul testi",
+  "warning": "Tüm görseller sentetiktir ve SPECIMEN olarak işaretlidir. Belge numaraları ve CPR'ler geçersizdir. Gerçek kişiye ait veri içermez. Güvenlik özelliği taklit edilmemiştir. Yalnız OCR regresyon testinde kullanılır.",
+  "count": 20,
+  "fixtures": [
+    {
+      "file": "images/pas_01_clean.png",
+      "document_type": "pas",
+      "person_id": "P1",
+      "capture_condition": "clean",
+      "capture_condition_tr": "temiz 300dpi tarama",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "TESTESEN",
+        "given_names": "ANDERS PRØVE",
+        "full_name": "ANDERS PRØVE TESTESEN",
+        "birth_date": "17.11.1986",
+        "birth_date_iso": "1986-11-17",
+        "cpr_first6": "171186",
+        "document_number": "201000033",
+        "issue_date": "14.03.2021",
+        "expiry_date": "14.03.2031",
+        "sex": "M",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "P<DNKTESTESEN<<ANDERS<PROEVE<<<<<<<<<<<<<<<<",
+          "2010000337DNK8611172M3103142<<<<<<<<<<<<<<<6"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Dansk pasta 'Personnr.' alanı yalnız CPR'nin ilk 6 hanesidir; son 4 hane belgede yoktur.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır."
+      ]
+    },
+    {
+      "file": "images/pas_02_rotate.png",
+      "document_type": "pas",
+      "person_id": "P2",
+      "capture_condition": "rotate",
+      "capture_condition_tr": "hafif eğik yerleşim (~3°)",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "SØRENSEN-ÅBERG",
+        "given_names": "METTE KIRSTINE",
+        "full_name": "METTE KIRSTINE SØRENSEN-ÅBERG",
+        "birth_date": "03.04.1974",
+        "birth_date_iso": "1974-04-03",
+        "cpr_first6": "030474",
+        "document_number": "201000170",
+        "issue_date": "02.09.2022",
+        "expiry_date": "02.09.2032",
+        "sex": "F",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "P<DNKSOERENSEN<AABERG<<METTE<KIRSTINE<<<<<<<",
+          "2010001703DNK7404032F3209022<<<<<<<<<<<<<<<2"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Dansk pasta 'Personnr.' alanı yalnız CPR'nin ilk 6 hanesidir; son 4 hane belgede yoktur.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır."
+      ]
+    },
+    {
+      "file": "images/pas_03_blur_noise.jpg",
+      "document_type": "pas",
+      "person_id": "P3",
+      "capture_condition": "blur_noise",
+      "capture_condition_tr": "telefon kamerası: bulanık + sensör gürültüsü",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "ÆGIDIUS",
+        "given_names": "JENS OLE",
+        "full_name": "JENS OLE ÆGIDIUS",
+        "birth_date": "29.02.1992",
+        "birth_date_iso": "1992-02-29",
+        "cpr_first6": "290292",
+        "document_number": "201000307",
+        "issue_date": "27.01.2020",
+        "expiry_date": "27.01.2030",
+        "sex": "M",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "P<DNKAEGIDIUS<<JENS<OLE<<<<<<<<<<<<<<<<<<<<<",
+          "2010003073DNK9202298M3001271<<<<<<<<<<<<<<<8"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Dansk pasta 'Personnr.' alanı yalnız CPR'nin ilk 6 hanesidir; son 4 hane belgede yoktur.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/pas_04_lowlight.png",
+      "document_type": "pas",
+      "person_id": "P4",
+      "capture_condition": "lowlight",
+      "capture_condition_tr": "düşük ışık + tek taraflı gölge",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "NIELSEN",
+        "given_names": "FREJA",
+        "full_name": "FREJA NIELSEN",
+        "birth_date": "12.08.2001",
+        "birth_date_iso": "2001-08-12",
+        "cpr_first6": "120801",
+        "document_number": "201000444",
+        "issue_date": "11.06.2023",
+        "expiry_date": "11.06.2033",
+        "sex": "F",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "P<DNKNIELSEN<<FREJA<<<<<<<<<<<<<<<<<<<<<<<<<",
+          "2010004449DNK0108124F3306116<<<<<<<<<<<<<<<0"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Dansk pasta 'Personnr.' alanı yalnız CPR'nin ilk 6 hanesidir; son 4 hane belgede yoktur.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/pas_05_glare.jpg",
+      "document_type": "pas",
+      "person_id": "P5",
+      "capture_condition": "glare",
+      "capture_condition_tr": "parlama/flaş yansıması + hafif eğiklik",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "AL-RASHID",
+        "given_names": "OMAR HUSSEIN",
+        "full_name": "OMAR HUSSEIN AL-RASHID",
+        "birth_date": "05.01.1959",
+        "birth_date_iso": "1959-01-05",
+        "cpr_first6": "050159",
+        "document_number": "201000581",
+        "issue_date": "05.05.2019",
+        "expiry_date": "05.05.2029",
+        "sex": "M",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "P<DNKAL<RASHID<<OMAR<HUSSEIN<<<<<<<<<<<<<<<<",
+          "2010005815DNK5901054M2905051<<<<<<<<<<<<<<<0"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Dansk pasta 'Personnr.' alanı yalnız CPR'nin ilk 6 hanesidir; son 4 hane belgede yoktur.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/idkort_01_clean.png",
+      "document_type": "idkort",
+      "person_id": "P1",
+      "capture_condition": "clean",
+      "capture_condition_tr": "temiz 300dpi tarama",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "TESTESEN",
+        "given_names": "ANDERS PRØVE",
+        "full_name": "ANDERS PRØVE TESTESEN",
+        "birth_date": "17.11.1986",
+        "birth_date_iso": "1986-11-17",
+        "cpr_first6": "171186",
+        "document_number": "ID1000066",
+        "issue_date": "14.03.2021",
+        "expiry_date": "14.03.2031",
+        "sex": "M",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "I<DNKID10000660<<<<<<<<<<<<<<<",
+          "8611172M3103142DNK<<<<<<<<<<<0",
+          "TESTESEN<<ANDERS<PROEVE<<<<<<<"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır."
+      ]
+    },
+    {
+      "file": "images/idkort_02_rotate.png",
+      "document_type": "idkort",
+      "person_id": "P2",
+      "capture_condition": "rotate",
+      "capture_condition_tr": "hafif eğik yerleşim (~3°)",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "SØRENSEN-ÅBERG",
+        "given_names": "METTE KIRSTINE",
+        "full_name": "METTE KIRSTINE SØRENSEN-ÅBERG",
+        "birth_date": "03.04.1974",
+        "birth_date_iso": "1974-04-03",
+        "cpr_first6": "030474",
+        "document_number": "ID1000203",
+        "issue_date": "02.09.2022",
+        "expiry_date": "02.09.2032",
+        "sex": "F",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "I<DNKID10002033<<<<<<<<<<<<<<<",
+          "7404032F3209022DNK<<<<<<<<<<<2",
+          "SOERENSEN<AABERG<<METTE<KIRSTI"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır."
+      ]
+    },
+    {
+      "file": "images/idkort_03_blur_noise.jpg",
+      "document_type": "idkort",
+      "person_id": "P3",
+      "capture_condition": "blur_noise",
+      "capture_condition_tr": "telefon kamerası: bulanık + sensör gürültüsü",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "ÆGIDIUS",
+        "given_names": "JENS OLE",
+        "full_name": "JENS OLE ÆGIDIUS",
+        "birth_date": "29.02.1992",
+        "birth_date_iso": "1992-02-29",
+        "cpr_first6": "290292",
+        "document_number": "ID1000340",
+        "issue_date": "27.01.2020",
+        "expiry_date": "27.01.2030",
+        "sex": "M",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "I<DNKID10003409<<<<<<<<<<<<<<<",
+          "9202298M3001271DNK<<<<<<<<<<<6",
+          "AEGIDIUS<<JENS<OLE<<<<<<<<<<<<"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/idkort_04_lowlight.png",
+      "document_type": "idkort",
+      "person_id": "P4",
+      "capture_condition": "lowlight",
+      "capture_condition_tr": "düşük ışık + tek taraflı gölge",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "NIELSEN",
+        "given_names": "FREJA",
+        "full_name": "FREJA NIELSEN",
+        "birth_date": "12.08.2001",
+        "birth_date_iso": "2001-08-12",
+        "cpr_first6": "120801",
+        "document_number": "ID1000477",
+        "issue_date": "11.06.2023",
+        "expiry_date": "11.06.2033",
+        "sex": "F",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "I<DNKID10004772<<<<<<<<<<<<<<<",
+          "0108124F3306116DNK<<<<<<<<<<<4",
+          "NIELSEN<<FREJA<<<<<<<<<<<<<<<<"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/idkort_05_glare.jpg",
+      "document_type": "idkort",
+      "person_id": "P5",
+      "capture_condition": "glare",
+      "capture_condition_tr": "parlama/flaş yansıması + hafif eğiklik",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "AL-RASHID",
+        "given_names": "OMAR HUSSEIN",
+        "full_name": "OMAR HUSSEIN AL-RASHID",
+        "birth_date": "05.01.1959",
+        "birth_date_iso": "1959-01-05",
+        "cpr_first6": "050159",
+        "document_number": "ID1000614",
+        "issue_date": "05.05.2019",
+        "expiry_date": "05.05.2029",
+        "sex": "M",
+        "nationality": "DNK",
+        "mrz_lines": [
+          "I<DNKID10006145<<<<<<<<<<<<<<<",
+          "5901054M2905051DNK<<<<<<<<<<<0",
+          "AL<RASHID<<OMAR<HUSSEIN<<<<<<<"
+        ]
+      },
+      "notes": [
+        "MRZ'de Æ/Ø/Å translitere edilir (AE/OE/AA); basılı ad ile MRZ adı birebir eşleşmez. Parser ikisini eşitlemeye çalışmamalı.",
+        "MRZ check digit'leri ICAO 9303'e göre geçerlidir.",
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/koerekort_01_clean.png",
+      "document_type": "koerekort",
+      "person_id": "P1",
+      "capture_condition": "clean",
+      "capture_condition_tr": "temiz 300dpi tarama",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "TESTESEN",
+        "given_names": "ANDERS PRØVE",
+        "full_name": "ANDERS PRØVE TESTESEN",
+        "birth_date": "17.11.1986",
+        "birth_date_iso": "1986-11-17",
+        "cpr_first6": "171186",
+        "document_number": "DK1000099",
+        "issue_date": "14.03.2021",
+        "expiry_date": "14.03.2031",
+        "sex": "M",
+        "categories": [
+          "AM",
+          "B",
+          "BE"
+        ],
+        "issuing_municipality": "Hvidovre"
+      },
+      "notes": [
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır."
+      ]
+    },
+    {
+      "file": "images/koerekort_02_rotate.png",
+      "document_type": "koerekort",
+      "person_id": "P2",
+      "capture_condition": "rotate",
+      "capture_condition_tr": "hafif eğik yerleşim (~3°)",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "SØRENSEN-ÅBERG",
+        "given_names": "METTE KIRSTINE",
+        "full_name": "METTE KIRSTINE SØRENSEN-ÅBERG",
+        "birth_date": "03.04.1974",
+        "birth_date_iso": "1974-04-03",
+        "cpr_first6": "030474",
+        "document_number": "DK1000236",
+        "issue_date": "02.09.2022",
+        "expiry_date": "02.09.2032",
+        "sex": "F",
+        "categories": [
+          "B"
+        ],
+        "issuing_municipality": "København N"
+      },
+      "notes": [
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır."
+      ]
+    },
+    {
+      "file": "images/koerekort_03_blur_noise.jpg",
+      "document_type": "koerekort",
+      "person_id": "P3",
+      "capture_condition": "blur_noise",
+      "capture_condition_tr": "telefon kamerası: bulanık + sensör gürültüsü",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "ÆGIDIUS",
+        "given_names": "JENS OLE",
+        "full_name": "JENS OLE ÆGIDIUS",
+        "birth_date": "29.02.1992",
+        "birth_date_iso": "1992-02-29",
+        "cpr_first6": "290292",
+        "document_number": "DK1000373",
+        "issue_date": "27.01.2020",
+        "expiry_date": "27.01.2030",
+        "sex": "M",
+        "categories": [
+          "AM",
+          "A1",
+          "B",
+          "C1"
+        ],
+        "issuing_municipality": "Odense C"
+      },
+      "notes": [
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/koerekort_04_lowlight.png",
+      "document_type": "koerekort",
+      "person_id": "P4",
+      "capture_condition": "lowlight",
+      "capture_condition_tr": "düşük ışık + tek taraflı gölge",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "NIELSEN",
+        "given_names": "FREJA",
+        "full_name": "FREJA NIELSEN",
+        "birth_date": "12.08.2001",
+        "birth_date_iso": "2001-08-12",
+        "cpr_first6": "120801",
+        "document_number": "DK1000510",
+        "issue_date": "11.06.2023",
+        "expiry_date": "11.06.2033",
+        "sex": "F",
+        "categories": [
+          "B"
+        ],
+        "issuing_municipality": "Albertslund"
+      },
+      "notes": [
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/koerekort_05_glare.jpg",
+      "document_type": "koerekort",
+      "person_id": "P5",
+      "capture_condition": "glare",
+      "capture_condition_tr": "parlama/flaş yansıması + hafif eğiklik",
+      "carries_address": false,
+      "expected_fields": {
+        "surname": "AL-RASHID",
+        "given_names": "OMAR HUSSEIN",
+        "full_name": "OMAR HUSSEIN AL-RASHID",
+        "birth_date": "05.01.1959",
+        "birth_date_iso": "1959-01-05",
+        "cpr_first6": "050159",
+        "document_number": "DK1000647",
+        "issue_date": "05.05.2019",
+        "expiry_date": "05.05.2029",
+        "sex": "M",
+        "categories": [
+          "AM",
+          "B",
+          "C",
+          "CE"
+        ],
+        "issuing_municipality": "Valby"
+      },
+      "notes": [
+        "Bu belge tipinde adres/posta kodu/şehir YOKTUR. OCR bu alanları boş bırakmalı, uydurmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/sundhedskort_01_clean.png",
+      "document_type": "sundhedskort",
+      "person_id": "P1",
+      "capture_condition": "clean",
+      "capture_condition_tr": "temiz 300dpi tarama",
+      "carries_address": true,
+      "expected_fields": {
+        "surname": "TESTESEN",
+        "given_names": "ANDERS PRØVE",
+        "full_name": "ANDERS PRØVE TESTESEN",
+        "birth_date": "17.11.1986",
+        "birth_date_iso": "1986-11-17",
+        "cpr_first6": "171186",
+        "street": "Hovedgaden 12, 2. th.",
+        "postal_code": "2650",
+        "city": "Hvidovre",
+        "phone": "+45 22 25 55 04",
+        "cpr_display_on_card": "171186-0000"
+      },
+      "notes": [
+        "Tam CPR karttadır; CRM yalnız ilk 6 haneyi saklamalı, son 4 hane hiçbir yere (DB, AFG, PDF, log) yazılmamalıdır."
+      ]
+    },
+    {
+      "file": "images/sundhedskort_02_rotate.png",
+      "document_type": "sundhedskort",
+      "person_id": "P2",
+      "capture_condition": "rotate",
+      "capture_condition_tr": "hafif eğik yerleşim (~3°)",
+      "carries_address": true,
+      "expected_fields": {
+        "surname": "SØRENSEN-ÅBERG",
+        "given_names": "METTE KIRSTINE",
+        "full_name": "METTE KIRSTINE SØRENSEN-ÅBERG",
+        "birth_date": "03.04.1974",
+        "birth_date_iso": "1974-04-03",
+        "cpr_first6": "030474",
+        "street": "Nørrebrogade 148",
+        "postal_code": "2200",
+        "city": "København N",
+        "phone": "+45 31 44 90 12",
+        "cpr_display_on_card": "030474-0000"
+      },
+      "notes": [
+        "Tam CPR karttadır; CRM yalnız ilk 6 haneyi saklamalı, son 4 hane hiçbir yere (DB, AFG, PDF, log) yazılmamalıdır."
+      ]
+    },
+    {
+      "file": "images/sundhedskort_03_blur_noise.jpg",
+      "document_type": "sundhedskort",
+      "person_id": "P3",
+      "capture_condition": "blur_noise",
+      "capture_condition_tr": "telefon kamerası: bulanık + sensör gürültüsü",
+      "carries_address": true,
+      "expected_fields": {
+        "surname": "ÆGIDIUS",
+        "given_names": "JENS OLE",
+        "full_name": "JENS OLE ÆGIDIUS",
+        "birth_date": "29.02.1992",
+        "birth_date_iso": "1992-02-29",
+        "cpr_first6": "290292",
+        "street": "Vestergade 7 A",
+        "postal_code": "5000",
+        "city": "Odense C",
+        "phone": "+45 60 18 33 07",
+        "cpr_display_on_card": "290292-0000"
+      },
+      "notes": [
+        "Tam CPR karttadır; CRM yalnız ilk 6 haneyi saklamalı, son 4 hane hiçbir yere (DB, AFG, PDF, log) yazılmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/sundhedskort_04_lowlight.png",
+      "document_type": "sundhedskort",
+      "person_id": "P4",
+      "capture_condition": "lowlight",
+      "capture_condition_tr": "düşük ışık + tek taraflı gölge",
+      "carries_address": true,
+      "expected_fields": {
+        "surname": "NIELSEN",
+        "given_names": "FREJA",
+        "full_name": "FREJA NIELSEN",
+        "birth_date": "12.08.2001",
+        "birth_date_iso": "2001-08-12",
+        "cpr_first6": "120801",
+        "street": "Bakkevej 3, st.",
+        "postal_code": "2620",
+        "city": "Albertslund",
+        "phone": "+45 42 77 05 61",
+        "cpr_display_on_card": "120801-0000"
+      },
+      "notes": [
+        "Tam CPR karttadır; CRM yalnız ilk 6 haneyi saklamalı, son 4 hane hiçbir yere (DB, AFG, PDF, log) yazılmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    },
+    {
+      "file": "images/sundhedskort_05_glare.jpg",
+      "document_type": "sundhedskort",
+      "person_id": "P5",
+      "capture_condition": "glare",
+      "capture_condition_tr": "parlama/flaş yansıması + hafif eğiklik",
+      "carries_address": true,
+      "expected_fields": {
+        "surname": "AL-RASHID",
+        "given_names": "OMAR HUSSEIN",
+        "full_name": "OMAR HUSSEIN AL-RASHID",
+        "birth_date": "05.01.1959",
+        "birth_date_iso": "1959-01-05",
+        "cpr_first6": "050159",
+        "street": "Valby Langgade 84, 1. sal",
+        "postal_code": "2500",
+        "city": "Valby",
+        "phone": "+45 22 90 41 38",
+        "cpr_display_on_card": "050159-0000"
+      },
+      "notes": [
+        "Tam CPR karttadır; CRM yalnız ilk 6 haneyi saklamalı, son 4 hane hiçbir yere (DB, AFG, PDF, log) yazılmamalıdır.",
+        "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
+      ]
+    }
+  ]
+}
