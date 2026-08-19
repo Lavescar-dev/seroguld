@@ -456,6 +456,7 @@ class UnicontaClient:
         PDF için ayrı `get_invoice_pdf(invoice_number=..., account=..., date=...)`
         çağrılmalıdır (canlı kanıt: GenerateDebtorInvoice PDF dönmüyor).
         """
+        settings = get_settings()
         body: dict[str, Any] = {
             "Order": order,
             "Lines": lines,
@@ -465,7 +466,27 @@ class UnicontaClient:
             "SendXML": send_xml,
         }
         if order_number is not None:
-            body["OrderNumber"] = order_number
+            if settings.uniconta_ordernumber_in_order:
+                order["OrderNumber"] = order_number
+            else:
+                body["OrderNumber"] = order_number
+        if settings.uniconta_omit_null_item:
+            lines = [
+                {key: value for key, value in row.items() if not (key == "Item" and value is None)}
+                for row in lines
+            ]
+            body["Lines"] = lines
+        accept_header = "application/json" if settings.uniconta_accept_json else "application/pdf"
+        # Hedefte teşhis için gövde özeti (PII'siz): kök anahtarlar + satır sayısı.
+        LOGGER.info(
+            "GenerateDebtorInvoice gövdesi: keys=%s lines=%d order_keys=%s flags(order_no_in_order=%s omit_null_item=%s accept_json=%s)",
+            sorted(body.keys()),
+            len(lines),
+            sorted(order.keys()),
+            settings.uniconta_ordernumber_in_order,
+            settings.uniconta_omit_null_item,
+            settings.uniconta_accept_json,
+        )
 
         async with httpx.AsyncClient(timeout=max(self.timeout, 60.0)) as client:
             token = await self.ensure_token(client)
@@ -474,7 +495,7 @@ class UnicontaClient:
                 json=body,
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "Accept": "application/pdf",
+                    "Accept": accept_header,
                     "Content-Type": "application/json",
                 },
             )
@@ -487,7 +508,7 @@ class UnicontaClient:
                     json=body,
                     headers={
                         "Authorization": f"Bearer {token}",
-                        "Accept": "application/pdf",
+                        "Accept": accept_header,
                         "Content-Type": "application/json",
                     },
                 )
@@ -498,8 +519,12 @@ class UnicontaClient:
             try:
                 result = response.json()
             except ValueError as exc:
+                # Uniconta uygulama hatalarını 2xx + DÜZ METİN gövdeyle dönebiliyor
+                # (ör. "ArgumentMissing"). Bu bir JSON parse sorunu değil, sunucunun
+                # gövde sözleşmesini reddetmesidir — gerçek neden olarak yüzeye çıkar.
+                raw = response.text.strip()[:300]
                 raise UnicontaError(
-                    f"GenerateDebtorInvoice JSON parse hatası: {exc}; raw={response.text[:200]}"
+                    f"GenerateDebtorInvoice uygulama hatası (HTTP {response.status_code}): {raw or 'boş gövde'}"
                 ) from exc
             err_code = result.get("Err") or 0
             if err_code:
@@ -834,12 +859,22 @@ def build_uniconta_lines_from_pos_lines(
         metal_name = getattr(metal, "value", str(metal or "")).lower()
         is_gold = "gold" in metal_name
         is_silver = "silver" in metal_name or "sølv" in metal_name
-        label = "Guld" if is_gold else ("Sølv" if is_silver else "Vare")
+        if is_gold:
+            label = "Guld"
+        elif is_silver:
+            label = "Sølv"
+        elif "platinum" in metal_name:
+            label = "Platin"
+        elif "palladium" in metal_name:
+            label = "Palladium"
+        else:
+            label = "Vare"
         karat = getattr(line, "purity_karat", None)
         purity_pct = getattr(line, "purity_percentage", None)
         weight = getattr(line, "weight_grams", None) or 0
         rate = getattr(line, "rate_dkk", None) or 0
-        karat_text = f"{karat}K" if karat else ""
+        karat_str = str(karat or "")
+        karat_text = f"{karat_str}K" if karat_str.replace(".", "").replace(",", "").isdigit() else karat_str
         purity_text = f"{purity_pct}‰" if purity_pct else ""
         text_parts = [label, karat_text, purity_text, f"{weight}g"]
         text = " · ".join(p for p in text_parts if p)

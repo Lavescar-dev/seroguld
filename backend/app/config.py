@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     wp_app_username: str = ""
     wp_app_password: str = ""
 
+    # GenerateDebtorInvoice gövde sözleşmesi adayları (hedefte 2xx + düz metin
+    # "ArgumentMissing" görüldü). Sözleşme belgesiz olduğundan düzeltmeler
+    # bayraklı ve varsayılan KAPALI — hedefte bayrak bayrak denenir.
+    uniconta_ordernumber_in_order: bool = False
+    uniconta_omit_null_item: bool = False
+    uniconta_accept_json: bool = False
+
     uniconta_api_url: str = "https://api.uniconta.com"
     uniconta_username: str = ""
     uniconta_password: str = ""
