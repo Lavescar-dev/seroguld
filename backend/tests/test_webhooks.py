@@ -24,24 +24,16 @@ def test_verify_wc_signature_rejects_invalid_hmac(caplog):
     assert "signature is invalid" in caplog.text
 
 
-def test_verify_wc_signature_allows_blank_secret_outside_production_and_logs(caplog):
-    caplog.set_level(logging.WARNING, logger="app.api.webhooks")
-    body = b'{"id":123}'
-
-    assert _verify_wc_signature(body, None, "", environment="development")
-    assert "signature verification bypassed" in caplog.text
-    caplog.clear()
-
-    assert _verify_wc_signature(body, None, "  ", environment="test")
-    assert "test environment" in caplog.text
-
-
-def test_verify_wc_signature_rejects_blank_secret_in_production(caplog):
+def test_verify_wc_signature_rejects_blank_secret_in_every_environment(caplog):
+    """Fail-closed: masaüstü dağıtımda env 'desktop' olduğundan eski
+    'production dışında atla' kuralı doğrulamayı fiilen kapatıyordu."""
     caplog.set_level(logging.ERROR, logger="app.api.webhooks")
     body = b'{"id":123}'
 
-    assert not _verify_wc_signature(body, None, "", environment="production")
-    assert "not configured in production" in caplog.text
+    for environment in ("development", "test", "desktop", "production", None):
+        assert not _verify_wc_signature(body, None, "", environment=environment)
+        assert not _verify_wc_signature(body, None, "  ", environment=environment)
+    assert "webhook secret is not configured" in caplog.text
 
 
 def test_extract_order_sale_items_processing_order():

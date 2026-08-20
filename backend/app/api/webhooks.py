@@ -41,17 +41,14 @@ def _verify_wc_signature(
     environment_name = (environment or "development").strip().lower()
     normalized_secret = (secret or "").strip()
     if not normalized_secret:
-        if environment_name in {"production", "prod"}:
-            logger.error(
-                "WooCommerce webhook rejected: webhook secret is not configured in production"
-            )
-            return False
-
-        logger.warning(
-            "WooCommerce webhook signature verification bypassed: webhook secret is empty in %s environment",
+        # Fail-closed: masaüstü dağıtımda env "desktop" olduğu için eski
+        # "production dışında atla" kuralı imza doğrulamasını fiilen
+        # kapatıyordu — secret yapılandırılmadan webhook kabul edilmez.
+        logger.error(
+            "WooCommerce webhook rejected: webhook secret is not configured (%s environment)",
             environment_name,
         )
-        return True
+        return False
     if not provided_signature:
         logger.warning("WooCommerce webhook rejected: signature header is missing")
         return False
