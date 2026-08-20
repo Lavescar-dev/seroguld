@@ -33,6 +33,10 @@ const DEFAULT_CONFIG: ApiConfig = {
   market_platin: '280',
   market_palladyum: '335',
   market_rates_live_enabled: false,
+  market_rates_live_fx_enabled: true,
+  market_rates_live_platinum_enabled: true,
+  market_rates_live_palladium_enabled: true,
+  metals_dev_api_key: '',
   firma_adi: 'Sero Guld',
   firma_cvr: '',
   firma_telefon: '',
@@ -45,7 +49,10 @@ export function buildSettingsApiStatus(config: ApiConfig) {
   const hasSecret = (field: keyof ApiConfig) => Boolean(config[field]) || configuredSecrets.has(String(field));
   return [
     { name: 'OpenAI', ok: hasSecret('openai_api_key') },
-    { name: 'OPMC', ok: hasSecret('opmc_api_key') },
+    // OPMC modülü yapım aşamasında ve anahtar hiçbir canlı çağrıda kullanılmıyor;
+    // hazır sayılması için URL yeterli (anahtar opsiyonel).
+    { name: 'OPMC', ok: Boolean(config.opmc_api_url?.trim()) },
+    { name: 'metals.dev', ok: hasSecret('metals_dev_api_key') },
     { name: 'WooCommerce', ok: hasSecret('woo_consumer_key') && hasSecret('woo_consumer_secret') },
     { name: 'WordPress', ok: hasSecret('wp_app_password') },
     { name: 'Uniconta', ok: Boolean(config.uniconta_username) && hasSecret('uniconta_password') },

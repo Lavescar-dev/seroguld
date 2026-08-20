@@ -24,6 +24,10 @@ export interface ApiConfig {
   market_platin: string;
   market_palladyum: string;
   market_rates_live_enabled: boolean;
+  market_rates_live_fx_enabled: boolean;
+  market_rates_live_platinum_enabled: boolean;
+  market_rates_live_palladium_enabled: boolean;
+  metals_dev_api_key: string;
   firma_adi: string;
   firma_cvr: string;
   firma_telefon: string;

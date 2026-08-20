@@ -19,6 +19,7 @@ SECRET_FIELDS = {
     "wp_app_password",
     "uniconta_password",
     "uniconta_api_key",
+    "metals_dev_api_key",
 }
 
 
@@ -40,6 +41,7 @@ def _settings(**overrides: object) -> Settings:
         "uniconta_purchase_vat_code_25": "Købsmoms",
         "uniconta_purchase_vat_code_0": "KøbBrugtmoms",
         "market_rates_live_enabled": False,
+        "metals_dev_api_key": "metals-secret",
     }
     defaults.update(overrides)
     return Settings(_env_file=None, **defaults)
@@ -111,6 +113,8 @@ async def test_blank_and_null_settings_secrets_preserve_existing_values(monkeypa
         uniconta_purchase_vat_code_25=" PurchaseVat25 ",
         uniconta_purchase_vat_code_0=" PurchaseVat0 ",
         market_rates_live_enabled=True,
+        market_rates_live_platinum_enabled=False,
+        metals_dev_api_key="  ",
     )
     response = await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
 
@@ -125,11 +129,16 @@ async def test_blank_and_null_settings_secrets_preserve_existing_values(monkeypa
         "WP_APP_PASSWORD",
         "UNICONTA_PASSWORD",
         "UNICONTA_API_KEY",
+        "METALS_DEV_API_KEY",
     })
     assert writes[0]["UNICONTA_API_URL"] == v2.UNICONTA_WEB_API_BASE
     assert writes[0]["UNICONTA_PURCHASE_VAT_CODE_25"] == "PurchaseVat25"
     assert writes[0]["UNICONTA_PURCHASE_VAT_CODE_0"] == "PurchaseVat0"
     assert writes[0]["MARKET_RATES_LIVE_ENABLED"] == "true"
+    # 0.3.8 alan bazlı oto bayrakları round-trip eder.
+    assert writes[0]["MARKET_RATES_LIVE_FX_ENABLED"] == "true"
+    assert writes[0]["MARKET_RATES_LIVE_PLATINUM_ENABLED"] == "false"
+    assert writes[0]["MARKET_RATES_LIVE_PALLADIUM_ENABLED"] == "true"
     assert response.openai_api_key == ""
     assert provider.clear_count == 1
     assert resets == [True]

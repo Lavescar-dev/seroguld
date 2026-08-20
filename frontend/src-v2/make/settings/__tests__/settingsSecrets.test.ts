@@ -30,6 +30,10 @@ function config(overrides: Partial<ApiConfig> = {}): ApiConfig {
     market_platin: '280',
     market_palladyum: '335',
     market_rates_live_enabled: false,
+    market_rates_live_fx_enabled: true,
+    market_rates_live_platinum_enabled: true,
+    market_rates_live_palladium_enabled: true,
+    metals_dev_api_key: '',
     firma_adi: 'Sero Guld',
     firma_cvr: '',
     firma_telefon: '',
@@ -55,10 +59,22 @@ describe('settings secret status', () => {
     expect(status).toEqual([
       { name: 'OpenAI', ok: true },
       { name: 'OPMC', ok: true },
+      { name: 'metals.dev', ok: false },
       { name: 'WooCommerce', ok: true },
       { name: 'WordPress', ok: true },
       { name: 'Uniconta', ok: true },
     ]);
+  });
+
+  it('marks OPMC ready from the URL alone and metals.dev from its secret', () => {
+    // OPMC anahtarı opsiyonel: modül yapım aşamasında, URL doluysa hazır.
+    const status = buildSettingsApiStatus(config({
+      secret_fields_configured: ['metals_dev_api_key'],
+    }));
+
+    expect(status.find((item) => item.name === 'OPMC')?.ok).toBe(true);
+    expect(status.find((item) => item.name === 'metals.dev')?.ok).toBe(true);
+    expect(buildSettingsApiStatus(config({ opmc_api_url: '  ' })).find((item) => item.name === 'OPMC')?.ok).toBe(false);
   });
 
   it('does not treat a Uniconta API key as a replacement for the login password', () => {

@@ -86,11 +86,17 @@ class SettingsScreenOut(AppBaseModel):
     uniconta_api_key: str
     uniconta_purchase_vat_code_25: str = "Købsmoms"
     uniconta_purchase_vat_code_0: str = "KøbBrugtmoms"
+    # metals.dev canlı fiyat beslemesi — anahtar secret'tır, geri dönmez.
+    metals_dev_api_key: str = ""
     market_gold: str
     market_silver: str
     market_platin: str
     market_palladyum: str
     market_rates_live_enabled: bool = False
+    # Alan bazlı oto seçimi — master açıkken hangi alanların canlı kalacağı.
+    market_rates_live_fx_enabled: bool = True
+    market_rates_live_platinum_enabled: bool = True
+    market_rates_live_palladium_enabled: bool = True
     firma_adi: str
     firma_cvr: str
     firma_telefon: str

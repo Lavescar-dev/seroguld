@@ -26,7 +26,9 @@ export interface GlobalMarketRateProfile {
   platinum_dkk: string;
   palladium_dkk: string;
   live_enabled: boolean;
-  source: 'manual' | 'live' | string;
+  source: 'manual' | 'live' | 'mixed' | string;
+  // Alan bazında oto durumu (eur_dkk_fx / platinum_dkk / palladium_dkk).
+  live_fields?: Record<string, boolean>;
   rate_meta?: Record<string, GlobalRateMeta>;
 }
 
@@ -250,8 +252,13 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
   const titleClass = dark ? 'text-lg font-black uppercase tracking-wider text-brand-900' : 'text-xl font-semibold text-sg-text';
   const sectionClass = dark ? 'border border-brand-200 bg-white p-4' : 'rounded-sg-md border border-sg-border bg-sg-surface-soft p-4';
   const metaClass = dark ? 'text-xs text-brand-600' : 'text-sm text-sg-text-soft';
-  // Canlı mod yalnız oto değerleri (fx, Pt, Pd) kilitler.
-  const autoDisabled = draft.live_enabled;
+  // Canlı mod yalnız oto değerleri (fx, Pt, Pd) kilitler — alan bazında:
+  // Ayarlar'da otomatikten çıkarılan alan manuel düzenlenebilir kalır.
+  const liveFields = draft.live_fields || {};
+  const fieldAutoDisabled = (key: 'eur_dkk_fx' | 'platinum_dkk' | 'palladium_dkk') =>
+    draft.live_enabled && (liveFields[key] ?? true);
+  const anyAutoDisabled =
+    fieldAutoDisabled('eur_dkk_fx') || fieldAutoDisabled('platinum_dkk') || fieldAutoDisabled('palladium_dkk');
   const rateMeta = draft.rate_meta || {};
 
   return (
@@ -269,11 +276,11 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
-          <div className={`flex items-start gap-3 border p-3 ${autoDisabled ? (dark ? 'border-sky-300 bg-sky-50' : 'rounded-sg-md border-sg-blue/30 bg-sg-blue-soft') : (dark ? 'border-amber-300 bg-amber-50' : 'rounded-sg-md border-sg-accent/30 bg-sg-accent-soft')}`}>
-            {autoDisabled ? <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
+          <div className={`flex items-start gap-3 border p-3 ${anyAutoDisabled ? (dark ? 'border-sky-300 bg-sky-50' : 'rounded-sg-md border-sg-blue/30 bg-sg-blue-soft') : (dark ? 'border-amber-300 bg-amber-50' : 'rounded-sg-md border-sg-accent/30 bg-sg-accent-soft')}`}>
+            {anyAutoDisabled ? <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
             <div>
-              <p className="text-sm font-semibold">{autoDisabled ? 'Canlı oto değerler açık' : 'Manuel oran profili'}</p>
-              <p className={`mt-1 ${metaClass}`}>{autoDisabled ? 'Kur, platin ve palladyum otomatik gelir; altın/gümüş/bar/Plet alış fiyatları her zaman elle belirlenir.' : 'Değişiklikler yalnız Kaydet düğmesine bastığınızda uygulanır.'}</p>
+              <p className="text-sm font-semibold">{anyAutoDisabled ? 'Canlı oto değerler açık' : 'Manuel oran profili'}</p>
+              <p className={`mt-1 ${metaClass}`}>{anyAutoDisabled ? 'Otomatik işaretli alanlar (kur/platin/palladyum) canlı gelir; işareti kaldırılanlar ve altın/gümüş/bar/Plet her zaman elle belirlenir.' : 'Değişiklikler yalnız Kaydet düğmesine bastığınızda uygulanır.'}</p>
             </div>
           </div>
 
@@ -329,20 +336,20 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>EUR / DKK</span><RateMetaChip meta={rateMeta.eur_dkk_fx} dark={dark} /></span>
-                <TextRateInput value={draft.eur_dkk_fx} disabled={autoDisabled} onChange={controller.updateFx} />
+                <TextRateInput value={draft.eur_dkk_fx} disabled={fieldAutoDisabled('eur_dkk_fx')} onChange={controller.updateFx} />
               </label>
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>Platin DKK/g</span><RateMetaChip meta={rateMeta.platinum_dkk} dark={dark} /></span>
-                <TextRateInput value={draft.platinum_dkk} disabled={autoDisabled} onChange={controller.updatePlatinum} />
+                <TextRateInput value={draft.platinum_dkk} disabled={fieldAutoDisabled('platinum_dkk')} onChange={controller.updatePlatinum} />
               </label>
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>Palladyum DKK/g</span><RateMetaChip meta={rateMeta.palladium_dkk} dark={dark} /></span>
-                <TextRateInput value={draft.palladium_dkk} disabled={autoDisabled} onChange={controller.updatePalladium} />
+                <TextRateInput value={draft.palladium_dkk} disabled={fieldAutoDisabled('palladium_dkk')} onChange={controller.updatePalladium} />
               </label>
             </div>
           </section>
 
-          {autoDisabled ? <a href="/settings" className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark'}>Ayarları aç</a> : null}
+          {anyAutoDisabled ? <a href="/settings" className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark'}>Ayarları aç</a> : null}
         </div>
 
         <footer className={`flex items-center justify-end gap-2 border-t px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>

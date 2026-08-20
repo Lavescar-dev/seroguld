@@ -643,7 +643,9 @@ async def _sync_processors(session: AsyncSession) -> list[GdprProcessorOut]:
             processor.endpoint_url = "https://api.openai.com/v1" if processor.configured else None
             processor.detail = "AI provider"
         elif processor.processor_key == "opmc":
-            processor.configured = bool(settings.opmc_api_url.strip() and settings.opmc_api_key.strip())
+            # API anahtarı opsiyonel: modül yapım aşamasında ve anahtar hiçbir
+            # canlı çağrıda kullanılmıyor — URL doluluğu yeterli (Ayarlar kartıyla hizalı).
+            processor.configured = bool(settings.opmc_api_url.strip())
             processor.status = "healthy" if processor.configured else "missing"
             processor.endpoint_url = settings.opmc_api_url or None
             processor.detail = "Anti-fraud/order data source"

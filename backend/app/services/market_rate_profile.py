@@ -153,15 +153,38 @@ def get_manual_market_rate_profile() -> dict[str, Any]:
     return _profile_from_payload(payload)
 
 
-def _auto_overlay(profile: dict[str, Any], auto: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Canlı mod yalnız oto değerleri (fx, Pt, Pd) günceller.
+# Otomatik beslenebilen alanlar; altın/gümüş matrisleri her zaman manueldir.
+AUTO_FIELD_KEYS = ("eur_dkk_fx", "platinum_dkk", "palladium_dkk")
+
+
+def _enabled_auto_keys(settings: Any) -> tuple[str, ...]:
+    """Master + alan bazlı bayraklardan etkin oto anahtarlarını türetir."""
+    if not bool(settings.market_rates_live_enabled):
+        return ()
+    field_flags = {
+        "eur_dkk_fx": bool(getattr(settings, "market_rates_live_fx_enabled", True)),
+        "platinum_dkk": bool(getattr(settings, "market_rates_live_platinum_enabled", True)),
+        "palladium_dkk": bool(getattr(settings, "market_rates_live_palladium_enabled", True)),
+    }
+    return tuple(key for key in AUTO_FIELD_KEYS if field_flags[key])
+
+
+def _auto_overlay(
+    profile: dict[str, Any],
+    auto: dict[str, dict[str, Any]],
+    enabled_keys: tuple[str, ...] = AUTO_FIELD_KEYS,
+) -> dict[str, Any]:
+    """Canlı mod yalnız SEÇİLİ oto değerleri (fx, Pt, Pd) günceller.
 
     Manuel altın/gümüş alış matrisleri ve bar/Plet fiyatları işletmenin kendi
-    değerleridir; canlı mod bunları ASLA ezmez.
+    değerleridir; canlı mod bunları ASLA ezmez. Alan bazlı kapatılan anahtarlar
+    da manuel değerinde kalır.
     """
     merged = dict(profile)
-    meta = {key: _manual_meta() for key in ("eur_dkk_fx", "platinum_dkk", "palladium_dkk")}
-    for key in ("eur_dkk_fx", "platinum_dkk", "palladium_dkk"):
+    meta = {key: _manual_meta() for key in AUTO_FIELD_KEYS}
+    for key in AUTO_FIELD_KEYS:
+        if key not in enabled_keys:
+            continue
         entry = auto.get(key)
         if entry is None:
             continue
@@ -177,33 +200,72 @@ def _auto_overlay(profile: dict[str, Any], auto: dict[str, dict[str, Any]]) -> d
     return merged
 
 
-def _with_runtime(profile: dict[str, Any], *, live_enabled: bool, source: str) -> dict[str, Any]:
-    result = {**profile, "live_enabled": live_enabled, "source": source}
+def _with_runtime(
+    profile: dict[str, Any],
+    *,
+    live_enabled: bool,
+    source: str,
+    live_fields: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    result = {
+        **profile,
+        "live_enabled": live_enabled,
+        "source": source,
+        "live_fields": live_fields if live_fields is not None else {key: False for key in AUTO_FIELD_KEYS},
+    }
     result.setdefault(
         "rate_meta",
-        {key: _manual_meta() for key in ("eur_dkk_fx", "platinum_dkk", "palladium_dkk")},
+        {key: _manual_meta() for key in AUTO_FIELD_KEYS},
     )
     return result
+
+
+def _resolve_source(enabled_keys: tuple[str, ...]) -> str:
+    if not enabled_keys:
+        return "manual"
+    return "live" if len(enabled_keys) == len(AUTO_FIELD_KEYS) else "mixed"
 
 
 async def get_effective_market_rate_profile() -> dict[str, Any]:
     settings = get_settings()
     manual = get_manual_market_rate_profile()
-    live_enabled = bool(settings.market_rates_live_enabled)
-    if not live_enabled:
-        return _with_runtime(manual, live_enabled=False, source="manual")
+    enabled = _enabled_auto_keys(settings)
+    live_fields = {key: key in enabled for key in AUTO_FIELD_KEYS}
+    if not enabled:
+        return _with_runtime(
+            manual,
+            live_enabled=bool(settings.market_rates_live_enabled),
+            source="manual",
+            live_fields=live_fields,
+        )
     auto = await GoldPriceService().get_auto_values()
-    return _with_runtime(_auto_overlay(manual, auto), live_enabled=True, source="live")
+    return _with_runtime(
+        _auto_overlay(manual, auto, enabled),
+        live_enabled=True,
+        source=_resolve_source(enabled),
+        live_fields=live_fields,
+    )
 
 
 def get_effective_market_rate_profile_cached() -> dict[str, Any]:
     settings = get_settings()
     manual = get_manual_market_rate_profile()
-    live_enabled = bool(settings.market_rates_live_enabled)
-    if not live_enabled:
-        return _with_runtime(manual, live_enabled=False, source="manual")
+    enabled = _enabled_auto_keys(settings)
+    live_fields = {key: key in enabled for key in AUTO_FIELD_KEYS}
+    if not enabled:
+        return _with_runtime(
+            manual,
+            live_enabled=bool(settings.market_rates_live_enabled),
+            source="manual",
+            live_fields=live_fields,
+        )
     auto = GoldPriceService.cached_auto_values_or_fallback()
-    return _with_runtime(_auto_overlay(manual, auto), live_enabled=True, source="live")
+    return _with_runtime(
+        _auto_overlay(manual, auto, enabled),
+        live_enabled=True,
+        source=_resolve_source(enabled),
+        live_fields=live_fields,
+    )
 
 
 def save_manual_market_rate_profile(payload: dict[str, Any]) -> dict[str, Any]:

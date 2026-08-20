@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     # geriye dönük yapılandırma uyumluluğu için tutulur; UI ve çalışma profili
     # MARKET_RATES_LIVE_ENABLED üzerinden aynı durumu okumalıdır.
     market_rates_live_enabled: bool = False
+    # Alan bazlı canlı mod: master kapalıyken hepsi kapalıdır; master açıkken
+    # operatör hangi alanların otomatikte kalacağını tek tek seçebilir.
+    market_rates_live_fx_enabled: bool = True
+    market_rates_live_platinum_enabled: bool = True
+    market_rates_live_palladium_enabled: bool = True
     gold_price_live_enabled: bool = True
     gold_price_timeout_seconds: float = 6.0
     gold_price_cache_seconds: int = 20

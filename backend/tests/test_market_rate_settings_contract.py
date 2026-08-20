@@ -9,11 +9,21 @@ from app.config import Settings
 from app.services import market_rate_profile
 
 
-def _settings(*, live: bool, profile_json: str = "") -> Settings:
+def _settings(
+    *,
+    live: bool,
+    profile_json: str = "",
+    fx_live: bool = True,
+    platinum_live: bool = True,
+    palladium_live: bool = True,
+) -> Settings:
     return Settings(
         _env_file=None,
         database_url="sqlite+aiosqlite:///test.db",
         market_rates_live_enabled=live,
+        market_rates_live_fx_enabled=fx_live,
+        market_rates_live_platinum_enabled=platinum_live,
+        market_rates_live_palladium_enabled=palladium_live,
         gold_price_live_enabled=not live,
         inventory_market_gold_dkk=Decimal("615.50"),
         inventory_market_silver_dkk=Decimal("7.80"),
@@ -65,6 +75,97 @@ async def test_live_mode_overlays_only_auto_values(monkeypatch: pytest.MonkeyPat
     # Manuel alış matrisi canlı moddan etkilenmez.
     assert profile["gold_24k_dkk"] == "615.50"
     assert profile["gold_rates_dkk"]["24"] == "615.50"
+
+
+class _LiveAutoAll:
+    async def get_auto_values(self):
+        return {
+            "eur_dkk_fx": {"value": Decimal("7.4759"), "source": "live", "observed_at": "2026-08-18", "stale": False},
+            "platinum_dkk": {"value": Decimal("355.91"), "source": "live", "observed_at": "2026-08-19", "stale": False},
+            "palladium_dkk": {"value": Decimal("266.31"), "source": "live", "observed_at": "2026-08-19", "stale": False},
+        }
+
+
+@pytest.mark.asyncio
+async def test_field_level_flag_keeps_disabled_field_manual(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.3.8: master açık + platin oto kapalı → platin manuel kalır, source 'mixed'."""
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=True, platinum_live=False))
+    monkeypatch.setattr(market_rate_profile, "GoldPriceService", _LiveAutoAll)
+
+    profile = await market_rate_profile.get_effective_market_rate_profile()
+
+    assert profile["live_enabled"] is True
+    assert profile["source"] == "mixed"
+    assert profile["live_fields"] == {"eur_dkk_fx": True, "platinum_dkk": False, "palladium_dkk": True}
+    # Kapalı alan canlı değerle EZİLMEZ; meta'sı manuel kalır.
+    assert profile["platinum_dkk"] == "280.00"
+    assert profile["rate_meta"]["platinum_dkk"]["source"] == "manual"
+    # Açık alanlar canlı gelir.
+    assert profile["eur_dkk_fx"] == "7.48"
+    assert profile["palladium_dkk"] == "266.31"
+    assert profile["rate_meta"]["palladium_dkk"]["source"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_all_field_flags_off_behaves_manual_but_master_stays_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        market_rate_profile,
+        "get_settings",
+        lambda: _settings(live=True, fx_live=False, platinum_live=False, palladium_live=False),
+    )
+
+    called = {"count": 0}
+
+    class NeverCalled:
+        async def get_auto_values(self):
+            called["count"] += 1
+            return {}
+
+    monkeypatch.setattr(market_rate_profile, "GoldPriceService", NeverCalled)
+
+    profile = await market_rate_profile.get_effective_market_rate_profile()
+
+    # Tüm alanlar kapalıysa canlı servis HİÇ çağrılmaz; her şey manuel.
+    assert called["count"] == 0
+    assert profile["live_enabled"] is True
+    assert profile["source"] == "manual"
+    assert profile["live_fields"] == {"eur_dkk_fx": False, "platinum_dkk": False, "palladium_dkk": False}
+    assert profile["platinum_dkk"] == "280.00"
+
+
+@pytest.mark.asyncio
+async def test_master_off_ignores_field_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=False))
+
+    profile = await market_rate_profile.get_effective_market_rate_profile()
+
+    assert profile["live_enabled"] is False
+    assert profile["source"] == "manual"
+    assert profile["live_fields"] == {"eur_dkk_fx": False, "platinum_dkk": False, "palladium_dkk": False}
+
+
+def test_cached_variant_respects_field_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=True, fx_live=False))
+
+    class CachedAuto:
+        @staticmethod
+        def cached_auto_values_or_fallback():
+            return {
+                "eur_dkk_fx": {"value": Decimal("7.4759"), "source": "live", "observed_at": "2026-08-18", "stale": False},
+                "platinum_dkk": {"value": Decimal("355.91"), "source": "live", "observed_at": "2026-08-19", "stale": False},
+                "palladium_dkk": {"value": Decimal("266.31"), "source": "live", "observed_at": "2026-08-19", "stale": False},
+            }
+
+    monkeypatch.setattr(market_rate_profile, "GoldPriceService", CachedAuto)
+
+    profile = market_rate_profile.get_effective_market_rate_profile_cached()
+
+    assert profile["source"] == "mixed"
+    assert profile["live_fields"]["eur_dkk_fx"] is False
+    # Kapalı fx manuel default'ta kalır; Pt/Pd canlı.
+    assert profile["eur_dkk_fx"] == "7.45"
+    assert profile["platinum_dkk"] == "355.91"
+    assert profile["rate_meta"]["eur_dkk_fx"]["source"] == "manual"
 
 
 def test_saved_profile_json_round_trips_through_settings(monkeypatch: pytest.MonkeyPatch) -> None:

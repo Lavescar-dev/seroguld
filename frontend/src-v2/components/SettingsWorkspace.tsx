@@ -31,7 +31,7 @@ import { getLocale, t } from '@/lib/locale';
 type SettingsVariant = 'classic' | 'modern';
 type ConfigKey = keyof ApiConfig;
 type CategoryKey = 'general' | 'appearance' | 'market' | 'integrations' | 'data';
-type IntegrationKey = 'openai' | 'opmc' | 'woocommerce' | 'wordpress' | 'uniconta';
+type IntegrationKey = 'openai' | 'opmc' | 'metals' | 'woocommerce' | 'wordpress' | 'uniconta';
 
 type SettingsWorkspaceProps = {
   variant: SettingsVariant;
@@ -102,11 +102,19 @@ const INTEGRATIONS: Array<{
   {
     key: 'opmc',
     label: 'OPMC',
-    description: 'Risk analizi ve sipariş izleme bağlantısı.',
+    description: 'Risk analizi ve sipariş izleme bağlantısı. API anahtarı opsiyonel — modül yapım aşamasında, URL doluysa hazır sayılır.',
     fields: [
       { key: 'opmc_api_url', label: 'API URL', placeholder: 'https://api.opmc.dk/v1', wide: true },
-      { key: 'opmc_api_key', label: 'API anahtarı', placeholder: 'opmc_...', secret: true },
+      { key: 'opmc_api_key', label: 'API anahtarı (opsiyonel)', placeholder: 'opmc_...', secret: true },
       { key: 'opmc_webhook_secret', label: 'Webhook gizli anahtarı', placeholder: 'whsec_...', secret: true },
+    ],
+  },
+  {
+    key: 'metals',
+    label: 'metals.dev',
+    description: 'Canlı EUR/DKK kuru ve Platin/Palladyum fiyat beslemesi (DKK/gram).',
+    fields: [
+      { key: 'metals_dev_api_key', label: 'API anahtarı', placeholder: 'metals_...', secret: true, wide: true },
     ],
   },
   {
@@ -360,13 +368,31 @@ export function SettingsWorkspace({
 
               {category === 'market' ? (
                 <div className="max-w-5xl space-y-7">
-                  <label className={`flex cursor-pointer items-start gap-4 p-4 ${classic ? 'border border-brand-200 bg-brand-50' : 'rounded-xl border border-slate-200 bg-slate-50'}`}>
-                    <input type="checkbox" checked={Boolean(config.market_rates_live_enabled)} onChange={(event) => onUpdate('market_rates_live_enabled', event.target.checked)} className="mt-1 h-4 w-4 accent-blue-600" />
-                    <span>
-                      <span className="block text-sm font-semibold">Canlı piyasa fiyatlarını otomatik kullan</span>
-                      <span className="mt-1 block text-sm leading-6 text-slate-500">Kapalıyken üst çubuktaki oran editöründe kaydedilen global profil kullanılır.</span>
-                    </span>
-                  </label>
+                  <div className={`p-4 ${classic ? 'border border-brand-200 bg-brand-50' : 'rounded-xl border border-slate-200 bg-slate-50'}`}>
+                    <label className="flex cursor-pointer items-start gap-4">
+                      <input type="checkbox" checked={Boolean(config.market_rates_live_enabled)} onChange={(event) => onUpdate('market_rates_live_enabled', event.target.checked)} className="mt-1 h-4 w-4 accent-blue-600" />
+                      <span>
+                        <span className="block text-sm font-semibold">Canlı piyasa fiyatlarını otomatik kullan</span>
+                        <span className="mt-1 block text-sm leading-6 text-slate-500">Kapalıyken üst çubuktaki oran editöründe kaydedilen global profil kullanılır.</span>
+                      </span>
+                    </label>
+                    {config.market_rates_live_enabled ? (
+                      <div className={`mt-4 space-y-2 border-t pt-3 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Otomatikte kalacak alanlar</p>
+                        {([
+                          ['market_rates_live_fx_enabled', 'EUR/DKK kuru'],
+                          ['market_rates_live_platinum_enabled', 'Platin DKK/g'],
+                          ['market_rates_live_palladium_enabled', 'Palladyum DKK/g'],
+                        ] as const).map(([key, label]) => (
+                          <label key={key} className="flex cursor-pointer items-center gap-3">
+                            <input type="checkbox" checked={Boolean(config[key])} onChange={(event) => onUpdate(key, event.target.checked)} className="h-4 w-4 accent-blue-600" />
+                            <span className="text-sm">{label}</span>
+                          </label>
+                        ))}
+                        <p className="text-xs leading-5 text-slate-500">İşareti kaldırılan alan manuel değerinde kalır ve oran editöründen düzenlenebilir.</p>
+                      </div>
+                    ) : null}
+                  </div>
                   <section>
                     <h3 className="text-sm font-semibold">Mevcut oran özeti</h3>
                     <div className={`mt-3 divide-y ${classic ? 'divide-brand-200 border-y border-brand-200' : 'divide-slate-200 border-y border-slate-200'}`}>

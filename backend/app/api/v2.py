@@ -1167,6 +1167,7 @@ def _build_settings_screen_out() -> SettingsScreenOut:
             ("wp_app_password", settings.wp_app_password),
             ("uniconta_password", settings.uniconta_password),
             ("uniconta_api_key", settings.uniconta_api_key),
+            ("metals_dev_api_key", settings.metals_dev_api_key),
         )
         if str(value or "").strip()
     ]
@@ -1191,11 +1192,15 @@ def _build_settings_screen_out() -> SettingsScreenOut:
         uniconta_api_key="",
         uniconta_purchase_vat_code_25=settings.uniconta_purchase_vat_code_25,
         uniconta_purchase_vat_code_0=settings.uniconta_purchase_vat_code_0,
+        metals_dev_api_key="",
         market_gold=str(settings.inventory_market_gold_dkk),
         market_silver=str(settings.inventory_market_silver_dkk),
         market_platin=str(settings.inventory_market_platinum_dkk),
         market_palladyum=str(settings.inventory_market_palladium_dkk),
         market_rates_live_enabled=bool(settings.market_rates_live_enabled),
+        market_rates_live_fx_enabled=bool(settings.market_rates_live_fx_enabled),
+        market_rates_live_platinum_enabled=bool(settings.market_rates_live_platinum_enabled),
+        market_rates_live_palladium_enabled=bool(settings.market_rates_live_palladium_enabled),
         firma_adi=settings.invoice_seller_name,
         firma_cvr=settings.invoice_seller_cvr,
         firma_telefon=settings.invoice_seller_phone,
@@ -1563,6 +1568,9 @@ async def put_settings_v2(
         "INVENTORY_MARKET_PLATINUM_DKK": payload.market_platin.strip() or "280",
         "INVENTORY_MARKET_PALLADIUM_DKK": payload.market_palladyum.strip() or "335",
         "MARKET_RATES_LIVE_ENABLED": "true" if payload.market_rates_live_enabled else "false",
+        "MARKET_RATES_LIVE_FX_ENABLED": "true" if payload.market_rates_live_fx_enabled else "false",
+        "MARKET_RATES_LIVE_PLATINUM_ENABLED": "true" if payload.market_rates_live_platinum_enabled else "false",
+        "MARKET_RATES_LIVE_PALLADIUM_ENABLED": "true" if payload.market_rates_live_palladium_enabled else "false",
         "INVOICE_SELLER_NAME": payload.firma_adi.strip(),
         "INVOICE_SELLER_CVR": payload.firma_cvr.strip(),
         "INVOICE_SELLER_PHONE": payload.firma_telefon.strip(),
@@ -1579,6 +1587,7 @@ async def put_settings_v2(
         "WP_APP_PASSWORD": payload.wp_app_password,
         "UNICONTA_PASSWORD": payload.uniconta_password,
         "UNICONTA_API_KEY": payload.uniconta_api_key,
+        "METALS_DEV_API_KEY": payload.metals_dev_api_key,
     }
     updates.update(
         {

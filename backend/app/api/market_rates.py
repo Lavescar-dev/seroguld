@@ -38,7 +38,10 @@ class MarketRateProfileOut(MarketRateProfileUpdateIn):
     gold_24k_dkk: str
     silver_dkk: str
     live_enabled: bool
-    source: Literal["manual", "live"]
+    # "mixed": master açık ama alanların yalnız bir kısmı otomatikte.
+    source: Literal["manual", "live", "mixed"]
+    # Alan bazında etkin oto durumu (eur_dkk_fx / platinum_dkk / palladium_dkk).
+    live_fields: dict[str, bool] = {}
     rate_meta: dict[str, MarketRateMetaOut]
 
 
