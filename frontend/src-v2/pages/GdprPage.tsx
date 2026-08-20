@@ -18,6 +18,13 @@ export function GdprPage() {
       isRefreshing={state.isRefreshing}
       onRefresh={state.onRefresh}
       onSelectRequest={state.setSelectedRequestId}
+      activeMutation={state.activeMutation}
+      onVerify={state.onVerify}
+      onApprove={state.onApprove}
+      onReject={state.onReject}
+      onEnqueue={state.onEnqueue}
+      onExecute={state.onExecute}
+      onUpdatePolicy={state.onUpdatePolicy}
     />
   ) : <MakeGdprPage {...state} />;
 }

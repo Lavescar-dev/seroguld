@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type FormEvent, type ReactNode, type SetStateAction } from 'react';
 import {
+  Ban,
   Calculator,
   Camera,
   ChevronDown,
@@ -398,6 +399,35 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
           <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateGoldRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateGoldRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
           <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateSilverRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateSilverRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
           <AlisLedger title="Platin / Palladium" tone="silver" rows={ptpdRows} expanded={expandedGroups.has('ptpd')} onToggle={() => onToggleGroup('ptpd')} onGramChange={(key, value) => state.onUpdatePtPdRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdatePtPdRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
+
+          {/* Belgenin resmî alt bloğu — klasik AFG sheet'iyle aynı içerik:
+              hedef hesap teyidi, imza alanı ve yasal beyan. */}
+          <div className="border-t border-sg-border px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-sg-md bg-sg-green px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/80">Overføres til konto</p>
+              <p className="text-sm font-bold text-white">
+                {state.bankInfo.reg_number && state.bankInfo.account_number
+                  ? `${state.bankInfo.reg_number} — ${state.bankInfo.account_number}`
+                  : state.bankInfo.reg_number || state.bankInfo.account_number || '—'}
+              </p>
+            </div>
+            <div className="mt-4 grid gap-6 sm:grid-cols-2">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Underskrift</p>
+                <div className="mb-2 mt-4 h-12 border-b-2 border-sg-border" />
+                <p className="text-xs text-sg-text-soft">{state.customerForm.name || 'Müşteri adı'} — {new Date().toLocaleDateString('da-DK')}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Erklæring</p>
+                <p className="mt-2 text-xs leading-relaxed text-sg-text-soft">
+                  Undertegnede erklærer hermed, at de solgte varer er min ejendom og sælges frivilligt. Varerne kan ikke
+                  returneres efter afregning. Prisen er beregnet på baggrund af dagens guld- og sølvpris.
+                </p>
+                <p className="mt-2 text-xs text-sg-text-soft">Sero Guld · Tlf: +45 00 00 00 00 · CVR: 00 00 00 00</p>
+              </div>
+            </div>
+          </div>
+
           <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border bg-sg-surface/95 px-4 py-3 backdrop-blur">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm"><span><span className="text-sg-text-soft">Gram </span><strong className="text-sg-text">{formatNumber(totalGram, ' g')}</strong></span><span><span className="text-sg-text-soft">Net </span><strong className="text-sg-text">{formatMoney(String(totalOffer))}</strong></span>{state.purchaseVatEnabled ? <span><span className="text-sg-text-soft">KDV (tarihsel) </span><strong className="text-sg-text">{formatMoney(String(vatAmount))}</strong></span> : null}<span><span className="text-sg-text-soft">Ödenecek </span><strong className="text-sg-accent">{formatMoney(String(grossOffer))}</strong></span></div>
             <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Kesinleştirmek için önce müşteri seçin veya oluşturun' : undefined} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
@@ -953,7 +983,7 @@ function DocumentList({ state, documents }: { state: ModernAlisViewModel['state'
                 <td className="px-3 py-3 text-sg-text-soft"><PreviewPopover label={`${document.silver_preview_items?.length || 0} satır`}><PreviewRows rows={document.silver_preview_items} /></PreviewPopover></td>
                 <td className="whitespace-nowrap px-3 py-4 font-medium text-sg-text">{formatNumber(document.total_weight_grams, ' g')}</td>
                 <td className="whitespace-nowrap px-3 py-4 font-semibold text-sg-text">{formatMoney(document.gross_amount_dkk)}</td>
-                <td className="px-3 py-4 text-xs"><PreviewPopover label={document.uniconta_sync_status || '—'}><span className="inline-flex rounded-full bg-sg-surface-soft px-2 py-1 font-semibold text-sg-text-soft">{document.uniconta_sync_status || '—'}</span>{document.uniconta_sync_error ? <p className="mt-2 text-sg-red">{document.uniconta_sync_error}</p> : <p className="mt-2 text-sg-text-soft">Invoice: {document.uniconta_invoice_number || '—'}</p>}</PreviewPopover></td>
+                <td className="px-3 py-4 text-xs"><PreviewPopover label={ucStatusLabel(document)}><span className="inline-flex rounded-full bg-sg-surface-soft px-2 py-1 font-semibold text-sg-text-soft">{ucStatusLabel(document)}</span>{document.uniconta_sync_error ? <p className="mt-2 text-sg-red">{document.uniconta_sync_error}</p> : <p className="mt-2 text-sg-text-soft">Fatura: {document.uniconta_invoice_number || '—'}{document.uniconta_credit_note_number ? ` · KN#${document.uniconta_credit_note_number}` : ''}</p>}</PreviewPopover></td>
                 <td className="whitespace-nowrap px-3 py-3 text-sg-text-soft">{formatRelativeTime(document.issued_at)}</td>
                 <td className="px-3 py-3"><DocumentActions state={state} document={document} /></td>
               </tr>
@@ -968,13 +998,24 @@ function DocumentList({ state, documents }: { state: ModernAlisViewModel['state'
               <div><p className="text-sm font-semibold text-sg-text">{document.document_number}</p><p className="mt-1 text-xs text-sg-text-soft">{document.customer_name || 'Müşteri yok'}</p></div>
               <span className="text-xs text-sg-text-soft">{formatRelativeTime(document.issued_at)}</span>
             </div>
-            <dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Altın" value={`${document.gold_preview_items?.length || 0} satır`} /><MobileRow label="Gümüş" value={`${document.silver_preview_items?.length || 0} satır`} /><MobileRow label="Gram" value={formatNumber(document.total_weight_grams, ' g')} /><MobileRow label="DKK" value={formatMoney(document.gross_amount_dkk)} /><MobileRow label="Durum" value={document.uniconta_sync_status || '—'} /></dl>
+            <dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Altın" value={`${document.gold_preview_items?.length || 0} satır`} /><MobileRow label="Gümüş" value={`${document.silver_preview_items?.length || 0} satır`} /><MobileRow label="Gram" value={formatNumber(document.total_weight_grams, ' g')} /><MobileRow label="DKK" value={formatMoney(document.gross_amount_dkk)} /><MobileRow label="Durum" value={ucStatusLabel(document)} /></dl>
             <div className="mt-3"><DocumentActions state={state} document={document} /></div>
           </div>
         ))}
       </div>
     </>
   );
+}
+
+// Klasikteki UnicontaSyncBadge ile aynı sözlük — ham enum kullanıcıya gösterilmez.
+function ucStatusLabel(document: PosSavedPurchaseListItem): string {
+  const status = document.uniconta_sync_status;
+  if (!status) return 'UC —';
+  if (status === 'synced') return document.uniconta_invoice_number ? `UC ${document.uniconta_invoice_number}` : 'UC senkron';
+  if (status === 'failed') return 'UC HATA';
+  if (status === 'skipped') return 'UC ATLANDI';
+  if (status === 'cancelled') return document.uniconta_credit_note_number ? `İptal · KN#${document.uniconta_credit_note_number}` : 'İptal edildi';
+  return `UC ${status}`;
 }
 
 function PreviewPopover({ label, children }: { label: string; children: ReactNode }) {
@@ -1011,6 +1052,18 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onEditDocument(document); }} disabled={busy || !document.can_edit} title={!document.can_edit ? 'Bu belge düzenlenebilir değil' : undefined} className={menuButton}><Pencil className="h-4 w-4" />Düzenle</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onDeleteDocument(document); }} disabled={busy || !document.can_delete} title={!document.can_delete ? 'Bu belge silinebilir değil' : undefined} className={`${menuButton} text-sg-red`}><Trash2 className="h-4 w-4" />Sil</button>
           {canRetry ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onRetryUnicontaSync(document); }} disabled={state.retryPendingSequenceNo === document.sequence_no} className={menuButton}><RefreshCcw className="h-4 w-4" />Uniconta tekrar</button> : null}
+          {document.uniconta_sync_status === 'synced' && document.uniconta_invoice_number ? (
+            <button
+              type="button"
+              onClick={(event) => { closeMenu(event.currentTarget); void state.onCancelUnicontaInvoice(document); }}
+              disabled={state.cancelPendingSequenceNo === document.sequence_no}
+              title={`Uniconta faturasını iptal et — kreditnota oluşturur (Faktura #${document.uniconta_invoice_number})`}
+              className={`${menuButton} text-sg-red`}
+            >
+              <Ban className="h-4 w-4" />
+              Fatura iptal (kreditnota)
+            </button>
+          ) : null}
         </div>
       </details>
     </div>

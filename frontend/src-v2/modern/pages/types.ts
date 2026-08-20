@@ -195,6 +195,19 @@ export interface ModernGdprCockpitPageProps {
   isRefreshing?: boolean;
   onRefresh?: () => void;
   onSelectRequest?: (requestId: string) => void;
+  // Talep yaşam döngüsü aksiyonları — geçirilmezse kokpit salt-okunur kalır.
+  activeMutation?: boolean;
+  onVerify?: (requestId: string, customerId: string) => Promise<unknown> | void;
+  onApprove?: (requestId: string, reason?: string) => Promise<unknown> | void;
+  onReject?: (requestId: string, reason?: string) => Promise<unknown> | void;
+  onEnqueue?: (requestId: string) => Promise<unknown> | void;
+  onExecute?: (requestId: string) => Promise<unknown> | void;
+  onUpdatePolicy?: (payload: {
+    policyKey: string;
+    retention_days?: number;
+    action?: string;
+    is_enabled?: boolean;
+  }) => Promise<unknown> | void;
 }
 
 export interface ModernGdprPublicPrivacyPageProps {

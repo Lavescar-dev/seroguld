@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Archive, Database, FileClock, FileKey2, LockKeyhole, RefreshCw, ShieldCheck, ShieldEllipsis, UsersRound, Workflow } from 'lucide-react';
+import { Archive, CheckCircle2, Clock3, Database, Download, FileClock, FileKey2, LockKeyhole, RefreshCw, ShieldCheck, ShieldEllipsis, ShieldX, UsersRound, Workflow } from 'lucide-react';
+
+import { downloadAuthedDocument } from '@/lib/api';
 
 import {
   ModernBadge,
@@ -64,8 +66,17 @@ export function ModernGdprCockpitPage({
   isRefreshing = false,
   onRefresh,
   onSelectRequest,
+  activeMutation = false,
+  onVerify,
+  onApprove,
+  onReject,
+  onEnqueue,
+  onExecute,
+  onUpdatePolicy,
 }: ModernGdprCockpitPageProps) {
   const [activeTab, setActiveTab] = useState<GdprTab>('requests');
+  const [decisionReason, setDecisionReason] = useState('');
+  const hasDecisionActions = Boolean(onApprove || onReject || onEnqueue || onExecute || onVerify);
   const relatedJobs = useMemo(() => {
     if (!selectedRequest) return [];
     const scoped = jobs.filter((job) => job.request_id === selectedRequest.id);
@@ -138,6 +149,59 @@ export function ModernGdprCockpitPage({
               { label: 'Son iş', value: selected.latest_job?.status || '—' },
               { label: 'Export', value: selected.export_download_path || 'Henüz yok' },
             ] : [{ label: 'Durum', value: 'Talep seçimi bekleniyor', accent: true }]} />
+            {selected && hasDecisionActions ? (
+              <ModernSection>
+                <ModernSectionHeader title="Doğrulama ve karar" description="Aday müşteri eşleştirme, karar gerekçesi ve talep yaşam döngüsü aksiyonları." />
+                <div className="mt-4 space-y-4">
+                  <div className="rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
+                    {selected.verified_customer_name ? (
+                      <p className="text-sm font-semibold text-sg-green-strong">Eşleşen müşteri: {selected.verified_customer_name}</p>
+                    ) : (
+                      <p className="text-sm text-sg-text-soft">Henüz doğrulanmış müşteri seçilmedi.</p>
+                    )}
+                    {onVerify && selected.match_candidates.length > 0 ? (
+                      <div className="mt-3 grid gap-2">
+                        {selected.match_candidates.map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            disabled={activeMutation}
+                            onClick={() => void onVerify(selected.id, candidate.id)}
+                            className="flex items-center justify-between rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-left transition hover:border-sg-accent disabled:opacity-60"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold text-sg-text">{candidate.name}</p>
+                              <p className="text-xs text-sg-text-soft">{candidate.email || candidate.phone || candidate.cpr_number_masked || '—'}</p>
+                            </div>
+                            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-sg-accent">Doğrula</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <label className="block text-xs font-semibold text-sg-text-soft">
+                    Karar gerekçesi / operatör notu
+                    <textarea
+                      value={decisionReason}
+                      onChange={(event) => setDecisionReason(event.target.value)}
+                      className="mt-1 min-h-24 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent"
+                      placeholder="Karar gerekçesi veya not"
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {onApprove ? <ModernButton tone="primary" icon={ShieldCheck} disabled={activeMutation} onClick={() => void onApprove(selected.id, decisionReason)}>Onayla</ModernButton> : null}
+                    {onReject ? <ModernButton tone="danger" icon={ShieldX} disabled={activeMutation} onClick={() => void onReject(selected.id, decisionReason)}>Reddet</ModernButton> : null}
+                    {onEnqueue ? <ModernButton tone="ghost" icon={Clock3} disabled={activeMutation} onClick={() => void onEnqueue(selected.id)}>Kuyruğa al</ModernButton> : null}
+                    {onExecute ? <ModernButton tone="success" icon={CheckCircle2} disabled={activeMutation} onClick={() => void onExecute(selected.id)}>Çalıştır</ModernButton> : null}
+                    {selected.export_download_path ? (
+                      <ModernButton tone="ghost" icon={Download} onClick={() => void downloadAuthedDocument(selected.export_download_path!, `${selected.reference_number}.zip`)}>
+                        Export indir
+                      </ModernButton>
+                    ) : null}
+                  </div>
+                </div>
+              </ModernSection>
+            ) : null}
             <ModernSection>
               <ModernSectionHeader title="Completion gate" description="Açık/manual/queued görev varken tamamla aksiyonu kapalı kalır." action={<ModernBadge tone={gate.tone}>{gate.label}</ModernBadge>} />
               <div className="mt-4 flex items-center justify-between gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-sm font-semibold text-sg-text">B5 terminal gate</p><p className="mt-1 text-xs text-sg-text-soft">{relatedJobs.length > 0 ? `${relatedJobs.length} gerçek job satırı değerlendirildi.` : "Copy-task kapsamı bu DTO'da eksik."}</p></div><ModernButton tone="primary" disabled title="Açık veya expose edilmemiş copy-task varken tamamlanamaz">Talebi tamamla</ModernButton></div>
@@ -153,7 +217,9 @@ export function ModernGdprCockpitPage({
         <div className="grid min-w-0 gap-5 xl:grid-cols-2">
           <ModernSection>
             <ModernSectionHeader title="Retention politikaları" description="Veri sınıfı, süre ve legal action gerçek policy endpoint'inden gelir." />
-            <div className="mt-4 space-y-3">{retentionPolicies.length > 0 ? retentionPolicies.map((policy) => <ModernCard key={policy.id} className="bg-sg-surface-soft"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-sg-text">{policy.title}</p><p className="mt-1 text-xs text-sg-text-soft">{policy.description || policy.applies_to}</p></div><ModernBadge tone={policy.is_enabled ? 'success' : 'warning'}>{policy.retention_days} gün</ModernBadge></div><p className="mt-3 text-xs text-sg-text-soft">Action: {policy.action}</p></ModernCard>) : <ModernUnavailableState title="Retention politikası yok" description="Backend gerçek policy döndürmedi." detail="NO POLICIES" />}</div>
+            <div className="mt-4 space-y-3">{retentionPolicies.length > 0 ? retentionPolicies.map((policy) => (
+              <RetentionPolicyCard key={policy.id} policy={policy} disabled={activeMutation} onSave={onUpdatePolicy} />
+            )) : <ModernUnavailableState title="Retention politikası yok" description="Backend gerçek policy döndürmedi." detail="NO POLICIES" />}</div>
           </ModernSection>
           <ModernSection>
             <ModernSectionHeader title="Kuyruk işleri" description="Job status'leri terminal olmayan işleri görünür tutar." />
@@ -171,6 +237,61 @@ export function ModernGdprCockpitPage({
 
       {activeTab === 'audit' ? <AuditTrail selectedRequest={selected} jobs={jobs} /> : null}
     </ModernPage>
+  );
+}
+
+function RetentionPolicyCard({
+  policy,
+  disabled,
+  onSave,
+}: {
+  policy: ModernGdprCockpitPageProps['retentionPolicies'][number];
+  disabled?: boolean;
+  onSave?: ModernGdprCockpitPageProps['onUpdatePolicy'];
+}) {
+  const [daysInput, setDaysInput] = useState(String(policy.retention_days));
+  const [enabled, setEnabled] = useState(policy.is_enabled);
+  return (
+    <ModernCard className="bg-sg-surface-soft">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-sg-text">{policy.title}</p>
+          <p className="mt-1 text-xs text-sg-text-soft">{policy.description || policy.applies_to}</p>
+        </div>
+        <ModernBadge tone={policy.is_enabled ? 'success' : 'warning'}>{policy.retention_days} gün</ModernBadge>
+      </div>
+      <p className="mt-3 text-xs text-sg-text-soft">Action: {policy.action} · Son güncelleme: {formatDate(policy.updated_at)}</p>
+      {onSave ? (
+        <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-sg-border-soft pt-3">
+          <label className="text-[11px] font-semibold text-sg-text-soft">
+            Süre (gün)
+            <input
+              type="number"
+              min={0}
+              value={daysInput}
+              onChange={(event) => setDaysInput(event.target.value)}
+              className="mt-1 block w-24 rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-sm text-sg-text outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-2 pb-1.5 text-xs font-semibold text-sg-text-soft">
+            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+            Aktif
+          </label>
+          <ModernButton
+            tone="primary"
+            size="sm"
+            disabled={disabled}
+            onClick={() => void onSave({
+              policyKey: policy.policy_key,
+              retention_days: Number.parseInt(daysInput, 10) || policy.retention_days,
+              is_enabled: enabled,
+            })}
+          >
+            Kaydet
+          </ModernButton>
+        </div>
+      ) : null}
+    </ModernCard>
   );
 }
 
