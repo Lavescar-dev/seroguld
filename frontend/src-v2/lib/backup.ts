@@ -143,3 +143,37 @@ export async function stageSelectedEncryptedBackup(): Promise<{ restore_path: st
 export function canRunScheduledBackup() {
   return Boolean(getAccessToken() && isTauriRuntime() && document.visibilityState === 'visible');
 }
+
+export type BackupSchedule = {
+  frequency: 'off' | 'daily' | 'weekly';
+  hour: number | null;
+  weekday: number | null;
+};
+
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/**
+ * Zamanlanmış yedeğin şu an alınması gerekip gerekmediğine karar verir (saf).
+ * Tetikleyici hem açılış hem periyodik nabız için aynıdır; "o gün zaten
+ * alındıysa tekrar alma" mantığı son yerel yedek zamanından türetilir.
+ */
+export function isBackupDue(schedule: BackupSchedule, lastLocalBackupAtISO: string | null, now: Date): boolean {
+  if (schedule.frequency === 'off') return false;
+
+  const last = lastLocalBackupAtISO ? new Date(lastLocalBackupAtISO) : null;
+  const lastValid = last && !Number.isNaN(last.getTime()) ? last : null;
+  // Bugün zaten yedek alındıysa (günlük ve haftalık için) tekrar alınmaz.
+  if (lastValid && isSameLocalDay(lastValid, now)) return false;
+
+  const hourReached = schedule.hour === null || now.getHours() >= schedule.hour;
+  if (!hourReached) return false;
+
+  if (schedule.frequency === 'weekly') {
+    // Haftada bir: yalnız seçilen gün; "bugün değilse" ile doğal tekilleşir.
+    if (schedule.weekday === null) return true;
+    return now.getDay() === schedule.weekday;
+  }
+  return true;
+}

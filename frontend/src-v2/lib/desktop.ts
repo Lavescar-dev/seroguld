@@ -171,12 +171,17 @@ export type DocumentExportResult = {
   mode: 'save-dialog' | 'downloads-fallback' | string;
 };
 
+export type BackupScheduleFrequency = 'off' | 'daily' | 'weekly';
+
 export type BackupNativeConfig = {
   destinationDir: string | null;
   destinationConfigured: boolean;
   destinationAvailable: boolean;
   recoveryKeyReady: boolean;
   recoveryKeyExported: boolean;
+  scheduleFrequency: BackupScheduleFrequency;
+  scheduleHour: number | null;
+  scheduleWeekday: number | null;
 };
 
 export type BackupPublishResult = {
@@ -499,6 +504,14 @@ export async function getBackupNativeConfig(): Promise<BackupNativeConfig | null
 
 export async function chooseBackupDestination(): Promise<BackupNativeConfig> {
   return invokeDesktop<BackupNativeConfig>('choose_backup_destination');
+}
+
+export async function setBackupSchedule(
+  frequency: BackupScheduleFrequency,
+  hour: number | null,
+  weekday: number | null,
+): Promise<BackupNativeConfig> {
+  return invokeDesktop<BackupNativeConfig>('set_backup_schedule', { frequency, hour, weekday });
 }
 
 export async function openBackupDestination(): Promise<string> {

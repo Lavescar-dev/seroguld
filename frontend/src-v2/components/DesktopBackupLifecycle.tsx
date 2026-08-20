@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 
-import { canRunScheduledBackup, getBackupStatus, runDesktopBackup } from '@/lib/backup';
+import { canRunScheduledBackup, getBackupStatus, isBackupDue, runDesktopBackup, type BackupSchedule } from '@/lib/backup';
+import { getBackupNativeConfig } from '@/lib/desktop';
 import { useToast } from '@/lib/toast';
 
 const STARTUP_DELAY_MS = 45_000;
-const ROUTINE_INTERVAL_MS = 2 * 60 * 60 * 1000;
+// Tercih edilen saati ~30 dk içinde yakalamak için nabız sıklaştırıldı.
+const ROUTINE_INTERVAL_MS = 30 * 60 * 1000;
 const CRITICAL_DELAY_MS = 15_000;
 
 function eventDetailMessage(event: Event): string {
@@ -38,8 +40,15 @@ export function DesktopBackupLifecycle() {
     const runIfDue = async (reason: 'startup' | 'routine') => {
       if (!active || !canRunScheduledBackup()) return;
       try {
-        const status = await getBackupStatus();
-        if (status.backup_due) await runDesktopBackup(reason);
+        const [config, status] = await Promise.all([getBackupNativeConfig(), getBackupStatus()]);
+        const schedule: BackupSchedule = {
+          frequency: config?.scheduleFrequency ?? 'daily',
+          hour: config?.scheduleHour ?? null,
+          weekday: config?.scheduleWeekday ?? null,
+        };
+        if (isBackupDue(schedule, status.latest_local_backup_at, new Date())) {
+          await runDesktopBackup(reason);
+        }
       } catch (error) {
         // Backup health remains visible on Dashboard and Settings. Background
         // work must never delay startup, autosave, navigation or shutdown.

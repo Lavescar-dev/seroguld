@@ -3551,6 +3551,7 @@ fn main() {
             keyring_delete,
             get_bootstrap_login_password,
             backup::get_backup_native_config,
+            backup::set_backup_schedule,
             backup::choose_backup_destination,
             backup::open_backup_destination,
             backup::export_backup_recovery_key,

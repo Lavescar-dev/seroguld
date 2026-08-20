@@ -27,6 +27,13 @@ const CONFIG_FILE: &str = "backup-settings.v1.json";
 struct BackupConfigFile {
     destination_dir: Option<String>,
     recovery_key_exported: bool,
+    // Uygulama-içi zamanlama; eksikse frontend "daily" (mevcut davranış) sayar.
+    #[serde(default)]
+    schedule_frequency: Option<String>,
+    #[serde(default)]
+    schedule_hour: Option<u8>,
+    #[serde(default)]
+    schedule_weekday: Option<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +44,9 @@ pub struct BackupNativeConfig {
     destination_available: bool,
     recovery_key_ready: bool,
     recovery_key_exported: bool,
+    schedule_frequency: String,
+    schedule_hour: Option<u8>,
+    schedule_weekday: Option<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -427,13 +437,54 @@ pub fn get_backup_native_config() -> BackupNativeConfig {
         .destination_dir
         .as_ref()
         .is_some_and(|path| Path::new(path).is_dir());
+    let schedule_frequency = normalize_schedule_frequency(config.schedule_frequency.as_deref());
     BackupNativeConfig {
         destination_configured: config.destination_dir.is_some(),
         destination_dir: config.destination_dir,
         destination_available: available,
         recovery_key_ready: key_exists(),
         recovery_key_exported: config.recovery_key_exported,
+        schedule_frequency,
+        schedule_hour: config.schedule_hour.filter(|hour| *hour <= 23),
+        schedule_weekday: config.schedule_weekday.filter(|day| *day <= 6),
     }
+}
+
+fn normalize_schedule_frequency(value: Option<&str>) -> String {
+    match value.map(str::trim) {
+        Some("off") => "off".to_string(),
+        Some("weekly") => "weekly".to_string(),
+        // Eksik/bilinmeyen değer mevcut günlük davranışı korur.
+        _ => "daily".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn set_backup_schedule(
+    frequency: String,
+    hour: Option<u8>,
+    weekday: Option<u8>,
+) -> Result<BackupNativeConfig, String> {
+    let normalized = match frequency.trim() {
+        "off" | "daily" | "weekly" => frequency.trim().to_string(),
+        _ => return Err("Geçersiz yedek sıklığı".to_string()),
+    };
+    if let Some(value) = hour {
+        if value > 23 {
+            return Err("Tercih edilen saat 0–23 aralığında olmalı".to_string());
+        }
+    }
+    if let Some(value) = weekday {
+        if value > 6 {
+            return Err("Gün 0 (Pazar) – 6 (Cumartesi) aralığında olmalı".to_string());
+        }
+    }
+    let mut config = load_config();
+    config.schedule_frequency = Some(normalized.clone());
+    config.schedule_hour = hour;
+    config.schedule_weekday = if normalized == "weekly" { weekday } else { None };
+    save_config(&config)?;
+    Ok(get_backup_native_config())
 }
 
 #[tauri::command]

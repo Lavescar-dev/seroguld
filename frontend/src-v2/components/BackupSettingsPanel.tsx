@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Cloud, Copy, DatabaseBackup, FolderOpen, KeyRound, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Cloud, Copy, DatabaseBackup, FolderOpen, KeyRound, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 
 import {
   getBackupConfiguration,
@@ -14,15 +14,33 @@ import {
   exportBackupRecoveryKey,
   importBackupRecoveryKey,
   openBackupDestination,
+  setBackupSchedule,
   type BackupNativeConfig,
+  type BackupScheduleFrequency,
 } from '@/lib/desktop';
 
 type BackupSettingsPanelProps = { variant: 'classic' | 'modern' };
+
+const WEEKDAY_LABELS = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
 
 function formatDate(value: string | null | undefined) {
   if (!value) return 'Henüz yok';
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? 'Henüz yok' : new Intl.DateTimeFormat('tr-TR', { dateStyle: 'medium', timeStyle: 'short' }).format(parsed);
+}
+
+function formatHour(hour: number | null): string {
+  return hour === null ? 'gün içinde' : `${String(hour).padStart(2, '0')}:00`;
+}
+
+function scheduleSummary(config: BackupNativeConfig | null): string {
+  if (!config) return 'Yükleniyor…';
+  if (config.scheduleFrequency === 'off') return 'Otomatik yedek kapalı (elle alınabilir)';
+  if (config.scheduleFrequency === 'weekly') {
+    const day = config.scheduleWeekday === null ? 'haftada bir' : `her ${WEEKDAY_LABELS[config.scheduleWeekday]}`;
+    return `${day} ${formatHour(config.scheduleHour)} — açılışta da telafi edilir`;
+  }
+  return `Her gün ${formatHour(config.scheduleHour)} — açılışta da telafi edilir`;
 }
 
 export function BackupSettingsPanel({ variant }: BackupSettingsPanelProps) {
@@ -32,6 +50,7 @@ export function BackupSettingsPanel({ variant }: BackupSettingsPanelProps) {
   const [message, setMessage] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [recoveryKey, setRecoveryKey] = useState('');
   const [importKey, setImportKey] = useState('');
+  const [scheduleDraft, setScheduleDraft] = useState<{ frequency: BackupScheduleFrequency; hour: number | null; weekday: number }>({ frequency: 'daily', hour: 19, weekday: 1 });
   const classic = variant === 'classic';
   const button = `inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${classic ? 'border border-brand-300 bg-white text-brand-800 hover:bg-brand-50' : 'rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`;
 
@@ -39,6 +58,13 @@ export function BackupSettingsPanel({ variant }: BackupSettingsPanelProps) {
     const [nextConfig, nextStatus] = await Promise.all([getBackupConfiguration(), getBackupStatus().catch(() => null)]);
     setConfig(nextConfig);
     setStatus(nextStatus);
+    if (nextConfig) {
+      setScheduleDraft({
+        frequency: nextConfig.scheduleFrequency,
+        hour: nextConfig.scheduleHour,
+        weekday: nextConfig.scheduleWeekday ?? 1,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -67,7 +93,7 @@ export function BackupSettingsPanel({ variant }: BackupSettingsPanelProps) {
           <DatabaseBackup className={`mt-0.5 h-5 w-5 ${classic ? 'text-brand-700' : 'text-blue-600'}`} />
           <div>
             <h3 className="text-sm font-semibold">Otomatik şifreli yedekleme</h3>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">CRM açıldıktan sonra arka planda günlük tutarlı SQLite, belge ve fotoğraf yedeği alınır. Açılış ve çıkış yedekleme için bekletilmez.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">Tutarlı SQLite, belge ve fotoğraf yedeği aşağıdaki zamanlamaya göre arka planda alınır ve AES-256 ile şifrelenir. Açılış ve çıkış yedekleme için bekletilmez.</p>
           </div>
         </div>
         <span className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold ${status?.backup_due ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'} ${classic ? 'border border-current/20' : 'rounded-full'}`}>
@@ -92,6 +118,42 @@ export function BackupSettingsPanel({ variant }: BackupSettingsPanelProps) {
         <button type="button" disabled={busy !== null} className={button} onClick={() => void openBackupDestination()}><FolderOpen className="h-4 w-4" /> Yedek klasörünü aç</button>
         <button type="button" disabled={busy !== null} className={button} onClick={() => void run('verify', async () => { await verifySelectedEncryptedBackup(); setMessage({ kind: 'success', text: 'Seçilen şifreli yedek ve içindeki SQLite veritabanı doğrulandı.' }); })}>{busy === 'verify' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />} Yedeği doğrula</button>
         <button type="button" disabled={busy !== null} className={button} onClick={() => void run('restore', async () => { const result = await stageSelectedEncryptedBackup(); setMessage({ kind: 'info', text: `Yedek güvenli restore alanında doğrulandı: ${result.restore_path}. Canlı geri yükleme için uygulamayı kapatıp bu staging kopyası kullanılmalıdır.` }); })}>{busy === 'restore' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Geri yüklemeye hazırla</button>
+      </div>
+
+      <div className={`mt-5 p-4 ${classic ? 'border border-brand-200' : 'rounded-xl border border-slate-200'}`}>
+        <div className="flex items-start gap-3"><CalendarClock className="mt-0.5 h-4 w-4 text-blue-600" /><div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">Zamanlama</p>
+          <p className="mt-1 text-sm leading-6 text-slate-500">Otomatik yedek uygulama açıkken çalışır. Kaçırılan yedek bir sonraki açılışta (o gün alınmadıysa) telafi edilir.</p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="text-xs font-semibold text-slate-500">Sıklık
+              <select value={scheduleDraft.frequency} onChange={(event) => setScheduleDraft((current) => ({ ...current, frequency: event.target.value as BackupScheduleFrequency }))} className={`mt-1 block px-3 py-2 text-sm ${classic ? 'border border-brand-300' : 'rounded-lg border border-slate-200'}`}>
+                <option value="off">Kapalı</option>
+                <option value="daily">Günlük</option>
+                <option value="weekly">Haftalık</option>
+              </select>
+            </label>
+            {scheduleDraft.frequency !== 'off' ? (
+              <label className="text-xs font-semibold text-slate-500">Tercih edilen saat
+                <select value={scheduleDraft.hour ?? ''} onChange={(event) => setScheduleDraft((current) => ({ ...current, hour: event.target.value === '' ? null : Number(event.target.value) }))} className={`mt-1 block px-3 py-2 text-sm ${classic ? 'border border-brand-300' : 'rounded-lg border border-slate-200'}`}>
+                  <option value="">Gün içinde (ilk fırsatta)</option>
+                  {Array.from({ length: 24 }, (_, index) => <option key={index} value={index}>{String(index).padStart(2, '0')}:00</option>)}
+                </select>
+              </label>
+            ) : null}
+            {scheduleDraft.frequency === 'weekly' ? (
+              <label className="text-xs font-semibold text-slate-500">Gün
+                <select value={scheduleDraft.weekday} onChange={(event) => setScheduleDraft((current) => ({ ...current, weekday: Number(event.target.value) }))} className={`mt-1 block px-3 py-2 text-sm ${classic ? 'border border-brand-300' : 'rounded-lg border border-slate-200'}`}>
+                  {WEEKDAY_LABELS.map((label, index) => <option key={index} value={index}>{label}</option>)}
+                </select>
+              </label>
+            ) : null}
+            <button type="button" disabled={busy !== null} className={button} onClick={() => void run('schedule', async () => {
+              setConfig(await setBackupSchedule(scheduleDraft.frequency, scheduleDraft.frequency === 'off' ? null : scheduleDraft.hour, scheduleDraft.frequency === 'weekly' ? scheduleDraft.weekday : null));
+              setMessage({ kind: 'success', text: 'Yedekleme zamanlaması kaydedildi.' });
+            })}>{busy === 'schedule' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />} Kaydet</button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Şu an: {scheduleSummary(config)}</p>
+        </div></div>
       </div>
 
       <div className={`mt-5 p-4 ${classic ? 'border border-brand-200' : 'rounded-xl border border-slate-200'}`}>
