@@ -81,13 +81,9 @@ export function MakeRoot({
   const [migrationOpen, setMigrationOpen] = useState(false);
   const globalMarketRates = useGlobalMarketRates();
   const isResizingDockRef = useRef(false);
-  const hasOfficeDock = Boolean(officeDock.document) && location.pathname === '/';
-
-  useEffect(() => {
-    if (officeDock.document && location.pathname !== '/') {
-      onCloseOfficeDock();
-    }
-  }, [location.pathname, officeDock.document, onCloseOfficeDock]);
+  // Modern kabukla parite: açık Office belgesi sayfa değişiminde kapanmaz;
+  // dock kullanıcı "Kapat" diyene kadar her rotada görünür kalır.
+  const hasOfficeDock = Boolean(officeDock.document);
 
   useEffect(() => {
     if (!hasOfficeDock) return;

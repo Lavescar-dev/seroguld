@@ -383,7 +383,29 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
         <div className="flex min-w-0 items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-sg-amber" /><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{workspace.customer.name || 'Müşteri bekleniyor'}</p><p className="text-xs text-sg-text-soft">{state.finalizePending ? 'Kaydediliyor...' : 'Taslak otomatik kaydediliyor'} · {displayLabel}</p></div></div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => onOpenTool('customer')} className={shellButtonClass(hasSelectedCustomer ? 'secondary' : 'warning')}><Users className="h-4 w-4" />{hasSelectedCustomer ? 'Müşteri' : 'Müşteri seç'}</button>
-          <button type="button" onClick={state.onOpenWorkspaceExcelPreview} disabled={Boolean(state.hasPendingWorkspaceSync?.())} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button>
+          {(() => {
+            // Klasikteki "Çalışma Dosyası" butonuyla parite: dosya adı görünür,
+            // kilitliyken nedeni tooltip'te söylenir.
+            const workbookName = `${workspace.numbering_preview.afregnings_number_next || workspace.session.session_code}.xlsm`;
+            const syncPending = Boolean(state.hasPendingWorkspaceSync?.());
+            return (
+              <button
+                type="button"
+                onClick={state.onOpenWorkspaceExcelPreview}
+                disabled={syncPending}
+                title={syncPending
+                  ? 'Otomatik kayıt sürüyor — senkron bitince Excel görünümü açılabilir.'
+                  : `Çalışma alanını Excel görünümünde aç (${workbookName})`}
+                className={shellButtonClass('secondary')}
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                <span className="flex min-w-0 flex-col text-left leading-tight">
+                  <span>Excel görünümü</span>
+                  <span className="truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">{workbookName}</span>
+                </span>
+              </button>
+            );
+          })()}
           <button type="button" onClick={state.onPrintWorkspace} className={shellButtonClass('ghost')}><Printer className="h-4 w-4" />Yazdır</button>
           {displayBridge?.onOpenCustomerDisplay && !isWide ? <button type="button" onClick={() => void displayBridge.onOpenCustomerDisplay?.()} className={shellButtonClass('ghost')}>Müşteri ekranı</button> : null}
           <button type="button" onClick={() => onOpenTool('roadmap')} className={shellButtonClass('ghost')}><Ellipsis className="h-4 w-4" />Diğer</button>
