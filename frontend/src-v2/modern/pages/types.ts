@@ -163,6 +163,15 @@ export interface ModernOpmcListPageProps {
   availability?: ModernAvailability;
   isLoading?: boolean;
   onRefresh?: () => void;
+  // Filtreler klasikle aynı state'ten gelir; geçirilmezse filtre çubuğu gizlenir.
+  days?: number;
+  onDaysChange?: (value: number) => void;
+  riskFilter?: 'all' | 'high' | 'medium' | 'low' | 'unknown';
+  onRiskFilterChange?: (value: 'all' | 'high' | 'medium' | 'low' | 'unknown') => void;
+  statusFilter?: string;
+  onStatusFilterChange?: (value: string) => void;
+  manualOnly?: 'all' | 'yes' | 'no';
+  onManualOnlyChange?: (value: 'all' | 'yes' | 'no') => void;
 }
 
 export interface ModernOpmcDetailPageProps {

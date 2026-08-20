@@ -55,7 +55,7 @@ import { WooCategoryPicker } from '@/make/woocommerce/WooCategoryPicker';
 import { ModernWooProductWizard } from './ModernWooProductWizard';
 
 type ModernWooCommercePageProps = { state: WooMakeState };
-type DetailTab = 'overview' | 'photos' | 'ai' | 'history';
+type DetailTab = 'overview' | 'photos' | 'ai' | 'publish' | 'history';
 
 const PRODUCT_PAGE_SIZE = 25;
 const filterLabels: Record<WooFilter, string> = {
@@ -323,7 +323,7 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
   const ready = isPublishReady(detail) && seoMissing.length === 0 && Number(state.publishPrice || 0) > 0;
   return (
     <div className="space-y-5">
-      <ModernSectionHeader title="WooCommerce yayını" description="Yayın kararı gerçek ProductOut ve SEO readiness alanlarına göre verilir." />
+      <ModernSectionHeader title="WooCommerce yayını" description="Yayın için fotoğraf, AI onayı, SEO alanları ve fiyat kontrol edilir." />
       <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
       <div className="max-w-xl">
         <WooCategoryPicker
@@ -375,12 +375,12 @@ function ProductWorkspace({ state }: { state: WooMakeState }) {
   if (!state.secilen) return <ModernEmptyState title="Ürün seçin" description="Soldan bir ürün seçtiğinizde operasyon ayrıntıları burada açılır." />;
   if (state.loadingDetail && !detail) return <ModernLoadingState title="Ürün detayı hazırlanıyor" description="ProductOut ve geçmiş kayıtları bekleniyor." />;
   if (state.detailError && !detail) return <ModernErrorState title="Ürün detayı açılamadı" description={state.detailError} onRetry={state.refreshWorkspace} />;
-  const tabs: Array<{ id: DetailTab; label: string; icon: typeof Package }> = [{ id: 'overview', label: 'Genel', icon: Package }, { id: 'photos', label: 'Fotoğraf', icon: ImageIcon }, { id: 'ai', label: 'AI & SEO', icon: Bot }, { id: 'history', label: 'Geçmiş', icon: History }];
+  const tabs: Array<{ id: DetailTab; label: string; icon: typeof Package }> = [{ id: 'overview', label: 'Genel', icon: Package }, { id: 'photos', label: 'Fotoğraf', icon: ImageIcon }, { id: 'ai', label: 'AI & SEO', icon: Bot }, { id: 'publish', label: 'Yayın', icon: Globe }, { id: 'history', label: 'Geçmiş', icon: History }];
   return (
     <ModernSection className="min-w-0 p-4 sm:p-5">
       <DetailHeader state={state} />
       <div className="mt-4 flex flex-wrap gap-1 border-b border-sg-border-soft pb-1">{tabs.map((entry) => <button key={entry.id} type="button" onClick={() => setTab(entry.id)} className={`inline-flex items-center gap-2 rounded-t-sg-md px-3 py-2 text-xs font-semibold transition ${tab === entry.id ? 'border-b-2 border-sg-accent bg-sg-accent-soft text-sg-accent-dark' : 'text-sg-text-soft hover:bg-sg-surface-soft'}`}><entry.icon className="h-3.5 w-3.5" />{entry.label}</button>)}</div>
-      <div className="mt-5">{tab === 'overview' ? <OverviewTab state={state} seoMissing={seoMissing} /> : null}{tab === 'photos' ? <PhotosTab state={state} /> : null}{tab === 'ai' ? <AiTab state={state} seoMissing={seoMissing} /> : null}{tab === 'history' ? <HistoryTab state={state} /> : null}</div>
+      <div className="mt-5">{tab === 'overview' ? <OverviewTab state={state} seoMissing={seoMissing} /> : null}{tab === 'photos' ? <PhotosTab state={state} /> : null}{tab === 'ai' ? <AiTab state={state} seoMissing={seoMissing} /> : null}{tab === 'publish' ? <PublishTab state={state} seoMissing={seoMissing} /> : null}{tab === 'history' ? <HistoryTab state={state} /> : null}</div>
     </ModernSection>
   );
 }

@@ -187,7 +187,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                           <History className="h-4 w-4" />
                           Geçmiş
                         </button>
-                        {!isFinalized ? (
+                        {!isFinalized && (lot.line_count || 0) === 0 ? (
                           <button type="button" onClick={() => state.onDeleteLot(lot.id)} disabled={state.deleteBusy} className={shellButtonClass('danger')}>
                             <Trash2 className="h-4 w-4" />
                             Sil

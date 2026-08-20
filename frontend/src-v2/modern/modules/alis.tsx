@@ -1040,7 +1040,10 @@ function EditableRowsCard({ title, rows, onGramChange, onAvanceChange }: { title
 
 function ModernDetailModal({ source, detail, loading, error, onClose, onEdit, onDelete, onPreview, onExport, onPrint, actionPending, onRetry }: { source: PosSavedPurchaseListItem | null; detail: PosDocumentDetail | null; loading: boolean; error?: string | null; onClose: () => void; onEdit: () => void; onDelete: () => void; onPreview: () => void; onExport: () => void; onPrint: () => void; actionPending: boolean; onRetry?: () => void }) {
   const address = [detail?.customer_address, detail?.customer_city || source?.customer_city, detail?.customer_postal_code || source?.customer_postal_code].filter(Boolean).join(', ');
-  const cpr = detail?.customer_cpr || source?.customer_cpr || detail?.customer_cpr_masked || source?.customer_cpr_masked || '—';
+  // Veri minimizasyonu (klasikle aynı): modalda tam CPR gösterilmez; yalnız
+  // doğum tarihi bölümü (ilk 6 hane) ya da maskeli değer.
+  const cprBirthPart = (value?: string | null) => (value || '').replace(/\D/g, '').slice(0, 6);
+  const cpr = cprBirthPart(detail?.customer_cpr || source?.customer_cpr) || detail?.customer_cpr_masked || source?.customer_cpr_masked || '—';
   const identity = detail?.customer_identity_doc_number || source?.customer_identity_doc_number || detail?.customer_identity_doc_number_masked || '—';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-sg-text/45 p-4 backdrop-blur-sm" onClick={onClose}>

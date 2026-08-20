@@ -17,6 +17,14 @@ export function AntifraudPage() {
       items={state.filteredOrders}
       onRefresh={state.onRefresh}
       isLoading={state.isLoading}
+      days={state.days}
+      onDaysChange={state.onDaysChange}
+      riskFilter={state.riskFilter}
+      onRiskFilterChange={state.onRiskFilterChange}
+      statusFilter={state.statusFilter}
+      onStatusFilterChange={state.onStatusFilterChange}
+      manualOnly={state.manualOnly}
+      onManualOnlyChange={state.onManualOnlyChange}
       availability={state.isError ? { state: 'unavailable', title: 'OPMC verisi alınamadı', description: state.errorMessage } : { state: 'available' }}
     />
   ) : <MakeOpmcPage {...state} />;

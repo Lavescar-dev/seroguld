@@ -48,10 +48,22 @@ export function ModernOpmcListPage({
   availability,
   isLoading = false,
   onRefresh,
+  days,
+  onDaysChange,
+  riskFilter,
+  onRiskFilterChange,
+  statusFilter,
+  onStatusFilterChange,
+  manualOnly,
+  onManualOnlyChange,
 }: ModernOpmcListPageProps) {
   const [activeTab, setActiveTab] = useState<OpmcTab>('queue');
-  const selected = items[0] || null;
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  // Kullanıcı kuyruğun herhangi bir vakasını sağ panelde inceleyebilmeli;
+  // seçim filtre sonucu listeden düşerse ilk kayda dönülür.
+  const selected = items.find((item) => String(item.order_id) === selectedOrderId) || items[0] || null;
   const average = riskAverage(items);
+  const hasFilters = Boolean(onRiskFilterChange || onStatusFilterChange || onManualOnlyChange || onDaysChange);
   const whitelistCount = items.filter((item) => item.is_whitelisted).length;
   const overrideCount = items.filter((item) => item.has_manual_override).length;
 
@@ -112,17 +124,73 @@ export function ModernOpmcListPage({
         <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(320px,0.82fr)_minmax(0,1.18fr)]">
           <ModernSection className="min-w-0">
             <ModernSectionHeader title="İnceleme kuyruğu" description="Sıra ve sahiplik gerçek OPMC order state'inden gelir." />
+            {hasFilters ? (
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                {onDaysChange ? (
+                  <label className="text-xs font-semibold text-sg-text-soft">Gün penceresi
+                    <input
+                      type="number"
+                      min={1}
+                      value={days ?? 30}
+                      onChange={(event) => onDaysChange(Number(event.target.value) || 30)}
+                      className="mt-1 block w-24 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none"
+                    />
+                  </label>
+                ) : null}
+                {onRiskFilterChange ? (
+                  <label className="text-xs font-semibold text-sg-text-soft">Risk
+                    <select value={riskFilter ?? 'all'} onChange={(event) => onRiskFilterChange(event.target.value as NonNullable<ModernOpmcListPageProps['riskFilter']>)} className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none">
+                      <option value="all">Tümü</option>
+                      <option value="high">Yüksek</option>
+                      <option value="medium">Orta</option>
+                      <option value="low">Düşük</option>
+                      <option value="unknown">Belirsiz</option>
+                    </select>
+                  </label>
+                ) : null}
+                {onStatusFilterChange ? (
+                  <label className="text-xs font-semibold text-sg-text-soft">Durum
+                    <select value={statusFilter ?? 'all'} onChange={(event) => onStatusFilterChange(event.target.value)} className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none">
+                      <option value="all">Tümü</option>
+                      <option value="processing">İşleniyor</option>
+                      <option value="pending">Beklemede</option>
+                      <option value="completed">Tamamlandı</option>
+                      <option value="cancelled">İptal</option>
+                    </select>
+                  </label>
+                ) : null}
+                {onManualOnlyChange ? (
+                  <label className="text-xs font-semibold text-sg-text-soft">Manuel inceleme
+                    <select value={manualOnly ?? 'all'} onChange={(event) => onManualOnlyChange(event.target.value as 'all' | 'yes' | 'no')} className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none">
+                      <option value="all">Tümü</option>
+                      <option value="yes">Yalnız manuel</option>
+                      <option value="no">Manuel dışı</option>
+                    </select>
+                  </label>
+                ) : null}
+                <ModernBadge tone="neutral">Filtrelenen: {items.length}</ModernBadge>
+              </div>
+            ) : null}
             <div className="mt-4 space-y-3">
               {items.length > 0 ? items.map((item) => {
                 const scoreTone = toneForRisk(item.risk_score);
+                const isActive = selected ? String(selected.order_id) === String(item.order_id) : false;
                 return (
-                  <a key={item.order_id} href={`#/opmc/${item.order_id}`} className="block rounded-sg-md border border-sg-border bg-sg-surface-soft p-4 transition hover:border-sg-accent hover:shadow-sg-sm">
+                  <button
+                    key={item.order_id}
+                    type="button"
+                    onClick={() => setSelectedOrderId(String(item.order_id))}
+                    className={`block w-full rounded-sg-md border p-4 text-left transition hover:border-sg-accent hover:shadow-sg-sm ${isActive ? 'border-sg-accent bg-sg-accent-soft/40' : 'border-sg-border bg-sg-surface-soft'}`}
+                  >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0"><p className="font-semibold text-sg-text">#{item.order_number || item.order_id} · {item.customer_name || 'Guest buyer'}</p><p className="mt-1 text-xs text-sg-text-soft">{item.status} · {item.payment_method || 'Ödeme kaynağı yok'}</p></div>
+                      <div className="min-w-0"><p className="font-semibold text-sg-text">#{item.order_number || item.order_id} · {item.customer_name || 'Misafir alıcı'}</p><p className="mt-1 text-xs text-sg-text-soft">{item.date_created ? formatDate(item.date_created) : '—'} · {formatMoney(item.total)} · {item.status}</p></div>
                       <span className={`text-2xl font-semibold ${scoreTone === 'danger' ? 'text-sg-red' : scoreTone === 'warning' ? 'text-sg-amber' : 'text-sg-green'}`}>{item.risk_score ?? '—'}</span>
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><ModernBadge tone={item.requires_manual_review ? 'danger' : 'success'}>{item.requires_manual_review ? 'Manuel inceleme' : 'Otomatik geçiş'}</ModernBadge><span className="text-sm text-sg-text-soft">Owner: Operasyon</span></div>
-                  </a>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      <ModernBadge tone={item.requires_manual_review ? 'danger' : 'success'}>{item.requires_manual_review ? 'Manuel inceleme' : 'Otomatik geçiş'}</ModernBadge>
+                      <a href={`#/opmc/${item.order_id}`} onClick={(event) => event.stopPropagation()} className="text-sm font-semibold text-sg-accent hover:underline">Detaya git</a>
+                    </div>
+                  </button>
                 );
               }) : <ModernUnavailableState title="İnceleme kuyruğu boş" description="Backend gerçek order satırı döndürmedi; boş durum başarı olarak boyanmaz." detail="NO CASES" />}
             </div>
@@ -199,7 +267,12 @@ export function ModernOpmcDetailPage({
               { label: 'Kaynak', value: detail.risk_score_source || 'unknown' },
               { label: 'Müşteri geçmişi', value: detail.customer_history ? `${detail.customer_history.total_orders} sipariş · ${detail.customer_history.known_safe ? 'güvenli' : 'eşleşme yok'}` : 'Kayıt yok' },
               { label: 'Toplam', value: formatMoney(detail.total) },
+              // Dolandırıcılık kararının ana verileri: e-posta, IP ve ödeme yöntemi.
+              { label: 'E-posta', value: detail.customer_email || '—' },
+              { label: 'IP adresi', value: detail.ip_address || '—' },
+              { label: 'Ödeme yöntemi', value: detail.payment_method || '—' },
               { label: 'Fatura / teslimat', value: `${detail.billing_country || '-'} / ${detail.shipping_country || '-'}` },
+              { label: 'Sipariş tarihi', value: detail.date_created ? formatDate(detail.date_created) : '—' },
               { label: 'Owner', value: 'Oturum operatörü' },
             ]} />
 
