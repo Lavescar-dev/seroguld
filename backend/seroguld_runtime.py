@@ -97,7 +97,24 @@ LEGACY_REVISION_ALIASES = {
     "0021_customer_activity_events": "0019_log_module_audit",
     "0022_pos_session_product_links": "0019_log_module_audit",
 }
-CURRENT_MIGRATION_HEAD = "0034_market_rate_confirmation"
+# YALNIZ son çare fallback — gerçek head her zaman Alembic script dizininden
+# okunur (_current_migration_head). Bu sabit bayatlarsa migration-öncesi
+# yedek yanlış atlanabilir; 0.3.8'de "0034" olarak bayat kalmıştı.
+CURRENT_MIGRATION_HEAD = "0036_product_woo_categories"
+
+
+def _current_migration_head() -> str:
+    try:
+        from alembic.script import ScriptDirectory
+
+        heads = ScriptDirectory.from_config(_alembic_config()).get_heads()
+        if len(heads) == 1:
+            return heads[0]
+    except Exception:  # pragma: no cover - yedek kararı fallback'e düşer
+        logging.getLogger(__name__).warning(
+            "Alembic head okunamadı; fallback sabiti kullanılacak", exc_info=True
+        )
+    return CURRENT_MIGRATION_HEAD
 
 
 def _bundle_root() -> Path:
@@ -1333,13 +1350,14 @@ def _ensure_sqlite_pre_migration_backup(
     database_path: Path,
     backup_root: Path,
     *,
-    migration_head: str = CURRENT_MIGRATION_HEAD,
+    migration_head: str | None = None,
 ) -> Path | None:
     """Back up only an existing database that is not already at the head."""
 
     if not _database_preexists(database_path):
         return None
-    if _sqlite_migration_revision(database_path) == migration_head:
+    resolved_head = migration_head if migration_head is not None else _current_migration_head()
+    if _sqlite_migration_revision(database_path) == resolved_head:
         return None
     return _create_sqlite_pre_migration_backup(database_path, backup_root)
 
