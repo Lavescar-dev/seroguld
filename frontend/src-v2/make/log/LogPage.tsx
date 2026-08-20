@@ -58,6 +58,14 @@ import {
   type MeltLotDraft,
   type SplitGroupKey,
 } from './types';
+import {
+  buildBucketGroups,
+  lineHasPendingChange,
+  resolveLineDraft,
+  splitGroupKeyForDraft,
+  sumLines,
+  toFloat,
+} from './lineHelpers';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 const sansStyle = { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" } as const;
@@ -112,22 +120,7 @@ function formatWorkbookYearLabel(year: number) {
   return `Canlı workbook · ${year}`;
 }
 
-function toFloat(value?: string | number | null) {
-  if (typeof value === 'number') return value;
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
-function sumLines(lines: AfgWorkspaceLine[]) {
-  return lines.reduce(
-    (sum, line) => ({
-      weight: sum.weight + toFloat(line.weight_grams),
-      amount: sum.amount + toFloat(line.line_total_dkk),
-      pure: sum.pure + toFloat(line.pure_gold_grams),
-    }),
-    { weight: 0, amount: 0, pure: 0 },
-  );
-}
 
 function effectiveLineState(line: AfgWorkspaceLine) {
   if (line.operation_destination === 'melt') return 'melted';
@@ -136,31 +129,6 @@ function effectiveLineState(line: AfgWorkspaceLine) {
   return line.product_status || line.operation_destination || 'awaiting_decision';
 }
 
-function resolveLineDraft(line: AfgWorkspaceLine, drafts: Record<string, LineDraft>): LineDraft {
-  return (
-    drafts[line.id] || {
-      classification: defaultClassification(line),
-      note: line.product_notes || '',
-      destination: defaultDestination(line),
-    }
-  );
-}
-
-function lineHasPendingChange(line: AfgWorkspaceLine, drafts: Record<string, LineDraft>) {
-  const draft = resolveLineDraft(line, drafts);
-  return (
-    draft.classification !== defaultClassification(line) ||
-    draft.destination !== defaultDestination(line) ||
-    draft.note.trim() !== (line.product_notes || '').trim()
-  );
-}
-
-function splitGroupKeyForDraft(draft: LineDraft): SplitGroupKey | null {
-  if (draft.destination !== 'inventory') return null;
-  if (draft.classification === 'white_gold') return 'white_gold';
-  if (draft.classification === 'separate_storage') return 'separate_storage';
-  return 'jewelry_cleaning';
-}
 
 function buildDocumentGroups(document: AfgWorkspaceDocument, drafts: Record<string, LineDraft>) {
   const pending: AfgWorkspaceLine[] = [];
@@ -186,28 +154,6 @@ function buildDocumentGroups(document: AfgWorkspaceDocument, drafts: Record<stri
   return { pending, groups };
 }
 
-function buildBucketGroups(documents: AfgWorkspaceDocument[], drafts: Record<string, LineDraft>) {
-  const groups: Record<SplitGroupKey, AfgWorkspaceLine[]> = {
-    jewelry_cleaning: [],
-    white_gold: [],
-    separate_storage: [],
-  };
-
-  for (const document of documents) {
-    for (const line of document.lines) {
-      const splitKey = splitGroupKeyForDraft(resolveLineDraft(line, drafts));
-      if (splitKey === 'jewelry_cleaning') {
-        groups.jewelry_cleaning.push(line);
-      } else if (splitKey === 'white_gold') {
-        groups.white_gold.push(line);
-      } else if (splitKey === 'separate_storage') {
-        groups.separate_storage.push(line);
-      }
-    }
-  }
-
-  return groups;
-}
 
 function summaryCards(bucket: LogBucketWorkspace | undefined, totalDocuments: number, activeTab: LogActiveTab) {
   const summary = bucket?.summary;

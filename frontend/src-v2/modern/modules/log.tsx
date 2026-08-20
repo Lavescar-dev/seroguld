@@ -3,9 +3,11 @@ import { type ChangeEvent, useMemo, useRef, useState } from 'react';
 
 import type { ModernLogViewModel } from '@/modern/adapters/log';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
-import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { formatDate, formatMoney, formatNumber, labelAfgClassification } from '@/lib/format';
 import { apiRequest } from '@/lib/api';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
+import { buildBucketGroups, lineHasPendingChange, resolveLineDraft, sumLines } from '@/make/log/lineHelpers';
+import { classificationOptions, type LineDraft, type MeltLotDraft, type SplitGroupKey } from '@/make/log/types';
 
 import { DataPill, EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
@@ -14,6 +16,25 @@ const LOT_STATUS_LABEL: Record<string, string> = {
   draft: 'Taslak',
   finalized: 'Kesinleşti',
 };
+
+const SPLIT_GROUP_LABEL: Record<SplitGroupKey, string> = {
+  jewelry_cleaning: 'Smykker Lager',
+  white_gold: 'Hvidguld / Beyaz Au',
+  separate_storage: 'Ayrı Depolama',
+};
+
+const LOT_DRAFT_FIELDS: Array<{ key: keyof MeltLotDraft; label: string; type: 'date' | 'text' }> = [
+  { key: 'sent_date', label: 'Gönderim tarihi', type: 'date' },
+  { key: 'purchased_from_date', label: 'Alış başlangıcı', type: 'date' },
+  { key: 'after_pure_gold_grams', label: 'Eritme sonrası has (g)', type: 'text' },
+  { key: 'insurance_dkk', label: 'Sigorta (DKK)', type: 'text' },
+  { key: 'shipping_dkk', label: 'Kargo (DKK)', type: 'text' },
+  { key: 'refining_dkk', label: 'Rafinasyon (DKK)', type: 'text' },
+  { key: 'sale_date', label: 'Satış tarihi', type: 'date' },
+  { key: 'quote_eur', label: 'Fiyat teklifi (EUR)', type: 'text' },
+  { key: 'exchange_rate_dkk', label: 'Kur (EUR→DKK)', type: 'text' },
+  { key: 'payout_total_dkk', label: 'Toplam ödeme (DKK)', type: 'text' },
+];
 
 const LOT_HISTORY_ACTION_LABEL: Record<string, string> = {
   created: 'Oluşturuldu',
@@ -36,6 +57,16 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
     if (!list.includes(state.selectedYear)) list.unshift(state.selectedYear);
     return list;
   }, [state.selectedYear]);
+  const splitSummary = useMemo(() => {
+    if (!bucket) return null;
+    const groups = buildBucketGroups(bucket.documents, state.lineDrafts);
+    return (Object.keys(SPLIT_GROUP_LABEL) as SplitGroupKey[]).map((key) => ({
+      key,
+      label: SPLIT_GROUP_LABEL[key],
+      count: groups[key].length,
+      totals: sumLines(groups[key]),
+    }));
+  }, [bucket, state.lineDrafts]);
 
   return (
     <ModernModuleShell
@@ -128,20 +159,85 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                     <MobileRow label="Pure" value={formatNumber(document.total_pure_gold_grams, ' g')} />
                     <MobileRow label="DKK" value={formatMoney(document.net_amount_dkk)} />
                   </dl>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {document.lines.map((line) => (
-                      <div key={line.id} className="flex flex-wrap gap-2 rounded-full border border-sg-border bg-sg-surface px-3 py-1.5 text-[11px] font-semibold text-sg-text-soft">
-                        <span>L{line.line_no}</span>
-                        <button type="button" onClick={() => state.onRoute(line, 'inventory')} className="text-sg-green">Depo</button>
-                        <button type="button" onClick={() => state.onRoute(line, 'undecided')} className="text-sg-amber">Kararsız</button>
-                        <button type="button" onClick={() => state.onRoute(line, 'melt')} className="text-sg-red">Melt</button>
-                      </div>
-                    ))}
+                  <div className="mt-3 grid gap-2">
+                    {document.lines.map((line) => {
+                      const draft = resolveLineDraft(line, state.lineDrafts);
+                      const pending = lineHasPendingChange(line, state.lineDrafts);
+                      const routeButton = (destination: LineDraft['destination'], label: string, activeClass: string) => (
+                        <button
+                          type="button"
+                          disabled={state.routeBusy}
+                          onClick={() => state.onRoute(line, destination)}
+                          className={`rounded-sg-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-50 ${draft.destination === destination ? activeClass : 'border-sg-border bg-sg-surface text-sg-text-soft hover:bg-sg-surface-soft'}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                      return (
+                        <div key={line.id} className={`rounded-sg-lg border p-3 ${pending ? 'border-sg-amber/40 bg-sg-amber-soft/30' : 'border-sg-border bg-sg-surface'}`}>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs font-semibold text-sg-text">
+                              L{line.line_no} · {formatNumber(line.weight_grams, ' g')} · {formatMoney(line.line_total_dkk)}
+                              {pending ? <span className="ml-2 rounded-full bg-sg-amber-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">İnceleme</span> : null}
+                            </p>
+                            <div className="flex gap-1.5">
+                              {routeButton('inventory', 'Depo', 'border-sg-green bg-sg-green-soft text-sg-green-strong')}
+                              {routeButton('undecided', 'Kararsız', 'border-sg-amber/50 bg-sg-amber-soft text-sg-amber')}
+                              {routeButton('melt', 'Erit', 'border-sg-red/40 bg-sg-red-soft text-sg-red')}
+                            </div>
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <label className="text-[11px] font-semibold text-sg-text-soft">Sınıf
+                              <select
+                                value={draft.classification}
+                                onChange={(event) => state.onDraftChange(line.id, { classification: event.target.value as LineDraft['classification'] })}
+                                className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs text-sg-text outline-none"
+                              >
+                                {classificationOptions.map((option) => (
+                                  <option key={option} value={option}>{labelAfgClassification(option)}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="text-[11px] font-semibold text-sg-text-soft">Operasyon notu
+                              <input
+                                value={draft.note}
+                                onChange={(event) => state.onDraftChange(line.id, { note: event.target.value })}
+                                className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs text-sg-text outline-none"
+                                placeholder="Not"
+                              />
+                            </label>
+                          </div>
+                          {line.is_gdpr_locked ? <p className="mt-2 text-[11px] text-sg-amber">GDPR süresi devam ediyor (bilgi).</p> : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
             </div>
           </ModernSection>
+
+          <div className="grid gap-4">
+          {splitSummary ? (
+            <ModernSection title="Ayrıştırma Özeti" subtitle="Depo rotalı satırların sınıfa göre dağılımı (Lager / Hvidguld / Ayrı Depo).">
+              <div className="grid gap-2">
+                {splitSummary.map((group) => (
+                  <div key={group.key} className="flex flex-wrap items-center justify-between gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm">
+                    <p className="font-semibold text-sg-text">{group.label} <span className="text-xs text-sg-text-soft">× {group.count}</span></p>
+                    <p className="text-xs text-sg-text-soft">
+                      {group.totals.weight.toFixed(2)} g · {group.totals.amount.toFixed(0)} kr · <span className="font-semibold text-sg-amber">{group.totals.pure.toFixed(3)} has</span>
+                    </p>
+                  </div>
+                ))}
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2 text-sm font-semibold text-sg-text">
+                  <p>Toplam ayrılan</p>
+                  <p>
+                    {splitSummary.reduce((sum, group) => sum + group.totals.weight, 0).toFixed(2)} g · {splitSummary.reduce((sum, group) => sum + group.totals.amount, 0).toFixed(0)} kr · {splitSummary.reduce((sum, group) => sum + group.totals.pure, 0).toFixed(3)} has
+                  </p>
+                </div>
+              </div>
+            </ModernSection>
+          ) : null}
 
           <ModernSection
             title="Melt Lotları"
@@ -169,7 +265,37 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                         <MobileRow label="Eritme öncesi saf" value={formatNumber(lot.before_pure_gold_grams, ' g')} />
                         <MobileRow label="Eritme sonrası saf" value={formatNumber(lot.after_pure_gold_grams, ' g')} />
                         <MobileRow label="Ödeme" value={formatMoney(lot.payout_total_dkk)} />
+                        <MobileRow label="Bağlı satır" value={String(lot.line_count || 0)} />
                       </dl>
+                      {(() => {
+                        const draft = state.lotDrafts[lot.id];
+                        if (!draft) return null;
+                        return (
+                          <fieldset disabled={isFinalized} className="mt-3 grid gap-2 rounded-sg-lg border border-sg-border bg-sg-surface p-3 disabled:opacity-60 sm:grid-cols-2">
+                            {LOT_DRAFT_FIELDS.map((field) => (
+                              <label key={field.key} className="text-[11px] font-semibold text-sg-text-soft">
+                                {field.label}
+                                <input
+                                  type={field.type}
+                                  inputMode={field.type === 'text' ? 'decimal' : undefined}
+                                  value={draft[field.key]}
+                                  onChange={(event) => state.onLotDraftChange(lot.id, { [field.key]: event.target.value })}
+                                  className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs text-sg-text outline-none"
+                                />
+                              </label>
+                            ))}
+                            <label className="text-[11px] font-semibold text-sg-text-soft sm:col-span-2">
+                              Not
+                              <input
+                                value={draft.notes}
+                                onChange={(event) => state.onLotDraftChange(lot.id, { notes: event.target.value })}
+                                className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs text-sg-text outline-none"
+                                placeholder="Lot notu"
+                              />
+                            </label>
+                          </fieldset>
+                        );
+                      })()}
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button type="button" onClick={() => state.onSaveLot(lot.id)} disabled={state.meltBusy} className={shellButtonClass('secondary')}>Kaydet</button>
                         <button type="button" onClick={() => state.onFinalizeLot(lot.id, isFinalized)} disabled={state.finalizeBusy} className={shellButtonClass(isFinalized ? 'secondary' : 'primary')}>
@@ -200,6 +326,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
               )}
             </div>
           </ModernSection>
+          </div>
         </div>
       ) : null}
 
