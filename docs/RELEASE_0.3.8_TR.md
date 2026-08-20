@@ -5,7 +5,8 @@
 ## Installer
 
 - Dosya: `C:\Users\Lavescar\Downloads\SERO-GULD-CRM-FULL-SETUP.exe`
-- SHA256: `(build sonrası doldurulacak)`
+- SHA256: `abf14dbeed6900f8ef9048a33a26132a6b6ffaa4a7978d662b999826b6966627` (255,9 MB)
+- Manifest: payload check passed; Defender taraması passed / 0 tehdit; fingerprint temiz (build sırasında ağaç değişmedi); önceki 0.3.7 installer `SeroGuldCRM-archive\` altına taşındı.
 - Sürüm pinleri (7 konum, hepsi 0.3.8); alembic tek head `0036_product_woo_categories`.
 
 ## Kapsam (aşama → commit)
@@ -21,7 +22,7 @@
 | 6 | **Alış UX:** tek Müşteri butonu + Mevcut/Yeni menüsü; Yeni müşteride kimlik fotoğrafı/OCR alanı; Belge ülkesi ve CPR format yazısı kalktı; Kniv beregner ayrı sheet + gümüş "Aktar" anahtar eşlemesi düzeltildi | 7dec51d |
 | 7 | **Woo:** WP'den kategori seçici (yayın paneli + sihirbaz, ürün başına kalıcı); spec şeridi "Vare nr. : X, Vægt: Yg Diameter: Zmm" hem kısa hem uzun açıklamada; katalog ürünleri tıklanabilir → SEO/açıklama/görsel detay paneli + CRM bağla/yayından kaldır; **Etiket butonları şimdilik gizli** | 27b1130 |
 | 8 | **Ayarlar:** canlı fiyatta alan bazlı seçim (kur/platin/palladyum ayrı ayrı otomatikte bırakılabilir); metals.dev API kartı; OPMC kartı URL doluysa hazır ("API anahtarı opsiyonel — modül yapım aşamasında") | 40d38fe |
-| 9 | Sürüm pinleri + gate'ler + release | (bu commit) |
+| 9 | Sürüm pinleri + gate'ler + release | e10cfc7 |
 
 ## Gate sonuçları (release öncesi son koşu)
 
