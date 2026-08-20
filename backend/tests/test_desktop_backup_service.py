@@ -46,7 +46,13 @@ def backup_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Settings:
     (tmp_path / "data" / "uploads" / "photo.jpg").write_bytes(b"jpeg-data")
     runtime_env = tmp_path / "config" / "runtime.env"
     runtime_env.parent.mkdir()
-    runtime_env.write_text("FIELD_ENCRYPTION_KEY=secret\n", encoding="utf-8")
+    runtime_env.write_text(
+        "FIELD_ENCRYPTION_KEY=secret\n"
+        "UNICONTA_PASSWORD=uniconta-secret\n"
+        "JWT_SECRET_KEY=jwt-secret\n"
+        "WOOCOMMERCE_CONSUMER_SECRET=woo-secret\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(service, "get_settings", lambda: settings)
     monkeypatch.setattr(service, "ROOT_ENV_FILE", runtime_env)
     return settings
@@ -65,6 +71,13 @@ def test_snapshot_uses_online_sqlite_backup_and_verified_manifest(backup_env: _S
         assert "documents/working/skip.xlsm" not in names
         assert "uploads/photo.jpg" in names
         assert "config/runtime.env" in names
+        # Yalnız kurtarma-zorunlu anahtar arşive girer; üçüncü parti kimlik
+        # bilgileri ve JWT sırları düz metin staging ZIP'ine yazılmaz.
+        archived_env = archive.read("config/runtime.env").decode("utf-8")
+        assert "FIELD_ENCRYPTION_KEY=secret" in archived_env
+        assert "uniconta-secret" not in archived_env
+        assert "jwt-secret" not in archived_env
+        assert "woo-secret" not in archived_env
 
     staged = service.stage_restore(result.snapshot_path)
     restored_db = Path(str(staged["restore_path"])) / "database" / "seroguld.db"

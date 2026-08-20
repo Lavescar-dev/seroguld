@@ -21,6 +21,36 @@ BACKUP_FORMAT_VERSION = 1
 SNAPSHOT_PREFIX = "seroguld-snapshot-"
 ENCRYPTED_SUFFIX = ".sgbackup"
 
+# Yedeğe yalnız felaket kurtarma için ZORUNLU config anahtarları girer.
+# FIELD_ENCRYPTION_KEY olmadan geri yüklenen DB'deki şifreli CPR/adres
+# alanları çözülemez; JWT sırları ve üçüncü parti kimlik bilgileri
+# (Uniconta/Woo/OpenAI parolaları) yeniden girilebilir olduğundan düz
+# metin staging ZIP'ine asla yazılmaz.
+BACKUP_ENV_ALLOWLIST = ("FIELD_ENCRYPTION_KEY",)
+
+
+def _redacted_runtime_env(config_file: Path, target: Path) -> Path | None:
+    try:
+        raw_lines = config_file.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return None
+    kept: list[str] = [
+        "# Sero Guld yedek kopyası — yalnız geri yükleme için zorunlu anahtarlar.",
+        "# Uniconta/Woo/OpenAI kimlik bilgileri ve JWT sırları bilinçli olarak dışarıda.",
+    ]
+    for raw_line in raw_lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key in BACKUP_ENV_ALLOWLIST:
+            kept.append(line)
+    if len(kept) == 2:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    return target
+
 
 class BackupError(RuntimeError):
     pass
@@ -116,7 +146,9 @@ def create_snapshot(*, reason: str, actor: str) -> SnapshotResult:
             source_entries.append((source, (Path("uploads") / relative).as_posix()))
         config_file = Path(ROOT_ENV_FILE).expanduser().resolve()
         if config_file.is_file():
-            source_entries.append((config_file, "config/runtime.env"))
+            redacted = _redacted_runtime_env(config_file, temp_root / "config" / "runtime.env")
+            if redacted is not None:
+                source_entries.append((redacted, "config/runtime.env"))
 
         files: list[dict[str, object]] = []
         total_bytes = 0
