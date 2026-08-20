@@ -995,7 +995,6 @@ function PreviewRows({ rows }: { rows: PosSavedPurchaseListItem['gold_preview_it
 function DocumentActions({ state, document }: { state: ModernAlisViewModel['state']; document: PosSavedPurchaseListItem }) {
   const busy = state.actionPendingSequenceNo === document.sequence_no;
   const canRetry = document.uniconta_sync_status === 'failed' || document.uniconta_sync_status === 'skipped';
-  const canCancelInvoice = document.uniconta_sync_status === 'synced' && Boolean(document.uniconta_invoice_number);
   const menuButton = 'flex w-full items-center gap-2 rounded-sg-sm px-3 py-2 text-left text-sm font-medium text-sg-text transition hover:bg-sg-surface-soft disabled:cursor-not-allowed disabled:opacity-40';
   const closeMenu = (element: HTMLElement) => element.closest('details')?.removeAttribute('open');
   return (
@@ -1012,7 +1011,6 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onEditDocument(document); }} disabled={busy || !document.can_edit} title={!document.can_edit ? 'Bu belge düzenlenebilir değil' : undefined} className={menuButton}><Pencil className="h-4 w-4" />Düzenle</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onDeleteDocument(document); }} disabled={busy || !document.can_delete} title={!document.can_delete ? 'Bu belge silinebilir değil' : undefined} className={`${menuButton} text-sg-red`}><Trash2 className="h-4 w-4" />Sil</button>
           {canRetry ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onRetryUnicontaSync(document); }} disabled={state.retryPendingSequenceNo === document.sequence_no} className={menuButton}><RefreshCcw className="h-4 w-4" />Uniconta tekrar</button> : null}
-          {canCancelInvoice ? <button type="button" disabled title="Uniconta fatura iptal servisi hazır değil" className={menuButton}>Fatura iptal · hazır değil</button> : null}
         </div>
       </details>
     </div>

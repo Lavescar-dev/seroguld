@@ -1,11 +1,12 @@
-import { Camera, Check, Eye, FileSpreadsheet, Search, Tag, Trash2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Camera, Check, Eye, FileSpreadsheet, Flame, Loader2, Search, Tag, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
 import { formatDate, formatMoney, formatNumber, labelInventoryCategory, labelInventorySubcategory, labelShopSyncStatus } from '@/lib/format';
 import { LABEL_PRINTING_ENABLED } from '@/lib/featureFlags';
+import { buildMediaUrl } from '@/lib/media';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
-import { describeActiveInventoryFilters, type MainCategory, type PlatinumSub, type SilverSub, type StokItem } from '@/make/depolama/types';
+import { ALLOWED_STATUS_TRANSITIONS, PRODUCT_STATUS_LABEL, describeActiveInventoryFilters, type InventoryLifecycleStatus, type MainCategory, type PlatinumSub, type SilverSub, type StokItem } from '@/make/depolama/types';
 import { InventoryWorkbookImport } from '@/make/depolama/InventoryWorkbookImport';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 
@@ -230,7 +231,7 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
                     <p className="mt-1 text-sm text-sg-text-soft">{selected.product_number} · {selected.reference_number || 'Ref yok'}</p>
                   </div>
                   <span className="rounded-full border border-sg-border bg-sg-surface px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
-                    {selected.status}
+                    {PRODUCT_STATUS_LABEL[selected.status] || selected.status}
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -258,11 +259,10 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
                     Etiket
                   </button>
                 ) : null}
-                <button type="button" onClick={() => state.onUploadPhotos(selected.id, [])} disabled className={shellButtonClass('secondary')}>
-                  <Camera className="h-4 w-4" />
-                  Foto Yükle
-                </button>
               </div>
+
+              <ModernLifecycleControls state={state} product={selected} />
+              <ModernPhotoSection state={state} product={selected} />
             </>
           )}
         </ModernSection>
@@ -270,6 +270,160 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
         </>
       )}
     </ModernModuleShell>
+  );
+}
+
+function ModernLifecycleControls({
+  state,
+  product,
+}: {
+  state: ModernDepolamaViewModel['state'];
+  product: NonNullable<ModernDepolamaViewModel['state']['selectedProduct']>;
+}) {
+  const [meltMode, setMeltMode] = useState(false);
+  const [meltReason, setMeltReason] = useState('');
+  const [saleMode, setSaleMode] = useState(false);
+  const [salePriceInput, setSalePriceInput] = useState('');
+  useEffect(() => {
+    setMeltMode(false);
+    setMeltReason('');
+    setSaleMode(false);
+    setSalePriceInput('');
+  }, [product.id]);
+
+  const allowedNext: InventoryLifecycleStatus[] = ALLOWED_STATUS_TRANSITIONS[product.status] || [];
+  const canSell = product.status === 'for_sale';
+  if (allowedNext.length === 0 && !canSell) return null;
+  const busy = state.updatingStatus;
+  const meltReasonValid = meltReason.trim().length >= 3;
+  const salePrice = Number(salePriceInput.replace(',', '.'));
+  const salePriceValid = Number.isFinite(salePrice) && salePrice > 0;
+
+  return (
+    <div className="mt-4 rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Sonraki durum</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {allowedNext.includes('in_inventory') ? (
+          <button type="button" disabled={busy} onClick={() => state.onUpdateProductStatus(product.id, 'in_inventory')} className={shellButtonClass('secondary')}>Depoda tut</button>
+        ) : null}
+        {allowedNext.includes('for_sale') ? (
+          <button type="button" disabled={busy} onClick={() => state.onUpdateProductStatus(product.id, 'for_sale')} className={shellButtonClass('secondary')}>Satışa hazırla</button>
+        ) : null}
+        {allowedNext.includes('undecided') ? (
+          <button type="button" disabled={busy} onClick={() => state.onUpdateProductStatus(product.id, 'undecided')} className={shellButtonClass('secondary')}>Karar bekliyor</button>
+        ) : null}
+        {allowedNext.includes('melted') ? (
+          <button type="button" disabled={busy} onClick={() => { setMeltMode((current) => !current); setSaleMode(false); }} className={shellButtonClass('danger')}>
+            <Flame className="h-4 w-4" />
+            Erit
+          </button>
+        ) : null}
+        {canSell ? (
+          <button type="button" disabled={busy} onClick={() => { setSaleMode((current) => !current); setMeltMode(false); }} className={shellButtonClass('primary')}>Satıldı olarak işaretle</button>
+        ) : null}
+      </div>
+
+      {meltMode ? (
+        <div className="mt-3 grid gap-2">
+          <label htmlFor="modern-melt-reason" className="text-xs font-semibold text-sg-text-soft">
+            Eritme gerekçesi (en az 3 karakter)
+            <input id="modern-melt-reason" value={meltReason} onChange={(event) => setMeltReason(event.target.value)} className={editorInputClass} placeholder="Örn. hurda, hasarlı" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => { setMeltMode(false); setMeltReason(''); }} className={shellButtonClass('secondary')}>Vazgeç</button>
+            <button
+              type="button"
+              disabled={busy || !meltReasonValid}
+              onClick={() => { state.onUpdateProductStatus(product.id, 'melted', meltReason.trim()); setMeltMode(false); setMeltReason(''); }}
+              className={shellButtonClass('danger')}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
+              Eritmeye taşı
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {saleMode ? (
+        <div className="mt-3 grid gap-2">
+          <label htmlFor="modern-sale-price" className="text-xs font-semibold text-sg-text-soft">
+            Satış fiyatı (DKK)
+            <input id="modern-sale-price" inputMode="decimal" value={salePriceInput} onChange={(event) => setSalePriceInput(event.target.value)} className={editorInputClass} placeholder="0,00" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => { setSaleMode(false); setSalePriceInput(''); }} className={shellButtonClass('secondary')}>Vazgeç</button>
+            <button
+              type="button"
+              disabled={busy || !salePriceValid}
+              onClick={() => { state.onUpdateProductStatus(product.id, 'sold' as InventoryLifecycleStatus, null, salePrice); setSaleMode(false); setSalePriceInput(''); }}
+              className={shellButtonClass('primary')}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              Sat
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ModernPhotoSection({
+  state,
+  product,
+}: {
+  state: ModernDepolamaViewModel['state'];
+  product: NonNullable<ModernDepolamaViewModel['state']['selectedProduct']>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const photos = product.photos || [];
+  return (
+    <div className="mt-4 rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Fotoğraflar ({photos.length})</p>
+        <div>
+          <input
+            ref={inputRef}
+            className="sr-only"
+            type="file"
+            accept="image/*"
+            multiple
+            aria-label="Ürün fotoğrafı seç"
+            onChange={(event) => {
+              const files = event.currentTarget.files;
+              if (files && files.length > 0) state.onUploadPhotos(product.id, files);
+              event.currentTarget.value = '';
+            }}
+          />
+          <button type="button" onClick={() => inputRef.current?.click()} disabled={state.uploadingPhotos} className={shellButtonClass('secondary')}>
+            {state.uploadingPhotos ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+            {state.uploadingPhotos ? 'Yükleniyor' : 'Foto yükle'}
+          </button>
+        </div>
+      </div>
+      {photos.length > 0 ? (
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {photos.slice(0, 9).map((photo) => (
+            <div key={photo.id || photo.url} className="group relative overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface">
+              <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
+              {photo.id ? (
+                <button
+                  type="button"
+                  disabled={state.deletingPhoto}
+                  onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.onDeletePhoto(product.id, photo.id!); }}
+                  aria-label="Fotoğrafı sil"
+                  className="absolute right-1 top-1 hidden rounded-sg-md border border-sg-red/30 bg-sg-surface/95 p-1 text-sg-red hover:bg-sg-red-soft group-hover:block disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-sg-text-soft">Henüz fotoğraf yok. "Foto yükle" ile bir veya birden çok görsel ekleyebilirsiniz.</p>
+      )}
+    </div>
   );
 }
 

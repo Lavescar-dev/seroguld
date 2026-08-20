@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { Check, Eye, Pencil, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Eye, Pencil, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 import type { ModernCustomersViewModel } from '@/modern/adapters/customers';
-import { formatDate, formatMoney, formatRelativeTime } from '@/lib/format';
+import { formatDate, formatMoney, formatNumber, formatRelativeTime } from '@/lib/format';
 import type { CustomerDraft } from '@/make/customers/types';
+import type { PosDocumentDetail } from '@/types';
 import { CustomerWorkspacePanel } from '@/components/CustomerWorkspacePanel';
 
-import { EmptyState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 
 const customerInputClass = 'mt-1 w-full rounded-sg-md border border-sg-amber/20 bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
 const customerIconActionClass = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sg-md border border-sg-border bg-sg-surface text-sg-text-soft transition hover:border-sg-accent/35 hover:bg-sg-surface-accent hover:text-sg-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sg-accent/30';
@@ -246,31 +247,127 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
               <CustomerWorkspacePanel customerId={selected.id} customerName={selected.name || 'Müşteri'} />
 
               <div className="mt-4 grid gap-3">
-                {state.historyItems.map((item) => (
-                  <div key={item.sequence_no} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-sg-text">{item.document_number}</p>
-                        <p className="mt-1 text-xs text-sg-text-soft">{formatRelativeTime(item.issued_at)}</p>
+                {state.historyItems.map((item) => {
+                  const isExpanded = state.expandedSequenceNo === item.sequence_no;
+                  return (
+                    <div key={item.sequence_no} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-sg-text">{item.document_number}</p>
+                          <p className="mt-1 text-xs text-sg-text-soft">{formatRelativeTime(item.issued_at)}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" onClick={() => state.onToggleHistory(item.sequence_no)} className={shellButtonClass('ghost')}>
+                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                            Detay
+                          </button>
+                          <button type="button" onClick={() => state.onPreviewOpen(item.sequence_no)} className={shellButtonClass('secondary')}>
+                            <Eye className="h-4 w-4" />
+                            Önizleme
+                          </button>
+                        </div>
                       </div>
-                      <button type="button" onClick={() => state.onPreviewOpen(item.sequence_no)} className={shellButtonClass('secondary')}>
-                        <Eye className="h-4 w-4" />
-                        Preview
-                      </button>
+                      <dl className="mt-3 grid gap-2 text-sm">
+                        <MobileRow label="DKK" value={formatMoney(item.gross_amount_dkk)} />
+                        <MobileRow label="Gram" value={item.total_weight_grams || '—'} />
+                        <MobileRow label="Log" value={state.historyLogMeta[item.sequence_no]?.inLog ? 'Var' : 'Yok'} />
+                      </dl>
+                      {isExpanded ? (
+                        <div className="mt-3 border-t border-sg-border pt-3">
+                          {!state.expandedDetail ? (
+                            <p className="text-sm text-sg-text-soft">Belge detayı yükleniyor…</p>
+                          ) : state.expandedDetail.lines.length === 0 ? (
+                            <p className="text-sm text-sg-text-soft">Bu belgede ürün satırı yok.</p>
+                          ) : (
+                            <div className="grid gap-2">
+                              {state.expandedDetail.lines.map((line) => (
+                                <div key={line.id} className="rounded-sg-md border border-sg-border bg-sg-surface p-3 text-sm">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <p className="font-semibold text-sg-text">
+                                      L{line.line_no} · {line.product_number || line.reference_number || line.product_type || 'Kalem'}
+                                    </p>
+                                    <p className="font-semibold text-sg-text">{formatMoney(line.line_total_dkk)}</p>
+                                  </div>
+                                  <p className="mt-1 text-xs text-sg-text-soft">
+                                    {line.metal_type === 'silver' ? 'Gümüş' : line.metal_type === 'gold' ? 'Altın' : line.metal_type || '—'}
+                                    {line.weight_grams ? ` · ${formatNumber(line.weight_grams, ' g')}` : ''}
+                                    {line.purity_karat ? ` · ${line.purity_karat}K` : ''}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
-                    <dl className="mt-3 grid gap-2 text-sm">
-                      <MobileRow label="DKK" value={formatMoney(item.gross_amount_dkk)} />
-                      <MobileRow label="Gram" value={item.total_weight_grams || '—'} />
-                      <MobileRow label="Log" value={state.historyLogMeta[item.sequence_no]?.inLog ? 'Var' : 'Yok'} />
-                    </dl>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}
         </ModernSection>
       </div>
+
+      {state.previewSequenceNo !== null ? (
+        <ModernAfgPreviewDrawer
+          detail={state.previewDetail}
+          loading={state.previewLoading}
+          onClose={state.onPreviewClose}
+        />
+      ) : null}
     </ModernModuleShell>
+  );
+}
+
+function ModernAfgPreviewDrawer({
+  detail,
+  loading,
+  onClose,
+}: {
+  detail: PosDocumentDetail | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <ModernDrawer
+      title={detail?.document_number || 'Belge önizleme'}
+      subtitle={detail ? `${formatDate(detail.issued_at)} · ${detail.customer_name || '—'}` : undefined}
+      onClose={onClose}
+    >
+      {loading || !detail ? (
+        <LoadingState label="Belge yükleniyor" />
+      ) : (
+        <>
+          <div className="grid gap-2 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-3 text-sm">
+            <MobileRow label="Toplam" value={formatMoney(detail.gross_amount_dkk)} />
+            <MobileRow label="Gram" value={detail.total_weight_grams ? formatNumber(detail.total_weight_grams, ' g') : '—'} />
+            <MobileRow label="Ödeme" value={detail.payment_method === 'bank' ? 'Banka' : '—'} />
+          </div>
+          <div className="mt-3 grid gap-2">
+            {detail.lines.length === 0 ? (
+              <p className="text-sm text-sg-text-soft">Bu belgede ürün satırı yok.</p>
+            ) : (
+              detail.lines.map((line) => (
+                <div key={line.id} className="rounded-sg-md border border-sg-border bg-sg-surface p-3 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-semibold text-sg-text">
+                      L{line.line_no} · {line.product_number || line.reference_number || line.product_type || 'Kalem'}
+                    </p>
+                    <p className="font-semibold text-sg-text">{formatMoney(line.line_total_dkk)}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-sg-text-soft">
+                    {line.metal_type === 'silver' ? 'Gümüş' : line.metal_type === 'gold' ? 'Altın' : line.metal_type || '—'}
+                    {line.weight_grams ? ` · ${formatNumber(line.weight_grams, ' g')}` : ''}
+                    {line.purity_karat ? ` · ${line.purity_karat}K` : ''}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+          {detail.notes ? <p className="mt-3 rounded-sg-md border border-sg-border bg-sg-surface-soft p-3 text-sm text-sg-text">{detail.notes}</p> : null}
+        </>
+      )}
+    </ModernDrawer>
   );
 }
 

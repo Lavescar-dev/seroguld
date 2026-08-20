@@ -5,6 +5,26 @@ export type ShopDurumu = 'hazir' | 'mangler_foto' | 'listelendi';
 export type InventorySurfaceView = 'system' | 'excel';
 export type InventoryLifecycleStatus = 'in_inventory' | 'for_sale' | 'undecided' | 'melted';
 
+export const PRODUCT_STATUS_LABEL: Record<string, string> = {
+  purchased: 'Giriş Bekliyor',
+  in_inventory: 'Depoda',
+  for_sale: 'Satış Hazır',
+  undecided: 'Karar Bekliyor',
+  sold: 'Satıldı',
+  melted: 'Eritildi',
+};
+
+// Backend `_allowed_status_transition` ile sync (product_service.py:120-145)
+export const ALLOWED_STATUS_TRANSITIONS: Record<string, InventoryLifecycleStatus[]> = {
+  // GDPR penceresi bilgilendirme: taze alım doğrudan satışa alınabilir.
+  purchased: ['in_inventory', 'undecided', 'melted', 'for_sale'],
+  in_inventory: ['for_sale', 'melted', 'undecided'],
+  for_sale: ['in_inventory', 'melted'], // sold ayrı akış (sale_price gerek)
+  undecided: ['in_inventory', 'for_sale', 'melted'],
+  sold: [],
+  melted: [],
+};
+
 export interface MarketPrices {
   gold: number;
   silver: number;

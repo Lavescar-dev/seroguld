@@ -69,11 +69,13 @@ export async function runDesktopBackup(reason: 'startup' | 'manual' | 'critical'
               body: JSON.stringify({ snapshot_path: candidate.snapshotPath }),
             }).catch(() => undefined);
           }
-        } catch {
+        } catch (drillError) {
           // The encrypted backup itself was already decrypted byte-for-byte by
           // the native publisher. A restore-drill warning must not turn a valid
           // daily backup into a failed backup or block the user workflow.
-          window.dispatchEvent(new CustomEvent('seroguld:backup-restore-drill-failed'));
+          window.dispatchEvent(new CustomEvent('seroguld:backup-restore-drill-failed', {
+            detail: { message: drillError instanceof Error ? drillError.message : String(drillError) },
+          }));
         }
       }
       window.dispatchEvent(new CustomEvent('seroguld:backup-completed', { detail: { snapshot, published } }));
@@ -83,7 +85,9 @@ export async function runDesktopBackup(reason: 'startup' | 'manual' | 'critical'
         method: 'DELETE',
         body: JSON.stringify({ snapshot_path: snapshot.snapshot_path }),
       }).catch(() => undefined);
-      window.dispatchEvent(new CustomEvent('seroguld:backup-failed'));
+      window.dispatchEvent(new CustomEvent('seroguld:backup-failed', {
+        detail: { message: error instanceof Error ? error.message : String(error) },
+      }));
       throw error;
     }
   })();

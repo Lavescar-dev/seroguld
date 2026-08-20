@@ -41,6 +41,7 @@ import type {
   SilverSub,
   StokItem,
 } from './types';
+import { ALLOWED_STATUS_TRANSITIONS, PRODUCT_STATUS_LABEL as SHARED_PRODUCT_STATUS_LABEL } from './types';
 
 const GOLD_PURITIES = [
   { label: '24K / Barren', saflik: 0.9999 },
@@ -420,14 +421,7 @@ function StokForm({
   );
 }
 
-const PRODUCT_STATUS_LABEL: Record<string, string> = {
-  purchased: 'Giriş Bekliyor',
-  in_inventory: 'Depoda',
-  for_sale: 'Satış Hazır',
-  undecided: 'Karar Bekliyor',
-  sold: 'Satıldı',
-  melted: 'Eritildi',
-};
+const PRODUCT_STATUS_LABEL = SHARED_PRODUCT_STATUS_LABEL;
 
 const PRODUCT_STATUS_TONE: Record<string, string> = {
   purchased: 'border-brand-300 bg-brand-100 text-brand-700',
@@ -438,16 +432,7 @@ const PRODUCT_STATUS_TONE: Record<string, string> = {
   melted: 'border-rose-300 bg-rose-50 text-rose-700',
 };
 
-// Backend `_allowed_status_transition` ile sync (product_service.py:120-145)
-const ALLOWED_TRANSITIONS: Record<string, InventoryLifecycleStatus[]> = {
-  // GDPR penceresi bilgilendirme: taze alım doğrudan satışa alınabilir.
-  purchased: ['in_inventory', 'undecided', 'melted', 'for_sale'],
-  in_inventory: ['for_sale', 'melted', 'undecided'],
-  for_sale: ['in_inventory', 'melted'], // sold ayrı akış (sale_price gerek)
-  undecided: ['in_inventory', 'for_sale', 'melted'],
-  sold: [],
-  melted: [],
-};
+const ALLOWED_TRANSITIONS = ALLOWED_STATUS_TRANSITIONS;
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
   created: 'Oluşturuldu',
