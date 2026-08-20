@@ -8,8 +8,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.antifraud import (
+    AntiFraudOverrideIn,
     get_order_detail as get_legacy_antifraud_order_detail,
     get_recent_orders as get_legacy_antifraud_recent_orders,
+    post_order_override as post_legacy_antifraud_override,
 )
 from app.api.deps import require_admin
 from app.api.inventory import get_inventory_workspace as get_legacy_inventory_workspace
@@ -446,3 +448,16 @@ async def get_opmc_order_detail_v2(
         notes_per_order=notes_per_order,
         _=admin,
     )
+
+
+@router.post("/opmc/orders/{order_id}/override", response_model=AntiFraudOrderOut)
+async def post_opmc_order_override_v2(
+    order_id: int,
+    payload: AntiFraudOverrideIn,
+    admin: User = Depends(require_admin),
+) -> AntiFraudOrderOut:
+    """Frontend'in çağırdığı v2 yolu — legacy /api/antifraud override'ını sarar.
+
+    Bu uç eksikken OPMC detayındaki onay/red butonları 404 alıyordu.
+    """
+    return await post_legacy_antifraud_override(order_id=order_id, payload=payload, admin=admin)
