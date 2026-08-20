@@ -39,7 +39,7 @@ function ModernInventoryEditor({ state }: { state: ModernDepolamaViewModel['stat
         <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); state.saveItem(); }}>
           <label htmlFor="inventory-name" className="text-xs font-semibold text-sg-text-soft">Ürün adı<input id="inventory-name" name="display_name" required value={editing.urun} onChange={(event) => update({ urun: event.target.value })} className={editorInputClass} /></label>
           <label htmlFor="inventory-category" className="text-xs font-semibold text-sg-text-soft">Kategori<select id="inventory-category" name="category" value={editing.mainKat} onChange={(event) => updateCategory(event.target.value as MainCategory)} className={editorInputClass}><option value="kulce">Külçe</option><option value="sikke">Sikke</option><option value="taki">Takı</option><option value="gumus">Gümüş</option><option value="platin_pd">Platin / Palladyum</option></select></label>
-          {editing.mainKat === 'gumus' ? <label htmlFor="inventory-silver-subcategory" className="text-xs font-semibold text-sg-text-soft">Gümüş türü<select id="inventory-silver-subcategory" name="silver_subcategory" value={editing.gumusAlt || 'smykker'} onChange={(event) => update({ gumusAlt: event.target.value as SilverSub })} className={editorInputClass}><option value="smykker">Takı</option><option value="barrer">Külçe</option></select></label> : null}
+          {editing.mainKat === 'gumus' ? <label htmlFor="inventory-silver-subcategory" className="text-xs font-semibold text-sg-text-soft">Gümüş türü<select id="inventory-silver-subcategory" name="silver_subcategory" value={editing.gumusAlt || 'smykker'} onChange={(event) => update({ gumusAlt: event.target.value as SilverSub })} className={editorInputClass}><option value="smykker">Takı</option><option value="barrer">Külçe</option><option value="monter">Sikke (Mønter)</option></select></label> : null}
           {editing.mainKat === 'platin_pd' ? <label htmlFor="inventory-platinum-subcategory" className="text-xs font-semibold text-sg-text-soft">Metal<select id="inventory-platinum-subcategory" name="platinum_subcategory" value={editing.platinAlt || 'platin'} onChange={(event) => update({ platinAlt: event.target.value as PlatinumSub })} className={editorInputClass}><option value="platin">Platin</option><option value="palladyum">Palladyum</option></select></label> : null}
           <label htmlFor="inventory-reference" className="text-xs font-semibold text-sg-text-soft">Stok / referans no<input id="inventory-reference" name="reference_number" value={editing.stokNo || editing.referenceNumber || ''} onChange={(event) => update({ stokNo: event.target.value, referenceNumber: event.target.value || null })} className={editorInputClass} /></label>
           <label htmlFor="inventory-date" className="text-xs font-semibold text-sg-text-soft">Alış tarihi<input id="inventory-date" name="purchase_date" type="date" value={editing.lagerDato} onChange={(event) => update({ lagerDato: event.target.value })} className={editorInputClass} /></label>
@@ -71,6 +71,9 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
   const selected = state.selectedProduct;
   const [migrationOpen, setMigrationOpen] = useState(false);
   const categoryScope = state.categoryScope || state.activeKat;
+  // Seçili ürünü düzenlemek için listedeki StokItem karşılığı gerekir
+  // (klasik drawer'daki selectedDraft deseniyle aynı).
+  const selectedDraft = selected ? state.stokList.find((item) => item.id === selected.id) ?? null : null;
   const categoryOptions: Array<{ key: MainCategory | 'all'; label: string }> = [
     { key: 'all', label: 'Tüm ürünler' },
     { key: 'kulce', label: 'Külçe' },
@@ -98,6 +101,9 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
       }
       actions={
         <>
+          <button type="button" onClick={() => state.setPriceOpen(!state.priceOpen)} className={shellButtonClass(state.priceOpen ? 'primary' : 'secondary')}>
+            Fiyatlar · Au {state.prices.gold} / Ag {state.prices.silver}
+          </button>
           <button type="button" onClick={() => setMigrationOpen(true)} className={shellButtonClass('secondary')}>Eski sistemi taşı</button>
           <button type="button" onClick={state.startNew} className={shellButtonClass('primary')}>Yeni Ürün</button>
           <InventoryWorkbookImport variant="modern" />
@@ -126,6 +132,52 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
           </button>
         ))}
       </div>
+
+      {categoryScope === 'gumus' ? (
+        <div className="flex flex-wrap gap-2 rounded-sg-xl border border-sg-border bg-sg-surface p-2" role="group" aria-label="Gümüş alt tipi">
+          {([['smykker', 'Takı'], ['barrer', 'Külçe'], ['monter', 'Sikke']] as const).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => state.setGumusAlt(key)} aria-pressed={state.gumusAlt === key} className={state.gumusAlt === key ? shellButtonClass('primary') : shellButtonClass('ghost')}>
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {categoryScope === 'platin_pd' ? (
+        <div className="flex flex-wrap gap-2 rounded-sg-xl border border-sg-border bg-sg-surface p-2" role="group" aria-label="Platin alt tipi">
+          {([['platin', 'Platin'], ['palladyum', 'Palladyum']] as const).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => state.setPlatinAlt(key)} aria-pressed={state.platinAlt === key} className={state.platinAlt === key ? shellButtonClass('primary') : shellButtonClass('ghost')}>
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {state.priceOpen ? (
+        <ModernSection title="Günlük piyasa fiyatları (DKK/g)" subtitle="Spot değerleme bu fiyatlarla hesaplanır; Kaydet tüm cihazlara uygular.">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {([
+              ['gold', 'Altın 24K'],
+              ['silver', 'Gümüş'],
+              ['platin', 'Platin'],
+              ['palladyum', 'Palladyum'],
+            ] as const).map(([key, label]) => (
+              <NumericDraftInput
+                key={key}
+                id={`market-price-${key}`}
+                label={label}
+                value={state.prices[key]}
+                onCommit={(value) => state.setPrices((current) => ({ ...current, [key]: value }))}
+              />
+            ))}
+          </div>
+          <div className="mt-3 flex justify-end gap-2">
+            <button type="button" onClick={() => state.setPriceOpen(false)} className={shellButtonClass('secondary')}>Kapat</button>
+            <button type="button" onClick={state.savePrices} disabled={state.savingPrices} className={shellButtonClass('primary')}>
+              {state.savingPrices ? 'Kaydediliyor…' : 'Kaydet'}
+            </button>
+          </div>
+        </ModernSection>
+      ) : null}
+
       <ModernStatGrid items={viewModel.stats} />
 
       {viewModel.phase === 'loading' ? <LoadingState label="Depolama workspace yükleniyor" /> : null}
@@ -194,6 +246,15 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
                     <td className="px-3 py-3">
                       <div className="flex gap-2">
                         <button type="button" onClick={() => state.onOpenDetail(item.id)} className={shellButtonClass('ghost')}>Detay</button>
+                        <button type="button" onClick={() => state.setEditing(item)} className={shellButtonClass('ghost')}>Düzenle</button>
+                        <button
+                          type="button"
+                          disabled={state.deletingItem}
+                          onClick={() => { if (window.confirm(`"${item.urun}" silinsin mi?`)) state.deleteItem(item.id); }}
+                          className={shellButtonClass('ghost')}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-sg-red" />
+                        </button>
                         {LABEL_PRINTING_ENABLED ? <button type="button" onClick={() => state.onPrintLabel(item.id, item.urun)} className={shellButtonClass('ghost')}>Etiket</button> : null}
                       </div>
                     </td>
@@ -249,6 +310,11 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
+                {selectedDraft ? (
+                  <button type="button" onClick={() => state.setEditing(selectedDraft)} className={shellButtonClass('primary')}>
+                    Düzenle
+                  </button>
+                ) : null}
                 <button type="button" onClick={() => state.onOpenWooProduct(selected.id)} className={shellButtonClass('secondary')}>
                   <Eye className="h-4 w-4" />
                   Woo
