@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, Uuid, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, Uuid, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,6 +14,16 @@ from app.models.enums import MetalTypeEnum, ProductStatusEnum, ProductTypeEnum, 
 
 class Product(Base):
     __tablename__ = "products"
+    # reference_number kısmi unique (NULL'lar hariç) — 0037 migration ile eşleşir.
+    __table_args__ = (
+        Index(
+            "uq_products_reference_number",
+            "reference_number",
+            unique=True,
+            sqlite_where=text("reference_number IS NOT NULL"),
+            postgresql_where=text("reference_number IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     product_number: Mapped[str] = mapped_column(String(4), unique=True, nullable=False, index=True)

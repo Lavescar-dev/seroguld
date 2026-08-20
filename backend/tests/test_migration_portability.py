@@ -44,6 +44,9 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
             row[1] for row in connection.execute("PRAGMA table_info(market_rate_confirmations)")
         }
         product_columns = {row[1] for row in connection.execute("PRAGMA table_info(products)")}
+        product_indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(products)")
+        }
 
     heads = subprocess.run(
         [sys.executable, "-m", "alembic", "heads"],
@@ -74,6 +77,7 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
     assert catalog_state_rows == 0
     assert "diameter_mm" in product_columns
     assert "woocommerce_category_ids" in product_columns
+    assert "uq_products_reference_number" in product_indexes
 
 
 def test_0035_backfills_inventory_category_like_runtime_inference(tmp_path: Path) -> None:

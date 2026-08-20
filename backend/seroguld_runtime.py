@@ -100,7 +100,7 @@ LEGACY_REVISION_ALIASES = {
 # YALNIZ son çare fallback — gerçek head her zaman Alembic script dizininden
 # okunur (_current_migration_head). Bu sabit bayatlarsa migration-öncesi
 # yedek yanlış atlanabilir; 0.3.8'de "0034" olarak bayat kalmıştı.
-CURRENT_MIGRATION_HEAD = "0036_product_woo_categories"
+CURRENT_MIGRATION_HEAD = "0037_product_reference_unique"
 
 
 def _current_migration_head() -> str:

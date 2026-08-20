@@ -34,8 +34,12 @@ async def _get_or_seed_sequence(
     key: str,
     seed_value: int,
     legacy_keys: tuple[str, ...] = (),
+    for_update: bool = False,
 ) -> ReferenceSequence:
-    current = await session.get(ReferenceSequence, key)
+    # Tüketim yolları satır kilidiyle okur: eşzamanlı iki finalize aynı
+    # next_value'yu görüp aynı numarayı üretmesin (SQLite'ta no-op, tek
+    # yazıcı; Postgres'te SELECT ... FOR UPDATE).
+    current = await session.get(ReferenceSequence, key, with_for_update=bool(for_update))
     if current is not None:
         return current
 
@@ -100,21 +104,35 @@ async def consume_reference_number(session: AsyncSession, *, start: int, window:
         key=REFERENCE_NUMBER_SEQUENCE_KEY,
         seed_value=seed,
         legacy_keys=LEGACY_REFERENCE_SEQUENCE_KEYS,
+        for_update=True,
     )
-    next_value = int(seq.next_value)
-    if len(str(next_value)) > 10:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Referans no limiti asildi. Lutfen manuel referans girin.",
+    candidate = int(seq.next_value)
+    # Elle girilmiş bir referans sıra değerini işgal etmiş olabilir; unique
+    # kısıt finalize ortasında patlamasın diye dolu numaralar atlanır.
+    while True:
+        if len(str(candidate)) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Referans no limiti asildi. Lutfen manuel referans girin.",
+            )
+        taken = await session.scalar(
+            select(func.count())
+            .select_from(Product)
+            .where(Product.reference_number == str(candidate))
         )
-    seq.next_value = next_value + 1
+        if not taken:
+            break
+        candidate += 1
+    seq.next_value = candidate + 1
     await session.flush()
-    return str(next_value)
+    return str(candidate)
 
 
 async def consume_product_number(session: AsyncSession) -> str:
     seed = await infer_product_number_seed(session)
-    seq = await _get_or_seed_sequence(session, key=PRODUCT_NUMBER_SEQUENCE_KEY, seed_value=seed)
+    seq = await _get_or_seed_sequence(
+        session, key=PRODUCT_NUMBER_SEQUENCE_KEY, seed_value=seed, for_update=True
+    )
     next_value = int(seq.next_value)
     if next_value > 9999:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Urun numarasi limiti doldu (9999)")

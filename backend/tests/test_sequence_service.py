@@ -77,6 +77,50 @@ def test_product_number_sequence_resumes_from_existing_products():
     asyncio.run(run())
 
 
+def test_consume_reference_number_skips_taken_values():
+    """Elle girilmiş bir referans sıra değerini işgal etmişse tüketim onu
+    atlar; unique kısıt finalize ortasında patlamaz."""
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            now = utc_now()
+            # Sıra 9680'de başlayacak ama 9680 ve 9681 elle alınmış.
+            for ref in ("9680", "9681"):
+                session.add(
+                    Product(
+                        product_number=f"01{ref[-2:]}",
+                        reference_number=ref,
+                        product_type=ProductTypeEnum.BRACELET,
+                        metal_type=MetalTypeEnum.YELLOW_GOLD,
+                        weight_grams=Decimal("10.00"),
+                        purity_karat="18K",
+                        purity_percentage=Decimal("75.00"),
+                        pure_gold_grams=Decimal("7.50"),
+                        purchase_date=now,
+                        purchase_price_dkk=Decimal("1000.00"),
+                        gold_rate_at_purchase=Decimal("500.00"),
+                        commission=Decimal("8.00"),
+                        gdpr_release_date=now + timedelta(days=14),
+                        is_gdpr_locked=True,
+                        status=ProductStatusEnum.PURCHASED,
+                    )
+                )
+            session.add(ReferenceSequence(key="reference_number", next_value=9680))
+            await session.flush()
+
+            consumed = await consume_reference_number(session, start=9680, window=100)
+            assert consumed == "9682"
+
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
 def test_reference_sequence_migrates_from_legacy_key():
     async def run() -> None:
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
