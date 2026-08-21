@@ -266,6 +266,36 @@ export function useLogMakeState(): LogPageProps {
     },
   });
 
+  // Tekil satır rotalama — tık ANINDA kalıcılaşır (gizli iki-adım kaldırıldı).
+  const routeLineMutation = useMutation({
+    mutationFn: async ({ line, destination }: { line: AfgWorkspaceLine; destination: 'inventory' | 'undecided' | 'melt' }) => {
+      const draft = lineDrafts[line.id];
+      return apiRequest<unknown>('/api/v2/log/lines/route', {
+        method: 'POST',
+        body: JSON.stringify({
+          line_ids: [line.id],
+          destination,
+          classification: draft?.classification || 'standard',
+          note: (draft?.note || '').trim() || null,
+        }),
+      });
+    },
+    onSuccess: async (_result, vars) => {
+      setLineDrafts((current) => {
+        const next = { ...current };
+        delete next[vars.line.id];
+        return next;
+      });
+      await invalidateLog();
+      emitArtifactSync({ kind: 'log', key: String(selectedYear), source: 'log-ui' });
+      const label = vars.destination === 'inventory' ? 'Depoya alındı' : vars.destination === 'melt' ? 'Eritmeye ayrıldı' : 'Karara bırakıldı';
+      toast.success(label);
+    },
+    onError: (error) => {
+      toast.error('İşlem uygulanamadı', extractApiMessage(error, 'Sunucu hatası'));
+    },
+  });
+
   const createMeltLotMutation = useMutation({
     mutationFn: async () =>
       apiRequest<LogMeltLot>('/api/v2/log/melt-lots', {
@@ -420,7 +450,7 @@ export function useLogMakeState(): LogPageProps {
         ...current,
         [lotId]: { ...(current[lotId] || toLotDraft(bucket?.melt_lots.find((lot) => lot.id === lotId) as LogMeltLot)), ...patch },
       })),
-    routeBusy: applyRouteReviewMutation.isPending,
+    routeBusy: applyRouteReviewMutation.isPending || routeLineMutation.isPending,
     meltBusy: updateMeltLotMutation.isPending,
     createMeltBusy: createMeltLotMutation.isPending,
     finalizeBusy: finalizeMeltLotMutation.isPending,
@@ -449,11 +479,19 @@ export function useLogMakeState(): LogPageProps {
       if (pendingRouteChanges.length === 0) return;
       applyRouteReviewMutation.mutate(pendingRouteChanges);
     },
-    onRoute: (line, destination) =>
-      setLineDrafts((current) => ({
-        ...current,
-        [line.id]: { ...(current[line.id] || buildLineDraft(line)), destination },
-      })),
+    onRoute: async (line, destination) => {
+      // Erit terminal (geri alınamaz) → önce onay. Diğerleri anında.
+      if (destination === 'melt') {
+        const ok = await confirm({
+          title: 'Satırı eritmeye ayır',
+          message: 'Bu satırın ürünü "eritildi" olarak işaretlenecek. Bu işlem geri alınamaz. Emin misiniz?',
+          confirmText: 'Erit',
+          variant: 'danger',
+        });
+        if (!ok) return;
+      }
+      routeLineMutation.mutate({ line, destination });
+    },
     onSaveLot: (lotId) => {
       const fallback = bucket?.melt_lots.find((lot) => lot.id === lotId);
       if (!fallback) return;

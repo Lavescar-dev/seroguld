@@ -1238,14 +1238,14 @@ function SplitSummarySection({
             <td className="border border-red-200 bg-red-50 px-3 py-2 text-center font-black text-red-700" style={monoStyle}>−{totalSplitWeight.toFixed(2)}</td>
             <td className="border border-red-200 bg-red-50 px-3 py-2 text-right font-black text-red-700" style={monoStyle}>−{totalSplitAmount.toFixed(0)}</td>
             <td className="border border-red-300 bg-red-100 px-3 py-2 text-center font-black text-red-800" style={monoStyle}>−{totalSplitPure.toFixed(3)}</td>
-            <td className="border border-red-200 bg-red-50 px-3 py-2 text-xs italic text-red-400">= D34</td>
+            <td className="border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-400">Depoya ayrılan</td>
           </tr>
           <tr className="border-t-2 border-orange-300">
             <td className="border border-orange-200 bg-orange-50 px-3 py-2.5 text-xs font-black uppercase tracking-wider text-orange-800">Net Eritmeye Giden</td>
             <td className="border border-orange-200 bg-orange-50 px-3 py-2.5 text-center font-black text-orange-900" style={monoStyle}>{toFloat(bucket.melt_queue.total_weight_grams).toFixed(2)}</td>
             <td className="border border-orange-200 bg-orange-50 px-3 py-2.5 text-right font-black text-orange-900" style={monoStyle}>{toFloat(bucket.melt_queue.total_amount_dkk).toFixed(0)}</td>
             <td className="border border-orange-300 bg-orange-100 px-3 py-2.5 text-center font-black text-orange-900" style={monoStyle}>{toFloat(bucket.melt_queue.total_pure_gold_grams).toFixed(3)}</td>
-            <td className="border border-orange-200 bg-orange-50 px-3 py-2.5 text-xs text-orange-400">= D37</td>
+            <td className="border border-orange-200 bg-orange-50 px-3 py-2.5 text-xs text-orange-400">Net eritme</td>
           </tr>
         </tfoot>
       </table>

@@ -6,7 +6,7 @@ import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 import { formatDate, formatMoney, formatNumber, labelAfgClassification } from '@/lib/format';
 import { apiRequest } from '@/lib/api';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
-import { buildBucketGroups, lineHasPendingChange, resolveLineDraft, sumLines } from '@/make/log/lineHelpers';
+import { buildBucketGroups, resolveLineDraft, sumLines } from '@/make/log/lineHelpers';
 import { classificationOptions, type LineDraft, type MeltLotDraft, type SplitGroupKey } from '@/make/log/types';
 
 import { DataPill, EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
@@ -18,9 +18,9 @@ const LOT_STATUS_LABEL: Record<string, string> = {
 };
 
 const SPLIT_GROUP_LABEL: Record<SplitGroupKey, string> = {
-  jewelry_cleaning: 'Smykker Lager',
-  white_gold: 'Hvidguld / Beyaz Au',
-  separate_storage: 'Ayrı Depolama',
+  jewelry_cleaning: 'Kuyum / temizlik',
+  white_gold: 'Beyaz altın',
+  separate_storage: 'Ayrı depo',
 };
 
 const LOT_DRAFT_FIELDS: Array<{ key: keyof MeltLotDraft; label: string; type: 'date' | 'text' }> = [
@@ -71,15 +71,15 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
   return (
     <ModernModuleShell
       eyebrow="Log / AFG Defteri"
-      title="Route ve Melt Yönetimi"
-      subtitle="Altın ve gümüş havuzları, taslak yönlendirme inceleme ve eritme lotu yaşam döngüsü akışlarını mevcut işlem sonucu ile kullanan modern arayüz."
+      title="AFG → Eritme akışı"
+      subtitle="Alım makbuzu (AFG) satırlarını depoya al, eritmeye ayır veya karara bırak; eritme lotlarını oluştur ve kesinleştir."
       blocker={viewModel.blocker}
       unsupportedControls={state.activeView === 'excel' ? [] : viewModel.unsupportedControls}
       badges={
         <>
-          <DataPill label="Bucket" value={state.activeTab.toUpperCase()} tone={state.activeTab === 'gold' ? 'warning' : 'neutral'} />
+          <DataPill label="Defter" value={state.activeTab === 'gold' ? 'Altın' : 'Gümüş'} tone={state.activeTab === 'gold' ? 'warning' : 'neutral'} />
           <DataPill label="Görünüm" value={state.activeView === 'excel' ? 'Office' : 'Sistem'} tone={state.activeView === 'excel' ? 'warning' : 'neutral'} />
-          <DataPill label="Review" value={state.pendingRouteCount > 0 ? `${state.pendingRouteCount} bekliyor` : 'Temiz'} tone={state.pendingRouteCount > 0 ? 'warning' : 'success'} />
+          {bucket ? <DataPill label="Eritme kuyruğu" value={`${bucket.melt_queue.line_count} satır`} tone={bucket.melt_queue.line_count > 0 ? 'warning' : 'success'} /> : null}
         </>
       }
       actions={
@@ -124,18 +124,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
         <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
           <ModernSection
             title="AFG Belgeleri"
-            subtitle="Belgeleri arayın ve satırları hızla yönlendirin."
-            actions={
-              state.pendingRouteCount > 0 ? (
-                <>
-                  <button type="button" onClick={state.onDiscardRouteReview} className={shellButtonClass('danger')}>Vazgeç</button>
-                  <button type="button" onClick={state.onApplyRouteReview} disabled={state.routeBusy} className={shellButtonClass('primary')}>
-                    {state.routeBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    İncelemeyi uygula
-                  </button>
-                </>
-              ) : null
-            }
+            subtitle="Satırı yönlendirmek için Depo / Kararsız / Erit'e tıklayın — anında uygulanır."
           >
             <div className="flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
               <Search className="h-4 w-4 text-sg-text-soft" />
@@ -162,32 +151,38 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                   <div className="mt-3 grid gap-2">
                     {document.lines.map((line) => {
                       const draft = resolveLineDraft(line, state.lineDrafts);
-                      const pending = lineHasPendingChange(line, state.lineDrafts);
+                      const terminal = line.product_status === 'melted' || line.product_status === 'sold';
+                      const dest = line.operation_destination;
                       const routeButton = (destination: LineDraft['destination'], label: string, activeClass: string) => (
                         <button
                           type="button"
-                          disabled={state.routeBusy}
+                          disabled={state.routeBusy || terminal}
                           onClick={() => state.onRoute(line, destination)}
-                          className={`rounded-sg-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-50 ${draft.destination === destination ? activeClass : 'border-sg-border bg-sg-surface text-sg-text-soft hover:bg-sg-surface-soft'}`}
+                          className={`rounded-sg-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${dest === destination ? activeClass : 'border-sg-border bg-sg-surface text-sg-text-soft hover:bg-sg-surface-soft'}`}
                         >
                           {label}
                         </button>
                       );
                       return (
-                        <div key={line.id} className={`rounded-sg-lg border p-3 ${pending ? 'border-sg-amber/40 bg-sg-amber-soft/30' : 'border-sg-border bg-sg-surface'}`}>
+                        <div key={line.id} className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="text-xs font-semibold text-sg-text">
-                              L{line.line_no} · {formatNumber(line.weight_grams, ' g')} · {formatMoney(line.line_total_dkk)}
-                              {pending ? <span className="ml-2 rounded-full bg-sg-amber-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">İnceleme</span> : null}
+                              L{line.line_no} · {formatNumber(line.weight_grams, ' g')} · {formatNumber(line.pure_gold_grams, ' has')} · {formatMoney(line.line_total_dkk)}
                             </p>
-                            <div className="flex gap-1.5">
-                              {routeButton('inventory', 'Depo', 'border-sg-green bg-sg-green-soft text-sg-green-strong')}
-                              {routeButton('undecided', 'Kararsız', 'border-sg-amber/50 bg-sg-amber-soft text-sg-amber')}
-                              {routeButton('melt', 'Erit', 'border-sg-red/40 bg-sg-red-soft text-sg-red')}
-                            </div>
+                            {terminal ? (
+                              <span className={`rounded-sg-sm border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${line.product_status === 'melted' ? 'border-sg-red/30 bg-sg-red-soft text-sg-red' : 'border-sg-border bg-sg-surface text-sg-text-soft'}`}>
+                                {line.product_status === 'melted' ? 'Eritildi' : 'Satıldı'}
+                              </span>
+                            ) : (
+                              <div className="flex gap-1.5">
+                                {routeButton('inventory', 'Depo', 'border-sg-green bg-sg-green-soft text-sg-green-strong')}
+                                {routeButton('undecided', 'Kararsız', 'border-sg-amber/50 bg-sg-amber-soft text-sg-amber')}
+                                {routeButton('melt', 'Erit', 'border-sg-red/40 bg-sg-red-soft text-sg-red')}
+                              </div>
+                            )}
                           </div>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                            <label className="text-[11px] font-semibold text-sg-text-soft">Sınıf
+                          {!terminal && dest === 'inventory' ? (
+                            <label className="mt-2 block text-[11px] font-semibold text-sg-text-soft">Depo sınıfı (değiştirince Depo'ya tekrar basın)
                               <select
                                 value={draft.classification}
                                 onChange={(event) => state.onDraftChange(line.id, { classification: event.target.value as LineDraft['classification'] })}
@@ -198,15 +193,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                                 ))}
                               </select>
                             </label>
-                            <label className="text-[11px] font-semibold text-sg-text-soft">Operasyon notu
-                              <input
-                                value={draft.note}
-                                onChange={(event) => state.onDraftChange(line.id, { note: event.target.value })}
-                                className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs text-sg-text outline-none"
-                                placeholder="Not"
-                              />
-                            </label>
-                          </div>
+                          ) : null}
                           {line.is_gdpr_locked ? <p className="mt-2 text-[11px] text-sg-amber">GDPR süresi devam ediyor (bilgi).</p> : null}
                         </div>
                       );
