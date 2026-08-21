@@ -1,6 +1,6 @@
 [package]
 name = "seroguld_crm_desktop"
-version = "0.3.10"
+version = "0.3.11"
 description = "Sero Guld CRM desktop shell"
 authors = ["Sero Guld"]
 edition = "2021"
