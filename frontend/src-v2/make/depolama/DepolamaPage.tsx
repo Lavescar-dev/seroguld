@@ -645,6 +645,7 @@ function ProductPhotoSection({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const attachedUrls = (product.photos || []).map((photo) => photo.url);
 
   return (
@@ -687,30 +688,43 @@ function ProductPhotoSection({
         />
       </div>
 
-      {product.photos.length > 0 ? (
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          {product.photos.slice(0, 9).map((photo) => (
-            <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200 bg-white">
-              <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
-              {photo.id ? (
-                <button
-                  type="button"
-                  disabled={deleting}
-                  onClick={() => onDelete(photo.id!)}
-                  className="absolute right-1 top-1 hidden border border-red-300 bg-white/95 p-1 text-red-600 hover:bg-red-100 group-hover:block disabled:opacity-50"
-                  title="Fotoğrafı sil"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-2 border border-dashed border-brand-300 bg-white px-4 py-5 text-xs text-brand-500">
-          Bu ürün için henüz foto yok. Yükle veya Havuz butonuyla ekleyin.
-        </div>
-      )}
+      <div
+        onDragOver={(event) => { event.preventDefault(); if (!uploading) setDragActive(true); }}
+        onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          if (uploading) return;
+          const images = Array.from(event.dataTransfer?.files || []).filter((file) => file.type.startsWith('image/'));
+          if (images.length) onUpload(images);
+        }}
+        className={`mt-2 rounded-sg-md transition ${dragActive ? 'ring-2 ring-sg-accent bg-sg-accent-soft/40' : ''}`}
+      >
+        {product.photos.length > 0 ? (
+          <div className="grid grid-cols-3 gap-2">
+            {product.photos.slice(0, 9).map((photo) => (
+              <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200 bg-white">
+                <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
+                {photo.id ? (
+                  <button
+                    type="button"
+                    disabled={deleting}
+                    onClick={() => onDelete(photo.id!)}
+                    className="absolute right-1 top-1 hidden border border-red-300 bg-white/95 p-1 text-red-600 hover:bg-red-100 group-hover:block disabled:opacity-50"
+                    title="Fotoğrafı sil"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={`border border-dashed px-4 py-5 text-xs ${dragActive ? 'border-sg-accent text-sg-accent-dark' : 'border-brand-300 bg-white text-brand-500'}`}>
+            {dragActive ? 'Fotoğrafları buraya bırakın' : 'Bu ürün için henüz foto yok. Yükle/Havuz butonuyla ekleyin veya buraya sürükleyip bırakın.'}
+          </div>
+        )}
+      </div>
 
       <DepolamaPhotoLibraryDrawer
         open={libraryOpen}

@@ -476,6 +476,7 @@ function ModernPhotoSection({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const photos = product.photos || [];
   const attachedUrls = photos.map((photo) => photo.url);
   return (
@@ -513,28 +514,43 @@ function ModernPhotoSection({
         attaching={state.attachingLibraryPhoto}
         attachedUrls={attachedUrls}
       />
-      {photos.length > 0 ? (
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {photos.slice(0, 9).map((photo) => (
-            <div key={photo.id || photo.url} className="group relative overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface">
-              <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
-              {photo.id ? (
-                <button
-                  type="button"
-                  disabled={state.deletingPhoto}
-                  onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.onDeletePhoto(product.id, photo.id!); }}
-                  aria-label="Fotoğrafı sil"
-                  className="absolute right-1 top-1 hidden rounded-sg-md border border-sg-red/30 bg-sg-surface/95 p-1 text-sg-red hover:bg-sg-red-soft group-hover:block disabled:opacity-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="mt-3 text-sm text-sg-text-soft">Henüz fotoğraf yok. "Foto yükle" ile bir veya birden çok görsel ekleyebilirsiniz.</p>
-      )}
+      <div
+        onDragOver={(event) => { event.preventDefault(); if (!state.uploadingPhotos) setDragActive(true); }}
+        onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          if (state.uploadingPhotos) return;
+          const images = Array.from(event.dataTransfer?.files || []).filter((file) => file.type.startsWith('image/'));
+          if (images.length) state.onUploadPhotos(product.id, images);
+        }}
+        className={`mt-3 rounded-sg-md transition ${dragActive ? 'ring-2 ring-sg-accent bg-sg-accent-soft/40' : ''}`}
+      >
+        {photos.length > 0 ? (
+          <div className="grid grid-cols-3 gap-2">
+            {photos.slice(0, 9).map((photo) => (
+              <div key={photo.id || photo.url} className="group relative overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface">
+                <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
+                {photo.id ? (
+                  <button
+                    type="button"
+                    disabled={state.deletingPhoto}
+                    onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.onDeletePhoto(product.id, photo.id!); }}
+                    aria-label="Fotoğrafı sil"
+                    className="absolute right-1 top-1 hidden rounded-sg-md border border-sg-red/30 bg-sg-surface/95 p-1 text-sg-red hover:bg-sg-red-soft group-hover:block disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className={`rounded-sg-md border border-dashed px-4 py-5 text-sm ${dragActive ? 'border-sg-accent text-sg-accent-dark' : 'border-sg-border text-sg-text-soft'}`}>
+            {dragActive ? 'Fotoğrafları buraya bırakın' : 'Henüz fotoğraf yok. "Foto yükle" ile ekleyin veya görselleri buraya sürükleyip bırakın.'}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
