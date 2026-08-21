@@ -109,10 +109,10 @@ def test_full_maps_produce_categories_attributes_and_metas() -> None:
     attributes = {item["name"]: item["options"][0] for item in payload["attributes"]}
     assert attributes["Karat"] == "22 karat"
     assert attributes["Renhed"] == "0,916"
-    assert attributes["Vægt"] == "19,65 g"
+    assert attributes["Vægt"] == "19,65g"
     assert attributes["Længde"] == "20,00cm"
-    assert attributes["Bredde"] == "26,11 mm"
-    assert attributes["Tykkelse"] == "2,32 mm"
+    assert attributes["Bredde"] == "26,11mm"
+    assert attributes["Tykkelse"] == "2,32mm"
     assert attributes["Producent"] == "Ukendt"
     assert attributes["Vare nr."] == "xxxx"
     assert "Diameter" not in attributes  # boş alan atlanır
@@ -244,29 +244,43 @@ def test_platinum_product_resolves_platin_pd_category() -> None:
 
 
 def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
-    once = _apply_spec_strip("<p>Metin</p>", "Vare nr. : 1427, Vægt: 0,93g")
-    twice = _apply_spec_strip(once, "Vare nr. : 1427, Vægt: 0,93g")
+    once = _apply_spec_strip("<p>Metin</p>", "Vare nr. : 1427 Længde: 1,40cm")
+    twice = _apply_spec_strip(once, "Vare nr. : 1427 Længde: 1,40cm")
     assert twice.count(SPEC_STRIP_MARKER_START) == 1
     assert twice.count("Vare nr. : 1427") == 1
     assert twice.index(SPEC_STRIP_MARKER_START) == 0  # her zaman başta
 
-    with_diameter = _product(diameter_mm=Decimal("5.97"), weight_grams=Decimal("0.93"), reference_number="1427")
-    assert _spec_strip_text(with_diameter) == "Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm"
-    without_diameter = _product()
-    assert _spec_strip_text(without_diameter) == "Vare nr. : xxxx, Vægt: 19,65g"
+    # Referans düzeni: Vare nr. + doldurulmuş ölçüler (ağırlık şeride girmez).
+    pendant = _product(
+        reference_number="1201",
+        length_cm="1,40cm",
+        width_mm=Decimal("1.10"),
+        thickness_mm=Decimal("5.22"),
+        diameter_mm=None,
+    )
+    assert _spec_strip_text(pendant) == "Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
+
+    # Yalnız çaplı ürün (yüzük): sadece Diameter.
+    ring = _product(reference_number="1427", length_cm=None, width_mm=None, thickness_mm=None, diameter_mm=Decimal("5.97"))
+    assert _spec_strip_text(ring) == "Vare nr. : 1427 Diameter: 5,97mm"
+
+    # Ölçüsüz ürün: yalnız Vare nr.
+    plain = _product(reference_number="9000", length_cm=None, width_mm=None, thickness_mm=None, diameter_mm=None)
+    assert _spec_strip_text(plain) == "Vare nr. : 9000"
 
     payload, _ = build_publish_payload(
-        product=with_diameter,
+        product=pendant,
         regular_price_dkk=Decimal("100"),
         name=None,
         images=[],
         settings=_settings(),
     )
+    strip = "Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
     # Şerit iki yerde: kısa açıklamanın ve uzun açıklamanın başında.
     assert payload["short_description"].startswith(SPEC_STRIP_MARKER_START)
-    assert "Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm" in payload["short_description"]
+    assert strip in payload["short_description"]
     assert payload["description"].startswith(SPEC_STRIP_MARKER_START)
-    assert "Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm" in payload["description"]
+    assert strip in payload["description"]
     # AI'dan gelen kısa açıklama korunur, şeridin arkasına eklenir.
     assert "Elegant armbånd." in payload["short_description"]
 

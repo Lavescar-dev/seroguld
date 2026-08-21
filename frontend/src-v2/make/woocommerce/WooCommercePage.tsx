@@ -33,6 +33,7 @@ import {
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { WooCatalogPanel } from './WooCatalogPanel';
 import { WooCategoryPicker } from './WooCategoryPicker';
+import { WooPhotoThumb } from './WooPhotoThumb';
 import { describeRejectedPhotos, filesFromDataTransfer, validatePhotoFiles } from './photoUpload';
 
 import {
@@ -1247,7 +1248,7 @@ export function MakeWooCommercePage({
                     <div className="mb-3 grid grid-cols-4 gap-3">
                       {detail.photos.map((photo, index) => (
                         <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200">
-                          <img src={buildMediaUrl(photo.avif_url || photo.url)} alt={detail.display_name || secilen.urun} className="aspect-square w-full object-cover" />
+                          <WooPhotoThumb photo={photo} alt={detail.display_name || secilen.urun} className="aspect-square w-full object-cover" />
                           {primaryPhotoLabel(index, photo.is_primary) ? (
                             <div className="absolute left-1 top-1 flex items-center gap-0.5 bg-amber-500 px-1 py-0.5">
                               <Star className="h-2.5 w-2.5 text-white" />

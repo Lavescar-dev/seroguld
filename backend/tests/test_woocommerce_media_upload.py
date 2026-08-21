@@ -27,6 +27,8 @@ class _FakeAsyncClient:
 
     calls: list[dict[str, Any]] = []
     next_response: _FakeResponse = _FakeResponse(201, {"id": 4242})
+    # Sıralı yanıt kuyruğu (fallback testleri için); boşsa next_response döner.
+    response_queue: list[_FakeResponse] = []
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -39,6 +41,8 @@ class _FakeAsyncClient:
 
     async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
         type(self).calls.append({"url": url, **kwargs})
+        if type(self).response_queue:
+            return type(self).response_queue.pop(0)
         return type(self).next_response
 
 
@@ -61,21 +65,21 @@ def service(monkeypatch: pytest.MonkeyPatch) -> WooCommerceService:
     monkeypatch.setattr(woocommerce_module.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.calls = []
     _FakeAsyncClient.next_response = _FakeResponse(201, {"id": 4242})
+    _FakeAsyncClient.response_queue = []
     return WooCommerceService()
 
 
-def test_upload_sends_original_file_with_matching_filename_and_mime(
-    service: WooCommerceService, tmp_path: Path
-) -> None:
+def test_upload_sends_avif_first(service: WooCommerceService, tmp_path: Path) -> None:
+    """Siteye BİRİNCİL AVIF gönderilir (CRM yüklemede AVIF üretir)."""
     original = tmp_path / "abc123_orig.jpg"
     original.write_bytes(b"\xff\xd8\xff jpeg bytes")
     avif = tmp_path / "abc123.avif"
     avif.write_bytes(b"avif bytes")
     photo = {
         "id": "abc123",
-        "filename": "IMG_1234.jpg",  # kullanıcının yüklediği ad — içerikle eşleşmeyebilir
-        "original_path": str(original),
+        "filename": "IMG_1234.jpg",
         "avif_path": str(avif),
+        "original_path": str(original),
         "url": "/media/abc123.avif",
     }
 
@@ -84,13 +88,38 @@ def test_upload_sends_original_file_with_matching_filename_and_mime(
     assert warning is None
     assert media == {"id": 4242}
     call = _FakeAsyncClient.calls[0]
-    # filename ve Content-Type GÖNDERİLEN gerçek dosyadan türetilir (orijinal jpg).
-    assert 'filename="abc123_orig.jpg"' in call["headers"]["Content-Disposition"]
-    assert call["headers"]["Content-Type"] == "image/jpeg"
-    assert call["content"] == b"\xff\xd8\xff jpeg bytes"
-    # Media id foto dict'ine persist edildi (yeniden yayında upload atlanır).
+    # İlk deneme AVIF: filename + Content-Type AVIF kaynağından türetilir.
+    assert 'filename="abc123.avif"' in call["headers"]["Content-Disposition"]
+    assert call["headers"]["Content-Type"] == "image/avif"
+    assert call["content"] == b"avif bytes"
     assert photo["wc_media_id"] == 4242
     assert photo["wc_media_uploaded_at"]
+
+
+def test_upload_falls_back_to_original_when_avif_rejected(
+    service: WooCommerceService, tmp_path: Path
+) -> None:
+    """WP AVIF'i reddederse (kurulum AVIF desteklemez) yedek formata düşülür."""
+    avif = tmp_path / "abc_2.avif"
+    avif.write_bytes(b"avif bytes")
+    original = tmp_path / "abc_2_orig.jpg"
+    original.write_bytes(b"\xff\xd8\xff jpeg")
+    photo = {"id": "abc2", "filename": "x.jpg", "avif_path": str(avif), "original_path": str(original)}
+    # 1. deneme (AVIF) 400, 2. deneme (jpg) 201.
+    _FakeAsyncClient.response_queue = [
+        _FakeResponse(400, {"message": "avif not allowed"}, text='{"message":"avif not allowed"}'),
+        _FakeResponse(201, {"id": 9001}),
+    ]
+
+    media, warning = asyncio.run(service._upload_media(photo))
+
+    assert warning is None
+    assert media == {"id": 9001}
+    assert len(_FakeAsyncClient.calls) == 2
+    # İkinci (kabul edilen) çağrı orijinal jpg.
+    assert 'filename="abc_2_orig.jpg"' in _FakeAsyncClient.calls[1]["headers"]["Content-Disposition"]
+    assert _FakeAsyncClient.calls[1]["headers"]["Content-Type"] == "image/jpeg"
+    assert photo["wc_media_id"] == 9001
 
 
 def test_upload_skips_when_media_id_already_recorded(service: WooCommerceService) -> None:

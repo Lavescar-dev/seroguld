@@ -77,7 +77,10 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-5.4"
+    openai_model: str = "gpt-5.6-luna"
+    # Reasoning effort AYRI parametredir; model ID'sine yapıştırılmaz (404).
+    # Değerler: none|low|medium|high|xhigh|max. Boş = gönderme (model default).
+    openai_reasoning_effort: str = "high"
     openai_max_tokens: int = 4096
     openai_timeout_seconds: float = 20.0
 

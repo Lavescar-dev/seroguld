@@ -312,15 +312,15 @@ def _build_attributes(product: Product) -> list[dict[str, Any]]:
         fraction = (Decimal(str(product.purity_percentage)) / Decimal("100")).quantize(Decimal("0.001"))
         entries.append(("Renhed", _danish_number(fraction)))
     if product.weight_grams is not None:
-        entries.append(("V\u00e6gt", f"{_danish_number(quantize_2(product.weight_grams))} g"))
+        entries.append(("V\u00e6gt", f"{_danish_number(quantize_2(product.weight_grams))}g"))
     if getattr(product, "length_cm", None):
-        entries.append(("L\u00e6ngde", str(product.length_cm)))
+        entries.append(("L\u00e6ngde", str(product.length_cm).strip()))
     if getattr(product, "width_mm", None) is not None:
-        entries.append(("Bredde", f"{_danish_number(quantize_2(product.width_mm))} mm"))
+        entries.append(("Bredde", f"{_danish_number(quantize_2(product.width_mm))}mm"))
     if getattr(product, "thickness_mm", None) is not None:
-        entries.append(("Tykkelse", f"{_danish_number(quantize_2(product.thickness_mm))} mm"))
+        entries.append(("Tykkelse", f"{_danish_number(quantize_2(product.thickness_mm))}mm"))
     if getattr(product, "diameter_mm", None) is not None:
-        entries.append(("Diameter", f"{_danish_number(quantize_2(product.diameter_mm))} mm"))
+        entries.append(("Diameter", f"{_danish_number(quantize_2(product.diameter_mm))}mm"))
     if getattr(product, "producer", None):
         entries.append(("Producent", str(product.producer)))
     reference = (product.reference_number or product.product_number or "").strip()
@@ -426,19 +426,29 @@ SPEC_STRIP_MARKER_END = "<!-- /sg-spec -->"
 
 
 def _spec_strip_text(product: Product) -> str:
-    """Referans sitedeki 'Vare nr. : 1427, Vægt: 0,93g Diameter: 5,97mm' şeridi.
+    """Referans sitedeki yeşil kutu şeridi:
+    'Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm'.
 
-    Çap yoksa Diameter parçası atlanır; sayılar Danca formatlanır.
+    Vare nr. + DOLDURULMUŞ ölçüler (Længde/Bredde/Tykkelse/Diameter). Ağırlık
+    şeride girmez (Yderligere information tablosunda); birimler boşluksuz,
+    referansla birebir; sayılar Danca ondalık virgülle.
     """
     ref = (product.reference_number or product.product_number or "").strip()
     if not ref:
         return ""
-    parts = [f"Vare nr. : {ref}"]
-    if getattr(product, "weight_grams", None) is not None:
-        parts.append(f"Vægt: {_danish_number(product.weight_grams)}g")
+    dims: list[str] = []
+    length = getattr(product, "length_cm", None)
+    if length:
+        # length_cm birim içeren serbest metindir (ör. "1,40cm" / "18-19cm").
+        dims.append(f"Længde: {str(length).strip()}")
+    if getattr(product, "width_mm", None) is not None:
+        dims.append(f"Bredde: {_danish_number(quantize_2(product.width_mm))}mm")
+    if getattr(product, "thickness_mm", None) is not None:
+        dims.append(f"Tykkelse: {_danish_number(quantize_2(product.thickness_mm))}mm")
     if getattr(product, "diameter_mm", None) is not None:
-        parts.append(f"Diameter: {_danish_number(product.diameter_mm)}mm")
-    return ", ".join(parts[:2]) + (f" {parts[2]}" if len(parts) > 2 else "")
+        dims.append(f"Diameter: {_danish_number(quantize_2(product.diameter_mm))}mm")
+    base = f"Vare nr. : {ref}"
+    return f"{base} {', '.join(dims)}" if dims else base
 
 
 def _strip_spec_block(value: str) -> str:
@@ -740,21 +750,30 @@ class WooCommerceService:
         if existing_media_id:
             return {"id": int(existing_media_id)}, None
 
-        # Orijinal dosya orijinal uzantısıyla gönderilir: WP'nin AVIF kabulü
-        # kurulum bağımlıdır ve filename/mime uyuşmazlığı WP tarafından
-        # reddedilir. filename + Content-Type HER ZAMAN gönderilen gerçek
-        # kaynaktan türetilir; kullanıcının yüklediği ad içerikle eşleşmiyorsa
-        # kullanılmaz.
-        photo_url = str(
-            photo_item.get("original_path")
-            or photo_item.get("avif_path")
-            or photo_item.get("original_url")
-            or photo_item.get("url")
-            or ""
-        ).strip()
-        if not photo_url:
+        # Siteye AVIF BİRİNCİL gönderilir (CRM yüklemede zaten AVIF üretir).
+        # WP'nin AVIF kabulü kuruluma bağlı olduğundan, AVIF reddedilirse
+        # otomatik olarak yedek formata (orijinal jpeg/webp) düşülür — "ne olur
+        # ne olmaz" ikinci format. İlk WP'nin kabul ettiği kaynak kullanılır.
+        candidates: list[str] = []
+        for key in ("avif_path", "avif_url", "original_path", "original_url", "url"):
+            value = str(photo_item.get(key) or "").strip()
+            if value and value not in candidates:
+                candidates.append(value)
+        if not candidates:
             return None, f"{photo_label}: dosya yolu kayıtlı değil, atlandı."
 
+        attempt_warnings: list[str] = []
+        for photo_url in candidates:
+            uploaded, warning = await self._post_wp_media(photo_label, photo_url)
+            if uploaded is not None:
+                photo_item["wc_media_id"] = int(uploaded["id"])
+                photo_item["wc_media_uploaded_at"] = utc_now().isoformat()
+                return uploaded, None
+            if warning:
+                attempt_warnings.append(warning)
+        return None, "; ".join(attempt_warnings) or f"{photo_label}: hiçbir format WP tarafından kabul edilmedi."
+
+    async def _post_wp_media(self, photo_label: str, photo_url: str) -> tuple[dict[str, Any] | None, str | None]:
         try:
             content, content_type = await self._load_photo_bytes(photo_url)
         except Exception as exc:  # noqa: BLE001 - uyarı olarak yüzeye taşınır
@@ -781,18 +800,16 @@ class WooCommerceService:
                     content=content,
                 )
         except Exception as exc:  # noqa: BLE001
-            return None, f"{photo_label}: WP medya isteği başarısız ({exc})."
+            return None, f"{photo_label} ({source_name}): WP medya isteği başarısız ({exc})."
 
         if response.status_code >= 400:
-            body_head = response.text[:300]
-            return None, f"{photo_label}: WP medya {response.status_code} döndürdü: {body_head}"
+            body_head = response.text[:200]
+            return None, f"{photo_label} ({source_name}): WP medya {response.status_code} döndürdü: {body_head}"
 
         payload = response.json()
         media_id = payload.get("id")
         if not media_id:
-            return None, f"{photo_label}: WP medya yanıtında id yok."
-        photo_item["wc_media_id"] = int(media_id)
-        photo_item["wc_media_uploaded_at"] = utc_now().isoformat()
+            return None, f"{photo_label} ({source_name}): WP medya yanıtında id yok."
         return {"id": int(media_id)}, None
 
     def _default_name(self, product: Product) -> str:

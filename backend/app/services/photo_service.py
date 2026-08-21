@@ -16,10 +16,19 @@ try:
 except Exception:  # pragma: no cover - plugin may be unavailable in some envs
     pillow_avif = None  # type: ignore[assignment]
 
+try:
+    # iPhone HEIC/HEIF fotoğrafları Pillow'un açabilmesi için opener'ı kaydet.
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    _HEIF_SUPPORTED = True
+except Exception:  # pragma: no cover - plugin may be unavailable in some envs
+    _HEIF_SUPPORTED = False
+
 from app.config import get_settings
 from app.models.product import Product
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "avif"}
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "avif", "heic", "heif"}
 ALLOWED_MIME_PREFIX = "image/"
 
 

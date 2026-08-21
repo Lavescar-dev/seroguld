@@ -1,7 +1,9 @@
 // İstemci tarafı fotoğraf doğrulaması; sunucudaki photo_service kurallarının
 // birebir aynısı (ALLOWED_EXTENSIONS + image/* mime + photo_max_size_mb).
-export const PHOTO_ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'avif'] as const;
+export const PHOTO_ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'heic', 'heif'] as const;
 export const PHOTO_MAX_SIZE_MB = 15;
+// Dosya seçici accept özniteliği için (iPhone HEIC dahil); kullanıcıya da gösterilir.
+export const PHOTO_ACCEPT_ATTR = 'image/*,.heic,.heif';
 export const PHOTO_MAX_SIZE_BYTES = PHOTO_MAX_SIZE_MB * 1024 * 1024;
 
 export interface RejectedPhoto {

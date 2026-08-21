@@ -16,8 +16,10 @@ class AISettingsOut(AppBaseModel):
     openai_api_key_masked: str | None = None
     openai_base_url: str
     openai_model: str
+    openai_reasoning_effort: str
     openai_timeout_seconds: float
     model_options: list[AIModelOptionOut]
+    reasoning_effort_options: list[str]
 
 
 class AISettingsUpdateIn(AppBaseModel):
@@ -27,6 +29,8 @@ class AISettingsUpdateIn(AppBaseModel):
     )
     openai_base_url: str
     openai_model: str
+    # Reasoning effort AYRI parametre (model ID'sine yapıştırılmaz). Boş = model default.
+    openai_reasoning_effort: str = "high"
     openai_timeout_seconds: float = Field(default=20.0, ge=5.0, le=120.0)
 
 

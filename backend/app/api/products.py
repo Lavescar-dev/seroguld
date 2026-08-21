@@ -654,7 +654,7 @@ async def ai_describe(
     admin=Depends(require_admin),
 ) -> ProductOut:
     product = await get_product_or_404(db, product_id)
-    description, usage = await AIService().generate_description_with_usage(product=product)
+    description, usage, images_analyzed = await AIService().generate_description_with_usage(product=product)
     updated = await update_product(
         db,
         product,
@@ -687,10 +687,15 @@ async def ai_describe(
                     "completion_tokens": usage.completion_tokens,
                     "total_tokens": usage.total_tokens,
                     "total_cost_usd": str(usage.total_cost_usd),
+                    "images_analyzed": images_analyzed,
                 }
             ),
             performed_by=admin.id,
-            notes="AI açıklama üretildi",
+            notes=(
+                f"AI açıklama üretildi ({images_analyzed} fotoğraf analiz edildi)"
+                if images_analyzed
+                else "AI açıklama üretildi (fotoğraf gönderilemedi — yalnız metin)"
+            ),
         )
     )
     await db.commit()

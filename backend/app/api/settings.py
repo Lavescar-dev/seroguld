@@ -18,11 +18,30 @@ from app.utils.env_file import upsert_env_values
 router = APIRouter()
 
 
+# Reasoning effort AYRI parametredir (model ID'sine yapıştırılmaz → 404).
+REASONING_EFFORT_OPTIONS: list[str] = ["none", "low", "medium", "high", "xhigh", "max"]
+
+
 AI_MODEL_OPTIONS: list[AIModelOptionOut] = [
+    AIModelOptionOut(
+        value="gpt-5.6-luna",
+        label="GPT-5.6 Luna",
+        note="(önerilen varsayılan: görsel + JSON çıktı, en hızlı/ucuz; foto→metadata için effort=high ile yeterli)",
+    ),
+    AIModelOptionOut(
+        value="gpt-5.6-terra",
+        label="GPT-5.6 Terra",
+        note="(dengeli kademe; Luna kalitesi yetmezse buraya yükseltin)",
+    ),
+    AIModelOptionOut(
+        value="gpt-5.6-sol",
+        label="GPT-5.6 Sol",
+        note="(flagship, en güçlü; en pahalı ve yavaş)",
+    ),
     AIModelOptionOut(
         value="gpt-5.4",
         label="GPT-5.4",
-        note="(önerilen varsayılan: görsel + metin SEO kalitesinde en güçlü genel seçenek)",
+        note="(eski varsayılan; görsel + metin SEO)",
     ),
     AIModelOptionOut(
         value="gpt-5.4-pro",
@@ -88,8 +107,10 @@ def _build_ai_settings_out() -> AISettingsOut:
         openai_api_key_masked=_mask_secret(api_key),
         openai_base_url=settings.openai_base_url,
         openai_model=settings.openai_model,
+        openai_reasoning_effort=getattr(settings, "openai_reasoning_effort", "high") or "",
         openai_timeout_seconds=float(settings.openai_timeout_seconds),
         model_options=AI_MODEL_OPTIONS,
+        reasoning_effort_options=REASONING_EFFORT_OPTIONS,
     )
 
 
@@ -117,9 +138,17 @@ async def update_ai_settings(
             detail="Base URL http:// veya https:// ile başlamalı.",
         )
 
+    effort = (payload.openai_reasoning_effort or "").strip().lower()
+    if effort and effort not in REASONING_EFFORT_OPTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Geçersiz reasoning effort. Seçenekler: {', '.join(REASONING_EFFORT_OPTIONS)} (veya boş).",
+        )
+
     updates: dict[str, str] = {
         "OPENAI_BASE_URL": base_url.rstrip("/"),
         "OPENAI_MODEL": model_name,
+        "OPENAI_REASONING_EFFORT": effort,
         "OPENAI_TIMEOUT_SECONDS": str(float(payload.openai_timeout_seconds)),
     }
     if payload.openai_api_key is not None and payload.openai_api_key.strip():

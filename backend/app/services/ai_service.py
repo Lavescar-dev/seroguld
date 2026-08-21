@@ -100,6 +100,7 @@ class AIService:
         self.api_key = settings.openai_api_key.strip()
         self.base_url = settings.openai_base_url.rstrip("/")
         self.model = settings.openai_model
+        self.reasoning_effort = getattr(settings, "openai_reasoning_effort", "") or ""
         self.timeout = max(5.0, float(settings.openai_timeout_seconds))
         self.media_root = settings.media_root_path()
         self.max_images = 4
@@ -165,6 +166,15 @@ class AIService:
             return (self.media_root / rel).resolve()
         if text.startswith("/"):
             return Path(text).expanduser().resolve()
+        # Windows'ta original_path/avif_path mutlak sürücü yolu (C:\...) olarak
+        # saklanıyor; yukarıdaki dallara girmediğinden foto sessizce atlanıp
+        # istek yalnız-metin gidiyordu. Var olan mutlak yolu doğrudan kabul et.
+        try:
+            candidate = Path(text)
+        except (ValueError, OSError):
+            return None
+        if candidate.is_absolute() and candidate.exists():
+            return candidate.resolve()
         return None
 
     def _read_photo_bytes(self, photo_item: dict[str, Any]) -> tuple[bytes, str] | None:
@@ -220,9 +230,10 @@ class AIService:
                 detail=f"Fotoğraf AI analizine hazırlanamadı: {exc}",
             ) from exc
 
-    def _build_user_content(self, product: Product) -> list[dict[str, Any]]:
+    def _build_user_content(self, product: Product) -> tuple[list[dict[str, Any]], int]:
         content: list[dict[str, Any]] = [{"type": "text", "text": self._build_prompt(product)}]
         photos = self._sorted_photos(product)
+        images_sent = 0
 
         for photo in photos[: self.max_images]:
             loaded = self._read_photo_bytes(photo)
@@ -239,7 +250,8 @@ class AIService:
                     "image_url": {"url": data_url},
                 }
             )
-        return content
+            images_sent += 1
+        return content, images_sent
 
     def _safe_int(self, value: Any) -> int:
         try:
@@ -292,17 +304,18 @@ class AIService:
             raw_usage=usage if isinstance(usage, dict) else {},
         )
 
-    async def generate_description_with_usage(self, *, product: Product) -> tuple[str, AIUsageSummary]:
+    async def generate_description_with_usage(
+        self, *, product: Product
+    ) -> tuple[str, AIUsageSummary, int]:
         if not self.api_key:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="OPENAI_API_KEY tanımlı değil. AI açıklama üretilemedi.",
             )
 
-        user_content = self._build_user_content(product)
-        payload = {
+        user_content, images_sent = self._build_user_content(product)
+        payload: dict[str, Any] = {
             "model": self.model,
-            "temperature": 0.4,
             "messages": [
                 {
                     "role": "system",
@@ -314,6 +327,13 @@ class AIService:
                 },
             ],
         }
+        # Reasoning effort ayrı parametredir. Reasoning modelleri temperature'ı
+        # reddedebildiğinden effort verildiğinde temperature gönderilmez.
+        effort = (self.reasoning_effort or "").strip().lower()
+        if effort:
+            payload["reasoning_effort"] = effort
+        else:
+            payload["temperature"] = 0.4
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -330,7 +350,9 @@ class AIService:
             ) from exc
 
         if response.status_code >= 400:
-            detail = response.text[:500]
+            # Ham OpenAI hatasını yukarı taşı (model_not_found, geçersiz effort,
+            # temperature reddi vb.) — sessiz yutma yerine gerçek neden görünür.
+            detail = self._extract_api_error(response)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"AI servisi hata döndü ({response.status_code}): {detail}",
@@ -347,8 +369,21 @@ class AIService:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI açıklama metni üretilemedi")
 
         usage = self._build_usage_summary(data)
-        return content, usage
+        return content, usage, images_sent
+
+    def _extract_api_error(self, response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+            err = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(err, dict):
+                message = str(err.get("message") or "").strip()
+                code = str(err.get("code") or err.get("type") or "").strip()
+                if message:
+                    return f"{message}{f' [{code}]' if code else ''}"
+        except Exception:
+            pass
+        return response.text[:500]
 
     async def generate_description(self, *, product: Product) -> str:
-        content, _usage = await self.generate_description_with_usage(product=product)
+        content, _usage, _images = await self.generate_description_with_usage(product=product)
         return content
