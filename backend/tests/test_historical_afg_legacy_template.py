@@ -21,6 +21,7 @@ from app.models.user import User
 from app.services.historical_afg_import import (
     HistoricalAfgUpload,
     _parse_upload,
+    apply_historical_afg_import,
     looks_like_legacy_afg_template,
     preview_historical_afg_import,
 )
@@ -151,6 +152,45 @@ async def test_preview_matches_apply_validation_and_blocks_duplicates() -> None:
     async with Session() as db:
         second = await preview_historical_afg_import(db, uploads=[upload])
         assert second.items[0].status == "already_imported"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_new_customer_checkbox_gates_creation() -> None:
+    """Preview yeni müşteriyi listeler; apply seçmezse AFG atlanır, seçince oluşur."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    upload = _upload("TEST-AFREGNING-11020-2026-08-09-oeresund-demo-design-aps.xlsx")
+
+    async with Session() as db:
+        admin = User(email="afg-admin@example.com", password_hash="x", name="Admin", role=RoleEnum.ADMIN, is_active=True)
+        db.add(admin)
+        await db.commit()
+
+        preview = await preview_historical_afg_import(db, uploads=[upload])
+        assert preview.items[0].customer_action == "create_customer"
+        assert len(preview.new_customers) == 1
+        key = preview.new_customers[0].key
+        assert preview.new_customers[0].afg_count == 1
+
+        # Seçilmezse: AFG atlanır (hata değil), müşteri oluşturulmaz.
+        skipped = await apply_historical_afg_import(
+            db, uploads=[upload], selected_hashes=[upload.source_hash], actor=admin, selected_customer_keys=[]
+        )
+        assert skipped.imported_count == 0
+        assert skipped.skipped_count == 1
+        assert skipped.failed_count == 0
+        assert "Yeni müşteri seçilmedi" in (skipped.items[0].message or "")
+
+        # Seçilince: müşteri oluşturulur ve AFG içe aktarılır.
+        imported = await apply_historical_afg_import(
+            db, uploads=[upload], selected_hashes=[upload.source_hash], actor=admin, selected_customer_keys=[key]
+        )
+        assert imported.imported_count == 1
+        assert imported.items[0].status == "imported"
 
     await engine.dispose()
 

@@ -26,11 +26,20 @@ type PreviewItem = {
   errors: string[];
 };
 
+type NewCustomer = {
+  key: string;
+  name?: string | null;
+  cpr_masked?: string | null;
+  phone?: string | null;
+  afg_count: number;
+};
+
 type PreviewResponse = {
   items: PreviewItem[];
   ready_count: number;
   blocked_count: number;
   already_imported_count: number;
+  new_customers: NewCustomer[];
 };
 
 type ApplyItem = {
@@ -51,10 +60,11 @@ type ApplyResponse = {
   failed_count: number;
 };
 
-function makeForm(files: File[], selectedHashes?: string[]) {
+function makeForm(files: File[], selectedHashes?: string[], selectedCustomerKeys?: string[]) {
   const form = new FormData();
   files.forEach((file) => form.append('files', file));
   if (selectedHashes) form.append('selected_hashes_json', JSON.stringify(selectedHashes));
+  if (selectedCustomerKeys) form.append('selected_customer_keys_json', JSON.stringify(selectedCustomerKeys));
   return form;
 }
 
@@ -86,6 +96,7 @@ export function HistoricalAfgImportDrawer({
   const [dragActive, setDragActive] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
+  const [selectedCustomerKeys, setSelectedCustomerKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<'preview' | 'apply' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [applyItems, setApplyItems] = useState<ApplyItem[]>([]);
@@ -107,9 +118,12 @@ export function HistoricalAfgImportDrawer({
       });
       setPreview(result);
       setSelectedHashes(new Set(result.items.filter((item) => item.status === 'ready').map((item) => item.source_hash)));
+      // Yeni müşteriler varsayılan hepsi seçili (operatör istemediğini kaldırır).
+      setSelectedCustomerKeys(new Set((result.new_customers || []).map((customer) => customer.key)));
     } catch (error) {
       setPreview(null);
       setSelectedHashes(new Set());
+      setSelectedCustomerKeys(new Set());
       setMessage(error instanceof Error ? error.message : 'Dosyalar analiz edilemedi.');
       setMessageTone('danger');
     } finally {
@@ -124,7 +138,7 @@ export function HistoricalAfgImportDrawer({
     try {
       const result = await apiRequest<ApplyResponse>('/api/v2/alis/historical-import/apply', {
         method: 'POST',
-        body: makeForm(files, [...selectedHashes]),
+        body: makeForm(files, [...selectedHashes], [...selectedCustomerKeys]),
       });
       setApplyItems(result.items || []);
       setMessage(
@@ -186,6 +200,7 @@ export function HistoricalAfgImportDrawer({
             setFiles(dropped);
             setPreview(null);
             setSelectedHashes(new Set());
+            setSelectedCustomerKeys(new Set());
             setMessage(null);
             setApplyItems([]);
           }}
@@ -203,6 +218,7 @@ export function HistoricalAfgImportDrawer({
               setFiles(Array.from(event.currentTarget.files || []));
               setPreview(null);
               setSelectedHashes(new Set());
+              setSelectedCustomerKeys(new Set());
               setMessage(null);
               setApplyItems([]);
             }}
@@ -239,6 +255,59 @@ export function HistoricalAfgImportDrawer({
               <ModernBadge tone="danger">{preview.blocked_count} engelli</ModernBadge>
               <ModernBadge tone="warning">{preview.already_imported_count} daha önce işlendi</ModernBadge>
             </div>
+            {preview.new_customers && preview.new_customers.length ? (
+              <ModernCard data-testid="historical-afg-new-customers" className="space-y-3 border-sg-accent/30 bg-sg-accent-soft/20">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-sg-text">{preview.new_customers.length} yeni müşteri bulundu</p>
+                    <p className="mt-0.5 text-xs text-sg-text-soft">
+                      İşaretlediklerin oluşturulur; işareti kaldırılan müşterinin AFG'si atlanır (içe aktarılmaz).
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={Boolean(busy)}
+                      onClick={() => setSelectedCustomerKeys(new Set(preview.new_customers.map((customer) => customer.key)))}
+                      className="rounded-sg-md px-2 py-1 text-xs font-medium text-sg-accent-dark hover:bg-sg-accent-soft disabled:opacity-50"
+                    >
+                      Tümünü seç
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(busy)}
+                      onClick={() => setSelectedCustomerKeys(new Set())}
+                      className="rounded-sg-md px-2 py-1 text-xs font-medium text-sg-text-soft hover:bg-sg-surface-2 disabled:opacity-50"
+                    >
+                      Temizle
+                    </button>
+                  </div>
+                </div>
+                <ul className="space-y-1.5">
+                  {preview.new_customers.map((customer) => (
+                    <li key={customer.key}>
+                      <label className="flex items-center gap-2 rounded-sg-md px-2 py-1.5 text-sm text-sg-text hover:bg-sg-surface-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedCustomerKeys.has(customer.key)}
+                          disabled={Boolean(busy)}
+                          onChange={(event) => setSelectedCustomerKeys((current) => {
+                            const next = new Set(current);
+                            if (event.currentTarget.checked) next.add(customer.key);
+                            else next.delete(customer.key);
+                            return next;
+                          })}
+                        />
+                        <span className="min-w-0 flex-1 truncate font-medium">{customer.name || 'İsimsiz müşteri'}</span>
+                        {customer.cpr_masked ? <span className="shrink-0 text-xs text-sg-text-soft">{customer.cpr_masked}</span> : null}
+                        {customer.phone ? <span className="shrink-0 text-xs text-sg-text-soft">{customer.phone}</span> : null}
+                        <ModernBadge tone="neutral">{customer.afg_count} AFG</ModernBadge>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </ModernCard>
+            ) : null}
             {preview.items.map((item) => {
               const selectable = item.status === 'ready';
               return (

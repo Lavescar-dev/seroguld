@@ -160,6 +160,7 @@ async def post_historical_afg_import_apply_v2(
     request: Request,
     files: list[UploadFile] = File(...),
     selected_hashes_json: str = Form(...),
+    selected_customer_keys_json: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> HistoricalAfgImportApplyOut:
@@ -170,11 +171,23 @@ async def post_historical_afg_import_apply_v2(
     if not isinstance(selected_hashes, list) or not all(isinstance(item, str) for item in selected_hashes):
         raise HTTPException(status_code=422, detail="Seçilen dosya listesi geçersiz.")
 
+    # None gönderilmezse tüm yeni müşteriler oluşturulur (geriye dönük).
+    selected_customer_keys: list[str] | None = None
+    if selected_customer_keys_json is not None:
+        try:
+            parsed_keys = json.loads(selected_customer_keys_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="Seçilen müşteri listesi geçersiz.") from exc
+        if not isinstance(parsed_keys, list) or not all(isinstance(item, str) for item in parsed_keys):
+            raise HTTPException(status_code=422, detail="Seçilen müşteri listesi geçersiz.")
+        selected_customer_keys = parsed_keys
+
     result = await apply_historical_afg_import(
         db,
         uploads=await _read_historical_afg_uploads(files),
         selected_hashes=selected_hashes,
         actor=admin,
+        selected_customer_keys=selected_customer_keys,
     )
     for item in result.items:
         if item.status == "imported" and item.sequence_no is not None:

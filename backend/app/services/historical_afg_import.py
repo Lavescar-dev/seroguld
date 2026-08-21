@@ -36,6 +36,7 @@ from app.schemas.customer import CustomerCreate
 from app.schemas.historical_afg_import import (
     HistoricalAfgImportApplyItemOut,
     HistoricalAfgImportApplyOut,
+    HistoricalAfgImportNewCustomerOut,
     HistoricalAfgImportPreviewItemOut,
     HistoricalAfgImportPreviewOut,
 )
@@ -609,11 +610,38 @@ def _parse_upload(upload: HistoricalAfgUpload) -> HistoricalAfgParsed:
     )
 
 
+def _customer_dedup_key(customer: object | None) -> str | None:
+    """Yeni müşteriyi preview↔apply arasında eşleyen kararlı anahtar."""
+    if customer is None:
+        return None
+    cpr = _clean_text(getattr(customer, "cpr_number", None))
+    if cpr:
+        return f"cpr:{re.sub(r'\\D', '', cpr)}"
+    identity = _clean_text(getattr(customer, "identity_doc_number", None))
+    if identity:
+        return f"id:{identity.strip().lower()}"
+    phone = _clean_text(getattr(customer, "phone", None))
+    if phone:
+        return f"phone:{_normalise_phone(phone)}"
+    name = _clean_text(getattr(customer, "name", None))
+    if name:
+        return f"name:{_normalise_name(name)}"
+    return None
+
+
+def _mask_cpr(cpr: str | None) -> str | None:
+    digits = re.sub(r"\D", "", cpr or "")
+    if len(digits) < 4:
+        return None
+    return f"******-{digits[-4:]}"
+
+
 async def _resolve_customer(
     session: AsyncSession,
     customer: object | None,
     *,
     create: bool,
+    allowed_new_keys: set[str] | None = None,
 ) -> tuple[User | None, str, list[str]]:
     if customer is None:
         return None, "blocked", ["Müşteri bilgisi okunamadı."]
@@ -691,6 +719,12 @@ async def _resolve_customer(
         except HTTPException as exc:
             return None, "blocked", [str(exc.detail)]
         return None, "create_customer", []
+    # apply: operatör bu yeni müşteriyi checkbox'ta seçmediyse oluşturma —
+    # AFG atlanır (net neden). allowed_new_keys=None → hepsi seçili (varsayılan).
+    if allowed_new_keys is not None:
+        key = _customer_dedup_key(customer)
+        if key is None or key not in allowed_new_keys:
+            return None, "skipped_customer", ["Yeni müşteri seçilmedi — AFG atlandı."]
     try:
         return await create_customer(session, payload), "created_customer", []
     except HTTPException as exc:
@@ -748,6 +782,7 @@ async def _preview_item(
     if not errors:
         _, customer_action, customer_errors = await _resolve_customer(session, parsed.customer, create=False)
         errors.extend(customer_errors)
+    customer_key = _customer_dedup_key(parsed.customer) if customer_action == "create_customer" else None
     return HistoricalAfgImportPreviewItemOut(
         source_hash=parsed.upload.source_hash,
         file_name=parsed.upload.filename,
@@ -756,6 +791,7 @@ async def _preview_item(
         issued_at=parsed.issued_at,
         customer_name=_clean_text(getattr(parsed.customer, "name", None)),
         customer_action=customer_action,
+        customer_key=customer_key,
         line_count=len(parsed.lines),
         total_weight_grams=parsed.total_weight_grams,
         total_amount_dkk=parsed.total_amount_dkk,
@@ -780,8 +816,10 @@ async def preview_historical_afg_import(
 ) -> HistoricalAfgImportPreviewOut:
     seen_hashes: set[str] = set()
     items: list[HistoricalAfgImportPreviewItemOut] = []
+    parsed_by_hash: dict[str, HistoricalAfgParsed] = {}
     for upload in uploads:
         parsed = _parse_upload(upload)
+        parsed_by_hash.setdefault(upload.source_hash, parsed)
         items.append(
             await _preview_item(
                 session,
@@ -790,11 +828,32 @@ async def preview_historical_afg_import(
             )
         )
         seen_hashes.add(upload.source_hash)
+
+    # Yeni müşterileri dedup'la (aynı müşteri birden çok AFG'de olabilir).
+    new_customers: dict[str, HistoricalAfgImportNewCustomerOut] = {}
+    for item in items:
+        if item.customer_action != "create_customer" or not item.customer_key:
+            continue
+        entry = new_customers.get(item.customer_key)
+        if entry is None:
+            parsed = parsed_by_hash.get(item.source_hash)
+            cust = getattr(parsed, "customer", None)
+            new_customers[item.customer_key] = HistoricalAfgImportNewCustomerOut(
+                key=item.customer_key,
+                name=item.customer_name,
+                cpr_masked=_mask_cpr(_clean_text(getattr(cust, "cpr_number", None))),
+                phone=_clean_text(getattr(cust, "phone", None)),
+                afg_count=1,
+            )
+        else:
+            entry.afg_count += 1
+
     return HistoricalAfgImportPreviewOut(
         items=items,
         ready_count=sum(item.status == "ready" for item in items),
         blocked_count=sum(item.status == "blocked" for item in items),
         already_imported_count=sum(item.status == "already_imported" for item in items),
+        new_customers=list(new_customers.values()),
     )
 
 
@@ -822,18 +881,29 @@ def _historical_notes(parsed: HistoricalAfgParsed) -> str:
     )
 
 
+class _CustomerNotSelected(Exception):
+    """Operatör bu yeni müşteriyi checkbox'ta seçmedi → AFG atlanır (hata değil)."""
+
+
 async def _persist(
     session: AsyncSession,
     *,
     parsed: HistoricalAfgParsed,
     actor: User,
+    allowed_new_keys: set[str] | None = None,
 ) -> PosDocument:
     duplicate = await _duplicate_reason(session, parsed)
     if duplicate:
         raise ValueError(duplicate)
-    customer, _, customer_errors = await _resolve_customer(session, parsed.customer, create=True)
+    customer, customer_action, customer_errors = await _resolve_customer(
+        session, parsed.customer, create=True, allowed_new_keys=allowed_new_keys
+    )
     if customer is None:
-        raise ValueError("; ".join(customer_errors) or "Müşteri çözümlenemedi.")
+        message = "; ".join(customer_errors) or "Müşteri çözümlenemedi."
+        if customer_action == "skipped_customer":
+            # Operatör seçmedi → hata değil, bilinçli atlama.
+            raise _CustomerNotSelected(message)
+        raise ValueError(message)
     if parsed.issued_at is None or not parsed.legacy_document_number or not parsed.lines:
         raise ValueError("İçe aktarma için zorunlu AFG bilgileri eksik.")
 
@@ -992,8 +1062,12 @@ async def apply_historical_afg_import(
     uploads: list[HistoricalAfgUpload],
     selected_hashes: list[str],
     actor: User,
+    selected_customer_keys: list[str] | None = None,
 ) -> HistoricalAfgImportApplyOut:
     selected = set(selected_hashes)
+    # None → tüm yeni müşteriler oluşturulur (checkbox gönderilmediyse geriye
+    # dönük varsayılan); liste → yalnız seçili anahtarlar oluşturulur.
+    allowed_new_keys = set(selected_customer_keys) if selected_customer_keys is not None else None
     if not selected:
         raise HTTPException(status_code=422, detail="İçe aktarılacak en az bir hazır dosya seçin.")
     if not selected.issubset({upload.source_hash for upload in uploads}):
@@ -1028,7 +1102,19 @@ async def apply_historical_afg_import(
             continue
         try:
             async with session.begin_nested():
-                document = await _persist(session, parsed=parsed, actor=actor)
+                document = await _persist(session, parsed=parsed, actor=actor, allowed_new_keys=allowed_new_keys)
+        except _CustomerNotSelected as exc:
+            results.append(
+                HistoricalAfgImportApplyItemOut(
+                    source_hash=upload.source_hash,
+                    file_name=upload.filename,
+                    status="skipped",
+                    legacy_document_number=parsed.legacy_document_number,
+                    message=str(exc),
+                    errors=[str(exc)],
+                )
+            )
+            continue
         except (HTTPException, ValidationError, ValueError) as exc:
             results.append(
                 HistoricalAfgImportApplyItemOut(
