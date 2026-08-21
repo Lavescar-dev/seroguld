@@ -40,6 +40,7 @@ from app.models.enums import RoleEnum
 from app.models.user import User
 from app.schemas.runtime import RuntimeReadinessOut
 from app.services.runtime_readiness import collect_runtime_readiness
+from app.services.seed_inventory import ensure_seed_inventory
 from app.utils.security import get_password_hash
 
 settings = get_settings()
@@ -200,6 +201,10 @@ async def lifespan(_: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     await ensure_initial_admin()
+    try:
+        await ensure_seed_inventory()
+    except Exception:  # pragma: no cover - seed asla başlatmayı bloke etmez
+        logging.getLogger("app.startup").exception("Depolama seed yüklenemedi")
     yield
 
 

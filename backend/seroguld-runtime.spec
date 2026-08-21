@@ -29,6 +29,19 @@ seed_file = backend_dir / "runtime-seed.env"
 if seed_file.exists():
     datas.append((str(seed_file), "."))
 
+# Bundle the depolama (inventory) seed artefact — products JSON + AVIF photo
+# pool — resolved at runtime via ``_bundle_root()/backend/seed_data``. Enumerate
+# files (like the alembic tree) so no __pycache__/dev cruft leaks in.
+seed_data_dir = backend_dir / "seed_data"
+if seed_data_dir.is_dir():
+    for source in sorted(seed_data_dir.rglob("*")):
+        if not source.is_file():
+            continue
+        relative = source.relative_to(seed_data_dir)
+        if "__pycache__" in relative.parts or source.suffix.lower() == ".pyc":
+            continue
+        datas.append((str(source), str(Path("backend/seed_data") / relative.parent)))
+
 binaries = []
 hiddenimports = [
     *collect_submodules("app"),

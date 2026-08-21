@@ -1,0 +1,2432 @@
+[
+  {
+    "file": "depolama_001_g2.avif",
+    "gallery_number": "2",
+    "anchor": [
+      3,
+      3
+    ],
+    "source_image": "image1.png"
+  },
+  {
+    "file": "depolama_002_g3.avif",
+    "gallery_number": "3",
+    "anchor": [
+      2,
+      10
+    ],
+    "source_image": "image2.png"
+  },
+  {
+    "file": "depolama_003_g4.avif",
+    "gallery_number": "4",
+    "anchor": [
+      2,
+      12
+    ],
+    "source_image": "image3.png"
+  },
+  {
+    "file": "depolama_004_g5.avif",
+    "gallery_number": "5",
+    "anchor": [
+      2,
+      15
+    ],
+    "source_image": "image4.png"
+  },
+  {
+    "file": "depolama_005_g6.avif",
+    "gallery_number": "6",
+    "anchor": [
+      15,
+      1
+    ],
+    "source_image": "image5.png"
+  },
+  {
+    "file": "depolama_006_g7.avif",
+    "gallery_number": "7",
+    "anchor": [
+      15,
+      3
+    ],
+    "source_image": "image6.png"
+  },
+  {
+    "file": "depolama_007_g8.avif",
+    "gallery_number": "8",
+    "anchor": [
+      15,
+      7
+    ],
+    "source_image": "image7.png"
+  },
+  {
+    "file": "depolama_008_g9.avif",
+    "gallery_number": "9",
+    "anchor": [
+      15,
+      10
+    ],
+    "source_image": "image8.png"
+  },
+  {
+    "file": "depolama_009_g10.avif",
+    "gallery_number": "10",
+    "anchor": [
+      15,
+      16
+    ],
+    "source_image": "image9.png"
+  },
+  {
+    "file": "depolama_010_g11.avif",
+    "gallery_number": "11",
+    "anchor": [
+      27,
+      0
+    ],
+    "source_image": "image10.png"
+  },
+  {
+    "file": "depolama_011_g12.avif",
+    "gallery_number": "12",
+    "anchor": [
+      27,
+      3
+    ],
+    "source_image": "image11.png"
+  },
+  {
+    "file": "depolama_012_g13.avif",
+    "gallery_number": "13",
+    "anchor": [
+      27,
+      7
+    ],
+    "source_image": "image12.png"
+  },
+  {
+    "file": "depolama_013_g14.avif",
+    "gallery_number": "14",
+    "anchor": [
+      27,
+      10
+    ],
+    "source_image": "image13.png"
+  },
+  {
+    "file": "depolama_014_g15.avif",
+    "gallery_number": "15",
+    "anchor": [
+      27,
+      13
+    ],
+    "source_image": "image14.png"
+  },
+  {
+    "file": "depolama_015_g16.avif",
+    "gallery_number": "16",
+    "anchor": [
+      40,
+      1
+    ],
+    "source_image": "image15.png"
+  },
+  {
+    "file": "depolama_016_g17.avif",
+    "gallery_number": "17",
+    "anchor": [
+      40,
+      4
+    ],
+    "source_image": "image16.png"
+  },
+  {
+    "file": "depolama_017_g18.avif",
+    "gallery_number": "18",
+    "anchor": [
+      40,
+      6
+    ],
+    "source_image": "image17.png"
+  },
+  {
+    "file": "depolama_018_g19.avif",
+    "gallery_number": "19",
+    "anchor": [
+      40,
+      10
+    ],
+    "source_image": "image18.png"
+  },
+  {
+    "file": "depolama_019_g20.avif",
+    "gallery_number": "20",
+    "anchor": [
+      40,
+      12
+    ],
+    "source_image": "image19.png"
+  },
+  {
+    "file": "depolama_020_g21.avif",
+    "gallery_number": "21",
+    "anchor": [
+      55,
+      1
+    ],
+    "source_image": "image20.png"
+  },
+  {
+    "file": "depolama_021_g23.avif",
+    "gallery_number": "23",
+    "anchor": [
+      55,
+      7
+    ],
+    "source_image": "image21.png"
+  },
+  {
+    "file": "depolama_022_g24.avif",
+    "gallery_number": "24",
+    "anchor": [
+      55,
+      9
+    ],
+    "source_image": "image22.png"
+  },
+  {
+    "file": "depolama_023_g22.avif",
+    "gallery_number": "22",
+    "anchor": [
+      55,
+      3
+    ],
+    "source_image": "image23.png"
+  },
+  {
+    "file": "depolama_024_g25.avif",
+    "gallery_number": "25",
+    "anchor": [
+      55,
+      12
+    ],
+    "source_image": "image24.png"
+  },
+  {
+    "file": "depolama_025_g26.avif",
+    "gallery_number": "26",
+    "anchor": [
+      70,
+      1
+    ],
+    "source_image": "image25.png"
+  },
+  {
+    "file": "depolama_026_g28.avif",
+    "gallery_number": "28",
+    "anchor": [
+      70,
+      6
+    ],
+    "source_image": "image26.png"
+  },
+  {
+    "file": "depolama_027_g27.avif",
+    "gallery_number": "27",
+    "anchor": [
+      70,
+      3
+    ],
+    "source_image": "image27.png"
+  },
+  {
+    "file": "depolama_028_g29.avif",
+    "gallery_number": "29",
+    "anchor": [
+      70,
+      9
+    ],
+    "source_image": "image28.png"
+  },
+  {
+    "file": "depolama_029_g30.avif",
+    "gallery_number": "30",
+    "anchor": [
+      70,
+      12
+    ],
+    "source_image": "image29.png"
+  },
+  {
+    "file": "depolama_030_g31.avif",
+    "gallery_number": "31",
+    "anchor": [
+      86,
+      0
+    ],
+    "source_image": "image30.png"
+  },
+  {
+    "file": "depolama_031_g32.avif",
+    "gallery_number": "32",
+    "anchor": [
+      86,
+      3
+    ],
+    "source_image": "image31.png"
+  },
+  {
+    "file": "depolama_032_g33.avif",
+    "gallery_number": "33",
+    "anchor": [
+      86,
+      7
+    ],
+    "source_image": "image32.png"
+  },
+  {
+    "file": "depolama_033_g33.avif",
+    "gallery_number": "33",
+    "anchor": [
+      93,
+      7
+    ],
+    "source_image": "image33.png"
+  },
+  {
+    "file": "depolama_034_g34.avif",
+    "gallery_number": "34",
+    "anchor": [
+      86,
+      9
+    ],
+    "source_image": "image34.png"
+  },
+  {
+    "file": "depolama_035_g34.avif",
+    "gallery_number": "34",
+    "anchor": [
+      94,
+      10
+    ],
+    "source_image": "image35.png"
+  },
+  {
+    "file": "depolama_036_g35.avif",
+    "gallery_number": "35",
+    "anchor": [
+      86,
+      13
+    ],
+    "source_image": "image36.png"
+  },
+  {
+    "file": "depolama_037_g36.avif",
+    "gallery_number": "36",
+    "anchor": [
+      102,
+      1
+    ],
+    "source_image": "image37.png"
+  },
+  {
+    "file": "depolama_038_g37.avif",
+    "gallery_number": "37",
+    "anchor": [
+      103,
+      4
+    ],
+    "source_image": "image38.png"
+  },
+  {
+    "file": "depolama_039_g37.avif",
+    "gallery_number": "37",
+    "anchor": [
+      108,
+      4
+    ],
+    "source_image": "image39.png"
+  },
+  {
+    "file": "depolama_040_g38.avif",
+    "gallery_number": "38",
+    "anchor": [
+      102,
+      7
+    ],
+    "source_image": "image40.png"
+  },
+  {
+    "file": "depolama_041_g38.avif",
+    "gallery_number": "38",
+    "anchor": [
+      110,
+      7
+    ],
+    "source_image": "image41.png"
+  },
+  {
+    "file": "depolama_042_g39.avif",
+    "gallery_number": "39",
+    "anchor": [
+      102,
+      9
+    ],
+    "source_image": "image42.png"
+  },
+  {
+    "file": "depolama_043_g39.avif",
+    "gallery_number": "39",
+    "anchor": [
+      107,
+      10
+    ],
+    "source_image": "image43.png"
+  },
+  {
+    "file": "depolama_044_g40.avif",
+    "gallery_number": "40",
+    "anchor": [
+      103,
+      12
+    ],
+    "source_image": "image44.png"
+  },
+  {
+    "file": "depolama_045_g41.avif",
+    "gallery_number": "41",
+    "anchor": [
+      124,
+      0
+    ],
+    "source_image": "image45.png"
+  },
+  {
+    "file": "depolama_046_g42.avif",
+    "gallery_number": "42",
+    "anchor": [
+      124,
+      3
+    ],
+    "source_image": "image46.png"
+  },
+  {
+    "file": "depolama_047_g43.avif",
+    "gallery_number": "43",
+    "anchor": [
+      124,
+      7
+    ],
+    "source_image": "image47.png"
+  },
+  {
+    "file": "depolama_048_g44.avif",
+    "gallery_number": "44",
+    "anchor": [
+      124,
+      9
+    ],
+    "source_image": "image48.png"
+  },
+  {
+    "file": "depolama_049_g45.avif",
+    "gallery_number": "45",
+    "anchor": [
+      124,
+      13
+    ],
+    "source_image": "image49.png"
+  },
+  {
+    "file": "depolama_050_g46.avif",
+    "gallery_number": "46",
+    "anchor": [
+      135,
+      1
+    ],
+    "source_image": "image50.png"
+  },
+  {
+    "file": "depolama_051_g47.avif",
+    "gallery_number": "47",
+    "anchor": [
+      135,
+      4
+    ],
+    "source_image": "image51.png"
+  },
+  {
+    "file": "depolama_052_g49.avif",
+    "gallery_number": "49",
+    "anchor": [
+      135,
+      9
+    ],
+    "source_image": "image52.png"
+  },
+  {
+    "file": "depolama_053_g48.avif",
+    "gallery_number": "48",
+    "anchor": [
+      135,
+      7
+    ],
+    "source_image": "image53.png"
+  },
+  {
+    "file": "depolama_054_g50.avif",
+    "gallery_number": "50",
+    "anchor": [
+      135,
+      13
+    ],
+    "source_image": "image54.png"
+  },
+  {
+    "file": "depolama_055_g51.avif",
+    "gallery_number": "51",
+    "anchor": [
+      146,
+      0
+    ],
+    "source_image": "image55.png"
+  },
+  {
+    "file": "depolama_056_g52.avif",
+    "gallery_number": "52",
+    "anchor": [
+      146,
+      3
+    ],
+    "source_image": "image56.png"
+  },
+  {
+    "file": "depolama_057_g53.avif",
+    "gallery_number": "53",
+    "anchor": [
+      147,
+      6
+    ],
+    "source_image": "image57.png"
+  },
+  {
+    "file": "depolama_058_g54.avif",
+    "gallery_number": "54",
+    "anchor": [
+      146,
+      9
+    ],
+    "source_image": "image58.png"
+  },
+  {
+    "file": "depolama_059_g55.avif",
+    "gallery_number": "55",
+    "anchor": [
+      146,
+      13
+    ],
+    "source_image": "image59.png"
+  },
+  {
+    "file": "depolama_060_g56.avif",
+    "gallery_number": "56",
+    "anchor": [
+      157,
+      1
+    ],
+    "source_image": "image60.png"
+  },
+  {
+    "file": "depolama_061_g57.avif",
+    "gallery_number": "57",
+    "anchor": [
+      157,
+      4
+    ],
+    "source_image": "image61.png"
+  },
+  {
+    "file": "depolama_062_g58.avif",
+    "gallery_number": "58",
+    "anchor": [
+      157,
+      6
+    ],
+    "source_image": "image62.png"
+  },
+  {
+    "file": "depolama_063_g59.avif",
+    "gallery_number": "59",
+    "anchor": [
+      157,
+      9
+    ],
+    "source_image": "image63.png"
+  },
+  {
+    "file": "depolama_064_g60.avif",
+    "gallery_number": "60",
+    "anchor": [
+      157,
+      12
+    ],
+    "source_image": "image64.png"
+  },
+  {
+    "file": "depolama_065_g61.avif",
+    "gallery_number": "61",
+    "anchor": [
+      170,
+      0
+    ],
+    "source_image": "image65.png"
+  },
+  {
+    "file": "depolama_066_g62.avif",
+    "gallery_number": "62",
+    "anchor": [
+      170,
+      3
+    ],
+    "source_image": "image66.png"
+  },
+  {
+    "file": "depolama_067_g63.avif",
+    "gallery_number": "63",
+    "anchor": [
+      170,
+      6
+    ],
+    "source_image": "image67.png"
+  },
+  {
+    "file": "depolama_068_g64.avif",
+    "gallery_number": "64",
+    "anchor": [
+      170,
+      9
+    ],
+    "source_image": "image68.png"
+  },
+  {
+    "file": "depolama_069_g65.avif",
+    "gallery_number": "65",
+    "anchor": [
+      170,
+      12
+    ],
+    "source_image": "image69.png"
+  },
+  {
+    "file": "depolama_070_g66.avif",
+    "gallery_number": "66",
+    "anchor": [
+      183,
+      1
+    ],
+    "source_image": "image70.png"
+  },
+  {
+    "file": "depolama_071_g66.avif",
+    "gallery_number": "66",
+    "anchor": [
+      187,
+      1
+    ],
+    "source_image": "image71.png"
+  },
+  {
+    "file": "depolama_072_g67.avif",
+    "gallery_number": "67",
+    "anchor": [
+      183,
+      3
+    ],
+    "source_image": "image72.png"
+  },
+  {
+    "file": "depolama_073_g68.avif",
+    "gallery_number": "68",
+    "anchor": [
+      183,
+      6
+    ],
+    "source_image": "image73.png"
+  },
+  {
+    "file": "depolama_074_g69.avif",
+    "gallery_number": "69",
+    "anchor": [
+      183,
+      9
+    ],
+    "source_image": "image74.png"
+  },
+  {
+    "file": "depolama_075_g69.avif",
+    "gallery_number": "69",
+    "anchor": [
+      183,
+      10
+    ],
+    "source_image": "image75.png"
+  },
+  {
+    "file": "depolama_076_g70.avif",
+    "gallery_number": "70",
+    "anchor": [
+      183,
+      12
+    ],
+    "source_image": "image76.png"
+  },
+  {
+    "file": "depolama_077_g72.avif",
+    "gallery_number": "72",
+    "anchor": [
+      195,
+      3
+    ],
+    "source_image": "image77.png"
+  },
+  {
+    "file": "depolama_078_g74.avif",
+    "gallery_number": "74",
+    "anchor": [
+      195,
+      9
+    ],
+    "source_image": "image78.png"
+  },
+  {
+    "file": "depolama_079_g74.avif",
+    "gallery_number": "74",
+    "anchor": [
+      195,
+      10
+    ],
+    "source_image": "image79.png"
+  },
+  {
+    "file": "depolama_080_g74.avif",
+    "gallery_number": "74",
+    "anchor": [
+      202,
+      9
+    ],
+    "source_image": "image80.png"
+  },
+  {
+    "file": "depolama_081_g75.avif",
+    "gallery_number": "75",
+    "anchor": [
+      195,
+      13
+    ],
+    "source_image": "image81.png"
+  },
+  {
+    "file": "depolama_082_g77.avif",
+    "gallery_number": "77",
+    "anchor": [
+      213,
+      3
+    ],
+    "source_image": "image82.png"
+  },
+  {
+    "file": "depolama_083_g76.avif",
+    "gallery_number": "76",
+    "anchor": [
+      214,
+      0
+    ],
+    "source_image": "image83.png"
+  },
+  {
+    "file": "depolama_084_g73.avif",
+    "gallery_number": "73",
+    "anchor": [
+      196,
+      6
+    ],
+    "source_image": "image84.png"
+  },
+  {
+    "file": "depolama_085_g78.avif",
+    "gallery_number": "78",
+    "anchor": [
+      213,
+      6
+    ],
+    "source_image": "image85.png"
+  },
+  {
+    "file": "depolama_086_g79.avif",
+    "gallery_number": "79",
+    "anchor": [
+      213,
+      9
+    ],
+    "source_image": "image86.png"
+  },
+  {
+    "file": "depolama_087_g80.avif",
+    "gallery_number": "80",
+    "anchor": [
+      213,
+      12
+    ],
+    "source_image": "image87.png"
+  },
+  {
+    "file": "depolama_088_g81.avif",
+    "gallery_number": "81",
+    "anchor": [
+      230,
+      0
+    ],
+    "source_image": "image88.png"
+  },
+  {
+    "file": "depolama_089_g82.avif",
+    "gallery_number": "82",
+    "anchor": [
+      230,
+      3
+    ],
+    "source_image": "image89.png"
+  },
+  {
+    "file": "depolama_090_g83.avif",
+    "gallery_number": "83",
+    "anchor": [
+      231,
+      6
+    ],
+    "source_image": "image90.png"
+  },
+  {
+    "file": "depolama_091_g84.avif",
+    "gallery_number": "84",
+    "anchor": [
+      230,
+      9
+    ],
+    "source_image": "image91.png"
+  },
+  {
+    "file": "depolama_092_g85.avif",
+    "gallery_number": "85",
+    "anchor": [
+      230,
+      12
+    ],
+    "source_image": "image92.png"
+  },
+  {
+    "file": "depolama_093_g86.avif",
+    "gallery_number": "86",
+    "anchor": [
+      248,
+      0
+    ],
+    "source_image": "image93.png"
+  },
+  {
+    "file": "depolama_094_g87.avif",
+    "gallery_number": "87",
+    "anchor": [
+      247,
+      3
+    ],
+    "source_image": "image94.png"
+  },
+  {
+    "file": "depolama_095_g88.avif",
+    "gallery_number": "88",
+    "anchor": [
+      247,
+      7
+    ],
+    "source_image": "image95.png"
+  },
+  {
+    "file": "depolama_096_g88.avif",
+    "gallery_number": "88",
+    "anchor": [
+      255,
+      7
+    ],
+    "source_image": "image96.png"
+  },
+  {
+    "file": "depolama_097_g89.avif",
+    "gallery_number": "89",
+    "anchor": [
+      248,
+      9
+    ],
+    "source_image": "image97.png"
+  },
+  {
+    "file": "depolama_098_g90.avif",
+    "gallery_number": "90",
+    "anchor": [
+      248,
+      12
+    ],
+    "source_image": "image98.png"
+  },
+  {
+    "file": "depolama_099_g91.avif",
+    "gallery_number": "91",
+    "anchor": [
+      266,
+      0
+    ],
+    "source_image": "image99.png"
+  },
+  {
+    "file": "depolama_100_g92.avif",
+    "gallery_number": "92",
+    "anchor": [
+      266,
+      3
+    ],
+    "source_image": "image100.png"
+  },
+  {
+    "file": "depolama_101_g93.avif",
+    "gallery_number": "93",
+    "anchor": [
+      267,
+      6
+    ],
+    "source_image": "image101.png"
+  },
+  {
+    "file": "depolama_102_g94.avif",
+    "gallery_number": "94",
+    "anchor": [
+      267,
+      9
+    ],
+    "source_image": "image102.png"
+  },
+  {
+    "file": "depolama_103_g95.avif",
+    "gallery_number": "95",
+    "anchor": [
+      267,
+      12
+    ],
+    "source_image": "image103.png"
+  },
+  {
+    "file": "depolama_103_g95.avif",
+    "gallery_number": "96",
+    "anchor": [
+      280,
+      0
+    ],
+    "reused": true
+  },
+  {
+    "file": "depolama_104_g99.avif",
+    "gallery_number": "99",
+    "anchor": [
+      280,
+      9
+    ],
+    "source_image": "image104.png"
+  },
+  {
+    "file": "depolama_105_g100.avif",
+    "gallery_number": "100",
+    "anchor": [
+      280,
+      12
+    ],
+    "source_image": "image105.png"
+  },
+  {
+    "file": "depolama_106_g97.avif",
+    "gallery_number": "97",
+    "anchor": [
+      281,
+      3
+    ],
+    "source_image": "image106.png"
+  },
+  {
+    "file": "depolama_107_g98.avif",
+    "gallery_number": "98",
+    "anchor": [
+      280,
+      6
+    ],
+    "source_image": "image107.png"
+  },
+  {
+    "file": "depolama_108_g9_5.avif",
+    "gallery_number": "9.5",
+    "anchor": [
+      14,
+      13
+    ],
+    "source_image": "image108.png"
+  },
+  {
+    "file": "depolama_109_g9_5.avif",
+    "gallery_number": "9.5",
+    "anchor": [
+      19,
+      13
+    ],
+    "source_image": "image109.png"
+  },
+  {
+    "file": "depolama_110_g2_5.avif",
+    "gallery_number": "2.5",
+    "anchor": [
+      3,
+      6
+    ],
+    "source_image": "image110.png"
+  },
+  {
+    "file": "depolama_111_g1.avif",
+    "gallery_number": "1",
+    "anchor": [
+      3,
+      0
+    ],
+    "source_image": "image111.png"
+  },
+  {
+    "file": "depolama_112_g101.avif",
+    "gallery_number": "101",
+    "anchor": [
+      295,
+      1
+    ],
+    "source_image": "image112.png"
+  },
+  {
+    "file": "depolama_113_g102.avif",
+    "gallery_number": "102",
+    "anchor": [
+      295,
+      4
+    ],
+    "source_image": "image113.png"
+  },
+  {
+    "file": "depolama_114_g103.avif",
+    "gallery_number": "103",
+    "anchor": [
+      295,
+      6
+    ],
+    "source_image": "image114.png"
+  },
+  {
+    "file": "depolama_115_g104.avif",
+    "gallery_number": "104",
+    "anchor": [
+      295,
+      9
+    ],
+    "source_image": "image115.png"
+  },
+  {
+    "file": "depolama_116_g105.avif",
+    "gallery_number": "105",
+    "anchor": [
+      294,
+      12
+    ],
+    "source_image": "image116.png"
+  },
+  {
+    "file": "depolama_117_g114.avif",
+    "gallery_number": "114",
+    "anchor": [
+      322,
+      10
+    ],
+    "source_image": "image117.png"
+  },
+  {
+    "file": "depolama_118_g115.avif",
+    "gallery_number": "115",
+    "anchor": [
+      322,
+      13
+    ],
+    "source_image": "image118.png"
+  },
+  {
+    "file": "depolama_119_g116.avif",
+    "gallery_number": "116",
+    "anchor": [
+      335,
+      1
+    ],
+    "source_image": "image119.png"
+  },
+  {
+    "file": "depolama_120_g116.avif",
+    "gallery_number": "116",
+    "anchor": [
+      340,
+      0
+    ],
+    "source_image": "image120.png"
+  },
+  {
+    "file": "depolama_121_g117.avif",
+    "gallery_number": "117",
+    "anchor": [
+      335,
+      4
+    ],
+    "source_image": "image121.png"
+  },
+  {
+    "file": "depolama_122_g117.avif",
+    "gallery_number": "117",
+    "anchor": [
+      341,
+      4
+    ],
+    "source_image": "image122.png"
+  },
+  {
+    "file": "depolama_123_g118.avif",
+    "gallery_number": "118",
+    "anchor": [
+      335,
+      7
+    ],
+    "source_image": "image123.png"
+  },
+  {
+    "file": "depolama_124_g118.avif",
+    "gallery_number": "118",
+    "anchor": [
+      340,
+      7
+    ],
+    "source_image": "image124.png"
+  },
+  {
+    "file": "depolama_125_g121.avif",
+    "gallery_number": "121",
+    "anchor": [
+      348,
+      0
+    ],
+    "source_image": "image125.png"
+  },
+  {
+    "file": "depolama_125_g121.avif",
+    "gallery_number": "120",
+    "anchor": [
+      335,
+      12
+    ],
+    "reused": true
+  },
+  {
+    "file": "depolama_126_g122.avif",
+    "gallery_number": "122",
+    "anchor": [
+      348,
+      3
+    ],
+    "source_image": "image126.png"
+  },
+  {
+    "file": "depolama_127_g123.avif",
+    "gallery_number": "123",
+    "anchor": [
+      348,
+      6
+    ],
+    "source_image": "image127.png"
+  },
+  {
+    "file": "depolama_128_g119.avif",
+    "gallery_number": "119",
+    "anchor": [
+      335,
+      10
+    ],
+    "source_image": "image128.png"
+  },
+  {
+    "file": "depolama_129_g119.avif",
+    "gallery_number": "119",
+    "anchor": [
+      341,
+      10
+    ],
+    "source_image": "image129.png"
+  },
+  {
+    "file": "depolama_130_g113.avif",
+    "gallery_number": "113",
+    "anchor": [
+      322,
+      6
+    ],
+    "source_image": "image130.png"
+  },
+  {
+    "file": "depolama_131_g110.avif",
+    "gallery_number": "110",
+    "anchor": [
+      309,
+      12
+    ],
+    "source_image": "image131.png"
+  },
+  {
+    "file": "depolama_132_g111.avif",
+    "gallery_number": "111",
+    "anchor": [
+      322,
+      0
+    ],
+    "source_image": "image132.png"
+  },
+  {
+    "file": "depolama_133_g109.avif",
+    "gallery_number": "109",
+    "anchor": [
+      309,
+      9
+    ],
+    "source_image": "image133.png"
+  },
+  {
+    "file": "depolama_134_g112.avif",
+    "gallery_number": "112",
+    "anchor": [
+      322,
+      3
+    ],
+    "source_image": "image134.png"
+  },
+  {
+    "file": "depolama_135_g106.avif",
+    "gallery_number": "106",
+    "anchor": [
+      309,
+      0
+    ],
+    "source_image": "image135.png"
+  },
+  {
+    "file": "depolama_136_g107.avif",
+    "gallery_number": "107",
+    "anchor": [
+      309,
+      3
+    ],
+    "source_image": "image136.png"
+  },
+  {
+    "file": "depolama_137_g131.avif",
+    "gallery_number": "131",
+    "anchor": [
+      374,
+      0
+    ],
+    "source_image": "image137.png"
+  },
+  {
+    "file": "depolama_138_g125.avif",
+    "gallery_number": "125",
+    "anchor": [
+      349,
+      13
+    ],
+    "source_image": "image138.png"
+  },
+  {
+    "file": "depolama_139_g126.avif",
+    "gallery_number": "126",
+    "anchor": [
+      361,
+      0
+    ],
+    "source_image": "image139.png"
+  },
+  {
+    "file": "depolama_140_g127.avif",
+    "gallery_number": "127",
+    "anchor": [
+      362,
+      4
+    ],
+    "source_image": "image140.png"
+  },
+  {
+    "file": "depolama_141_g128.avif",
+    "gallery_number": "128",
+    "anchor": [
+      362,
+      6
+    ],
+    "source_image": "image141.png"
+  },
+  {
+    "file": "depolama_142_g129.avif",
+    "gallery_number": "129",
+    "anchor": [
+      362,
+      9
+    ],
+    "source_image": "image142.png"
+  },
+  {
+    "file": "depolama_143_g130.avif",
+    "gallery_number": "130",
+    "anchor": [
+      361,
+      12
+    ],
+    "source_image": "image143.png"
+  },
+  {
+    "file": "depolama_144_g132.avif",
+    "gallery_number": "132",
+    "anchor": [
+      375,
+      4
+    ],
+    "source_image": "image144.png"
+  },
+  {
+    "file": "depolama_145_g133.avif",
+    "gallery_number": "133",
+    "anchor": [
+      375,
+      7
+    ],
+    "source_image": "image145.png"
+  },
+  {
+    "file": "depolama_146_g134.avif",
+    "gallery_number": "134",
+    "anchor": [
+      375,
+      10
+    ],
+    "source_image": "image146.png"
+  },
+  {
+    "file": "depolama_147_g135.avif",
+    "gallery_number": "135",
+    "anchor": [
+      375,
+      13
+    ],
+    "source_image": "image147.png"
+  },
+  {
+    "file": "depolama_148_g136.avif",
+    "gallery_number": "136",
+    "anchor": [
+      388,
+      1
+    ],
+    "source_image": "image148.png"
+  },
+  {
+    "file": "depolama_149_g137.avif",
+    "gallery_number": "137",
+    "anchor": [
+      388,
+      4
+    ],
+    "source_image": "image149.png"
+  },
+  {
+    "file": "depolama_150_g138.avif",
+    "gallery_number": "138",
+    "anchor": [
+      388,
+      7
+    ],
+    "source_image": "image150.png"
+  },
+  {
+    "file": "depolama_151_g139.avif",
+    "gallery_number": "139",
+    "anchor": [
+      388,
+      10
+    ],
+    "source_image": "image151.png"
+  },
+  {
+    "file": "depolama_152_g140.avif",
+    "gallery_number": "140",
+    "anchor": [
+      387,
+      12
+    ],
+    "source_image": "image152.png"
+  },
+  {
+    "file": "depolama_153_g141.avif",
+    "gallery_number": "141",
+    "anchor": [
+      399,
+      0
+    ],
+    "source_image": "image153.png"
+  },
+  {
+    "file": "depolama_154_g142.avif",
+    "gallery_number": "142",
+    "anchor": [
+      400,
+      3
+    ],
+    "source_image": "image154.png"
+  },
+  {
+    "file": "depolama_155_g143.avif",
+    "gallery_number": "143",
+    "anchor": [
+      400,
+      6
+    ],
+    "source_image": "image155.png"
+  },
+  {
+    "file": "depolama_156_g144.avif",
+    "gallery_number": "144",
+    "anchor": [
+      399,
+      9
+    ],
+    "source_image": "image156.png"
+  },
+  {
+    "file": "depolama_157_g145.avif",
+    "gallery_number": "145",
+    "anchor": [
+      399,
+      12
+    ],
+    "source_image": "image157.png"
+  },
+  {
+    "file": "depolama_158_g146.avif",
+    "gallery_number": "146",
+    "anchor": [
+      413,
+      0
+    ],
+    "source_image": "image158.png"
+  },
+  {
+    "file": "depolama_159_g147.avif",
+    "gallery_number": "147",
+    "anchor": [
+      413,
+      3
+    ],
+    "source_image": "image159.png"
+  },
+  {
+    "file": "depolama_160_g148.avif",
+    "gallery_number": "148",
+    "anchor": [
+      412,
+      6
+    ],
+    "source_image": "image160.png"
+  },
+  {
+    "file": "depolama_161_g149.avif",
+    "gallery_number": "149",
+    "anchor": [
+      412,
+      9
+    ],
+    "source_image": "image161.png"
+  },
+  {
+    "file": "depolama_162_g157.avif",
+    "gallery_number": "157",
+    "anchor": [
+      439,
+      4
+    ],
+    "source_image": "image162.png"
+  },
+  {
+    "file": "depolama_163_g158.avif",
+    "gallery_number": "158",
+    "anchor": [
+      439,
+      7
+    ],
+    "source_image": "image163.png"
+  },
+  {
+    "file": "depolama_164_g152.avif",
+    "gallery_number": "152",
+    "anchor": [
+      425,
+      3
+    ],
+    "source_image": "image164.png"
+  },
+  {
+    "file": "depolama_165_g154.avif",
+    "gallery_number": "154",
+    "anchor": [
+      426,
+      9
+    ],
+    "source_image": "image165.png"
+  },
+  {
+    "file": "depolama_166_g155.avif",
+    "gallery_number": "155",
+    "anchor": [
+      426,
+      13
+    ],
+    "source_image": "image166.png"
+  },
+  {
+    "file": "depolama_167_g156.avif",
+    "gallery_number": "156",
+    "anchor": [
+      439,
+      1
+    ],
+    "source_image": "image167.png"
+  },
+  {
+    "file": "depolama_168_g153.avif",
+    "gallery_number": "153",
+    "anchor": [
+      426,
+      7
+    ],
+    "source_image": "image168.png"
+  },
+  {
+    "file": "depolama_169_g159.avif",
+    "gallery_number": "159",
+    "anchor": [
+      439,
+      10
+    ],
+    "source_image": "image169.png"
+  },
+  {
+    "file": "depolama_170_g160.avif",
+    "gallery_number": "160",
+    "anchor": [
+      438,
+      13
+    ],
+    "source_image": "image170.png"
+  },
+  {
+    "file": "depolama_171_g160.avif",
+    "gallery_number": "160",
+    "anchor": [
+      444,
+      13
+    ],
+    "source_image": "image171.png"
+  },
+  {
+    "file": "depolama_172_g161.avif",
+    "gallery_number": "161",
+    "anchor": [
+      452,
+      1
+    ],
+    "source_image": "image172.png"
+  },
+  {
+    "file": "depolama_173_g162.avif",
+    "gallery_number": "162",
+    "anchor": [
+      452,
+      3
+    ],
+    "source_image": "image173.png"
+  },
+  {
+    "file": "depolama_174_g164.avif",
+    "gallery_number": "164",
+    "anchor": [
+      451,
+      9
+    ],
+    "source_image": "image174.png"
+  },
+  {
+    "file": "depolama_175_g163.avif",
+    "gallery_number": "163",
+    "anchor": [
+      451,
+      7
+    ],
+    "source_image": "image175.png"
+  },
+  {
+    "file": "depolama_176_g163.avif",
+    "gallery_number": "163",
+    "anchor": [
+      457,
+      7
+    ],
+    "source_image": "image176.png"
+  },
+  {
+    "file": "depolama_177_g169.avif",
+    "gallery_number": "169",
+    "anchor": [
+      465,
+      10
+    ],
+    "source_image": "image177.png"
+  },
+  {
+    "file": "depolama_178_g170.avif",
+    "gallery_number": "170",
+    "anchor": [
+      465,
+      13
+    ],
+    "source_image": "image178.png"
+  },
+  {
+    "file": "depolama_179_g171.avif",
+    "gallery_number": "171",
+    "anchor": [
+      478,
+      0
+    ],
+    "source_image": "image179.png"
+  },
+  {
+    "file": "depolama_180_g172.avif",
+    "gallery_number": "172",
+    "anchor": [
+      478,
+      3
+    ],
+    "source_image": "image180.png"
+  },
+  {
+    "file": "depolama_181_g173.avif",
+    "gallery_number": "173",
+    "anchor": [
+      479,
+      7
+    ],
+    "source_image": "image181.png"
+  },
+  {
+    "file": "depolama_182_g174.avif",
+    "gallery_number": "174",
+    "anchor": [
+      479,
+      10
+    ],
+    "source_image": "image182.png"
+  },
+  {
+    "file": "depolama_183_g175.avif",
+    "gallery_number": "175",
+    "anchor": [
+      479,
+      12
+    ],
+    "source_image": "image183.png"
+  },
+  {
+    "file": "depolama_184_g177.avif",
+    "gallery_number": "177",
+    "anchor": [
+      491,
+      3
+    ],
+    "source_image": "image184.png"
+  },
+  {
+    "file": "depolama_185_g177.avif",
+    "gallery_number": "177",
+    "anchor": [
+      498,
+      3
+    ],
+    "source_image": "image185.png"
+  },
+  {
+    "file": "depolama_186_g176.avif",
+    "gallery_number": "176",
+    "anchor": [
+      491,
+      0
+    ],
+    "source_image": "image186.png"
+  },
+  {
+    "file": "depolama_187_g176.avif",
+    "gallery_number": "176",
+    "anchor": [
+      496,
+      0
+    ],
+    "source_image": "image187.png"
+  },
+  {
+    "file": "depolama_188_g178.avif",
+    "gallery_number": "178",
+    "anchor": [
+      492,
+      6
+    ],
+    "source_image": "image188.png"
+  },
+  {
+    "file": "depolama_189_g179.avif",
+    "gallery_number": "179",
+    "anchor": [
+      491,
+      9
+    ],
+    "source_image": "image189.png"
+  },
+  {
+    "file": "depolama_190_g180.avif",
+    "gallery_number": "180",
+    "anchor": [
+      492,
+      12
+    ],
+    "source_image": "image190.png"
+  },
+  {
+    "file": "depolama_191_g181.avif",
+    "gallery_number": "181",
+    "anchor": [
+      507,
+      0
+    ],
+    "source_image": "image191.png"
+  },
+  {
+    "file": "depolama_192_g182.avif",
+    "gallery_number": "182",
+    "anchor": [
+      508,
+      3
+    ],
+    "source_image": "image192.png"
+  },
+  {
+    "file": "depolama_193_g183.avif",
+    "gallery_number": "183",
+    "anchor": [
+      508,
+      6
+    ],
+    "source_image": "image193.png"
+  },
+  {
+    "file": "depolama_194_g184.avif",
+    "gallery_number": "184",
+    "anchor": [
+      508,
+      10
+    ],
+    "source_image": "image194.png"
+  },
+  {
+    "file": "depolama_195_g185.avif",
+    "gallery_number": "185",
+    "anchor": [
+      508,
+      13
+    ],
+    "source_image": "image195.png"
+  },
+  {
+    "file": "depolama_196_g186.avif",
+    "gallery_number": "186",
+    "anchor": [
+      524,
+      0
+    ],
+    "source_image": "image196.png"
+  },
+  {
+    "file": "depolama_197_g187.avif",
+    "gallery_number": "187",
+    "anchor": [
+      524,
+      3
+    ],
+    "source_image": "image197.png"
+  },
+  {
+    "file": "depolama_198_g188.avif",
+    "gallery_number": "188",
+    "anchor": [
+      523,
+      6
+    ],
+    "source_image": "image198.png"
+  },
+  {
+    "file": "depolama_199_g189.avif",
+    "gallery_number": "189",
+    "anchor": [
+      523,
+      9
+    ],
+    "source_image": "image199.png"
+  },
+  {
+    "file": "depolama_200_g190.avif",
+    "gallery_number": "190",
+    "anchor": [
+      524,
+      13
+    ],
+    "source_image": "image200.png"
+  },
+  {
+    "file": "depolama_201_g191.avif",
+    "gallery_number": "191",
+    "anchor": [
+      540,
+      0
+    ],
+    "source_image": "image201.png"
+  },
+  {
+    "file": "depolama_202_g192.avif",
+    "gallery_number": "192",
+    "anchor": [
+      541,
+      4
+    ],
+    "source_image": "image202.png"
+  },
+  {
+    "file": "depolama_203_g193.avif",
+    "gallery_number": "193",
+    "anchor": [
+      540,
+      6
+    ],
+    "source_image": "image203.png"
+  },
+  {
+    "file": "depolama_204_g194.avif",
+    "gallery_number": "194",
+    "anchor": [
+      541,
+      9
+    ],
+    "source_image": "image204.png"
+  },
+  {
+    "file": "depolama_205_g195.avif",
+    "gallery_number": "195",
+    "anchor": [
+      541,
+      13
+    ],
+    "source_image": "image205.png"
+  },
+  {
+    "file": "depolama_206_g196.avif",
+    "gallery_number": "196",
+    "anchor": [
+      555,
+      1
+    ],
+    "source_image": "image206.png"
+  },
+  {
+    "file": "depolama_207_g197.avif",
+    "gallery_number": "197",
+    "anchor": [
+      555,
+      3
+    ],
+    "source_image": "image207.png"
+  },
+  {
+    "file": "depolama_208_g198.avif",
+    "gallery_number": "198",
+    "anchor": [
+      555,
+      6
+    ],
+    "source_image": "image208.png"
+  },
+  {
+    "file": "depolama_209_g199.avif",
+    "gallery_number": "199",
+    "anchor": [
+      555,
+      9
+    ],
+    "source_image": "image209.png"
+  },
+  {
+    "file": "depolama_210_g200.avif",
+    "gallery_number": "200",
+    "anchor": [
+      555,
+      13
+    ],
+    "source_image": "image210.png"
+  },
+  {
+    "file": "depolama_211_g201.avif",
+    "gallery_number": "201",
+    "anchor": [
+      568,
+      0
+    ],
+    "source_image": "image211.png"
+  },
+  {
+    "file": "depolama_212_g202.avif",
+    "gallery_number": "202",
+    "anchor": [
+      568,
+      3
+    ],
+    "source_image": "image212.png"
+  },
+  {
+    "file": "depolama_213_g203.avif",
+    "gallery_number": "203",
+    "anchor": [
+      568,
+      6
+    ],
+    "source_image": "image213.png"
+  },
+  {
+    "file": "depolama_214_g204.avif",
+    "gallery_number": "204",
+    "anchor": [
+      568,
+      9
+    ],
+    "source_image": "image214.png"
+  },
+  {
+    "file": "depolama_215_g206.avif",
+    "gallery_number": "206",
+    "anchor": [
+      582,
+      0
+    ],
+    "source_image": "image215.png"
+  },
+  {
+    "file": "depolama_216_g207.avif",
+    "gallery_number": "207",
+    "anchor": [
+      582,
+      3
+    ],
+    "source_image": "image216.png"
+  },
+  {
+    "file": "depolama_217_g208.avif",
+    "gallery_number": "208",
+    "anchor": [
+      582,
+      6
+    ],
+    "source_image": "image217.png"
+  },
+  {
+    "file": "depolama_218_g209.avif",
+    "gallery_number": "209",
+    "anchor": [
+      582,
+      9
+    ],
+    "source_image": "image218.png"
+  },
+  {
+    "file": "depolama_219_g210.avif",
+    "gallery_number": "210",
+    "anchor": [
+      582,
+      12
+    ],
+    "source_image": "image219.png"
+  },
+  {
+    "file": "depolama_220_g211.avif",
+    "gallery_number": "211",
+    "anchor": [
+      597,
+      0
+    ],
+    "source_image": "image220.png"
+  },
+  {
+    "file": "depolama_220_g211.avif",
+    "gallery_number": "212",
+    "anchor": [
+      597,
+      3
+    ],
+    "reused": true
+  },
+  {
+    "file": "depolama_220_g211.avif",
+    "gallery_number": "213",
+    "anchor": [
+      597,
+      6
+    ],
+    "reused": true
+  },
+  {
+    "file": "depolama_221_g214.avif",
+    "gallery_number": "214",
+    "anchor": [
+      597,
+      10
+    ],
+    "source_image": "image221.png"
+  },
+  {
+    "file": "depolama_222_g215.avif",
+    "gallery_number": "215",
+    "anchor": [
+      598,
+      13
+    ],
+    "source_image": "image222.png"
+  },
+  {
+    "file": "depolama_223_g219.avif",
+    "gallery_number": "219",
+    "anchor": [
+      614,
+      9
+    ],
+    "source_image": "image223.png"
+  },
+  {
+    "file": "depolama_224_g220.avif",
+    "gallery_number": "220",
+    "anchor": [
+      614,
+      12
+    ],
+    "source_image": "image224.png"
+  },
+  {
+    "file": "depolama_225_g221.avif",
+    "gallery_number": "221",
+    "anchor": [
+      629,
+      0
+    ],
+    "source_image": "image225.png"
+  },
+  {
+    "file": "depolama_226_g223.avif",
+    "gallery_number": "223",
+    "anchor": [
+      629,
+      6
+    ],
+    "source_image": "image226.png"
+  },
+  {
+    "file": "depolama_227_g240.avif",
+    "gallery_number": "240",
+    "anchor": [
+      670,
+      12
+    ],
+    "source_image": "image227.png"
+  },
+  {
+    "file": "depolama_228_g239.avif",
+    "gallery_number": "239",
+    "anchor": [
+      670,
+      9
+    ],
+    "source_image": "image228.png"
+  },
+  {
+    "file": "depolama_229_g238.avif",
+    "gallery_number": "238",
+    "anchor": [
+      670,
+      6
+    ],
+    "source_image": "image229.png"
+  },
+  {
+    "file": "depolama_230_g237.avif",
+    "gallery_number": "237",
+    "anchor": [
+      670,
+      3
+    ],
+    "source_image": "image230.png"
+  },
+  {
+    "file": "depolama_231_g241.avif",
+    "gallery_number": "241",
+    "anchor": [
+      685,
+      0
+    ],
+    "source_image": "image231.png"
+  },
+  {
+    "file": "depolama_232_g249.avif",
+    "gallery_number": "249",
+    "anchor": [
+      700,
+      9
+    ],
+    "source_image": "image232.png"
+  },
+  {
+    "file": "depolama_233_g250.avif",
+    "gallery_number": "250",
+    "anchor": [
+      701,
+      13
+    ],
+    "source_image": "image233.png"
+  },
+  {
+    "file": "depolama_234_g242.avif",
+    "gallery_number": "242",
+    "anchor": [
+      686,
+      4
+    ],
+    "source_image": "image234.png"
+  },
+  {
+    "file": "depolama_235_g244.avif",
+    "gallery_number": "244",
+    "anchor": [
+      685,
+      9
+    ],
+    "source_image": "image235.png"
+  },
+  {
+    "file": "depolama_236_g243.avif",
+    "gallery_number": "243",
+    "anchor": [
+      685,
+      6
+    ],
+    "source_image": "image236.png"
+  },
+  {
+    "file": "depolama_237_g248.avif",
+    "gallery_number": "248",
+    "anchor": [
+      700,
+      6
+    ],
+    "source_image": "image237.png"
+  },
+  {
+    "file": "depolama_238_g247.avif",
+    "gallery_number": "247",
+    "anchor": [
+      700,
+      3
+    ],
+    "source_image": "image238.png"
+  },
+  {
+    "file": "depolama_239_g246.avif",
+    "gallery_number": "246",
+    "anchor": [
+      700,
+      0
+    ],
+    "source_image": "image239.png"
+  },
+  {
+    "file": "depolama_240_g245.avif",
+    "gallery_number": "245",
+    "anchor": [
+      685,
+      12
+    ],
+    "source_image": "image240.png"
+  },
+  {
+    "file": "depolama_241_g253.avif",
+    "gallery_number": "253",
+    "anchor": [
+      713,
+      6
+    ],
+    "source_image": "image241.png"
+  },
+  {
+    "file": "depolama_242_g252.avif",
+    "gallery_number": "252",
+    "anchor": [
+      713,
+      3
+    ],
+    "source_image": "image242.png"
+  },
+  {
+    "file": "depolama_243_g255.avif",
+    "gallery_number": "255",
+    "anchor": [
+      713,
+      12
+    ],
+    "source_image": "image243.png"
+  },
+  {
+    "file": "depolama_244_g254.avif",
+    "gallery_number": "254",
+    "anchor": [
+      713,
+      9
+    ],
+    "source_image": "image244.png"
+  },
+  {
+    "file": "depolama_245_g251.avif",
+    "gallery_number": "251",
+    "anchor": [
+      713,
+      0
+    ],
+    "source_image": "image245.png"
+  },
+  {
+    "file": "depolama_246_g283.avif",
+    "gallery_number": "283",
+    "anchor": [
+      798,
+      6
+    ],
+    "source_image": "image246.png"
+  },
+  {
+    "file": "depolama_247_g284.avif",
+    "gallery_number": "284",
+    "anchor": [
+      799,
+      10
+    ],
+    "source_image": "image247.png"
+  },
+  {
+    "file": "depolama_248_g285.avif",
+    "gallery_number": "285",
+    "anchor": [
+      799,
+      13
+    ],
+    "source_image": "image248.png"
+  },
+  {
+    "file": "depolama_249_g287.avif",
+    "gallery_number": "287",
+    "anchor": [
+      814,
+      4
+    ],
+    "source_image": "image249.png"
+  },
+  {
+    "file": "depolama_250_g288.avif",
+    "gallery_number": "288",
+    "anchor": [
+      813,
+      6
+    ],
+    "source_image": "image250.png"
+  },
+  {
+    "file": "depolama_251_g289.avif",
+    "gallery_number": "289",
+    "anchor": [
+      814,
+      10
+    ],
+    "source_image": "image251.png"
+  },
+  {
+    "file": "depolama_252_g290.avif",
+    "gallery_number": "290",
+    "anchor": [
+      814,
+      13
+    ],
+    "source_image": "image252.png"
+  },
+  {
+    "file": "depolama_253_g291.avif",
+    "gallery_number": "291",
+    "anchor": [
+      828,
+      0
+    ],
+    "source_image": "image253.png"
+  },
+  {
+    "file": "depolama_254_g292.avif",
+    "gallery_number": "292",
+    "anchor": [
+      828,
+      3
+    ],
+    "source_image": "image254.png"
+  },
+  {
+    "file": "depolama_255_g293.avif",
+    "gallery_number": "293",
+    "anchor": [
+      829,
+      7
+    ],
+    "source_image": "image255.png"
+  },
+  {
+    "file": "depolama_256_g294.avif",
+    "gallery_number": "294",
+    "anchor": [
+      828,
+      9
+    ],
+    "source_image": "image256.png"
+  },
+  {
+    "file": "depolama_257_g295.avif",
+    "gallery_number": "295",
+    "anchor": [
+      829,
+      13
+    ],
+    "source_image": "image257.png"
+  },
+  {
+    "file": "depolama_258_g296.avif",
+    "gallery_number": "296",
+    "anchor": [
+      840,
+      0
+    ],
+    "source_image": "image258.png"
+  },
+  {
+    "file": "depolama_259_g297.avif",
+    "gallery_number": "297",
+    "anchor": [
+      840,
+      3
+    ],
+    "source_image": "image259.png"
+  },
+  {
+    "file": "depolama_260_g298.avif",
+    "gallery_number": "298",
+    "anchor": [
+      841,
+      7
+    ],
+    "source_image": "image260.png"
+  },
+  {
+    "file": "depolama_261_g301.avif",
+    "gallery_number": "301",
+    "anchor": [
+      855,
+      0
+    ],
+    "source_image": "image261.png"
+  },
+  {
+    "file": "depolama_262_g300.avif",
+    "gallery_number": "300",
+    "anchor": [
+      840,
+      12
+    ],
+    "source_image": "image262.png"
+  },
+  {
+    "file": "depolama_263_g299.avif",
+    "gallery_number": "299",
+    "anchor": [
+      841,
+      10
+    ],
+    "source_image": "image263.png"
+  },
+  {
+    "file": "depolama_264_g302.avif",
+    "gallery_number": "302",
+    "anchor": [
+      855,
+      3
+    ],
+    "source_image": "image264.png"
+  },
+  {
+    "file": "depolama_265_g310.avif",
+    "gallery_number": "310",
+    "anchor": [
+      870,
+      13
+    ],
+    "source_image": "image265.png"
+  },
+  {
+    "file": "depolama_266_g311.avif",
+    "gallery_number": "311",
+    "anchor": [
+      890,
+      1
+    ],
+    "source_image": "image266.png"
+  }
+]
