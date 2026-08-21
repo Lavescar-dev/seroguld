@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 from app.config import get_settings
 from app.models.product import Product
 from app.services.photo_service import sorted_photos_for_publish
+from app.services.woocommerce_profiles import effective_publish_profile, profile_traits
 from app.utils.helpers import quantize_2, utc_now
 
 
@@ -254,6 +255,35 @@ DESC_FOOTER_DA_DEFAULT = (
 )
 
 
+# Yatırım ürünleri (külçe/sikke/platin) için açıklama alt bloğu — Valcambi/
+# sikke referans dilinden; Størrelsesguide yok. Ayarlar'dan düzenlenebilir.
+DESC_FOOTER_INVESTMENT_DA_DEFAULT = (
+    "<h3>Investering i ædelmetal</h3>"
+    "<p>Hos Sero Guld handler du ædelmetal fra anerkendte producenter. Varen "
+    "leveres forsikret og kan afhentes i Valby efter aftale.</p>"
+    "<p>Renheden er oplyst i promille under specifikationer. Barrer og mønter er "
+    "præget og forseglet, og mange leveres med et certificeret unikt nummer, som "
+    "stemmer overens med varen.</p>"
+    "<p>Ædelmetal er en håndgribelig og likvid måde at sprede sin opsparing på. "
+    "Vi yder ikke investeringsrådgivning, men står gerne til rådighed med "
+    "produktinformation og vejledning ved spørgsmål.</p>"
+)
+
+
+def _renhed_promille(product: Product) -> str | None:
+    """purity_percentage'dan 'NNN,N promille (NN,NN%)' üretir (yatırım şekli)."""
+    pct = getattr(product, "purity_percentage", None)
+    if pct is None:
+        return None
+    try:
+        percent = Decimal(str(pct))
+    except (TypeError, ValueError):
+        return None
+    promille = (percent * Decimal("10")).quantize(Decimal("0.1"))
+    pct_q = percent.quantize(Decimal("0.01"))
+    return f"{_danish_number(promille)} promille ({_danish_number(pct_q)}%)"
+
+
 def _load_json_setting(raw: str) -> dict[str, Any]:
     text = (raw or "").strip()
     if not text:
@@ -332,11 +362,12 @@ def _resolve_categories(
     return categories, primary_int, warnings
 
 
-def _build_attributes(product: Product) -> list[dict[str, Any]]:
-    """Sitedeki 'Yderligere information' spec tablosunu besleyen attribute'lar.
+def _aedelmetal_name(product: Product) -> str | None:
+    metal = getattr(product.metal_type, "value", str(product.metal_type))
+    return {"platinum": "Platin", "palladium": "Palladium"}.get(metal)
 
-    Boş alan atlanır; sayılar Danca ondalık virgülle yazılır.
-    """
+
+def _jewelry_attributes(product: Product) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     karat = _karat_number(product)
     if karat:
@@ -359,7 +390,46 @@ def _build_attributes(product: Product) -> list[dict[str, Any]]:
     reference = (product.reference_number or product.product_number or "").strip()
     if reference:
         entries.append(("Vare nr.", reference))
+    return entries
 
+
+def _investment_attributes(product: Product, traits: dict[str, Any]) -> list[tuple[str, str]]:
+    """K\u00fcl\u00e7e/sikke/platin: V\u00e6gt(gram) + Karat/\u00c6delmetal + Renhed(promille) +
+    (sikke) Diameter/Tykkelse/\u00c5rstal + Producent."""
+    entries: list[tuple[str, str]] = []
+    if product.weight_grams is not None:
+        entries.append(("V\u00e6gt", f"{_danish_number(quantize_2(product.weight_grams))} gram"))
+    if traits.get("aedelmetal"):
+        metal = _aedelmetal_name(product)
+        if metal:
+            entries.append(("\u00c6delmetal", metal))
+    else:
+        karat = _karat_number(product)
+        if karat:
+            entries.append(("Karat", karat))
+    promille = _renhed_promille(product)
+    if promille:
+        entries.append(("Renhed", promille))
+    if traits.get("dimensions"):
+        if getattr(product, "diameter_mm", None) is not None:
+            entries.append(("Diameter", f"{_danish_number(quantize_2(product.diameter_mm))}mm"))
+        if getattr(product, "thickness_mm", None) is not None:
+            entries.append(("Tykkelse", f"{_danish_number(quantize_2(product.thickness_mm))}mm"))
+    if getattr(product, "producer", None):
+        entries.append(("Producent", str(product.producer)))
+    if traits.get("year") and getattr(product, "production_year", None):
+        entries.append(("\u00c5rstal", str(int(product.production_year))))
+    return entries
+
+
+def _build_attributes(product: Product) -> list[dict[str, Any]]:
+    """Sitedeki 'Yderligere information' spec tablosu \u2014 YAYIN PROF\u0130L\u0130NE g\u00f6re."""
+    profile = effective_publish_profile(product)
+    traits = profile_traits(profile)
+    if traits.get("investment"):
+        entries = _investment_attributes(product, traits)
+    else:
+        entries = _jewelry_attributes(product)
     return [
         {"name": name, "visible": True, "options": [value]}
         for name, value in entries
@@ -459,28 +529,38 @@ SPEC_STRIP_MARKER_END = "<!-- /sg-spec -->"
 
 
 def _spec_strip_text(product: Product) -> str:
-    """Referans sitedeki yeşil kutu şeridi:
-    'Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm'.
+    """Yayin profiline gore yesil kutu seridi.
 
-    Vare nr. + DOLDURULMUŞ ölçüler (Længde/Bredde/Tykkelse/Diameter). Ağırlık
-    şeride girmez (Yderligere information tablosunda); birimler boşluksuz,
-    referansla birebir; sayılar Danca ondalık virgülle.
+    jewelry: 'Vare nr. : 1201 L\u00e6ngde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm'
+    (Vare nr. + doldurulmus olculer). investment (bar/coin/platin): olcu yok;
+    spec_strip_mode='weight' ise 'Vare nr. : X V\u00e6gt: N gram', 'none' ise bos.
+    Birimler bosluksuz; sayilar Danca ondalik virgulle.
     """
     ref = (product.reference_number or product.product_number or "").strip()
     if not ref:
         return ""
+    base = f"Vare nr. : {ref}"
+    traits = profile_traits(effective_publish_profile(product))
+    mode = traits.get("spec_strip_mode", "dimensions")
+
+    if traits.get("investment"):
+        if mode == "none":
+            return base
+        if product.weight_grams is not None:
+            return f"{base} V\u00e6gt: {_danish_number(quantize_2(product.weight_grams))} gram"
+        return base
+
     dims: list[str] = []
     length = getattr(product, "length_cm", None)
     if length:
-        # length_cm birim içeren serbest metindir (ör. "1,40cm" / "18-19cm").
-        dims.append(f"Længde: {str(length).strip()}")
+        # length_cm birim iceren serbest metindir (or. "1,40cm" / "18-19cm").
+        dims.append(f"L\u00e6ngde: {str(length).strip()}")
     if getattr(product, "width_mm", None) is not None:
         dims.append(f"Bredde: {_danish_number(quantize_2(product.width_mm))}mm")
     if getattr(product, "thickness_mm", None) is not None:
         dims.append(f"Tykkelse: {_danish_number(quantize_2(product.thickness_mm))}mm")
     if getattr(product, "diameter_mm", None) is not None:
         dims.append(f"Diameter: {_danish_number(quantize_2(product.diameter_mm))}mm")
-    base = f"Vare nr. : {ref}"
     return f"{base} {', '.join(dims)}" if dims else base
 
 
@@ -595,14 +675,19 @@ def build_publish_payload(
     if not slug_value or not _slug_consistent(slug_value, product):
         slug_value = _default_slug_for(product)
 
-    # Sabit Danca blok yalnız TAKI ürünlerinde; DB'deki ai_description'a asla
-    # yazılmaz, yalnız giden payload'da birleştirilir.
-    if (
-        settings.woocommerce_desc_footer_enabled
-        and _product_inventory_category(product) == "taki"
-    ):
-        footer_html = (settings.woocommerce_desc_footer_html or "").strip() or DESC_FOOTER_DA_DEFAULT
-        description_value = _apply_description_footer(description_value, footer_html)
+    # Sabit Danca alt blok YAYIN PROFİLİNE göre; DB'deki ai_description'a asla
+    # yazılmaz, yalnız giden payload'da birleştirilir. jewelry → Størrelsesguide,
+    # investment (külçe/sikke/platin) → yatırım bloğu.
+    if settings.woocommerce_desc_footer_enabled:
+        footer_key = profile_traits(effective_publish_profile(product)).get("footer_key")
+        if footer_key == "jewelry":
+            footer_html = (settings.woocommerce_desc_footer_html or "").strip() or DESC_FOOTER_DA_DEFAULT
+            description_value = _apply_description_footer(description_value, footer_html)
+        elif footer_key == "investment":
+            footer_html = (
+                getattr(settings, "woocommerce_desc_footer_investment_html", "") or ""
+            ).strip() or DESC_FOOTER_INVESTMENT_DA_DEFAULT
+            description_value = _apply_description_footer(description_value, footer_html)
 
     # Referans sitedeki spec şeridi ("Vare nr. : X, Vægt: Yg Diameter: Zmm")
     # hem kısa açıklamanın hem uzun açıklamanın başına idempotent eklenir.

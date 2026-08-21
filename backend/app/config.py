@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     # boş = koda gömülü varsayılan (DESC_FOOTER_DA_DEFAULT). Env tek satır.
     woocommerce_desc_footer_html: str = ""
     woocommerce_desc_footer_enabled: bool = True
+    # Yatırım ürünleri (külçe/sikke/platin) alt bloğu; boşsa gömülü default.
+    woocommerce_desc_footer_investment_html: str = ""
     woocommerce_primary_term_meta_key: str = "_yoast_wpseo_primary_product_cat"
 
     wordpress_base_url: str = ""

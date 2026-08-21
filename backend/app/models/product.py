@@ -76,6 +76,10 @@ class Product(Base):
     woocommerce_category_ids: Mapped[list | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
+    # Yayın profili override'ı (jewelry/bar/coin/platinum); boşsa üründen türetilir.
+    woocommerce_publish_profile: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Sikke üretim yılı (Årstal attribute'u); operatör girer / AI önerir.
+    production_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_published_to_site: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

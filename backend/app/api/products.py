@@ -757,11 +757,27 @@ async def publish(
     if payload.category_ids is not None:
         product.woocommerce_category_ids = [int(value) for value in payload.category_ids] or None
 
+    # Yayın profili override'ı (jewelry/bar/coin/platinum) ve sikke yılı (Årstal).
+    if payload.publish_profile is not None:
+        from app.services.woocommerce_profiles import VALID_PROFILES
+
+        candidate = payload.publish_profile.strip().lower()
+        if candidate and candidate not in VALID_PROFILES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Geçersiz yayın profili. Seçenekler: {', '.join(VALID_PROFILES)}",
+            )
+        product.woocommerce_publish_profile = candidate or None
+    if payload.production_year is not None:
+        product.production_year = payload.production_year if payload.production_year > 0 else None
+
     wc_service = WooCommerceService()
     request_payload = {
         "regular_price_dkk": str(payload.regular_price_dkk),
         "name": payload.name,
         "category_ids": payload.category_ids,
+        "publish_profile": payload.publish_profile,
+        "production_year": payload.production_year,
     }
 
     try:

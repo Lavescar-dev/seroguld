@@ -133,6 +133,11 @@ class ProductPublishRequest(AppBaseModel):
     # None = ürün üzerindeki override'a dokunma; [] = override'ı temizle
     # (Settings haritasına dön); dolu liste = bu ID'lerle yayınla ve sakla.
     category_ids: list[int] | None = None
+    # Yayın profili override'ı (jewelry/bar/coin/platinum); None=dokunma,
+    # ""=temizle (türetime dön), dolu=kullan+sakla.
+    publish_profile: str | None = None
+    # Sikke üretim yılı (Årstal); None=dokunma, 0/negatif=temizle.
+    production_year: int | None = None
 
 
 class ProductWooImportRequest(AppBaseModel):
@@ -183,6 +188,10 @@ class ProductOut(AppBaseModel):
     ai_description_approved: bool
     woocommerce_product_id: int | None
     woocommerce_category_ids: list[int] | None = None
+    woocommerce_publish_profile: str | None = None
+    production_year: int | None = None
+    # Ürünün türetilen (varsayılan) yayın profili — UI seçicide default.
+    resolved_publish_profile: str | None = None
     is_published_to_site: bool
     published_at: datetime | None
     photos: list[PhotoItem]

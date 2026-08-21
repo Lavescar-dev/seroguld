@@ -162,15 +162,18 @@ def test_empty_maps_degrade_gracefully_with_warnings() -> None:
     assert payload["regular_price"] == "100.00"
 
 
-def test_bar_product_gets_no_footer_and_no_karat_category() -> None:
+def test_bar_product_uses_investment_profile_attributes_footer_and_no_karat_category() -> None:
     bar = _product(
         product_type=SimpleNamespace(value="bar"),
         inventory_category="kulce",
         purity_karat="24K",
+        purity_percentage=Decimal("99.99"),
+        weight_grams=Decimal("2.50"),
         length_cm=None,
         width_mm=None,
         thickness_mm=None,
-        producer="Umicore",
+        diameter_mm=None,
+        producer="Valcambi Suisse",
     )
     payload, _ = build_publish_payload(
         product=bar,
@@ -180,7 +183,16 @@ def test_bar_product_gets_no_footer_and_no_karat_category() -> None:
         settings=_settings(),
     )
     assert payload["categories"] == [{"id": 111}]  # kulce/gold; karat kategorisi yok
-    assert DESC_FOOTER_MARKER_START not in payload["description"]
+    # Yatırım footer'ı (Størrelsesguide değil).
+    assert DESC_FOOTER_MARKER_START in payload["description"]
+    assert "Investering" in payload["description"]
+    assert "Størrelsesguide" not in payload["description"]
+    # Yatırım attribute formatı: Vægt gram, çıplak karat, Renhed promille, ölçü yok.
+    attrs = {item["name"]: item["options"][0] for item in payload["attributes"]}
+    assert attrs["Vægt"] == "2,50 gram"
+    assert attrs["Karat"] == "24"
+    assert attrs["Renhed"] == "999,9 promille (99,99%)"
+    assert "Længde" not in attrs and "Bredde" not in attrs and "Tykkelse" not in attrs
 
 
 def test_footer_is_idempotent_and_overridable() -> None:

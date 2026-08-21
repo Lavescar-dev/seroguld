@@ -82,6 +82,15 @@ def calculate_offer_price(
     return quantize_2(pure_gold_grams * gold_rate_dkk_per_gram * (Decimal("1") - commission_rate))
 
 
+def _resolved_publish_profile(product: Product) -> str | None:
+    try:
+        from app.services.woocommerce_profiles import resolve_publish_profile
+
+        return resolve_publish_profile(product)
+    except Exception:  # pragma: no cover - türetim UI için bilgi amaçlı
+        return None
+
+
 def infer_inventory_categories(
     metal_type: MetalTypeEnum, product_type: ProductTypeEnum
 ) -> tuple[str, str | None]:
@@ -272,6 +281,9 @@ def to_product_out(product: Product) -> ProductOut:
             if product.woocommerce_category_ids
             else None
         ),
+        woocommerce_publish_profile=getattr(product, "woocommerce_publish_profile", None),
+        production_year=getattr(product, "production_year", None),
+        resolved_publish_profile=_resolved_publish_profile(product),
         is_published_to_site=product.is_published_to_site,
         published_at=product.published_at,
         photos=product.photos or [],

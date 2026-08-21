@@ -77,6 +77,8 @@ def test_fresh_sqlite_alembic_upgrade_reaches_head(tmp_path: Path) -> None:
     assert catalog_state_rows == 0
     assert "diameter_mm" in product_columns
     assert "woocommerce_category_ids" in product_columns
+    assert "woocommerce_publish_profile" in product_columns
+    assert "production_year" in product_columns
     assert "uq_products_reference_number" in product_indexes
 
 
