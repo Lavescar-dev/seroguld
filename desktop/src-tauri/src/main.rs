@@ -3133,6 +3133,41 @@ fn open_runtime_diagnostics(state: State<'_, RuntimeSupervisor>) -> Result<Strin
     Ok(target.display().to_string())
 }
 
+/// Harici bir http/https adresini işletim sisteminin varsayılan tarayıcısında
+/// açar. Tauri webview'i `<a target=_blank>`/`window.open`'ı sessizce yutar; bu
+/// komut OS kabuğunu kullanır (mevcut open_runtime_diagnostics deseniyle aynı).
+/// Güvenlik: yalnız http/https kabul edilir (dosya/UNC/keyfi şema/komut engellenir).
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim().to_string();
+    let lower = trimmed.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("Yalnız http/https adresleri açılabilir".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe")
+            .arg(&trimmed)
+            .spawn()
+            .map_err(|error| format!("Adres açılamadı: {error}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&trimmed)
+            .spawn()
+            .map_err(|error| format!("Adres açılamadı: {error}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&trimmed)
+            .spawn()
+            .map_err(|error| format!("Adres açılamadı: {error}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn probe_excel_com_availability(
     app: AppHandle,
@@ -3538,6 +3573,7 @@ fn main() {
             consume_desktop_close_request,
             retry_desktop_startup,
             open_runtime_diagnostics,
+            open_external_url,
             get_excel_availability,
             probe_excel_com_availability,
             launch_excel_bridge,

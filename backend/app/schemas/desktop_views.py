@@ -68,6 +68,9 @@ class DashboardScreenOut(AppBaseModel):
 class SettingsScreenOut(AppBaseModel):
     openai_api_key: str
     openai_model: str
+    # Reasoning effort AYRI parametre (none|low|medium|high|xhigh|max); model
+    # ID'sine yapıştırılmaz. UI'da ayrı dropdown olarak seçilir.
+    openai_reasoning_effort: str = "high"
     openai_max_tokens: str
     opmc_api_url: str
     opmc_api_key: str

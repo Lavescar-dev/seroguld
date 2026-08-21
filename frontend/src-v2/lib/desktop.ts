@@ -667,6 +667,26 @@ export async function openRuntimeDiagnostics(): Promise<string | null> {
   }
 }
 
+/**
+ * Harici http/https adresini açar. Paketli Tauri webview'inde `window.open`/
+ * `<a target=_blank>` sessizce çalışmaz; bu durumda OS tarayıcısını açan Rust
+ * komutuna (open_external_url) düşer. Tarayıcı (dev) ortamında window.open kullanır.
+ */
+export async function openExternalUrl(url: string): Promise<boolean> {
+  const target = (url || '').trim();
+  if (!target) return false;
+  if (!isTauriRuntime()) {
+    window.open(target, '_blank', 'noopener,noreferrer');
+    return true;
+  }
+  try {
+    await invokeDesktop('open_external_url', { url: target });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function listenDesktopCloseRequest(listener: (state: DesktopStartupState) => void): Promise<() => void> {
   if (!isTauriRuntime()) return () => undefined;
   try {

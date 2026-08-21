@@ -207,6 +207,45 @@ def test_saved_profile_json_round_trips_through_settings(monkeypatch: pytest.Mon
     assert reloaded["plet_dkk"] == "0.02"
 
 
+def test_save_persists_per_field_auto_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drawer'daki manuel/oto geçişi: live_fields verilince alan-bazlı canlı
+    bayraklar + master bayrak env'e yazılmalı (Ayarlar ekranına gitmeye gerek yok)."""
+    saved: dict[str, str] = {}
+    monkeypatch.setattr(market_rate_profile, "upsert_env_values", lambda _p, v: saved.update(v))
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=False))
+    monkeypatch.setattr(market_rate_profile.get_settings, "cache_clear", lambda: None, raising=False)
+
+    base = {
+        "eur_dkk_fx": "7.45",
+        "gold_rates_dkk": {"8": "130", "14": "382", "18": "470", "21": "540", "21.6": "555", "22": "565", "24": "612"},
+        "silver_rates_dkk": {"999": "8.10", "925": "7.40", "830": "6.60"},
+        "plet_dkk": "0.02", "gold_bar_dkk": "620", "silver_bar_dkk": "8.30",
+        "platinum_dkk": "300", "palladium_dkk": "340",
+    }
+
+    # Platin oto, diğerleri manuel -> master açık.
+    market_rate_profile.save_manual_market_rate_profile(
+        {**base, "live_fields": {"eur_dkk_fx": False, "platinum_dkk": True, "palladium_dkk": False}}
+    )
+    assert saved["MARKET_RATES_LIVE_FX_ENABLED"] == "false"
+    assert saved["MARKET_RATES_LIVE_PLATINUM_ENABLED"] == "true"
+    assert saved["MARKET_RATES_LIVE_PALLADIUM_ENABLED"] == "false"
+    assert saved["MARKET_RATES_LIVE_ENABLED"] == "true"  # en az bir alan oto
+
+    # Hepsi manuel -> master kapalı.
+    saved.clear()
+    market_rate_profile.save_manual_market_rate_profile(
+        {**base, "live_fields": {"eur_dkk_fx": False, "platinum_dkk": False, "palladium_dkk": False}}
+    )
+    assert saved["MARKET_RATES_LIVE_ENABLED"] == "false"
+
+    # live_fields verilmezse canlı bayraklara DOKUNULMAZ.
+    saved.clear()
+    market_rate_profile.save_manual_market_rate_profile(base)
+    assert "MARKET_RATES_LIVE_ENABLED" not in saved
+    assert "MARKET_RATES_LIVE_PLATINUM_ENABLED" not in saved
+
+
 def test_legacy_eur_profile_json_is_converted_on_read(monkeypatch: pytest.MonkeyPatch) -> None:
     legacy_json = json.dumps(
         {

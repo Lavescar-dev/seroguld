@@ -16,6 +16,7 @@ import {
 import { useState } from 'react';
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { openExternalUrl } from '@/lib/desktop';
 import type { WooCatalogSyncSummary, WooMakeState } from './useWooMakeState';
 
 type WooCatalogPanelProps = {
@@ -150,7 +151,7 @@ export function WooCatalogPanel({ state, mode, onOpenLocalProducts }: WooCatalog
                   <td className="px-4 py-3">{item.weight_grams == null ? <span className="text-amber-700">Eksik</span> : formatNumber(item.weight_grams, ' g')}</td>
                   <td className="px-4 py-3"><p>{item.stock_status || '—'}</p><p className={`mt-1 ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{item.stock_quantity ?? '—'} adet</p></td>
                   <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{item.manual_review_required ? <span className="border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-amber-800">Manuel</span> : <span className="border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-emerald-800">Hazır</span>}{item.photo_missing ? <span className="border border-red-200 bg-red-50 px-1.5 py-0.5 text-red-700">Foto yok</span> : null}</div></td>
-                  <td className="px-4 py-3">{item.linked_product_id ? <span className="inline-flex items-center gap-1 text-emerald-700"><Link2 className="h-3.5 w-3.5" />CRM bağlı</span> : item.permalink ? <a href={item.permalink} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="inline-flex items-center gap-1 text-blue-700 hover:underline">Siteyi aç<ExternalLink className="h-3 w-3" /></a> : '—'}</td>
+                  <td className="px-4 py-3">{item.linked_product_id ? <span className="inline-flex items-center gap-1 text-emerald-700"><Link2 className="h-3.5 w-3.5" />CRM bağlı</span> : item.permalink ? <a href={item.permalink} target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void openExternalUrl(item.permalink as string); }} className="inline-flex items-center gap-1 text-blue-700 hover:underline">Siteyi aç<ExternalLink className="h-3 w-3" /></a> : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -251,7 +252,7 @@ function WooCatalogDetailDrawer({ state, classic, buttonClass }: { state: WooMak
 
             <div className="flex flex-wrap items-center gap-2">
               {detail.permalink ? (
-                <a href={detail.permalink} target="_blank" rel="noreferrer" className={buttonClass}>
+                <a href={detail.permalink} target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); void openExternalUrl(detail.permalink as string); }} className={buttonClass}>
                   <span className="inline-flex items-center gap-1">Siteyi aç<ExternalLink className="h-3 w-3" /></span>
                 </a>
               ) : null}

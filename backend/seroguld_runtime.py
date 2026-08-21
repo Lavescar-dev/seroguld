@@ -277,6 +277,23 @@ def prepare_runtime_environment() -> RuntimePaths:
             "OFFICE_PROVIDER_LOG": "embedded",
         }
     )
+    # --- Dağıtılmış runtime.env için bir-defalık onarımlar --------------------
+    # Bu değerler yalnız BAYAT/BOZUK ise düzeltilir; kullanıcının bilinçli
+    # seçimi korunur (force-override değil).
+    #   * OPENAI_MODEL: eski varsayılan "gpt-5.4" → "gpt-5.6-luna" (kullanıcının
+    #     başka bir modeli seçtiyse dokunulmaz). Boşsa da luna yaz.
+    #   * OPENAI_REASONING_EFFORT: boşsa "high".
+    #   * INVOICE_SELLER_NAME: boş veya çift-encode (mojibake, 'Ã' içeriyor) ise
+    #     doğru "Sero Guld og Sølv ApS" değerine sabitle.
+    _openai_model = current.get("OPENAI_MODEL", "").strip()
+    if not _openai_model or _openai_model == "gpt-5.4":
+        current["OPENAI_MODEL"] = "gpt-5.6-luna"
+    if not current.get("OPENAI_REASONING_EFFORT", "").strip():
+        current["OPENAI_REASONING_EFFORT"] = "high"
+    _seller = current.get("INVOICE_SELLER_NAME", "")
+    if not _seller.strip() or "Ã" in _seller:
+        current["INVOICE_SELLER_NAME"] = "Sero Guld og Sølv ApS"
+
     if len(current.get("JWT_ACCESS_SECRET", "")) < 32:
         current["JWT_ACCESS_SECRET"] = secrets.token_urlsafe(48)
     if len(current.get("JWT_REFRESH_SECRET", "")) < 32:

@@ -268,20 +268,37 @@ def get_effective_market_rate_profile_cached() -> dict[str, Any]:
     )
 
 
+# Oto alan bayrağı (drawer'daki manuel/oto geçişi) -> env anahtarı.
+_LIVE_FIELD_ENV = {
+    "eur_dkk_fx": "MARKET_RATES_LIVE_FX_ENABLED",
+    "platinum_dkk": "MARKET_RATES_LIVE_PLATINUM_ENABLED",
+    "palladium_dkk": "MARKET_RATES_LIVE_PALLADIUM_ENABLED",
+}
+
+
 def save_manual_market_rate_profile(payload: dict[str, Any]) -> dict[str, Any]:
     profile = _profile_from_payload(payload)
-    upsert_env_values(
-        ROOT_ENV_FILE,
-        {
-            "INVENTORY_MARKET_RATE_PROFILE_JSON": json.dumps(profile, ensure_ascii=True, separators=(",", ":")),
-            "INVENTORY_MARKET_GOLD_DKK": profile["gold_24k_dkk"],
-            "INVENTORY_MARKET_SILVER_DKK": profile["silver_dkk"],
-            "INVENTORY_MARKET_PLATINUM_DKK": profile["platinum_dkk"],
-            "INVENTORY_MARKET_PALLADIUM_DKK": profile["palladium_dkk"],
-            "INVENTORY_MARKET_GOLD_BAR_DKK": profile["gold_bar_dkk"],
-            "INVENTORY_MARKET_SILVER_BAR_DKK": profile["silver_bar_dkk"],
-            "INVENTORY_MARKET_PLET_DKK": profile["plet_dkk"],
-        },
-    )
+    updates = {
+        "INVENTORY_MARKET_RATE_PROFILE_JSON": json.dumps(profile, ensure_ascii=True, separators=(",", ":")),
+        "INVENTORY_MARKET_GOLD_DKK": profile["gold_24k_dkk"],
+        "INVENTORY_MARKET_SILVER_DKK": profile["silver_dkk"],
+        "INVENTORY_MARKET_PLATINUM_DKK": profile["platinum_dkk"],
+        "INVENTORY_MARKET_PALLADIUM_DKK": profile["palladium_dkk"],
+        "INVENTORY_MARKET_GOLD_BAR_DKK": profile["gold_bar_dkk"],
+        "INVENTORY_MARKET_SILVER_BAR_DKK": profile["silver_bar_dkk"],
+        "INVENTORY_MARKET_PLET_DKK": profile["plet_dkk"],
+    }
+    # Drawer'daki manuel/oto geçişi: verildiyse alan-bazlı canlı bayrakları da
+    # burada kalıcılaştır (ayrı Ayarlar ekranına gitmeye gerek kalmadan).
+    live_fields = payload.get("live_fields")
+    if isinstance(live_fields, dict):
+        any_auto = False
+        for field, env_key in _LIVE_FIELD_ENV.items():
+            enabled = bool(live_fields.get(field, False))
+            updates[env_key] = "true" if enabled else "false"
+            any_auto = any_auto or enabled
+        # Master bayrak: en az bir alan otomatikse açık.
+        updates["MARKET_RATES_LIVE_ENABLED"] = "true" if any_auto else "false"
+    upsert_env_values(ROOT_ENV_FILE, updates)
     get_settings.cache_clear()
     return _with_runtime(profile, live_enabled=False, source="manual")

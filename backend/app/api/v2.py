@@ -1174,6 +1174,7 @@ def _build_settings_screen_out() -> SettingsScreenOut:
     return SettingsScreenOut(
         openai_api_key="",
         openai_model=settings.openai_model,
+        openai_reasoning_effort=settings.openai_reasoning_effort,
         openai_max_tokens=str(settings.openai_max_tokens),
         opmc_api_url=settings.opmc_api_url,
         opmc_api_key="",
@@ -1552,7 +1553,8 @@ async def put_settings_v2(
     _: User = Depends(require_admin),
 ) -> SettingsScreenOut:
     updates = {
-        "OPENAI_MODEL": payload.openai_model.strip() or "gpt-5.4",
+        "OPENAI_MODEL": payload.openai_model.strip() or "gpt-5.6-luna",
+        "OPENAI_REASONING_EFFORT": payload.openai_reasoning_effort.strip() or "high",
         "OPENAI_MAX_TOKENS": payload.openai_max_tokens.strip() or "4096",
         "OPMC_API_URL": payload.opmc_api_url.strip(),
         "WOOCOMMERCE_BASE_URL": payload.woo_store_url.strip(),
@@ -2320,6 +2322,7 @@ from app.api.v2_alis import router as alis_router
 from app.api.v2_log import router as log_router
 from app.api.v2_office_runtime import router as office_runtime_router
 from app.api.v2_woocommerce import router as woocommerce_router
+from app.api.v2_legacy_migrations import router as legacy_migrations_router
 
 router.include_router(alis_router)
 router.include_router(log_router)
@@ -2327,3 +2330,6 @@ router.include_router(office_runtime_router)
 router.include_router(woocommerce_router)
 router.include_router(document_artifacts_router)
 router.include_router(excel_sessions_router)
+# "Eski Excel sistemini taşı" (Veri Taşıma Merkezi) — router daha önce hiçbir
+# yere mount edilmemişti; /api/v2/legacy-migrations/* çağrıları 404 dönüyordu.
+router.include_router(legacy_migrations_router)

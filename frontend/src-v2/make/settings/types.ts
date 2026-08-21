@@ -1,6 +1,7 @@
 export interface ApiConfig {
   openai_api_key: string;
   openai_model: string;
+  openai_reasoning_effort: string;
   openai_max_tokens: string;
   opmc_api_url: string;
   opmc_api_key: string;

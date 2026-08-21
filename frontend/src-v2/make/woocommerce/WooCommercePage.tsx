@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { openExternalUrl } from '@/lib/desktop';
 import { WooCatalogPanel } from './WooCatalogPanel';
 import { WooCategoryPicker } from './WooCategoryPicker';
 import { WooPhotoThumb } from './WooPhotoThumb';
@@ -285,9 +286,9 @@ function primaryPhotoLabel(index: number, isPrimary: boolean | undefined) {
 }
 
 function openExternal(url: string) {
-  if (typeof window !== 'undefined') {
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }
+  // Paketli Tauri webview'inde window.open sessizce çalışmaz; OS tarayıcısını
+  // açan yardımcıya düşer (tarayıcı/dev ortamında window.open fallback).
+  void openExternalUrl(url);
 }
 
 function FieldRow({ label, children }: { label: string; children: ReactNode }) {

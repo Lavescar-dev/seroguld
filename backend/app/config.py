@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     invoice_default_currency: str = "DKK"
     invoice_sale_vat_rate_percent: Decimal = Decimal("0")
     # Varsayılanlar AFG şablonundaki resmi footer metniyle eşleşir.
-    invoice_seller_name: str = "Sero Guld ApS"
+    invoice_seller_name: str = "Sero Guld og Sølv ApS"
     invoice_seller_address_line1: str = "Valby Langgade 84"
     invoice_seller_postal_code: str = "2500"
     invoice_seller_city: str = "Valby"

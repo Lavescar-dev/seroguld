@@ -9,7 +9,8 @@ import type { ApiConfig } from './types';
 
 const DEFAULT_CONFIG: ApiConfig = {
   openai_api_key: '',
-  openai_model: 'gpt-4o',
+  openai_model: 'gpt-5.6-luna',
+  openai_reasoning_effort: 'high',
   openai_max_tokens: '4096',
   opmc_api_url: 'https://api.opmc.dk/v1',
   opmc_api_key: '',

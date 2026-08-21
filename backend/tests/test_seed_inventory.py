@@ -65,30 +65,68 @@ async def test_seed_loads_products_and_is_idempotent(factory):
     await engine.dispose()
 
 
-@pytest.mark.asyncio
-async def test_seed_skips_when_products_exist(factory):
-    engine, Session = factory
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    # Pre-existing product => seed must not touch the DB, only drop the marker.
+def _existing_product():
     from decimal import Decimal
     from app.models.enums import MetalTypeEnum, ProductTypeEnum
     from app.utils.helpers import utc_now
 
+    return Product(
+        product_number="0001", display_name="test takı",
+        product_type=ProductTypeEnum.RING, metal_type=MetalTypeEnum.YELLOW_GOLD,
+        weight_grams=Decimal("1.00"), pure_gold_grams=Decimal("0.90"), unit_count=1,
+        total_weight_grams=Decimal("1.00"), purchase_date=utc_now(), purchase_price_dkk=Decimal("100.00"),
+        gdpr_release_date=utc_now(), is_gdpr_locked=False, status=ProductStatusEnum.IN_INVENTORY, photos=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_seed_loads_additively_over_existing_product(factory):
+    """Mevcut kurulum (tek 'test takı' ürünü) 0.3.10'a yükselince 625 ürün
+    additive eklenmeli; mevcut ürün korunmalı, seed numaraları çakışmamalı."""
+    engine, Session = factory
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     async with Session() as db:
-        db.add(Product(
-            product_number="0001", product_type=ProductTypeEnum.RING, metal_type=MetalTypeEnum.YELLOW_GOLD,
-            weight_grams=Decimal("1.00"), pure_gold_grams=Decimal("0.90"), unit_count=1,
-            total_weight_grams=Decimal("1.00"), purchase_date=utc_now(), purchase_price_dkk=Decimal("100.00"),
-            gdpr_release_date=utc_now(), is_gdpr_locked=False, status=ProductStatusEnum.IN_INVENTORY, photos=[],
-        ))
+        db.add(_existing_product())  # product_number 0001
         await db.commit()
 
     await seed_inventory.ensure_seed_inventory(session_factory=Session)
     async with Session() as db:
         total = await db.scalar(select(func.count()).select_from(Product))
-        assert total == 1  # untouched
-        assert await db.get(ReferenceSequence, seed_inventory.SEED_MARKER_KEY) is not None
+        assert total > 500  # 1 mevcut + ~625 seed
+        # mevcut ürün korunur
+        assert await db.scalar(select(func.count()).select_from(Product).where(Product.product_number == "0001")) == 1
+        # seed numaraları mevcut ürünün ötesinden başlar (çakışma yok)
+        assert await db.scalar(select(func.count()).select_from(Product).where(Product.product_number == "0002")) == 1
+        # marker artık gerçekten-seed'lendi (>0)
+        marker = await db.get(ReferenceSequence, seed_inventory.SEED_MARKER_KEY)
+        assert marker is not None and int(marker.next_value) > 0
+
+    # tekrar çalıştır -> idempotent
+    await seed_inventory.ensure_seed_inventory(session_factory=Session)
+    async with Session() as db:
+        assert await db.scalar(select(func.count()).select_from(Product)) == total
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_poisoned_marker_reseeds(factory):
+    """Eski sürümün yazdığı zehirli marker (next_value=0) bir sonraki açılışta
+    seed'i tetiklemeli (kullanıcının yaşadığı durum)."""
+    engine, Session = factory
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with Session() as db:
+        db.add(_existing_product())
+        db.add(ReferenceSequence(key=seed_inventory.SEED_MARKER_KEY, next_value=0))  # zehirli
+        await db.commit()
+
+    await seed_inventory.ensure_seed_inventory(session_factory=Session)
+    async with Session() as db:
+        total = await db.scalar(select(func.count()).select_from(Product))
+        assert total > 500  # zehirli marker'a rağmen seed geldi
+        marker = await db.get(ReferenceSequence, seed_inventory.SEED_MARKER_KEY)
+        assert int(marker.next_value) > 0  # artık düzeltildi
     await engine.dispose()
 
 

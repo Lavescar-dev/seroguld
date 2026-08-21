@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
-  Building2,
   CheckCircle2,
   ChevronRight,
   Database,
   Download,
   Eye,
   EyeOff,
-  Globe2,
   Monitor,
   Plug,
   RefreshCw,
@@ -30,7 +28,7 @@ import { getLocale, t } from '@/lib/locale';
 
 type SettingsVariant = 'classic' | 'modern';
 type ConfigKey = keyof ApiConfig;
-type CategoryKey = 'general' | 'appearance' | 'market' | 'integrations' | 'data';
+type CategoryKey = 'appearance' | 'market' | 'integrations' | 'data';
 type IntegrationKey = 'openai' | 'opmc' | 'metals' | 'woocommerce' | 'wordpress' | 'uniconta';
 
 type SettingsWorkspaceProps = {
@@ -57,10 +55,30 @@ type FieldDefinition = {
   placeholder?: string;
   secret?: boolean;
   wide?: boolean;
+  type?: 'select';
+  options?: Array<{ value: string; label: string }>;
 };
 
-const CATEGORIES: Array<{ key: CategoryKey; label: string; description: string; icon: typeof Building2 }> = [
-  { key: 'general', label: 'Genel', description: 'Firma ve belge bilgileri', icon: Building2 },
+// GPT-5.6 ailesi cutoff sonrası gerçek modeller (bkz gpt-56-model-family notu);
+// reasoning_effort AYRI parametre — model ID'sine yapıştırılmaz.
+const OPENAI_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'gpt-5.6-luna', label: 'gpt-5.6-luna (önerilen)' },
+  { value: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
+  { value: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
+  { value: 'gpt-5.4', label: 'gpt-5.4 (eski)' },
+  { value: 'gpt-4o', label: 'gpt-4o (eski)' },
+  { value: 'gpt-4o-mini', label: 'gpt-4o-mini (eski)' },
+];
+const OPENAI_REASONING_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'none', label: 'none (kapalı)' },
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high (önerilen)' },
+  { value: 'xhigh', label: 'xhigh' },
+  { value: 'max', label: 'max' },
+];
+
+const CATEGORIES: Array<{ key: CategoryKey; label: string; description: string; icon: typeof Monitor }> = [
   { key: 'appearance', label: 'Görünüm ve ekran', description: 'Arayüz, dil ve monitör', icon: Monitor },
   { key: 'market', label: 'Piyasa oranları', description: 'Canlı kaynak ve metal oranları', icon: TrendingUp },
   { key: 'integrations', label: 'Entegrasyonlar', description: 'Harici servis bağlantıları', icon: Plug },
@@ -68,20 +86,11 @@ const CATEGORIES: Array<{ key: CategoryKey; label: string; description: string; 
 ];
 
 const CATEGORY_COPY: Record<CategoryKey, { eyebrow: string; title: string; description: string }> = {
-  general: { eyebrow: 'İşletme profili', title: 'Genel ayarlar', description: 'Belge, çıktı ve operasyon ekranlarında kullanılan firma bilgileri.' },
   appearance: { eyebrow: 'Bu cihaz', title: 'Görünüm ve ekran', description: 'Operatör arayüzünü, dilleri ve müşteri ekranının hangi monitörde açılacağını yönetin.' },
   market: { eyebrow: 'Fiyatlandırma', title: 'Piyasa oranları', description: 'Yeni işlemlerde kullanılacak canlı fiyat kaynağını ve kayıtlı oran profilini yönetin.' },
   integrations: { eyebrow: 'Bağlantılar', title: 'Entegrasyonlar', description: 'Harici servislerin bağlantı bilgilerini ve mevcut yapılandırma durumunu yönetin.' },
   data: { eyebrow: 'Hesap koruması', title: 'Hesap ve güvenlik', description: 'Parolanızı, güvenli cihaz kaydını ve yerel verileri yönetin.' },
 };
-
-const COMPANY_FIELDS: FieldDefinition[] = [
-  { key: 'firma_adi', label: 'Firma adı', placeholder: 'Sero Guld og Sølv ApS' },
-  { key: 'firma_email', label: 'Firma e-postası', placeholder: 'info@seroguld.dk' },
-  { key: 'firma_telefon', label: 'Telefon', placeholder: '+45 00 00 00 00' },
-  { key: 'firma_cvr', label: 'CVR', placeholder: '34093083' },
-  { key: 'firma_adres', label: 'Adres', placeholder: 'Cadde, posta kodu ve şehir', wide: true },
-];
 
 const INTEGRATIONS: Array<{
   key: IntegrationKey;
@@ -94,7 +103,8 @@ const INTEGRATIONS: Array<{
     label: 'OpenAI',
     description: 'Ürün metni, SEO ve yapay zekâ özellikleri.',
     fields: [
-      { key: 'openai_model', label: 'Model', placeholder: 'gpt-4o' },
+      { key: 'openai_model', label: 'Model', type: 'select', options: OPENAI_MODEL_OPTIONS },
+      { key: 'openai_reasoning_effort', label: 'Reasoning effort', type: 'select', options: OPENAI_REASONING_OPTIONS },
       { key: 'openai_max_tokens', label: 'Maksimum token', placeholder: '4096' },
       { key: 'openai_api_key', label: 'API anahtarı', placeholder: 'sk-proj-...', secret: true, wide: true },
     ],
@@ -251,7 +261,7 @@ export function SettingsWorkspace({
   languageSlot,
   monitorSlot,
 }: SettingsWorkspaceProps) {
-  const [category, setCategory] = useState<CategoryKey>('general');
+  const [category, setCategory] = useState<CategoryKey>('appearance');
   const [integration, setIntegration] = useState<IntegrationKey>('openai');
   const classic = variant === 'classic';
   const activeCopy = CATEGORY_COPY[category];
@@ -275,6 +285,12 @@ export function SettingsWorkspace({
           className={inputClass}
           onChange={(value) => onUpdate(field.key, value)}
         />
+      ) : field.type === 'select' ? (
+        <select value={String(config[field.key] ?? '')} onChange={(event) => onUpdate(field.key, event.target.value)} className={inputClass}>
+          {field.options?.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
       ) : (
         <input value={String(config[field.key] ?? '')} placeholder={field.placeholder} onChange={(event) => onUpdate(field.key, event.target.value)} className={inputClass} />
       )}
@@ -348,16 +364,6 @@ export function SettingsWorkspace({
             </div>
 
             <div className="px-5 py-6 sm:px-7">
-              {category === 'general' ? (
-                <section className="max-w-4xl">
-                  <div className="grid gap-x-5 gap-y-5 sm:grid-cols-2">{COMPANY_FIELDS.map(renderField)}</div>
-                  <div className={`mt-7 flex items-start gap-3 border-t pt-5 text-sm text-slate-500 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
-                    <Globe2 className="mt-0.5 h-4 w-4 shrink-0" />
-                    Bu bilgiler AFG belgelerinde, yazdırma çıktılarında ve entegrasyon kayıtlarında kullanılır.
-                  </div>
-                </section>
-              ) : null}
-
               {category === 'appearance' ? (
                 <div className="space-y-8">
                   <section>{uiVariantSlot}</section>

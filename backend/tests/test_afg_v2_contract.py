@@ -164,10 +164,10 @@ def test_footer_keeps_bold_sero_guld_run(monkeypatch) -> None:
     assert text.startswith("Sero Guld")
     assert "Valby Langgade 84" in text
     assert "CVR-nr: DK34093083" in text
-    # Rich text: ilk run kalın 'Sero Guld'
+    # Rich text: ilk run kalın firma adı (' ApS' soneki çıkarılır).
     blocks = list(footer)
     assert getattr(blocks[0].font, "b", False) is True
-    assert blocks[0].text == "Sero Guld"
+    assert blocks[0].text == "Sero Guld og Sølv"
     line2 = str(reloaded["Afregningsbilag"]["C54"].value)
     assert "Tlf.: 22255504" in line2
     assert "info@seroguld.dk" in line2

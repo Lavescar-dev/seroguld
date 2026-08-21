@@ -188,14 +188,15 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
         return
 
     async with session_factory() as session:
-        # Marker present -> already seeded (survives a later manual product wipe).
-        if await session.get(ReferenceSequence, SEED_MARKER_KEY) is not None:
+        # Tek-seferlik kapı YALNIZ marker'a dayanır (products-boş şartı YOK):
+        #   marker.next_value > 0  -> gerçekten seed'lendi -> atla
+        #   marker yok / next_value == 0 (zehirli: eski "atla+0 yaz" davranışı)
+        #                          -> seed'le. Böylece mevcut kuruluma (ör. tek
+        #   "test takı" ürünü olan) 625 ürün additive eklenir; daha önce doğru
+        #   seed'lenmiş kurulum tekrar etmez.
+        marker = await session.get(ReferenceSequence, SEED_MARKER_KEY)
+        if marker is not None and int(marker.next_value) > 0:
             await session.rollback()
-            return
-        # Never seed onto an install that already has products (real data).
-        if (await session.execute(select(Product.id).limit(1))).first() is not None:
-            session.add(ReferenceSequence(key=SEED_MARKER_KEY, next_value=0))
-            await session.commit()
             return
 
         try:
@@ -204,7 +205,9 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
             logger.exception("Depolama seed okunamadı: %s", seed_file)
             return
 
-        next_number = await infer_product_number_seed(session)  # 1 on empty DB
+        # max(product_number)+1 — dolu DB'de mevcut ürünlerin ötesinden başlar,
+        # çakışma olmaz (ör. "test takı"=0001 -> seed 0002'den).
+        next_number = await infer_product_number_seed(session)
         created = 0
         for row in rows:
             try:
@@ -225,6 +228,12 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
             seq.next_value = max(int(seq.next_value), next_number)
 
         photos = _copy_photo_pool()
-        session.add(ReferenceSequence(key=SEED_MARKER_KEY, next_value=created))
+        # Marker'ı "gerçekten seed'lendi" (>0) olarak yaz. Zehirli/mevcut satır
+        # varsa güncelle (PK çakışması olmasın); yoksa ekle.
+        done_value = max(created, 1)
+        if marker is not None:
+            marker.next_value = done_value
+        else:
+            session.add(ReferenceSequence(key=SEED_MARKER_KEY, next_value=done_value))
         await session.commit()
         logger.info("Depolama seed yüklendi: %s ürün, %s foto (havuz)", created, photos)

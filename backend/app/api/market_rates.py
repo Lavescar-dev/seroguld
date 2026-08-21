@@ -32,6 +32,9 @@ class MarketRateProfileUpdateIn(AppBaseModel):
     silver_bar_dkk: str
     platinum_dkk: str
     palladium_dkk: str
+    # Alan-bazlı manuel/oto geçişi (eur_dkk_fx / platinum_dkk / palladium_dkk).
+    # Verilirse canlı bayraklar da kaydedilir; verilmezse mevcut ayar korunur.
+    live_fields: dict[str, bool] | None = None
 
 
 class MarketRateProfileOut(MarketRateProfileUpdateIn):
@@ -60,4 +63,7 @@ async def put_market_rate_defaults(
     # kaydedilebilir (eski 409 kilidi kaldırıldı).
     if set(payload.gold_rates_dkk) != set(GOLD_RATE_KEYS) or set(payload.silver_rates_dkk) != set(SILVER_RATE_KEYS):
         raise HTTPException(status_code=422, detail="Altın ve gümüş oran matrisi eksik veya hatalı.")
-    return save_manual_market_rate_profile(payload.model_dump())
+    save_manual_market_rate_profile(payload.model_dump())
+    # Kaydettikten sonra ETKİN profili döndür: oto işaretlenen alanlar (Pt/Pd/fx)
+    # canlı değerleriyle gelir; drawer anında güncel durumu görür.
+    return await get_effective_market_rate_profile()
