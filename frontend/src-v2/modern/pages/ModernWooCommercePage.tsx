@@ -47,6 +47,7 @@ import {
   isPublishReady,
   missingSeoFields,
   parseAiSeoBundle,
+  parseAiSuggestions,
 } from '@/make/woocommerce/WooCommercePage';
 import type { WooFilter, WooMakeState, WooListItem } from '@/make/woocommerce/useWooMakeState';
 import { filesFromDataTransfer, PHOTO_ACCEPT_ATTR, PHOTO_MAX_SIZE_MB } from '@/make/woocommerce/photoUpload';
@@ -318,13 +319,54 @@ function AiTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[
   );
 }
 
+function specStripPreview(detail: WooMakeState['detail']): string {
+  if (!detail) return '';
+  const ref = (detail.reference_number || detail.product_number || '').trim();
+  if (!ref) return '';
+  const dims: string[] = [];
+  if (detail.length_cm) dims.push(`Længde: ${String(detail.length_cm).trim()}`);
+  if (detail.width_mm != null) dims.push(`Bredde: ${String(detail.width_mm).replace('.', ',')}mm`);
+  if (detail.thickness_mm != null) dims.push(`Tykkelse: ${String(detail.thickness_mm).replace('.', ',')}mm`);
+  if (detail.diameter_mm != null) dims.push(`Diameter: ${String(detail.diameter_mm).replace('.', ',')}mm`);
+  const base = `Vare nr. : ${ref}`;
+  return dims.length ? `${base} ${dims.join(', ')}` : base;
+}
+
 function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
   const detail = state.detail;
   if (!detail) return <ModernLoadingState title="Yayın alanı hazırlanıyor" />;
   const ready = isPublishReady(detail) && seoMissing.length === 0 && Number(state.publishPrice || 0) > 0;
+  const suggestions = parseAiSuggestions(state.aiDraft || detail.ai_description);
+  const hasSuggestions = Boolean(suggestions.producer || suggestions.stone || suggestions.subtype);
+  const specPreview = specStripPreview(detail);
   return (
     <div className="space-y-5">
       <ModernSectionHeader title="WooCommerce yayını" description="Yayın için fotoğraf, AI onayı, SEO alanları ve fiyat kontrol edilir." />
+
+      {hasSuggestions ? (
+        <ModernCard>
+          <div className="flex items-start gap-3">
+            <Bot className="mt-0.5 h-5 w-5 text-sg-accent" />
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-sg-text">AI'ın fotoğraftan okudukları (öneri)</h3>
+              <p className="mt-1 text-xs text-sg-text-soft">Bunlar öneridir — doğrulayıp ürünün Depolama alanlarına (üretici, tip) girin. Ölçüler fiziksel ölçümdür, AI önermez.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {suggestions.producer ? <ModernBadge tone="info">Üretici: {suggestions.producer}</ModernBadge> : null}
+                {suggestions.stone ? <ModernBadge tone="info">Taş: {suggestions.stone}</ModernBadge> : null}
+                {suggestions.subtype ? <ModernBadge tone="info">Tip: {suggestions.subtype}</ModernBadge> : null}
+              </div>
+            </div>
+          </div>
+        </ModernCard>
+      ) : null}
+
+      {specPreview ? (
+        <ModernCard>
+          <h3 className="text-sm font-semibold text-sg-text">Spec şeridi önizleme (sitede böyle görünecek)</h3>
+          <div className="mt-2 rounded-sg-md border border-sg-green/30 bg-sg-green-soft px-3 py-2 text-sm text-sg-green-strong">✓ {specPreview}</div>
+        </ModernCard>
+      ) : null}
+
       <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
       <div className="max-w-xl">
         <WooCategoryPicker

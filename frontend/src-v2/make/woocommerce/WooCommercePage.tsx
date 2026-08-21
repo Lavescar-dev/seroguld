@@ -139,8 +139,45 @@ function stripCodeFence(value: string) {
   return value.replace(/^```[a-z-]*\n?/i, '').replace(/\n?```$/i, '').trim();
 }
 
+export type AiSuggestions = {
+  producer: string;
+  stone: string;
+  subtype: string;
+};
+
+export function parseAiSuggestions(text: string | null | undefined): AiSuggestions {
+  const empty = { producer: '', stone: '', subtype: '' };
+  const raw = text?.trim();
+  if (!raw || !raw.startsWith('{')) return empty;
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const pick = (key: string) => (typeof data[key] === 'string' ? (data[key] as string).trim() : '');
+    return { producer: pick('suggested_producer'), stone: pick('suggested_stone'), subtype: pick('suggested_subtype') };
+  } catch {
+    return empty;
+  }
+}
+
 export function parseAiSeoBundle(text: string | null | undefined): SeoBundle {
   if (!text?.trim()) return emptySeoBundle();
+
+  // Yeni JSON schema structured output — bölüm-metni yerine JSON.
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const data = JSON.parse(trimmed) as Record<string, unknown>;
+      const str = (key: string) => (typeof data[key] === 'string' ? (data[key] as string).trim() : '');
+      return {
+        title: str('seo_title'),
+        slug: str('url_slug'),
+        kisaAciklama: str('short_description'),
+        meta: str('meta_description'),
+        uzunAciklama: stripCodeFence(str('long_description_html')),
+      };
+    } catch {
+      // Bozuk JSON — eski bölüm-metni parse'ına düş.
+    }
+  }
 
   const parsed = emptySeoBundle();
   let currentKey: keyof SeoBundle | null = null;

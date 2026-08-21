@@ -120,28 +120,26 @@ class AIService:
         )
 
         return (
-            "Skriv en dansk WooCommerce SEO-pakke for et smykke.\n"
+            "Skriv en dansk WooCommerce SEO-pakke for et smykke og udfyld JSON-skemaet.\n"
             "Meget vigtigt:\n"
             "- Brug produkttypen naturligt i teksten (fx ring, armband, halskæde, øreringe).\n"
             "- Brug metaltype, vægt, karat og renhed semantisk korrekt.\n"
             "- Brug også visuelle detaljer fra billederne (fx kædetype, sten, mønster, lukning, overflade/stand).\n"
             "- Hvis noget er uklart i billedet, skriv neutralt uden at gætte.\n"
             "- Ingen investeringsråd, ingen garantiløfter, ingen overdrivelser.\n"
-            "- Skriv professionelt, klart og salgsvenligt.\n"
-            "- Hold sproget naturligt for dansk e-handel.\n\n"
-            "Outputformat (følg præcis disse sektioner):\n"
-            "SEO_TITLE:\n"
-            "<maks 70 tegn>\n\n"
-            "SHORT_DESCRIPTION:\n"
-            "<1-2 sætninger, 140-220 tegn>\n\n"
-            "LONG_DESCRIPTION_HTML:\n"
-            "<HTML med 2 korte afsnit + en ul-liste med specifikationer + afsluttende CTA>\n"
-            "<Specifikationslisten skal mindst indeholde: Vare nr., Vægt (g), Karat/Renhed"
-            " og Diameter (mm, hvis kendt) — samme struktur som referencesiden>\n\n"
-            "META_DESCRIPTION:\n"
-            "<maks 155 tegn>\n\n"
-            "URL_SLUG:\n"
-            "<kun små bogstaver, tal og bindestreger>\n\n"
+            "- Skriv professionelt, klart og salgsvenligt for dansk e-handel.\n\n"
+            "Feltkrav:\n"
+            "- seo_title: maks 70 tegn.\n"
+            "- short_description: 1-2 sætninger, 140-220 tegn (ren tekst).\n"
+            "- long_description_html: HTML med 2 korte afsnit + en <ul>-liste med "
+            "specifikationer + afsluttende CTA. Specifikationslisten skal mindst "
+            "indeholde: Vare nr., Vægt (g), Karat/Renhed og mål (hvis kendt) — samme "
+            "struktur som referencesiden.\n"
+            "- meta_description: maks 155 tegn.\n"
+            "- url_slug: kun små bogstaver, tal og bindestreger.\n"
+            "- suggested_producer/suggested_stone/suggested_subtype: FORSLAG læst fra "
+            "billedet (producent-/mærkegravering, stenart, undertype). Skriv null hvis "
+            "det ikke tydeligt kan aflæses. GÆT ALDRIG mål — de indtastes fysisk.\n\n"
             f"Produktdata:\n"
             f"- Produkttype: {product_type}\n"
             f"- Metal: {metal_type}\n"
@@ -151,6 +149,42 @@ class AIService:
             f"- Reference: {ref}\n"
             f"- Diameter: {diameter} mm\n"
         )
+
+    @staticmethod
+    def _response_format() -> dict[str, Any]:
+        text = {"type": "string"}
+        nullable = {"type": ["string", "null"]}
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "seo_bundle",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "seo_title": text,
+                        "short_description": text,
+                        "long_description_html": text,
+                        "meta_description": text,
+                        "url_slug": text,
+                        "suggested_producer": nullable,
+                        "suggested_stone": nullable,
+                        "suggested_subtype": nullable,
+                    },
+                    "required": [
+                        "seo_title",
+                        "short_description",
+                        "long_description_html",
+                        "meta_description",
+                        "url_slug",
+                        "suggested_producer",
+                        "suggested_stone",
+                        "suggested_subtype",
+                    ],
+                },
+            },
+        }
 
     def _sorted_photos(self, product: Product) -> list[dict[str, Any]]:
         return sorted_photos_for_publish(product)
@@ -316,10 +350,11 @@ class AIService:
         user_content, images_sent = self._build_user_content(product)
         payload: dict[str, Any] = {
             "model": self.model,
+            "response_format": self._response_format(),
             "messages": [
                 {
                     "role": "system",
-                    "content": "Du skriver produkttekster til en dansk WooCommerce-butik.",
+                    "content": "Du skriver produkttekster til en dansk WooCommerce-butik og udfylder JSON-skemaet præcist.",
                 },
                 {
                     "role": "user",

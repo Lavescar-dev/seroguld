@@ -137,9 +137,42 @@ def _normalize_long_description_html(value: str) -> str:
     return "\n".join(normalized).strip()
 
 
+def _parse_seo_bundle_json(text: str) -> dict[str, str] | None:
+    """JSON schema structured output (yeni format). Geçersizse None döner ve
+    çağıran eski bölüm-metni parse'ına düşer (geriye dönük uyum)."""
+    stripped = (text or "").strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        data = json.loads(stripped)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    wanted = ("seo_title", "short_description", "long_description_html", "meta_description", "url_slug")
+    clean: dict[str, str] = {}
+    for key in wanted:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            clean[key] = value.strip()
+    if "url_slug" in clean:
+        clean["url_slug"] = _sanitize_slug(clean["url_slug"])
+        if not clean["url_slug"]:
+            clean.pop("url_slug", None)
+    if "long_description_html" in clean:
+        clean["long_description_html"] = _normalize_long_description_html(
+            _strip_code_fence(clean["long_description_html"])
+        )
+    return clean
+
+
 def _parse_ai_description_seo_bundle(text: str) -> dict[str, str]:
     if not text or not text.strip():
         return {}
+
+    as_json = _parse_seo_bundle_json(text)
+    if as_json is not None:
+        return as_json
 
     parsed: dict[str, str] = {}
     current_key: str | None = None

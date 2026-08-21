@@ -39,6 +39,30 @@ Palladium Smykke 22,05g Ref 9610
     assert parsed["url_slug"] == "palladium-smykke-22-05g-ref-9610"
 
 
+def test_parse_ai_description_seo_bundle_reads_json_structured_output():
+    """Yeni JSON schema structured output — bölüm-metni yerine JSON."""
+    import json
+
+    payload = json.dumps(
+        {
+            "seo_title": "Hjerte vedhæng i 14 karat guld",
+            "short_description": "Fint hjertevedhæng i 14 karat guld.",
+            "long_description_html": "```html\n<p>Beskrivelse</p><ul><li>Vare nr.: 1201</li></ul>\n```",
+            "meta_description": "Køb hjertevedhæng i 14 karat guld.",
+            "url_slug": "Hjerte Vedhæng 14 Karat",
+            "suggested_producer": "JAR",
+            "suggested_stone": None,
+            "suggested_subtype": "vedhæng",
+        }
+    )
+    parsed = _parse_ai_description_seo_bundle(payload)
+    assert parsed["seo_title"] == "Hjerte vedhæng i 14 karat guld"
+    assert parsed["long_description_html"].startswith("<p>Beskrivelse</p>")
+    assert parsed["url_slug"] == "hjerte-vedhaeng-14-karat"
+    # Öneri alanları publish payload'ına girmez (yalnız SEO alanları).
+    assert "suggested_producer" not in parsed
+
+
 def test_parse_ai_description_seo_bundle_returns_empty_for_plain_text():
     parsed = _parse_ai_description_seo_bundle("Dette er normal tekst uden SEO sektioner.")
     assert parsed == {}
