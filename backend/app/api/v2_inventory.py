@@ -18,6 +18,7 @@ from app.models.user import User
 from app.schemas.document_artifact import DocumentArtifactReconcilePreviewOut, DocumentArtifactRecordOut
 from app.schemas.inventory import InventoryMarketPricesOut, InventoryMarketPricesUpdate, InventoryWorkspaceOut
 from app.schemas.product import (
+    LibraryPhotoAttach,
     ProductCreate,
     ProductHistoryEntryOut,
     ProductOut,
@@ -74,6 +75,9 @@ async def _sync_inventory_projection(
 async def get_depolama_workspace_v2(
     q: str | None = None,
     category: str | None = Query(default=None, pattern=r"^(kulce|sikke|taki|gumus|platin_pd)$"),
+    status: str | None = Query(
+        default=None, pattern=r"^(purchased|in_inventory|for_sale|sold|melted|undecided)$"
+    ),
     subcategory: str | None = Query(default=None, max_length=30),
     location: str | None = Query(default=None, max_length=100),
     needs_cleaning: bool | None = Query(default=None),
@@ -94,6 +98,7 @@ async def get_depolama_workspace_v2(
     workspace = await get_legacy_inventory_workspace(
         q=q,
         category=category,
+        status=status,
         subcategory=subcategory,
         location=location,
         needs_cleaning=needs_cleaning,
@@ -112,6 +117,7 @@ async def get_depolama_workspace_v2(
     no_filters = (
         not q
         and not category
+        and not status
         and not subcategory
         and not location
         and needs_cleaning is None
@@ -228,6 +234,74 @@ async def patch_depolama_product_status_v2(
     except Exception:
         await db.rollback()
         raise
+
+
+# Seed foto havuzunun servis edildiği klasör (media_root altında, /media ile sunulur).
+_SEED_PHOTO_REL = "seed-library/depolama"
+
+
+@router.post("/depolama/products/{product_id}/photos/from-library", response_model=ProductOut)
+async def attach_library_photo_v2(
+    product_id: UUID,
+    payload: LibraryPhotoAttach,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> ProductOut:
+    """Depolama foto havuzundaki bir fotoyu ürüne iliştirir (elle eşleme).
+
+    Fotolar seed'de havuz olarak gelir; operatör doğru fotoyu bu uçla ürüne
+    bağlar. Yalnız havuzda gerçekten var olan dosya adı kabul edilir (yol
+    bileşenleri düşürülür — path traversal engellenir)."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from uuid import uuid4
+
+    from fastapi import HTTPException
+    from fastapi.encoders import jsonable_encoder
+
+    from app.config import get_settings
+    from app.models.product_history import ProductHistory
+
+    safe_name = Path(payload.file).name  # yol bileşenlerini at
+    if not safe_name or safe_name != payload.file:
+        raise HTTPException(status_code=422, detail="Geçersiz foto adı.")
+    pool_dir = get_settings().media_root_path() / _SEED_PHOTO_REL
+    if not (pool_dir / safe_name).is_file():
+        raise HTTPException(status_code=404, detail="Foto havuzda bulunamadı.")
+
+    product = await get_product_or_404(db, product_id, commit_gdpr_changes=False)
+    photos = list(product.photos or [])
+    url = f"/media/{_SEED_PHOTO_REL}/{safe_name}"
+    if any((p or {}).get("url") == url for p in photos):
+        raise HTTPException(status_code=409, detail="Bu foto zaten iliştirilmiş.")
+    make_primary = payload.make_primary or not photos
+    if make_primary:
+        for p in photos:
+            p["is_primary"] = False
+    photos.append({
+        "id": str(uuid4()),
+        "url": url,
+        "avif_url": url,
+        "filename": safe_name,
+        "is_primary": make_primary,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "mime_type": "image/avif",
+        "source": "depolama_seed_library",
+    })
+    product.photos = photos
+    db.add(
+        ProductHistory(
+            product_id=product.id,
+            action="photo_attached_from_library",
+            old_value=None,
+            new_value=jsonable_encoder({"file": safe_name}),
+            performed_by=admin.id,
+            notes="Depolama foto havuzundan iliştirildi",
+        )
+    )
+    await db.commit()
+    updated = await get_product_or_404(db, product.id)
+    return to_product_out(updated)
 
 
 @router.get("/depolama/workbook")

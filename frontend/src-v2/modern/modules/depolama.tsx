@@ -1,4 +1,4 @@
-import { Camera, Check, Eye, FileSpreadsheet, Flame, Loader2, Search, Tag, Trash2, X } from 'lucide-react';
+import { Camera, Check, Eye, FileSpreadsheet, Flame, Images, Loader2, Search, Tag, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
@@ -6,12 +6,31 @@ import { formatDate, formatMoney, formatNumber, labelInventoryCategory, labelInv
 import { LABEL_PRINTING_ENABLED } from '@/lib/featureFlags';
 import { buildMediaUrl } from '@/lib/media';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
-import { ALLOWED_STATUS_TRANSITIONS, PRODUCT_STATUS_LABEL, describeActiveInventoryFilters, type InventoryLifecycleStatus, type MainCategory, type PlatinumSub, type SilverSub, type StokItem } from '@/make/depolama/types';
+import { ALLOWED_STATUS_TRANSITIONS, PRODUCT_STATUS_LABEL, PRODUCT_STATUS_TONE, STATUS_FILTER_OPTIONS, describeActiveInventoryFilters, type InventoryLifecycleStatus, type MainCategory, type PlatinumSub, type SilverSub, type StokItem } from '@/make/depolama/types';
 import { InventoryWorkbookImport } from '@/make/depolama/InventoryWorkbookImport';
+import { DepolamaPhotoLibraryDrawer } from '@/make/depolama/DepolamaPhotoLibraryDrawer';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
+
+const MODERN_STATUS_TONE_CLASS: Record<string, string> = {
+  success: 'bg-sg-green-soft text-sg-green-strong border border-sg-green/30',
+  warning: 'bg-sg-amber-soft text-sg-amber border border-sg-amber/30',
+  danger: 'bg-sg-red-soft text-sg-red border border-sg-red/30',
+  neutral: 'bg-sg-surface text-sg-text-soft border border-sg-border',
+};
+
+function ModernStatusBadge({ status }: { status?: string }) {
+  // Aktif stok varsayılan görünüm — yalnız ayırt edici durumlarda rozet göster.
+  if (!status || status === 'in_inventory') return null;
+  const tone = PRODUCT_STATUS_TONE[status] ?? 'neutral';
+  return (
+    <span className={`ml-2 inline-block whitespace-nowrap rounded-sg-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${MODERN_STATUS_TONE_CLASS[tone]}`}>
+      {PRODUCT_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
 
 const editorInputClass = 'mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
 
@@ -221,6 +240,20 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
             <label className="text-xs font-semibold text-sg-text-soft">Gram Max
               <input value={state.filters.weightMax} onChange={(event) => state.setFilters((current) => ({ ...current, weightMax: event.target.value }))} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none" />
             </label>
+            <label className="text-xs font-semibold text-sg-text-soft">Durum
+              <select
+                value={state.filters.status}
+                onChange={(event) => state.setFilters((current) => ({ ...current, status: event.target.value }))}
+                className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none"
+                title="Ürün durumu (satılmış/eritilmiş dahil görüntüle)"
+              >
+                {STATUS_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value || 'default'} value={option.value}>
+                    {option.value ? `Durum: ${option.label}` : option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div className="mt-4 hidden overflow-x-auto md:block">
@@ -238,7 +271,7 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
               <tbody>
                 {state.stokList.map((item) => (
                   <tr key={item.id} className="border-b border-sg-border-soft">
-                    <td className="px-3 py-3 font-medium text-sg-text">{item.urun}</td>
+                    <td className="px-3 py-3 font-medium text-sg-text">{item.urun}<ModernStatusBadge status={item.productStatus} /></td>
                     <td className="px-3 py-3 text-sg-text-soft">{labelInventoryCategory(item.mainKat)}{item.gumusAlt ? ` / ${labelInventorySubcategory(item.gumusAlt)}` : item.platinAlt ? ` / ${labelInventorySubcategory(item.platinAlt)}` : ''}</td>
                     <td className="px-3 py-3 text-sg-text-soft">{formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')}</td>
                     <td className="px-3 py-3 text-sg-text-soft">{formatMoney(item.alisFiyati)}</td>
@@ -267,7 +300,7 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
           <div className="mt-4 grid gap-3 md:hidden">
             {state.stokList.map((item) => (
               <button key={item.id} type="button" onClick={() => state.onOpenDetail(item.id)} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4 text-left">
-                <p className="text-sm font-semibold text-sg-text">{item.urun}</p>
+                <p className="text-sm font-semibold text-sg-text">{item.urun}<ModernStatusBadge status={item.productStatus} /></p>
                 <dl className="mt-3 grid gap-2 text-sm">
                   <MobileRow label="Kategori" value={labelInventoryCategory(item.mainKat)} />
                   <MobileRow label="Gram" value={formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')} />
@@ -442,12 +475,18 @@ function ModernPhotoSection({
   product: NonNullable<ModernDepolamaViewModel['state']['selectedProduct']>;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const photos = product.photos || [];
+  const attachedUrls = photos.map((photo) => photo.url);
   return (
     <div className="mt-4 rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Fotoğraflar ({photos.length})</p>
-        <div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setLibraryOpen(true)} disabled={state.attachingLibraryPhoto} className={shellButtonClass('secondary')} title="Depolama foto havuzundan iliştir">
+            {state.attachingLibraryPhoto ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+            Havuz
+          </button>
           <input
             ref={inputRef}
             className="sr-only"
@@ -467,6 +506,13 @@ function ModernPhotoSection({
           </button>
         </div>
       </div>
+      <DepolamaPhotoLibraryDrawer
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        onSelect={(file) => state.onAttachLibraryPhoto(product.id, file)}
+        attaching={state.attachingLibraryPhoto}
+        attachedUrls={attachedUrls}
+      />
       {photos.length > 0 ? (
         <div className="mt-3 grid grid-cols-3 gap-2">
           {photos.slice(0, 9).map((photo) => (

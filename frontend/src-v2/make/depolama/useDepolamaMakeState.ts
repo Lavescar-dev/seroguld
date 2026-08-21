@@ -310,6 +310,7 @@ export function buildWorkspaceQueryParams(
   const params = new URLSearchParams();
   if (filters.q.trim()) params.set('q', filters.q.trim());
   if (category !== 'all') params.set('category', category);
+  if (filters.status) params.set('status', filters.status);
   if (subcategory) params.set('subcategory', subcategory);
   if (filters.location.trim()) params.set('location', filters.location.trim());
   if (filters.needsCleaning) params.set('needs_cleaning', 'true');
@@ -368,9 +369,11 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     queryFn: () => apiRequest<InventoryWorkspace>(`/api/v2/depolama/workspace?${workspaceParams}`),
   });
 
+  // Durum filtresi seçiliyse backend zaten tam o durumu döndürür (satılmış/
+  // eritilmiş dahil) — bu durumda client tarafı gizleme uygulanmaz.
   const visibleRows = useMemo(
-    () => (workspaceQuery.data?.rows || []).filter(isStorageVisible),
-    [workspaceQuery.data?.rows],
+    () => (workspaceQuery.data?.rows || []).filter((row) => (filters.status ? true : isStorageVisible(row))),
+    [workspaceQuery.data?.rows, filters.status],
   );
 
   const stokList = useMemo(
@@ -637,6 +640,23 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     },
   });
 
+  const attachLibraryPhotoMutation = useMutation({
+    mutationFn: ({ productId, file }: { productId: string; file: string }) =>
+      apiRequest<ProductOut>(`/api/v2/depolama/products/${productId}/photos/from-library`, {
+        method: 'POST',
+        body: JSON.stringify({ file }),
+      }),
+    onSuccess: async (product) => {
+      await invalidateDepolama(product.id);
+      toast.success('Foto havuzdan iliştirildi');
+    },
+    onError: (error) => {
+      const msg = extractApiMessage(error, 'Sunucu hatası');
+      if (msg.includes('zaten iliştir')) toast.warning('Zaten ekli', msg);
+      else toast.error('Foto iliştirilemedi', msg);
+    },
+  });
+
   async function printLabel(productId: string, productLabel: string) {
     setRetryingLabelId(productId);
     try {
@@ -777,5 +797,8 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     onDeletePhoto: (productId: string, photoId: string) =>
       deletePhotoMutation.mutate({ productId, photoId }),
     deletingPhoto: deletePhotoMutation.isPending,
+    onAttachLibraryPhoto: (productId: string, file: string) =>
+      attachLibraryPhotoMutation.mutate({ productId, file }),
+    attachingLibraryPhoto: attachLibraryPhotoMutation.isPending,
   };
 }

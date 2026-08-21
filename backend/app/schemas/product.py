@@ -28,6 +28,14 @@ class PhotoItem(AppBaseModel):
     wc_media_uploaded_at: str | None = None
 
 
+class LibraryPhotoAttach(AppBaseModel):
+    """Depolama foto havuzundan bir fotoyu ürüne iliştirme isteği; ``file`` seed
+    kütüphanesindeki dosya adıdır (yol değil — traversal engellenir)."""
+
+    file: str = Field(min_length=1, max_length=200)
+    make_primary: bool = False
+
+
 class SellerInlineCreate(AppBaseModel):
     name: str = Field(min_length=2, max_length=200)
     email: str | None = None

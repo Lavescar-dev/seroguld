@@ -218,6 +218,9 @@ async def put_inventory_market_prices(
 async def get_inventory_workspace(
     q: str | None = Query(default=None),
     category: str | None = Query(default=None, pattern=r"^(kulce|sikke|taki|gumus|platin_pd)$"),
+    status: str | None = Query(
+        default=None, pattern=r"^(purchased|in_inventory|for_sale|sold|melted|undecided)$"
+    ),
     subcategory: str | None = Query(default=None, max_length=30),
     location: str | None = Query(default=None, max_length=100),
     needs_cleaning: bool | None = Query(default=None),
@@ -237,6 +240,7 @@ async def get_inventory_workspace(
 
     q = _normalize_text_filter(q)
     category = _normalize_text_filter(category)
+    status = _normalize_text_filter(status)
     subcategory = _normalize_text_filter(subcategory)
     location = _normalize_text_filter(location)
     date_from = _normalize_text_filter(date_from)
@@ -251,9 +255,15 @@ async def get_inventory_workspace(
     offset = offset if isinstance(offset, int) else 0
 
     prices = _get_market_prices()
+    # Varsayılan liste yalnız aktif stok gösterir; operatör açıkça bir durum
+    # seçerse (satılmış/eritilmiş dahil) o duruma göre filtreler.
+    if status:
+        status_clause = Product.status == ProductStatusEnum(status)
+    else:
+        status_clause = Product.status.in_(tuple(ACTIVE_STATUSES))
     stmt = (
         select(Product)
-        .where(Product.status.in_(tuple(ACTIVE_STATUSES)), visible_product_clause())
+        .where(status_clause, visible_product_clause())
         .options(selectinload(Product.seller_customer), selectinload(Product.buyer_customer))
         .order_by(Product.purchase_date.desc(), Product.product_number.desc())
     )

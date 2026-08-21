@@ -11,8 +11,28 @@ import type {
   PlatinumSub,
   StokItem,
 } from './types';
+import { PRODUCT_STATUS_LABEL, PRODUCT_STATUS_TONE } from './types';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
+
+const STATUS_TONE_CLASS: Record<string, string> = {
+  success: 'bg-emerald-100 border-emerald-300 text-emerald-700',
+  warning: 'bg-amber-100 border-amber-300 text-amber-700',
+  danger: 'bg-red-100 border-red-300 text-red-700',
+  neutral: 'bg-brand-100 border-brand-300 text-brand-600',
+};
+
+function StatusBadge({ status }: { status?: string }) {
+  if (!status) return null;
+  const tone = PRODUCT_STATUS_TONE[status] ?? 'neutral';
+  return (
+    <span
+      className={`ml-2 inline-block whitespace-nowrap border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${STATUS_TONE_CLASS[tone]}`}
+    >
+      {PRODUCT_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
 
 const TH =
   'border border-brand-300 px-3 py-2.5 text-xs font-black text-brand-600 uppercase tracking-wider bg-brand-100 whitespace-nowrap';
@@ -126,6 +146,7 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
               <Lock className="h-2.5 w-2.5" /> GDPR
             </span>
           ) : null}
+          <StatusBadge status={item.productStatus} />
         </div>
       ),
     },

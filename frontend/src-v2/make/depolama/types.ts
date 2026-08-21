@@ -14,6 +14,27 @@ export const PRODUCT_STATUS_LABEL: Record<string, string> = {
   melted: 'Eritildi',
 };
 
+// Rozet tonu — durum listesi ve tablo rozeti aynı renklendirmeyi kullansın.
+export const PRODUCT_STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  purchased: 'neutral',
+  in_inventory: 'success',
+  for_sale: 'success',
+  undecided: 'warning',
+  sold: 'neutral',
+  melted: 'danger',
+};
+
+// Durum filtresi seçenekleri (boş = varsayılan aktif stok görünümü).
+export const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Aktif stok (varsayılan)' },
+  { value: 'in_inventory', label: PRODUCT_STATUS_LABEL.in_inventory },
+  { value: 'for_sale', label: PRODUCT_STATUS_LABEL.for_sale },
+  { value: 'undecided', label: PRODUCT_STATUS_LABEL.undecided },
+  { value: 'purchased', label: PRODUCT_STATUS_LABEL.purchased },
+  { value: 'sold', label: PRODUCT_STATUS_LABEL.sold },
+  { value: 'melted', label: PRODUCT_STATUS_LABEL.melted },
+];
+
 // Backend `_allowed_status_transition` ile sync (product_service.py:120-145)
 export const ALLOWED_STATUS_TRANSITIONS: Record<string, InventoryLifecycleStatus[]> = {
   // GDPR penceresi bilgilendirme: taze alım doğrudan satışa alınabilir.
@@ -101,6 +122,8 @@ export interface InventoryFilterState {
   location: string;
   needsCleaning: boolean;
   gdprLocked: 'all' | 'locked' | 'unlocked';
+  /** '' = varsayılan aktif stok; aksi halde tek bir ProductStatusEnum değeri */
+  status: string;
 }
 
 export const EMPTY_FILTERS: InventoryFilterState = {
@@ -114,6 +137,7 @@ export const EMPTY_FILTERS: InventoryFilterState = {
   location: '',
   needsCleaning: false,
   gdprLocked: 'all',
+  status: '',
 };
 
 export function describeActiveInventoryFilters(
@@ -129,5 +153,6 @@ export function describeActiveInventoryFilters(
   if (filters.priceMin || filters.priceMax) active.push('fiyat aralığı');
   if (filters.needsCleaning) active.push('temizlik bekleyenler');
   if (filters.gdprLocked !== 'all') active.push('GDPR kilidi');
+  if (filters.status) active.push(`durum: ${PRODUCT_STATUS_LABEL[filters.status] ?? filters.status}`);
   return active;
 }

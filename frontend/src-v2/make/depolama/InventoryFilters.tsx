@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { Calendar, FilterX, Lock, Search, Sparkles } from 'lucide-react';
 
 import type { InventoryFilterState } from './types';
-import { EMPTY_FILTERS } from './types';
+import { EMPTY_FILTERS, STATUS_FILTER_OPTIONS } from './types';
 
 interface InventoryFiltersProps {
   filters: InventoryFilterState;
@@ -32,6 +32,7 @@ export function InventoryFilters({
     filters.priceMax ||
     filters.location ||
     filters.needsCleaning ||
+    filters.status ||
     filters.gdprLocked !== 'all';
 
   return (
@@ -139,6 +140,19 @@ export function InventoryFilters({
         <Sparkles className="h-3 w-3" />
         Temizlik
       </button>
+
+      <select
+        value={filters.status}
+        onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}
+        className={`${inputCls} w-40`}
+        title="Ürün durumu (satılmış/eritilmiş dahil görüntüle)"
+      >
+        {STATUS_FILTER_OPTIONS.map((option) => (
+          <option key={option.value || 'default'} value={option.value}>
+            {option.value ? `Durum: ${option.label}` : option.label}
+          </option>
+        ))}
+      </select>
 
       <select
         value={filters.gdprLocked}

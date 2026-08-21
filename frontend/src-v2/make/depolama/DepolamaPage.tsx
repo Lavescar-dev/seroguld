@@ -8,6 +8,7 @@ import {
   Edit2,
   Flame,
   History,
+  Images,
   Loader2,
   Lock,
   PackageCheck,
@@ -24,6 +25,7 @@ import type { ProductHistoryEntry, ProductOut, ProductSourceAfg } from '@/types'
 import { useConfirm } from '@/components/ConfirmDialog';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
+import { DepolamaPhotoLibraryDrawer } from './DepolamaPhotoLibraryDrawer';
 import { InventoryDataTable } from './InventoryDataTable';
 import { InventoryFilters } from './InventoryFilters';
 import { InventoryWorkbookImport } from './InventoryWorkbookImport';
@@ -628,30 +630,48 @@ function ProductPhotoSection({
   product,
   onUpload,
   onDelete,
+  onAttachLibrary,
   uploading,
   deleting,
+  attaching,
 }: {
   product: ProductOut;
   onUpload: (files: FileList | File[]) => void;
   onDelete: (photoId: string) => void;
+  onAttachLibrary: (file: string) => void;
   uploading: boolean;
   deleting: boolean;
+  attaching: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const attachedUrls = (product.photos || []).map((photo) => photo.url);
 
   return (
     <section>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Fotoğraflar ({product.photos.length})</p>
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={uploading}
-          className="inline-flex items-center gap-1.5 border border-brand-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-brand-700 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-50"
-        >
-          {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
-          Yükle
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            disabled={attaching}
+            className="inline-flex items-center gap-1.5 border border-brand-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-brand-700 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-50"
+            title="Depolama foto havuzundan iliştir"
+          >
+            {attaching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Images className="h-3 w-3" />}
+            Havuz
+          </button>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="inline-flex items-center gap-1.5 border border-brand-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-brand-700 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-50"
+          >
+            {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
+            Yükle
+          </button>
+        </div>
         <input
           ref={inputRef}
           type="file"
@@ -688,9 +708,17 @@ function ProductPhotoSection({
         </div>
       ) : (
         <div className="mt-2 border border-dashed border-brand-300 bg-white px-4 py-5 text-xs text-brand-500">
-          Bu ürün için henüz foto yok. Yükle butonuyla ekleyin.
+          Bu ürün için henüz foto yok. Yükle veya Havuz butonuyla ekleyin.
         </div>
       )}
+
+      <DepolamaPhotoLibraryDrawer
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        onSelect={(file) => onAttachLibrary(file)}
+        attaching={attaching}
+        attachedUrls={attachedUrls}
+      />
     </section>
   );
 }
@@ -800,8 +828,10 @@ function InventoryDetailDrawer({
   updatingStatus,
   onUploadPhotos,
   onDeletePhoto,
+  onAttachLibraryPhoto,
   uploadingPhotos,
   deletingPhoto,
+  attachingLibraryPhoto,
   onPrintLabel,
   printingLabel,
 }: {
@@ -818,8 +848,10 @@ function InventoryDetailDrawer({
   updatingStatus: boolean;
   onUploadPhotos: (files: FileList | File[]) => void;
   onDeletePhoto: (photoId: string) => void;
+  onAttachLibraryPhoto: (file: string) => void;
   uploadingPhotos: boolean;
   deletingPhoto: boolean;
+  attachingLibraryPhoto: boolean;
   onPrintLabel: () => void;
   printingLabel: boolean;
 }) {
@@ -1023,8 +1055,10 @@ function InventoryDetailDrawer({
               product={product}
               onUpload={onUploadPhotos}
               onDelete={onDeletePhoto}
+              onAttachLibrary={onAttachLibraryPhoto}
               uploading={uploadingPhotos}
               deleting={deletingPhoto}
+              attaching={attachingLibraryPhoto}
             />
 
             <section className="grid grid-cols-2 gap-3">
@@ -1125,6 +1159,8 @@ export interface DepolamaPageProps {
   uploadingPhotos: boolean;
   onDeletePhoto: (productId: string, photoId: string) => void;
   deletingPhoto: boolean;
+  onAttachLibraryPhoto: (productId: string, file: string) => void;
+  attachingLibraryPhoto: boolean;
 }
 
 export function DepolamaPage({
@@ -1177,6 +1213,8 @@ export function DepolamaPage({
   uploadingPhotos,
   onDeletePhoto,
   deletingPhoto,
+  onAttachLibraryPhoto,
+  attachingLibraryPhoto,
 }: DepolamaPageProps) {
   const confirm = useConfirm();
   const totals = useMemo(
@@ -1658,6 +1696,12 @@ export function DepolamaPage({
             }
           }}
           deletingPhoto={deletingPhoto}
+          onAttachLibraryPhoto={(file) => {
+            if (selectedProductId) {
+              onAttachLibraryPhoto(selectedProductId, file);
+            }
+          }}
+          attachingLibraryPhoto={attachingLibraryPhoto}
           onPrintLabel={() => {
             if (selectedProductId) {
               onPrintLabel(selectedProductId, selectedProduct?.product_number || selectedProductId);
