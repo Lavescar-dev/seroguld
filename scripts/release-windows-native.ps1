@@ -34,7 +34,7 @@ $DefenderScanFinishedAt = $null
 $DefenderScanTool = $null
 $DefenderScanThreatCount = 0
 $script:ArtifactChecks = [ordered]@{}
-$ProductVersion = "0.3.11"
+$ProductVersion = "0.3.12"
 $CustomerRuntimeSeedRelativePath = "runtime\seroguld-runtime\runtime-seed.env"
 
 function Get-CustomerRuntimeSeedAllowedKeys {
