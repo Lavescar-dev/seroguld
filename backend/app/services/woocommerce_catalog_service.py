@@ -575,6 +575,61 @@ async def link_catalog_item(
     return catalog_item_out(item)
 
 
+async def auto_link_by_sku(db: AsyncSession) -> dict[str, int]:
+    """WooCommerce katalog SKU'sunu depolama ürününün reference_number'ıyla
+    (S2500 gibi depo kodu) eşleyip toplu bağlar. Yalnız bağlı OLMAYAN katalog
+    satırları + bağlı OLMAYAN ürünler eşlenir; zaten bağlı olan atlanır.
+    Döndürür: {linked, skipped_no_match, already_linked}."""
+    unlinked_items = list(
+        (await db.scalars(
+            select(WooCommerceCatalogItem).where(
+                WooCommerceCatalogItem.linked_product_id.is_(None),
+                WooCommerceCatalogItem.sku.isnot(None),
+            )
+        )).all()
+    )
+    # reference_number -> product_id (görünür ürünler)
+    ref_rows = (await db.execute(
+        select(Product.reference_number, Product.id).where(
+            Product.reference_number.isnot(None), visible_product_clause()
+        )
+    )).all()
+    ref_to_product: dict[str, UUID] = {}
+    for ref, pid in ref_rows:
+        ref_to_product.setdefault(str(ref).strip(), pid)
+    # Zaten bir katalog satırına bağlı ürünler (çift bağlamayı önle)
+    already_linked_products = {
+        pid for (pid,) in (await db.execute(
+            select(WooCommerceCatalogItem.linked_product_id).where(
+                WooCommerceCatalogItem.linked_product_id.isnot(None)
+            )
+        )).all()
+    }
+
+    linked = 0
+    skipped_no_match = 0
+    already = 0
+    for item in unlinked_items:
+        sku = str(item.sku).strip() if item.sku else ""
+        product_id = ref_to_product.get(sku)
+        if product_id is None:
+            skipped_no_match += 1
+            continue
+        if product_id in already_linked_products:
+            already += 1
+            continue
+        item.linked_product_id = product_id
+        already_linked_products.add(product_id)
+        linked += 1
+
+    if linked:
+        await _bump_revision(db)
+        await db.commit()
+    else:
+        await db.rollback()
+    return {"linked": linked, "skipped_no_match": skipped_no_match, "already_linked": already}
+
+
 async def unlink_catalog_item(db: AsyncSession, *, catalog_item_id: UUID) -> WooCatalogItemOut:
     item = await db.get(WooCommerceCatalogItem, catalog_item_id)
     if item is None:

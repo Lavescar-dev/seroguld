@@ -1,4 +1,4 @@
-import { Camera, Check, Eye, FileSpreadsheet, Flame, Images, Loader2, Search, Tag, Trash2, X } from 'lucide-react';
+import { Camera, Check, Edit3, Eye, FileSpreadsheet, Flame, ImageOff, Images, Link2, Loader2, Printer, Search, Tag, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
@@ -11,7 +11,7 @@ import { InventoryWorkbookImport } from '@/make/depolama/InventoryWorkbookImport
 import { DepolamaPhotoLibraryDrawer } from '@/make/depolama/DepolamaPhotoLibraryDrawer';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 
-import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { DataPill, EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 const MODERN_STATUS_TONE_CLASS: Record<string, string> = {
@@ -28,6 +28,26 @@ function ModernStatusBadge({ status }: { status?: string }) {
   return (
     <span className={`ml-2 inline-block whitespace-nowrap rounded-sg-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${MODERN_STATUS_TONE_CLASS[tone]}`}>
       {PRODUCT_STATUS_LABEL[status] ?? status}
+    </span>
+  );
+}
+
+function RowThumb({ url, alt, size = 'h-11 w-11' }: { url?: string | null; alt: string; size?: string }) {
+  if (url) {
+    return <img src={buildMediaUrl(url)} alt={alt} loading="lazy" className={`${size} shrink-0 rounded-sg-md border border-sg-border object-cover`} />;
+  }
+  return (
+    <div className={`${size} flex shrink-0 items-center justify-center rounded-sg-md border border-dashed border-sg-border bg-sg-surface-soft text-sg-text-soft`} aria-hidden>
+      <ImageOff className="h-4 w-4" />
+    </div>
+  );
+}
+
+function WooLinkedBadge({ linked }: { linked?: boolean }) {
+  if (!linked) return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-sg-sm border border-sg-green/30 bg-sg-green-soft px-1.5 py-0.5 text-[10px] font-semibold text-sg-green-strong">
+      <Link2 className="h-3 w-3" />Woo'da bağlı
     </span>
   );
 }
@@ -124,6 +144,10 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
             Fiyatlar · Au {state.prices.gold} / Ag {state.prices.silver}
           </button>
           <button type="button" onClick={() => setMigrationOpen(true)} className={shellButtonClass('secondary')}>Eski sistemi taşı</button>
+          <button type="button" onClick={state.onAutoLinkWoo} disabled={state.autoLinkingWoo} className={shellButtonClass('secondary')} title="Woo ürünlerini SKU (depo kodu) ile toplu bağla">
+            {state.autoLinkingWoo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+            Woo bağla
+          </button>
           <button type="button" onClick={state.startNew} className={shellButtonClass('primary')}>Yeni Ürün</button>
           <InventoryWorkbookImport variant="modern" />
           <button type="button" onClick={state.onOpenWorkbookPreview} className={shellButtonClass('secondary')}>
@@ -221,8 +245,8 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
         );
       })() : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-        <ModernSection title="Stok Listesi" subtitle="Mobil görünüm taşmayı önlemek için kart düzenine geçer.">
+      <div className="space-y-4">
+        <ModernSection title="Stok Listesi" subtitle="Satırda ana fotoğraf, durum ve Woo bağlantısı; detay için satıra tıklayın.">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <label className="text-xs font-semibold text-sg-text-soft">
               Metin Filtre
@@ -256,77 +280,78 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
             </label>
           </div>
 
-          <div className="mt-4 hidden overflow-x-auto md:block">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-sg-border text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
-                  <th className="px-3 py-2">Ürün</th>
-                  <th className="px-3 py-2">Kategori</th>
-                  <th className="px-3 py-2">Gram</th>
-                  <th className="px-3 py-2">DKK</th>
-                  <th className="px-3 py-2">Shop</th>
-                  <th className="px-3 py-2">Aksiyon</th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.stokList.map((item) => (
-                  <tr key={item.id} className="border-b border-sg-border-soft">
-                    <td className="px-3 py-3 font-medium text-sg-text">{item.urun}<ModernStatusBadge status={item.productStatus} /></td>
-                    <td className="px-3 py-3 text-sg-text-soft">{labelInventoryCategory(item.mainKat)}{item.gumusAlt ? ` / ${labelInventorySubcategory(item.gumusAlt)}` : item.platinAlt ? ` / ${labelInventorySubcategory(item.platinAlt)}` : ''}</td>
-                    <td className="px-3 py-3 text-sg-text-soft">{formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')}</td>
-                    <td className="px-3 py-3 text-sg-text-soft">{formatMoney(item.alisFiyati)}</td>
-                    <td className="px-3 py-3 text-sg-text-soft">{labelShopSyncStatus(item.shopDurumu || null)}</td>
-                    <td className="px-3 py-3">
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => state.onOpenDetail(item.id)} className={shellButtonClass('ghost')}>Detay</button>
-                        <button type="button" onClick={() => state.setEditing(item)} className={shellButtonClass('ghost')}>Düzenle</button>
-                        <button
-                          type="button"
-                          disabled={state.deletingItem}
-                          onClick={() => { if (window.confirm(`"${item.urun}" silinsin mi?`)) state.deleteItem(item.id); }}
-                          className={shellButtonClass('ghost')}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-sg-red" />
-                        </button>
-                        {LABEL_PRINTING_ENABLED ? <button type="button" onClick={() => state.onPrintLabel(item.id, item.urun)} className={shellButtonClass('ghost')}>Etiket</button> : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:hidden">
+          <div className="mt-4 divide-y divide-sg-border-soft overflow-hidden rounded-sg-xl border border-sg-border">
             {state.stokList.map((item) => (
-              <button key={item.id} type="button" onClick={() => state.onOpenDetail(item.id)} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4 text-left">
-                <p className="text-sm font-semibold text-sg-text">{item.urun}<ModernStatusBadge status={item.productStatus} /></p>
-                <dl className="mt-3 grid gap-2 text-sm">
-                  <MobileRow label="Kategori" value={labelInventoryCategory(item.mainKat)} />
-                  <MobileRow label="Gram" value={formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')} />
-                  <MobileRow label="DKK" value={formatMoney(item.alisFiyati)} />
-                  <MobileRow label="Shop" value={labelShopSyncStatus(item.shopDurumu || null)} />
-                </dl>
-              </button>
+              <div
+                key={item.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => state.onOpenDetail(item.id)}
+                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); state.onOpenDetail(item.id); } }}
+                className="flex cursor-pointer items-center gap-3 bg-sg-surface px-3 py-2.5 transition hover:bg-sg-surface-soft"
+              >
+                <RowThumb url={item.primaryPhoto} alt={item.urun} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <p className="truncate text-sm font-semibold text-sg-text">{item.urun}</p>
+                    <ModernStatusBadge status={item.productStatus} />
+                    <WooLinkedBadge linked={item.wooLinked} />
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-sg-text-soft">
+                    {item.referenceNumber ? `${item.referenceNumber} · ` : ''}{labelInventoryCategory(item.mainKat)}
+                    {item.gumusAlt ? ` / ${labelInventorySubcategory(item.gumusAlt)}` : item.platinAlt ? ` / ${labelInventorySubcategory(item.platinAlt)}` : ''}
+                    {' · '}{formatNumber(item.toplamGram || item.birimGram * item.adet, ' g')}
+                  </p>
+                </div>
+                <div className="hidden shrink-0 text-right sm:block">
+                  <p className="text-sm font-semibold text-sg-text">{formatMoney(item.alisFiyati)}</p>
+                  <p className="mt-0.5 text-xs text-sg-text-soft">{labelShopSyncStatus(item.shopDurumu || null)}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                  <button type="button" onClick={() => state.setEditing(item)} className={shellButtonClass('ghost')} aria-label="Düzenle" title="Düzenle"><Edit3 className="h-4 w-4" /></button>
+                  {LABEL_PRINTING_ENABLED ? <button type="button" onClick={() => state.onPrintLabel(item.id, item.urun)} className={shellButtonClass('ghost')} aria-label="Etiket" title="Etiket"><Printer className="h-4 w-4" /></button> : null}
+                  <button
+                    type="button"
+                    disabled={state.deletingItem}
+                    onClick={() => { if (window.confirm(`"${item.urun}" silinsin mi?`)) state.deleteItem(item.id); }}
+                    className={shellButtonClass('ghost')}
+                    aria-label="Sil"
+                    title="Sil"
+                  >
+                    <Trash2 className="h-4 w-4 text-sg-red" />
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         </ModernSection>
 
-        <ModernSection title="Seçili Ürün" subtitle="Tarih, kaynak AFG, fotoğraf ve denetim özetleri.">
-          {!selected ? (
-            <EmptyState title="Ürün Seçilmedi" message="Stok listesinden bir ürün seçildiğinde detay paneli burada açılır." />
+      </div>
+
+      {state.selectedProductId || state.loadingSelectedProduct ? (
+        <ModernDrawer
+          title={selected ? (selected.display_name || selected.product_number) : 'Ürün detayı'}
+          subtitle={selected ? `${selected.product_number} · ${selected.reference_number || 'Ref yok'}` : undefined}
+          onClose={state.onCloseDetail}
+        >
+          {state.loadingSelectedProduct ? (
+            <LoadingState label="Ürün detayı yükleniyor" />
+          ) : state.detailError || !selected ? (
+            <EmptyState title="Ürün açılamadı" message="Ürün silinmiş olabilir veya bağlantı kesildi. Listeyi yenileyip tekrar deneyin." />
           ) : (
-            <>
+            <div className="space-y-4">
               <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Ürün Kartı</p>
-                    <p className="mt-1 text-lg font-semibold text-sg-text">{selected.display_name || selected.product_number}</p>
-                    <p className="mt-1 text-sm text-sg-text-soft">{selected.product_number} · {selected.reference_number || 'Ref yok'}</p>
+                  <div className="flex items-center gap-3">
+                    <RowThumb url={selected.photos?.[0]?.url} alt={selected.display_name || selected.product_number} size="h-14 w-14" />
+                    <div>
+                      <p className="text-lg font-semibold text-sg-text">{selected.display_name || selected.product_number}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <ModernStatusBadge status={selected.status} />
+                        <WooLinkedBadge linked={selectedDraft?.wooLinked} />
+                      </div>
+                    </div>
                   </div>
-                  <span className="rounded-full border border-sg-border bg-sg-surface px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">
-                    {PRODUCT_STATUS_LABEL[selected.status] || selected.status}
-                  </span>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
@@ -342,30 +367,28 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2">
                 {selectedDraft ? (
                   <button type="button" onClick={() => state.setEditing(selectedDraft)} className={shellButtonClass('primary')}>
-                    Düzenle
+                    <Edit3 className="h-4 w-4" />Düzenle
                   </button>
                 ) : null}
                 <button type="button" onClick={() => state.onOpenWooProduct(selected.id)} className={shellButtonClass('secondary')}>
-                  <Eye className="h-4 w-4" />
-                  Woo
+                  <Eye className="h-4 w-4" />Woo
                 </button>
                 {LABEL_PRINTING_ENABLED ? (
                   <button type="button" onClick={() => state.onPrintLabel(selected.id, selected.product_number)} disabled={state.printingLabelForId === selected.id} className={shellButtonClass('secondary')}>
-                    <Tag className="h-4 w-4" />
-                    Etiket
+                    <Tag className="h-4 w-4" />Etiket
                   </button>
                 ) : null}
               </div>
 
               <ModernLifecycleControls state={state} product={selected} />
               <ModernPhotoSection state={state} product={selected} />
-            </>
+            </div>
           )}
-        </ModernSection>
-      </div>
+        </ModernDrawer>
+      ) : null}
         </>
       )}
     </ModernModuleShell>

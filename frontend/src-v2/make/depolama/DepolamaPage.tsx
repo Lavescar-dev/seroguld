@@ -9,6 +9,7 @@ import {
   Flame,
   History,
   Images,
+  Link2,
   Loader2,
   Lock,
   PackageCheck,
@@ -1139,6 +1140,7 @@ export interface DepolamaPageProps {
   selectedProductId: string | null;
   selectedProduct: ProductOut | null;
   loadingSelectedProduct: boolean;
+  detailError: boolean;
   productHistory: ProductHistoryEntry[];
   productHistoryLoading: boolean;
   productSourceAfg: ProductSourceAfg | null;
@@ -1175,6 +1177,8 @@ export interface DepolamaPageProps {
   deletingPhoto: boolean;
   onAttachLibraryPhoto: (productId: string, file: string) => void;
   attachingLibraryPhoto: boolean;
+  onAutoLinkWoo: () => void;
+  autoLinkingWoo: boolean;
 }
 
 export function DepolamaPage({
@@ -1205,6 +1209,8 @@ export function DepolamaPage({
   productSourceAfgLoading,
   opdateret,
   startNew,
+  onAutoLinkWoo,
+  autoLinkingWoo,
   saveItem,
   deleteItem,
   onOpenWorkbookPreview,
@@ -1659,14 +1665,26 @@ export function DepolamaPage({
             ) : null}
           </div>
           {activeView === 'system' && !editing ? (
-            <button
-              type="button"
-              onClick={startNew}
-              className="flex items-center px-5 py-2 bg-brand-800 text-white text-sm font-bold hover:bg-brand-900 transition-colors border border-brand-900"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Yeni Ürün
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onAutoLinkWoo}
+                disabled={autoLinkingWoo}
+                title="Woo ürünlerini SKU (depo kodu) ile toplu bağla"
+                className="flex items-center gap-2 px-4 py-2 bg-white text-brand-700 text-sm font-bold hover:bg-brand-50 transition-colors border border-brand-300 disabled:opacity-60"
+              >
+                {autoLinkingWoo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                Woo bağla
+              </button>
+              <button
+                type="button"
+                onClick={startNew}
+                className="flex items-center px-5 py-2 bg-brand-800 text-white text-sm font-bold hover:bg-brand-900 transition-colors border border-brand-900"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Yeni Ürün
+              </button>
+            </>
           ) : null}
         </div>
       </div>

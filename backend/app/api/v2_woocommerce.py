@@ -58,6 +58,7 @@ from app.models.woocommerce_catalog import WooCommerceCatalogItem
 from app.services.woocommerce import WooCommerceService
 from app.services.woocommerce_catalog_service import (
     apply_catalog_sync,
+    auto_link_by_sku,
     get_catalog_counts,
     get_catalog_item_detail,
     get_catalog_state,
@@ -287,6 +288,15 @@ async def delete_woocommerce_catalog_link_v2(
     _: User = Depends(require_admin),
 ) -> WooCatalogItemOut:
     return await unlink_catalog_item(db, catalog_item_id=catalog_item_id)
+
+
+@router.post("/woocommerce/catalog/auto-link-by-sku")
+async def post_woocommerce_catalog_auto_link_v2(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> dict[str, int]:
+    """Woo katalog SKU'sunu depo kodu (reference_number) ile toplu eşler."""
+    return await auto_link_by_sku(db)
 
 
 @router.get("/woocommerce/workspace", response_model=WooWorkspaceOut)

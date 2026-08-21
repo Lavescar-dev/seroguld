@@ -108,6 +108,9 @@ function rowToStokItem(row: InventoryGridRow): StokItem {
     referenceNumber: row.reference_number || null,
     productNumber: row.product_number,
     needsCleaning: row.needs_cleaning,
+    primaryPhoto: row.primary_photo ?? null,
+    photoCount: row.photo_count ?? 0,
+    wooLinked: Boolean(row.is_woo_linked),
   };
 }
 
@@ -416,10 +419,12 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   }, [editing]);
 
   useEffect(() => {
+    // Seçimi YALNIZ ürün gerçekten yoksa (silinmiş → detay 404/hata) kapat.
+    // Filtre değişimi veya refetch sırasında stokList'ten düşmesi seçimi
+    // KAPATMAZ (eski davranış Detay'ı aralıklı buga sokuyordu).
     if (!selectedProductId) return;
-    if (stokList.some((item) => item.id === selectedProductId)) return;
-    setSelectedProductId(null);
-  }, [selectedProductId, stokList]);
+    if (detailQuery.isError) setSelectedProductId(null);
+  }, [selectedProductId, detailQuery.isError]);
 
   useEffect(() => {
     return listenArtifactSync((signal) => {
@@ -657,6 +662,22 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     },
   });
 
+  const autoLinkWooMutation = useMutation({
+    mutationFn: () =>
+      apiRequest<{ linked: number; skipped_no_match: number; already_linked: number }>(
+        '/api/v2/woocommerce/catalog/auto-link-by-sku',
+        { method: 'POST' },
+      ),
+    onSuccess: async (result) => {
+      await invalidateDepolama();
+      await queryClient.invalidateQueries({ queryKey: ['woocommerce'] });
+      toast.success('Woo bağlama tamamlandı', `${result.linked} ürün bağlandı, ${result.skipped_no_match} eşleşmedi.`);
+    },
+    onError: (error) => {
+      toast.error('Woo bağlama başarısız', extractApiMessage(error, 'Sunucu hatası'));
+    },
+  });
+
   async function printLabel(productId: string, productLabel: string) {
     setRetryingLabelId(productId);
     try {
@@ -766,6 +787,7 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     selectedProductId,
     selectedProduct: detailQuery.data ?? null,
     loadingSelectedProduct: detailQuery.isLoading,
+    detailError: detailQuery.isError,
     productHistory: historyQuery.data ?? [],
     productHistoryLoading: historyQuery.isLoading,
     productSourceAfg: sourceAfgQuery.data ?? null,
@@ -800,5 +822,7 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     onAttachLibraryPhoto: (productId: string, file: string) =>
       attachLibraryPhotoMutation.mutate({ productId, file }),
     attachingLibraryPhoto: attachLibraryPhotoMutation.isPending,
+    onAutoLinkWoo: () => autoLinkWooMutation.mutate(),
+    autoLinkingWoo: autoLinkWooMutation.isPending,
   };
 }

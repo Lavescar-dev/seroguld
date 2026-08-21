@@ -634,6 +634,7 @@ export interface InventoryGridRow {
   is_gdpr_locked: boolean;
   primary_photo?: string | null;
   photo_count: number;
+  is_woo_linked?: boolean;
   has_ai_description: boolean;
   ai_description_approved: boolean;
   notes?: string | null;

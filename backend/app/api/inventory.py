@@ -90,7 +90,7 @@ def _saflik_label(product: Product) -> str:
     return "-"
 
 
-def _inventory_row(product: Product, prices: InventoryMarketPricesOut) -> InventoryGridRowOut:
+def _inventory_row(product: Product, prices: InventoryMarketPricesOut, linked_ids: set | None = None) -> InventoryGridRowOut:
     main_category, subcategory = _infer_inventory_category(product)
     unit_count = int(product.unit_count or 1)
     birim_gram = quantize_2(to_decimal(product.weight_grams))
@@ -129,6 +129,7 @@ def _inventory_row(product: Product, prices: InventoryMarketPricesOut) -> Invent
         shop_fiyati_dkk=(quantize_2(product.shop_price_dkk) if product.shop_price_dkk is not None else None),
         shop_sync_status=product.shop_sync_status,
         is_published_to_site=bool(product.is_published_to_site),
+        is_woo_linked=(product.id in linked_ids) if linked_ids else False,
         length_cm=product.length_cm,
         width_mm=(quantize_2(product.width_mm) if product.width_mm is not None else None),
         thickness_mm=(quantize_2(product.thickness_mm) if product.thickness_mm is not None else None),
@@ -304,7 +305,20 @@ async def get_inventory_workspace(
 
     stmt = stmt.limit(limit).offset(offset)
     products = list((await db.scalars(stmt)).unique().all())
-    rows = [_inventory_row(item, prices) for item in products]
+    # Bu sayfadaki ürünlerden hangileri bir Woo katalog kaydına bağlı?
+    linked_ids: set = set()
+    if products:
+        from app.models.woocommerce_catalog import WooCommerceCatalogItem
+
+        product_ids = [p.id for p in products]
+        linked_ids = {
+            pid for (pid,) in (await db.execute(
+                select(WooCommerceCatalogItem.linked_product_id).where(
+                    WooCommerceCatalogItem.linked_product_id.in_(product_ids)
+                )
+            )).all()
+        }
+    rows = [_inventory_row(item, prices, linked_ids) for item in products]
     return InventoryWorkspaceOut(
         market_prices=prices,
         summary=_summary(rows),

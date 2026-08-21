@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.database import AsyncSessionLocal
 from app.config import get_settings
@@ -49,7 +49,14 @@ from app.utils.helpers import quantize_2, utc_now
 
 logger = logging.getLogger(__name__)
 
-SEED_MARKER_KEY = "depolama_seed"
+SEED_MARKER_KEY = "depolama_seed"  # eski (0.3.10) boolean marker — artık kullanılmıyor
+# Sürümlü seed: bu değer arttıkça mevcut seed ürünleri silinip düzeltilmiş
+# veriyle yeniden yüklenir. v2: alış tarihi düzeltmesi + reference_number=legacy_code.
+SEED_VERSION_KEY = "depolama_seed_version"
+SEED_VERSION = 2
+# Gerçek alış tarihi olmayan (kaynak dosyada boş/tarih-olmayan) ürünler için
+# legacy sentinel — BUGÜN DEĞİL (tüm gerçek tarihler ≥ 2021-07-14, en alta iner).
+LEGACY_UNKNOWN_DATE = datetime(2020, 1, 1, tzinfo=timezone.utc)
 _STATUS_MAP = {
     "in_inventory": ProductStatusEnum.IN_INVENTORY,
     "sold": ProductStatusEnum.SOLD,
@@ -81,12 +88,15 @@ def _dec(value) -> Decimal | None:
 
 
 def _parse_date(value: str | None) -> datetime:
+    # Gerçek tarih yoksa BUGÜN'e düşme (eski hata: 219 ürün bugün görünüyordu) —
+    # legacy sentinel kullan; böylece bilinmeyen-tarihli eski ürünler listenin
+    # en altına iner, "yeni alım" gibi görünmez.
     if not value:
-        return utc_now()
+        return LEGACY_UNKNOWN_DATE
     try:
         return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
     except ValueError:
-        return utc_now()
+        return LEGACY_UNKNOWN_DATE
 
 
 def _notes_marker(row: dict) -> str:
@@ -108,7 +118,7 @@ def _notes_marker(row: dict) -> str:
     return " ".join(bits)
 
 
-def _build_product(row: dict, product_number: str) -> Product:
+def _build_product(row: dict, product_number: str, reference_number: str | None = None) -> Product:
     metal = MetalTypeEnum(row["metal_type"])
     ptype = ProductTypeEnum(row["product_type"])
     weight = _dec(row["weight_grams"]) or Decimal("0.01")
@@ -124,6 +134,9 @@ def _build_product(row: dict, product_number: str) -> Product:
 
     product = Product(
         product_number=product_number,
+        # Depo kodu (S2500…) reference_number'a taşınır → Woo SKU eşleşmesi.
+        # Çakışan/uzun kodlar çağıran döngüde None'a düşürülür.
+        reference_number=reference_number,
         display_name=(row.get("display_name") or None),
         product_type=ptype,
         metal_type=metal,
@@ -187,15 +200,16 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
         logger.info("Depolama seed atlandı: artefakt yok (%s)", seed_file)
         return
 
+    seed_tag = f"{SOURCE_TYPE_TAG}depolama_seed]"  # notes içindeki [SOURCE_TYPE:depolama_seed]
+
     async with session_factory() as session:
-        # Tek-seferlik kapı YALNIZ marker'a dayanır (products-boş şartı YOK):
-        #   marker.next_value > 0  -> gerçekten seed'lendi -> atla
-        #   marker yok / next_value == 0 (zehirli: eski "atla+0 yaz" davranışı)
-        #                          -> seed'le. Böylece mevcut kuruluma (ör. tek
-        #   "test takı" ürünü olan) 625 ürün additive eklenir; daha önce doğru
-        #   seed'lenmiş kurulum tekrar etmez.
-        marker = await session.get(ReferenceSequence, SEED_MARKER_KEY)
-        if marker is not None and int(marker.next_value) > 0:
+        # Sürümlü kapı: kayıtlı sürüm SEED_VERSION'a ulaştıysa atla. Aksi halde
+        # (yok / eski / eski boolean marker) mevcut seed ürünlerini SİL ve
+        # düzeltilmiş veriyle yeniden yükle. Operatörün oluşturduğu (marker'sız)
+        # ürünler ETKİLENMEZ.
+        version_row = await session.get(ReferenceSequence, SEED_VERSION_KEY)
+        current_version = int(version_row.next_value) if version_row is not None else 0
+        if current_version >= SEED_VERSION:
             await session.rollback()
             return
 
@@ -205,13 +219,31 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
             logger.exception("Depolama seed okunamadı: %s", seed_file)
             return
 
-        # max(product_number)+1 — dolu DB'de mevcut ürünlerin ötesinden başlar,
-        # çakışma olmaz (ör. "test takı"=0001 -> seed 0002'den).
+        # Önceki seed ürünlerini (notes'ta seed marker'ı olanlar) temizle —
+        # bugün-tarihli/ref'siz eski seed verisi yerine düzeltilmiş sürüm gelir.
+        # Woo linkleri ON DELETE SET NULL; SKU otomatik bağlama ile yeniden kurulur.
+        removed = await session.execute(delete(Product).where(Product.notes.contains(seed_tag)))
+
+        # Mevcut (operatör) reference_number'larıyla çakışmayı önlemek için önce
+        # onları topla; seed kodları (S2500…) bunlara ve birbirine çarpmasın.
+        existing_refs = {
+            r for (r,) in (await session.execute(
+                select(Product.reference_number).where(Product.reference_number.isnot(None))
+            )).all()
+        }
+
         next_number = await infer_product_number_seed(session)
         created = 0
         for row in rows:
+            ref = None
+            code = row.get("legacy_code")
+            if code:
+                code = str(code).strip()[:10]
+                if code and code not in existing_refs:
+                    ref = code
+                    existing_refs.add(code)
             try:
-                product = _build_product(row, f"{next_number:04d}")
+                product = _build_product(row, f"{next_number:04d}", reference_number=ref)
             except (KeyError, ValueError, TypeError):
                 logger.warning("Depolama seed satırı atlandı (row=%s)", row.get("source_row"), exc_info=True)
                 continue
@@ -219,8 +251,7 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
             next_number += 1
             created += 1
 
-        # Advance the shared product-number sequence past the seeded block so
-        # the first operator-created product continues cleanly.
+        # Ürün-no sekansını seed bloğunun ötesine ilerlet.
         seq = await session.get(ReferenceSequence, PRODUCT_NUMBER_SEQUENCE_KEY)
         if seq is None:
             session.add(ReferenceSequence(key=PRODUCT_NUMBER_SEQUENCE_KEY, next_value=next_number))
@@ -228,12 +259,13 @@ async def ensure_seed_inventory(session_factory=AsyncSessionLocal) -> None:
             seq.next_value = max(int(seq.next_value), next_number)
 
         photos = _copy_photo_pool()
-        # Marker'ı "gerçekten seed'lendi" (>0) olarak yaz. Zehirli/mevcut satır
-        # varsa güncelle (PK çakışması olmasın); yoksa ekle.
-        done_value = max(created, 1)
-        if marker is not None:
-            marker.next_value = done_value
+        # Sürüm marker'ını yaz/güncelle.
+        if version_row is not None:
+            version_row.next_value = SEED_VERSION
         else:
-            session.add(ReferenceSequence(key=SEED_MARKER_KEY, next_value=done_value))
+            session.add(ReferenceSequence(key=SEED_VERSION_KEY, next_value=SEED_VERSION))
         await session.commit()
-        logger.info("Depolama seed yüklendi: %s ürün, %s foto (havuz)", created, photos)
+        logger.info(
+            "Depolama seed v%s yüklendi: %s ürün eklendi, %s eski seed silindi, %s foto (havuz)",
+            SEED_VERSION, created, removed.rowcount if removed.rowcount is not None else "?", photos,
+        )

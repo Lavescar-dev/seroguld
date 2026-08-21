@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo } from 'react';
-import { Edit2, Eye, Lock, Printer, Sparkles, Trash2 } from 'lucide-react';
+import { Edit2, Eye, ImageOff, Link2, Lock, Printer, Sparkles, Trash2 } from 'lucide-react';
 import { LABEL_PRINTING_ENABLED } from '@/lib/featureFlags';
+import { buildMediaUrl } from '@/lib/media';
 
 import type {
   CategoryTotals,
@@ -136,17 +137,31 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
       className: `${TH} text-left`,
       align: 'left',
       render: (item) => (
-        <div>
-          <p className="font-semibold text-brand-900">{item.urun}</p>
-          {item.uretici && kat === 'kulce' ? (
-            <span className="text-xs font-normal text-brand-400">{item.uretici}</span>
-          ) : null}
-          {item.isGdprLocked ? (
-            <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
-              <Lock className="h-2.5 w-2.5" /> GDPR
+        <div className="flex items-center gap-2.5">
+          {item.primaryPhoto ? (
+            <img src={buildMediaUrl(item.primaryPhoto)} alt={item.urun} loading="lazy" className="h-9 w-9 shrink-0 border border-brand-200 object-cover" />
+          ) : (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-dashed border-brand-200 bg-brand-50 text-brand-300" aria-hidden><ImageOff className="h-4 w-4" /></span>
+          )}
+          <div className="min-w-0">
+            <p className="font-semibold text-brand-900">{item.urun}</p>
+            {item.uretici && kat === 'kulce' ? (
+              <span className="text-xs font-normal text-brand-400">{item.uretici}</span>
+            ) : null}
+            <span className="ml-0 inline-flex flex-wrap items-center gap-1.5 align-middle">
+              {item.isGdprLocked ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-amber-700">
+                  <Lock className="h-2.5 w-2.5" /> GDPR
+                </span>
+              ) : null}
+              <StatusBadge status={item.productStatus} />
+              {item.wooLinked ? (
+                <span className="inline-flex items-center gap-1 border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-700">
+                  <Link2 className="h-2.5 w-2.5" /> Woo
+                </span>
+              ) : null}
             </span>
-          ) : null}
-          <StatusBadge status={item.productStatus} />
+          </div>
         </div>
       ),
     },

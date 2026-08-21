@@ -84,6 +84,11 @@ export interface StokItem {
   shopFark?: number;
   isGdprLocked?: boolean;
   productStatus?: string;
+  /** Satır thumbnail'ı için ana foto (relative /media/...) + foto sayısı */
+  primaryPhoto?: string | null;
+  photoCount?: number;
+  /** WooCommerce katalog kaydına bağlı mı */
+  wooLinked?: boolean;
   /** Yeni eklenen field — düzenleme dispatch'i için optimistic concurrency */
   updatedAt?: string;
 }
