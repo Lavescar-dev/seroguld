@@ -397,12 +397,15 @@ function ModernLogWorkbookImport({
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
 
   async function onFileSelected(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
-    if (!file) return;
+    if (file) await processFile(file);
+  }
 
+  async function processFile(file: File) {
     const extension = file.name.toLowerCase().split('.').pop();
     if (extension !== 'xlsx' && extension !== 'xlsm') {
       setStatus({ tone: 'error', message: 'Yalnızca .xlsx veya .xlsm Log çalışma kitabı içe aktarılabilir.' });
@@ -470,9 +473,22 @@ function ModernLogWorkbookImport({
           {status.tone === 'error' ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
           <p>{status.message}</p>
         </div>
-      ) : (
-        <p className="text-sm text-sg-text-soft">Dosya seçildiğinde önce açık onay istenir; onay olmadan hiçbir kayıt güncellenmez.</p>
-      )}
+      ) : null}
+      <div
+        onDragOver={(event) => { event.preventDefault(); if (!busy) setDragActive(true); }}
+        onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          if (busy) return;
+          const file = Array.from(event.dataTransfer?.files || []).find((f) => /\.(xlsx|xlsm)$/i.test(f.name));
+          if (file) void processFile(file);
+        }}
+        onClick={() => inputRef.current?.click()}
+        className={`mt-2 cursor-pointer rounded-sg-md border border-dashed px-4 py-5 text-center text-sm transition ${dragActive ? 'border-sg-accent bg-sg-accent-soft text-sg-accent-dark' : 'border-sg-border text-sg-text-soft hover:bg-sg-surface-soft'}`}
+      >
+        {dragActive ? 'Log Excel dosyasını buraya bırakın (.xlsx / .xlsm)' : 'Excel dosyasını buraya sürükleyin veya tıklayıp seçin. Onay olmadan hiçbir kayıt güncellenmez.'}
+      </div>
     </ModernSection>
   );
 }

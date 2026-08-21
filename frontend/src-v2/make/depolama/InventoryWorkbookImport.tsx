@@ -50,6 +50,7 @@ export function InventoryWorkbookImport({ variant }: InventoryWorkbookImportProp
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   async function previewFile(file: File) {
     const extension = file.name.toLowerCase().split('.').pop();
@@ -152,9 +153,24 @@ export function InventoryWorkbookImport({ variant }: InventoryWorkbookImportProp
         }}
         aria-label="Depolama Excel dosyası seç"
       />
-      <button type="button" onClick={() => void chooseFile()} disabled={busy} className={buttonClass}>
+      <button
+        type="button"
+        onClick={() => void chooseFile()}
+        disabled={busy}
+        className={`${buttonClass} ${dragActive ? 'ring-2 ring-sg-accent' : ''}`}
+        title="Excel dosyasını sürükleyip bırakabilir veya tıklayıp seçebilirsiniz"
+        onDragOver={(event) => { event.preventDefault(); if (!busy) setDragActive(true); }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          if (busy) return;
+          const file = Array.from(event.dataTransfer?.files || []).find((f) => /\.(xlsx|xlsm)$/i.test(f.name));
+          if (file) void previewFile(file);
+        }}
+      >
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-        {busy ? 'Hazırlanıyor' : 'Excel içe aktar'}
+        {busy ? 'Hazırlanıyor' : dragActive ? 'Bırakın' : 'Excel içe aktar'}
       </button>
 
       {status ? (

@@ -29,6 +29,7 @@ export function LegacyMigrationCenter({ open, onClose, initialPhase = 'afg' }: {
   const [records, setRecords] = useState<MigrationRecord[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   const refresh = async (runId = run?.id) => {
     if (!runId) return;
@@ -86,7 +87,7 @@ export function LegacyMigrationCenter({ open, onClose, initialPhase = 'afg' }: {
     return () => window.clearInterval(timer);
   }, [open, run?.id, run?.status, activePhase]);
 
-  const upload = async (files: FileList | null) => {
+  const upload = async (files: FileList | File[] | null) => {
     if (!run || !files?.length) return;
     const form = new FormData();
     Array.from(files).forEach((file) => form.append('files', file));
@@ -152,8 +153,19 @@ export function LegacyMigrationCenter({ open, onClose, initialPhase = 'afg' }: {
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           {error ? <div className="mb-4 flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><AlertTriangle className="h-5 w-5 shrink-0" />{error}</div> : null}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="font-black text-slate-950">{selectedDefinition.title}</h3><p className="mt-1 text-sm text-slate-600">{selectedDefinition.copy}</p></div><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">{phaseState?.status || 'boş'}</span></div>
+          <div
+            onDragOver={(event) => { event.preventDefault(); if (canEditPhase) setDragActive(true); }}
+            onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              if (!canEditPhase) return;
+              const files = Array.from(event.dataTransfer?.files || []).filter((file) => /\.(xlsx|xlsm)$/i.test(file.name));
+              if (files.length) void upload(files);
+            }}
+            className={`rounded-2xl border bg-slate-50 p-5 transition ${dragActive ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'}`}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="font-black text-slate-950">{selectedDefinition.title}</h3><p className="mt-1 text-sm text-slate-600">{dragActive ? 'Dosyaları buraya bırakın (.xlsx / .xlsm)' : selectedDefinition.copy}</p></div><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">{phaseState?.status || 'boş'}</span></div>
             <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold"><span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">{phaseState?.ready || 0} hazır</span><span className="rounded-full bg-red-100 px-3 py-1 text-red-800">{phaseState?.blocked || 0} engelli</span><span className="rounded-full bg-amber-100 px-3 py-1 text-amber-800">{phaseState?.already_imported || 0} daha önce işlendi</span></div>
             <div className="mt-5 flex flex-wrap gap-3"><label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-black text-white hover:bg-blue-700 ${!canEditPhase ? 'pointer-events-none opacity-40' : ''}`}><FileSpreadsheet className="h-4 w-4" />Dosyaları seç<input type="file" accept=".xlsx,.xlsm" multiple={selectedDefinition.multiple} className="sr-only" onChange={(event) => void upload(event.target.files)} /></label><button type="button" onClick={() => void analyze()} disabled={!canEditPhase || !phaseState?.file_count || Boolean(busy) || run?.status === 'analyzing'} className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-black text-slate-800 disabled:opacity-40">{run?.status === 'analyzing' ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Analiz ediliyor</span> : 'Önizlemeyi analiz et'}</button><button type="button" onClick={() => void apply()} disabled={!canApply || Boolean(busy)} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-black text-white disabled:opacity-40">Adımı atomik uygula</button></div>
           </div>

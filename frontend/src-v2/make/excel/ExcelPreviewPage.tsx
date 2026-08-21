@@ -101,6 +101,7 @@ export function MakeExcelPreviewPage({
   onApplyChanges,
 }: ExcelPreviewPageProps) {
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
+  const [dragActive, setDragActive] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const sheets = workbook?.sheets || [];
 
@@ -114,7 +115,19 @@ export function MakeExcelPreviewPage({
   const kindLabel = formatKindLabel(kind);
 
   return (
-    <div className="min-h-screen bg-stone-100 text-brand-950" style={sansStyle}>
+    <div
+      className={`min-h-screen bg-stone-100 text-brand-950 ${dragActive && isEditable ? 'ring-4 ring-inset ring-brand-400' : ''}`}
+      style={sansStyle}
+      onDragOver={(event) => { if (!isEditable) return; event.preventDefault(); setDragActive(true); }}
+      onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
+      onDrop={(event) => {
+        if (!isEditable) return;
+        event.preventDefault();
+        setDragActive(false);
+        const file = Array.from(event.dataTransfer?.files || []).find((f) => /\.(xlsx|xlsm)$/i.test(f.name));
+        if (file) onImportFile(file);
+      }}
+    >
       <div className="border-b border-brand-300 bg-white px-6 py-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
