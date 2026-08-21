@@ -183,6 +183,7 @@ async def _fetch_document_bundle(
     *,
     q: str | None = None,
     sequence_no: int | None = None,
+    year: int | None = None,
     limit: int = 200,
 ) -> list[tuple[PosDocument, PosSession, Transaction, list[AfgWorkspaceLineOut]]]:
     normalized_query = q.strip() if q else ""
@@ -195,8 +196,18 @@ async def _fetch_document_bundle(
         .join(Transaction, Transaction.pos_document_sequence_no == PosDocument.sequence_no)
         .where(PosDocument.document_type == PosDocumentTypeEnum.PURCHASE_RECEIPT)
         .order_by(PosDocument.issued_at.desc(), PosDocument.sequence_no.desc())
-        .limit(limit)
     )
+    # Yıl filtresi SQL'de (limitten ÖNCE) — taşınabilir tarih aralığı; aksi
+    # halde "en yeni 200" penceresi seçilen yılı tamamen dışarıda bırakıyordu.
+    if year is not None:
+        from datetime import datetime, timezone
+
+        lower = datetime(year, 1, 1, tzinfo=timezone.utc)
+        upper = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        stmt = stmt.where(PosDocument.issued_at >= lower, PosDocument.issued_at < upper)
+        # Yıl kapsamı: o yılın TÜM belgeleri (defter/round-trip eksik olmasın).
+        limit = max(limit, 10000)
+    stmt = stmt.limit(limit)
     if sequence_no is not None:
         stmt = stmt.where(PosDocument.sequence_no == sequence_no)
     elif normalized_query:
@@ -500,11 +511,9 @@ async def build_log_workspace(
     year: int | None = None,
     limit: int = 200,
 ) -> AfgLogWorkspaceOut:
-    bundles = await _fetch_document_bundle(db, q=q, limit=limit)
+    # Yıl artık SQL'de filtrelenir (limitten önce); Python post-filter kalktı.
+    bundles = await _fetch_document_bundle(db, q=q, year=year, limit=limit)
     documents = [_workspace_document(document, session, transaction, lines) for document, session, transaction, lines in bundles]
-
-    if year is not None:
-        documents = [d for d in documents if d.issued_at and d.issued_at.year == year]
 
     gold_documents = _bucket_documents(documents, "gold")
     silver_documents = _bucket_documents(documents, "silver")

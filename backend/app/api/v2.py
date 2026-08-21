@@ -554,7 +554,7 @@ async def _apply_log_workbook_artifact_inputs(
     workbook_bytes: bytes,
     create_snapshot: bool,
 ) -> AfgLogWorkspaceOut:
-    current_workspace = await build_log_workspace(db, q=None, limit=200)
+    current_workspace = await build_log_workspace(db, q=None, year=year)
     try:
         parsed = parse_log_workbook_inputs_from_workbook(
             workbook_bytes,
@@ -588,7 +588,7 @@ async def _apply_log_workbook_artifact_inputs(
     for update in parsed.lot_updates:
         await update_afg_melt_lot(db, lot_id=update.lot_id, payload=update.payload)
 
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=year)
     await _ensure_log_artifact(
         db,
         workspace,
@@ -761,7 +761,7 @@ async def _office_preview_for_kind(
             return build_inventory_preview(workspace, artifact=bundle.artifact), True
         if kind == "log":
             year = _default_artifact_year(int(key))
-            workspace = await build_log_workspace(db, q=None, limit=200)
+            workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
             bundle = await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)
             await db.commit()
             return build_log_preview(workspace, year=year, artifact=bundle.artifact), False
@@ -821,7 +821,7 @@ async def _office_status_for_kind(
             year = _default_artifact_year(int(key))
             artifact = await get_artifact_record(db, f"log.live.{year}")
             if artifact is None:
-                workspace = await build_log_workspace(db, q=None, limit=200)
+                workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
                 artifact = (await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)).artifact
                 await db.commit()
             # Log/history workbooks are projections and intentionally cannot
@@ -1361,7 +1361,7 @@ async def _load_uniconta_invoices(
 async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScreenOut:
     settings = get_settings()
     inventory_workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
-    log_workspace = await build_log_workspace(db, q=None, limit=200)
+    log_workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
 
     purchase_rows = (
         await db.execute(

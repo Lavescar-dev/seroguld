@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from uuid import UUID
+from zipfile import BadZipFile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,7 +98,7 @@ async def post_log_lines_route_v2(
     admin: User = Depends(require_admin),
 ) -> AfgRouteResponse:
     response = await legacy_post_afg_lines_route(payload=payload, db=db, admin=admin)
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
     await _ensure_log_artifact(
         db,
         workspace,
@@ -146,7 +148,7 @@ async def post_log_routes_batch_apply_v2(
         actor_id=admin.id,
     )
 
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
     await _ensure_log_artifact(
         db,
         workspace,
@@ -172,7 +174,7 @@ async def post_log_melt_lot_v2(
     admin: User = Depends(require_admin),
 ) -> AfgMeltLotOut:
     lot = await create_afg_melt_lot(db, payload=payload, actor=admin)
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
     await _ensure_log_artifact(
         db,
         workspace,
@@ -191,7 +193,7 @@ async def put_log_melt_lot_v2(
     admin: User = Depends(require_admin),
 ) -> AfgMeltLotOut:
     lot = await update_afg_melt_lot(db, lot_id=lot_id, payload=payload, actor=admin)
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
     await _ensure_log_artifact(
         db,
         workspace,
@@ -209,7 +211,7 @@ async def post_log_melt_lot_finalize_v2(
     admin: User = Depends(require_admin),
 ) -> AfgMeltLotOut:
     lot = await finalize_afg_melt_lot(db, lot_id=lot_id, actor=admin, reverse=False)
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
     await _ensure_log_artifact(
         db,
         workspace,
@@ -292,7 +294,7 @@ async def get_log_workbook_v2(
     _: User = Depends(require_admin),
 ) -> Response:
     resolved_year = _default_artifact_year(year)
-    workspace = await build_log_workspace(db, q=None, limit=200)
+    workspace = await build_log_workspace(db, q=None, year=resolved_year)
     bundle = await sync_log_workbook_artifact(db, workspace, year=resolved_year, create_snapshot=False)
     await db.commit()
     return artifact_file_response(bundle.artifact, content=bundle.content)
@@ -306,7 +308,7 @@ async def post_log_workbook_reconcile_preview_v2(
     _: User = Depends(require_admin),
 ) -> DocumentArtifactReconcilePreviewOut:
     resolved_year = _default_artifact_year(year)
-    current_workspace = await build_log_workspace(db, q=None, limit=200)
+    current_workspace = await build_log_workspace(db, q=None, year=resolved_year)
     content = await workbook.read()
     try:
         parsed = parse_log_workbook_inputs_from_workbook(
@@ -349,12 +351,22 @@ async def post_log_workbook_import_v2(
     _: User = Depends(require_admin),
 ) -> AfgLogWorkspaceOut:
     content = await workbook.read()
-    workspace = await _apply_log_workbook_artifact_inputs(
-        db,
-        year=_default_artifact_year(year),
-        workbook_bytes=content,
-        create_snapshot=True,
-    )
+    if not content:
+        raise HTTPException(status_code=422, detail="Boş dosya yüklendi.")
+    try:
+        workspace = await _apply_log_workbook_artifact_inputs(
+            db,
+            year=_default_artifact_year(year),
+            workbook_bytes=content,
+            create_snapshot=True,
+        )
+    except HTTPException:
+        raise
+    except (BadZipFile, InvalidFileException) as exc:
+        # Bozuk/xlsx-olmayan dosya artık genel 500 değil, net 422 döner.
+        raise HTTPException(status_code=422, detail=f"Geçersiz Excel dosyası: {exc}") from exc
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
     return workspace
 
