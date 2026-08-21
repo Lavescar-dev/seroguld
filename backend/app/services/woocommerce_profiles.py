@@ -74,13 +74,9 @@ def _metal_key(product: Any) -> str:
     return str(getattr(metal, "value", metal) or "").lower()
 
 
-def _inventory_category(product: Any) -> str:
-    if getattr(product, "inventory_category", None):
-        return str(product.inventory_category)
-    # product_service tek kaynak; döngüsel import'tan kaçınmak için geç import.
-    from app.services.product_service import infer_inventory_categories
-
-    return infer_inventory_categories(product.metal_type, product.product_type)[0]
+def _product_type_key(product: Any) -> str:
+    ptype = getattr(product, "product_type", None)
+    return str(getattr(ptype, "value", ptype) or "").lower()
 
 
 def _inventory_subcategory(product: Any) -> str:
@@ -89,15 +85,26 @@ def _inventory_subcategory(product: Any) -> str:
 
 
 def resolve_publish_profile(product: Any) -> str:
-    """Ürünün varsayılan yayın profili. Operatör override'ı (product.
-    woocommerce_publish_profile) varsa çağıran onu kullanır; bu fonksiyon
-    yalnız türetimi verir."""
+    """Ürünün varsayılan yayın profili (enum'a bağımlı değil; hem gerçek ürün
+    hem SimpleNamespace ile çalışır). Operatör override'ı ayrı ele alınır."""
     metal = _metal_key(product)
     if metal in {"platinum", "palladium"}:
         return PROFILE_PLATINUM
 
-    category = _inventory_category(product)
+    category = str(getattr(product, "inventory_category", "") or "").lower()
     sub = _inventory_subcategory(product)
+    ptype = _product_type_key(product)
+
+    # inventory_category boşsa metal+tipten türet (infer_inventory_categories
+    # ile aynı kural, enum karşılaştırması olmadan).
+    if not category:
+        if metal == "silver":
+            category = "gumus"
+            sub = sub or ("barrer" if ptype == "bar" else "smykker")
+        elif ptype == "bar":
+            category = "kulce"
+        else:
+            category = "taki"
 
     if category == "kulce":
         return PROFILE_BAR

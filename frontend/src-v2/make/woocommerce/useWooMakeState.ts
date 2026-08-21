@@ -280,6 +280,10 @@ export interface WooMakeState {
   categoriesError: string | null;
   refreshCategories: () => Promise<void>;
   publishCategoryIds: number[];
+  publishProfile: string;
+  setPublishProfile: (value: string) => void;
+  publishYear: string;
+  setPublishYear: (value: string) => void;
   setPublishCategoryIds: (ids: number[]) => void;
   togglePublishCategory: (id: number) => void;
   catalogDetailId: string | null;
@@ -573,6 +577,8 @@ export function useWooMakeState(): WooMakeState {
   const [catalogPageNumber, setCatalogPageNumber] = useState(1);
   const [catalogPreview, setCatalogPreview] = useState<WooCatalogSyncPreview | null>(null);
   const [publishCategoryIds, setPublishCategoryIds] = useState<number[]>([]);
+  const [publishProfile, setPublishProfile] = useState<string>('');
+  const [publishYear, setPublishYear] = useState<string>('');
   const [catalogDetailId, setCatalogDetailId] = useState<string | null>(null);
 
   const bootstrapQuery = useQuery({
@@ -696,6 +702,9 @@ export function useWooMakeState(): WooMakeState {
     setPublishPrice(String(product.shop_price_dkk || product.sale_price_dkk || product.purchase_price_dkk || ''));
     setAiDraft(product.ai_description || '');
     setPublishCategoryIds((product.woocommerce_category_ids ?? []).map(Number));
+    // Override varsa onu, yoksa türetilen profili göster; yıl varsa doldur.
+    setPublishProfile(product.woocommerce_publish_profile || product.resolved_publish_profile || '');
+    setPublishYear(product.production_year ? String(product.production_year) : '');
   }, [detailQuery.data]);
 
   async function invalidateProduct(productId?: string | null) {
@@ -757,6 +766,8 @@ export function useWooMakeState(): WooMakeState {
           name: name || undefined,
           // Seçici durumu yayınla birlikte kalıcılaşır; [] = harita davranışına dön.
           category_ids: publishCategoryIds,
+          publish_profile: publishProfile || '',
+          production_year: publishYear.trim() ? Number(publishYear) : 0,
         }),
       }),
     onSuccess: async (payload) => {
@@ -1103,6 +1114,10 @@ export function useWooMakeState(): WooMakeState {
     refreshCategories,
     publishCategoryIds,
     setPublishCategoryIds,
+    publishProfile,
+    setPublishProfile,
+    publishYear,
+    setPublishYear,
     togglePublishCategory,
     catalogDetailId,
     openCatalogDetail: setCatalogDetailId,

@@ -143,16 +143,17 @@ export type AiSuggestions = {
   producer: string;
   stone: string;
   subtype: string;
+  year: string;
 };
 
 export function parseAiSuggestions(text: string | null | undefined): AiSuggestions {
-  const empty = { producer: '', stone: '', subtype: '' };
+  const empty = { producer: '', stone: '', subtype: '', year: '' };
   const raw = text?.trim();
   if (!raw || !raw.startsWith('{')) return empty;
   try {
     const data = JSON.parse(raw) as Record<string, unknown>;
     const pick = (key: string) => (typeof data[key] === 'string' ? (data[key] as string).trim() : '');
-    return { producer: pick('suggested_producer'), stone: pick('suggested_stone'), subtype: pick('suggested_subtype') };
+    return { producer: pick('suggested_producer'), stone: pick('suggested_stone'), subtype: pick('suggested_subtype'), year: pick('suggested_year') };
   } catch {
     return empty;
   }

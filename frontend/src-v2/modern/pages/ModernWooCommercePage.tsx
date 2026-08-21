@@ -367,8 +367,25 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
         </ModernCard>
       ) : null}
 
+      <div className="flex flex-wrap gap-4">
+        <label className="block"><span className="mb-2 block text-sm font-semibold text-sg-text">Yayın şablonu (WP yerleşimi)</span>
+          <select value={state.publishProfile} onChange={(event) => state.setPublishProfile(event.target.value)} className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none">
+            <option value="jewelry">Smykke (takı)</option>
+            <option value="bar">Barre (külçe · yatırım)</option>
+            <option value="coin">Mønt (sikke)</option>
+            <option value="platinum">Platin / Palladium</option>
+          </select>
+          <span className="mt-1 block text-xs text-sg-text-soft">Yderligere information + açıklama bloğu bu şablona göre üretilir.</span>
+        </label>
+        {state.publishProfile === 'coin' ? (
+          <label className="block"><span className="mb-2 block text-sm font-semibold text-sg-text">Årstal (üretim yılı){suggestions.year ? <span className="ml-1 text-sg-accent">· AI: {suggestions.year}</span> : null}</span>
+            <ModernTextInput inputMode="numeric" type="number" min="0" placeholder={suggestions.year || 'örn. 2024'} value={state.publishYear} onChange={(event) => state.setPublishYear(event.target.value)} />
+          </label>
+        ) : null}
+      </div>
       <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
       <div className="max-w-xl">
+        <p className="mb-2 text-sm font-semibold text-sg-text">WP'de hangi grup(lar)a yayınlansın?</p>
         <WooCategoryPicker
           categories={state.categories}
           selectedIds={state.publishCategoryIds}

@@ -119,27 +119,60 @@ class AIService:
             str(product.diameter_mm) if getattr(product, "diameter_mm", None) is not None else "-"
         )
 
+        from app.services.woocommerce_profiles import (
+            PROFILE_BAR,
+            PROFILE_COIN,
+            PROFILE_PLATINUM,
+            effective_publish_profile,
+        )
+
+        profile = effective_publish_profile(product)
+        if profile in {PROFILE_BAR, PROFILE_COIN, PROFILE_PLATINUM}:
+            noun = "mønt" if profile == PROFILE_COIN else "barre" if profile == PROFILE_BAR else "ædelmetalprodukt"
+            angle = (
+                f"Skriv en dansk WooCommerce SEO-pakke for en {noun} (investeringsprodukt) og udfyld JSON-skemaet.\n"
+                "Meget vigtigt:\n"
+                "- Fokusér på renhed (promille), producent/mønt, oprindelsesland, "
+                "vægt og evt. certifikat/forsegling/unikt nummer.\n"
+                + ("- Aflæs årstal fra mønten hvis det er præget (suggested_year).\n" if profile == PROFILE_COIN else "")
+                + "- INGEN størrelsesguide, ingen smykke-designsprog.\n"
+                "- Neutralt og fagligt; ingen investeringsrådgivning, ingen garantiløfter.\n"
+                "- GÆT ALDRIG mål eller vægt.\n"
+            )
+            spec_hint = (
+                "specifikationer + afsluttende CTA. Specifikationslisten skal mindst "
+                "indeholde: Vægt, Karat/Ædelmetal, Renhed (promille) og producent."
+            )
+        else:
+            angle = (
+                "Skriv en dansk WooCommerce SEO-pakke for et smykke og udfyld JSON-skemaet.\n"
+                "Meget vigtigt:\n"
+                "- Brug produkttypen naturligt i teksten (fx ring, armband, halskæde, øreringe).\n"
+                "- Brug metaltype, vægt, karat og renhed semantisk korrekt.\n"
+                "- Brug også visuelle detaljer fra billederne (fx kædetype, sten, mønster, lukning, overflade/stand).\n"
+                "- Hvis noget er uklart i billedet, skriv neutralt uden at gætte.\n"
+                "- Ingen investeringsråd, ingen garantiløfter, ingen overdrivelser.\n"
+                "- Skriv professionelt, klart og salgsvenligt for dansk e-handel.\n"
+            )
+            spec_hint = (
+                "specifikationer + afsluttende CTA. Specifikationslisten skal mindst "
+                "indeholde: Vare nr., Vægt (g), Karat/Renhed og mål (hvis kendt) — samme "
+                "struktur som referencesiden."
+            )
+
         return (
-            "Skriv en dansk WooCommerce SEO-pakke for et smykke og udfyld JSON-skemaet.\n"
-            "Meget vigtigt:\n"
-            "- Brug produkttypen naturligt i teksten (fx ring, armband, halskæde, øreringe).\n"
-            "- Brug metaltype, vægt, karat og renhed semantisk korrekt.\n"
-            "- Brug også visuelle detaljer fra billederne (fx kædetype, sten, mønster, lukning, overflade/stand).\n"
-            "- Hvis noget er uklart i billedet, skriv neutralt uden at gætte.\n"
-            "- Ingen investeringsråd, ingen garantiløfter, ingen overdrivelser.\n"
-            "- Skriv professionelt, klart og salgsvenligt for dansk e-handel.\n\n"
+            angle + "\n"
             "Feltkrav:\n"
             "- seo_title: maks 70 tegn.\n"
             "- short_description: 1-2 sætninger, 140-220 tegn (ren tekst).\n"
             "- long_description_html: HTML med 2 korte afsnit + en <ul>-liste med "
-            "specifikationer + afsluttende CTA. Specifikationslisten skal mindst "
-            "indeholde: Vare nr., Vægt (g), Karat/Renhed og mål (hvis kendt) — samme "
-            "struktur som referencesiden.\n"
+            + spec_hint + "\n"
             "- meta_description: maks 155 tegn.\n"
             "- url_slug: kun små bogstaver, tal og bindestreger.\n"
-            "- suggested_producer/suggested_stone/suggested_subtype: FORSLAG læst fra "
-            "billedet (producent-/mærkegravering, stenart, undertype). Skriv null hvis "
-            "det ikke tydeligt kan aflæses. GÆT ALDRIG mål — de indtastes fysisk.\n\n"
+            "- suggested_producer/suggested_stone/suggested_subtype/suggested_year: "
+            "FORSLAG læst fra billedet (producent-/mærkegravering, stenart, undertype, "
+            "møntens årstal). Skriv null hvis det ikke tydeligt kan aflæses. GÆT ALDRIG "
+            "mål — de indtastes fysisk.\n\n"
             f"Produktdata:\n"
             f"- Produkttype: {product_type}\n"
             f"- Metal: {metal_type}\n"
@@ -171,6 +204,7 @@ class AIService:
                         "suggested_producer": nullable,
                         "suggested_stone": nullable,
                         "suggested_subtype": nullable,
+                        "suggested_year": nullable,
                     },
                     "required": [
                         "seo_title",
@@ -181,6 +215,7 @@ class AIService:
                         "suggested_producer",
                         "suggested_stone",
                         "suggested_subtype",
+                        "suggested_year",
                     ],
                 },
             },
