@@ -10,8 +10,7 @@ import {
   apiRequest,
   buildWsUrl,
   downloadAuthedDocument,
-  fetchAuthedPdfBlob,
-  openAuthedDocument,
+  printAuthedDocument,
 } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -2275,19 +2274,6 @@ export function useAlisMakeState(): AlisPageProps {
     );
   }
 
-  async function openUnicontaPdfModal(sequenceNo: number, htmlFallbackPath: string) {
-    setPdfState((current) => ({ ...current, loading: true, error: null }));
-    try {
-      const { url } = await fetchAuthedPdfBlob(`/api/v2/uniconta/invoice-pdf/from-pos/${sequenceNo}`);
-      setPdfState({ url, filename: `uniconta-${sequenceNo}.pdf`, loading: false, error: null });
-    } catch (exc) {
-      // Sync henüz tamamlanmadıysa veya hata → HTML fallback (yeni tab)
-      setPdfState({ url: null, filename: '', loading: false, error: null });
-      void openAuthedDocument(htmlFallbackPath);
-      void exc; // explicit ignore
-    }
-  }
-
   function closePdfModal() {
     setPdfState((current) => {
       if (current.url) URL.revokeObjectURL(current.url);
@@ -2296,10 +2282,9 @@ export function useAlisMakeState(): AlisPageProps {
   }
 
   function handlePrintDocument(item: PosSavedPurchaseListItem) {
-    void openUnicontaPdfModal(
-      item.sequence_no,
-      `/api/v2/alis/documents/${item.sequence_no}/print?format=html`,
-    );
+    // R2-13 — yazdırma doğrudan WebView2 native diyaloğuyla açılır
+    // (eski openUnicontaPdfModal fallback'i Tauri'de sessizce yutuluyordu).
+    void printAuthedDocument(`/api/v2/alis/documents/${item.sequence_no}/print?format=html`);
   }
 
   function handleOpenWorkspaceExcelPreview() {
@@ -2680,10 +2665,7 @@ export function useAlisMakeState(): AlisPageProps {
     },
     onPrintDetail: () => {
       if (!detailDocumentQuery.data) return;
-      void openUnicontaPdfModal(
-        detailDocumentQuery.data.sequence_no,
-        `/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/print?format=html`,
-      );
+      void printAuthedDocument(`/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/print?format=html`);
     },
     onOpenDetailExcelPreview: () => {
       if (!detailDocumentQuery.data) return;
@@ -2778,7 +2760,7 @@ export function useAlisMakeState(): AlisPageProps {
     setPaymentMethod: setPaymentMethodFromUi,
     onPrintWorkspace: () => {
       if (!workspace) return;
-      void openAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html`);
+      void printAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html`);
     },
     onOpenWorkspaceExcelPreview: handleOpenWorkspaceExcelPreview,
     onCancelWorkspace: () => cancelMutation.mutate(),

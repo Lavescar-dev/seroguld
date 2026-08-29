@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 
-import { openAuthedDocument } from '@/lib/api';
+import { printAuthedDocument } from '@/lib/api';
 import {
   formatDate,
   formatMoney,
@@ -181,7 +181,7 @@ function AfgPreviewModal({
             {detail ? (
               <button
                 type="button"
-                onClick={() => void openAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=pdf`)}
+                onClick={() => void printAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=html`)}
                 className="flex items-center gap-1.5 bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-amber-700"
               >
                 <Printer className="h-3.5 w-3.5" />
@@ -521,7 +521,7 @@ function FragmentRow({
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      void openAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=pdf`);
+                      void printAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=html`);
                     }}
                     className="flex items-center gap-1.5 bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-amber-700"
                   >

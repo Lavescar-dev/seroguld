@@ -1,4 +1,5 @@
 import { clearAuth, getAccessToken, getRefreshToken, isAuthRemembered, setAuth } from '@/lib/auth';
+import { isTauriRuntime } from '@/lib/desktop';
 import type { AuthTokenResponse } from '@/types';
 
 export class ApiError extends Error {
@@ -184,6 +185,57 @@ export async function openAuthedDocument(path: string): Promise<void> {
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank', 'noopener,noreferrer');
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export async function printAuthedDocument(path: string): Promise<void> {
+  const blob = await apiRequest<Blob>(path);
+  if (!isTauriRuntime()) {
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return;
+  }
+  // PDF HTML pipeline'ına giremez (srcdoc metin bekler) — çağıran HTML
+  // uç noktası kullanmalı (ör. receipt?format=html).
+  if (blob.type.includes('pdf')) {
+    throw new Error('Yazdırma yalnızca HTML belgelerle çalışır; PDF uç noktası kullanıldı.');
+  }
+  // R2-13 — Tauri webview `window.open`'ı sessizce yutar (bkz. main.rs
+  // open_external_url yorumu). Yazdırma için belge gizli bir iframe'e
+  // yüklenir ve WebView2'nin native yazdırma diyaloğu çağrılır; diyaloğu
+  // tüm sistem yazıcıları (ve "Microsoft Print to PDF") görür.
+  const html = await blob.text();
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.setAttribute('title', 'Yazdırma önizleme');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '1px';
+  iframe.style.height = '1px';
+  iframe.style.opacity = '0';
+  iframe.style.border = '0';
+  const scheduleCleanup = () => {
+    window.setTimeout(() => iframe.remove(), 120_000);
+  };
+  const loaded = new Promise<void>((resolve, reject) => {
+    iframe.addEventListener('load', () => resolve(), { once: true });
+    iframe.addEventListener('error', () => reject(new Error('Yazdırma belgesi yüklenemedi')), { once: true });
+  });
+  document.body.appendChild(iframe);
+  try {
+    iframe.srcdoc = html;
+    await loaded;
+    const target = iframe.contentWindow;
+    if (!target) throw new Error('Yazdırma çerçevesi hazır değil');
+    target.focus();
+    target.print();
+    target.addEventListener('afterprint', scheduleCleanup, { once: true });
+    scheduleCleanup();
+  } catch (error) {
+    iframe.remove();
+    throw error;
+  }
 }
 
 export async function downloadAuthedDocument(path: string, filename: string): Promise<void> {
