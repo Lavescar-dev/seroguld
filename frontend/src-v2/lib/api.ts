@@ -180,11 +180,9 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
   return (await response.blob()) as T;
 }
 
-export async function openAuthedDocument(path: string): Promise<void> {
+export async function fetchAuthedText(path: string): Promise<string> {
   const blob = await apiRequest<Blob>(path);
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank', 'noopener,noreferrer');
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return blob.text();
 }
 
 export async function printAuthedDocument(path: string): Promise<void> {

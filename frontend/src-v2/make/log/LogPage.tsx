@@ -25,7 +25,8 @@ import {
   X,
 } from 'lucide-react';
 
-import { openAuthedDocument } from '@/lib/api';
+import { fetchAuthedText } from '@/lib/api';
+import { HtmlDocumentModal } from '@/components/HtmlDocumentModal';
 import {
   formatDate,
   formatMoney,
@@ -814,6 +815,13 @@ function BucketWorkspaceView({
     [bucketGroups],
   );
   const selectedDocument = documents.find((document) => document.sequence_no === expandedDocument) ?? documents[0] ?? null;
+  // R2-13 — window.open Tauri'de sessizce yutulduğu için belge modalda açılır.
+  const [htmlDoc, setHtmlDoc] = useState<{ html: string; title: string } | null>(null);
+  const closeHtmlDoc = () => setHtmlDoc(null);
+  const openDocumentHtml = async (sessionId: string, documentNumber: string) => {
+    const html = await fetchAuthedText(`/api/pos/sessions/${sessionId}/receipt?audience=admin&format=html`);
+    setHtmlDoc({ html, title: documentNumber });
+  };
   const selectedWorkspace = useMemo(() => {
     if (!selectedDocument) {
       return null;
@@ -1022,7 +1030,7 @@ function BucketWorkspaceView({
                       <button
                         type="button"
                         onClick={() =>
-                          void openAuthedDocument(`/api/pos/sessions/${selectedWorkspace.document.session_id}/receipt?audience=admin&format=html`)
+                          void openDocumentHtml(selectedWorkspace.document.session_id, selectedWorkspace.document.document_number)
                         }
                         className="inline-flex items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-50"
                       >
@@ -1119,6 +1127,13 @@ function BucketWorkspaceView({
         onDownloadPdf={onDownloadLotPdf}
         onOpenHistory={onOpenLotHistory}
         onOpenLines={onOpenLotLines}
+      />
+      <HtmlDocumentModal
+        open={Boolean(htmlDoc?.html)}
+        html={htmlDoc?.html ?? null}
+        title="AFG Belgesi"
+        subtitle={htmlDoc?.title}
+        onClose={closeHtmlDoc}
       />
     </div>
   );
