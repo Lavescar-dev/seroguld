@@ -47,6 +47,9 @@ export interface GlobalMarketRatesController {
   open: () => void;
   close: () => void;
   save: () => void;
+  // R2-06 takibi: "WP'den çek" çekmece AÇIKKEN çalışır; draft yalnız çekmece
+  // kapalıyken senkronlandığından sunucudan taze profil çekip draft'ı yazar.
+  refreshDraftFromServer: () => Promise<void>;
   updateFx: (value: string) => void;
   updateGoldRate: (key: string, value: string) => void;
   updateSilverRate: (key: string, value: string) => void;
@@ -183,6 +186,13 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     setIsOpen(true);
   };
 
+  const refreshDraftFromServer = async () => {
+    const next = await apiRequest<GlobalMarketRateProfile>('/api/v2/market-rates/defaults');
+    queryClient.setQueryData(['market-rates', 'defaults'], next);
+    setDraft(toDraft({ ...fallback, ...next }));
+    setErrorMessage(null);
+  };
+
   const close = () => {
     setIsOpen(false);
     setErrorMessage(null);
@@ -217,6 +227,7 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     errorMessage: errorMessage || (query.isError ? 'Global oran profiline ulaşılamadı.' : null),
     open,
     close,
+    refreshDraftFromServer,
     save: () => {
       if (requiredInvalid) {
         setErrorMessage('Altın karat ve gümüş saflık oranları pozitif olmalı — lütfen boş/0 bırakılan alanları doldurun.');
@@ -446,10 +457,15 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
               // R2-06: karat/gümüş fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
               void (async () => {
                 try {
-                  const result = await apiRequest<{ applied_gold: Record<string, string>; fetched_at: string }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
+                  const result = await apiRequest<{ applied_gold: Record<string, string>; applied_silver?: Record<string, string>; fetched_at: string }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
                   await queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
                   await queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
-                  window.alert(`WP Priser uygulandı: ${Object.keys(result.applied_gold || {}).length} karat güncellendi.`);
+                  // R2-06 takibi: invalidate draft'ı tazelemez (effect yalnız
+                  // çekmece kapalıyken senkronlar) — açık alanları burada güncelle.
+                  await controller.refreshDraftFromServer();
+                  const goldCount = Object.keys(result.applied_gold || {}).length;
+                  const silverCount = Object.keys(result.applied_silver || {}).length;
+                  window.alert(`WP Priser uygulandı: ${goldCount} karat + ${silverCount} gümüş güncellendi.`);
                 } catch (fetchError) {
                   window.alert(fetchError instanceof Error ? fetchError.message : 'WP Priser çekilemedi.');
                 }
