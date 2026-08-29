@@ -1,10 +1,16 @@
-"""R2-06 — karat/metal fiyatlarının TEK kaynağı: WordPress "Priser" sayfası.
+"""R2-06 — karat/metal fiyatlarının TEK kaynağı: WordPress "Priser" sayfaları.
 
-seroguld.dk'daki "Sølv og guldpriser" bloğu (8 karat guld pr. gram 280,00 …)
-WP REST API üzerinden (wp/v2/pages, mevcut WP app-parolasıyla) okunur ve
-etiketli satırlar ayrıştırılır. Sayfa scrape edilmez — REST'in döndürdüğü
-rendered içerik alanı ayrıştırılır. Çekilemeyen değer sessizce atlanır;
-mevcut profil değeri korunur (AFG fiyatları asla sıfırlanmaz).
+seroguld.dk'daki fiyat tabloları (Guldpriser + Sølvpriser sayfaları) WP REST
+API üzerinden okunur ve tablo satırlarından ayrıştırılır:
+
+    <td>8 karat</td><td>333%</td><td>280.00 DKK</td>
+    <td>Sølv – 3 tårnet</td><td>830%</td><td>10.20 DKK</td>
+
+Sayfa scrape edilmez — REST'in döndürdüğü rendered içerik ayrıştırılır.
+Fiyat hücresi DKK son eki olmadan kabul edilmez; makullük bantlarının
+dışındaki değerler (ör. saflık metninden gelen "9,16" gibi) reddedilir.
+Çekilemeyen değer sessizce atlanır; mevcut profil değeri korunur (AFG
+fiyatları asla sıfırlanmaz).
 
 metals.dev bu karar ile tamamen devre dışıdır (kullanıcı kararı, Tur 2).
 """
@@ -24,51 +30,165 @@ from app.utils.helpers import quantize_2, utc_now
 
 LOGGER = logging.getLogger(__name__)
 
-# "8 karat guld pr. gram 280,00" / "14 karat 490,00" / "21,6 karat …"
-_GOLD_LINE = re.compile(
-    r"(?P<karat>\d{1,2}(?:[.,]\d)?)\s*karat[^0-9]{0,40}?(?P<price>\d{1,3}(?:\.\d{3})*,\d{2})",
+# Canlı site: https://seroguld.dk/guldpriser/ ve /soelvpriser/ (wp/v2/pages).
+GOLD_PAGE_SLUG = "guldpriser"
+SILVER_PAGE_SLUG = "soelvpriser"
+
+# Altın satırı: ilk hücre "8 karat" / "21,6 karat" biçimindedir.
+_GOLD_ROW = re.compile(r"^\s*(?P<karat>\d{1,2}(?:[.,]\d)?)\s*karat\b", re.IGNORECASE)
+# Gümüş etiketleri → profil anahtarı (satır ilk hücresinde aranır).
+_SILVER_ROWS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"fins[øo]lv", re.IGNORECASE), "999"),
+    (re.compile(r"sterling", re.IGNORECASE), "925"),
+    (re.compile(r"3\s*-?\s*t[åa]rnet", re.IGNORECASE), "830"),
+)
+# Fiyat hücresi: DKK/kr. eki zorunlu. 280.00 / 1.234,56 / 1 234,56 biçimleri.
+_PRICE_CELL = re.compile(
+    r"(?P<num>\d{1,4}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?)\s*(?:dkk|kr\.?)\b",
     re.IGNORECASE,
 )
-# Gümüş etiketleri → profil anahtarı
-_SILVER_LABELS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"fins[øo]lv[^0-9]{0,40}?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE), "999"),
-    (re.compile(r"sterling[^0-9]{0,40}?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE), "925"),
-    (re.compile(r"3\s*t[åa]rnet[^0-9]{0,40}?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE), "830"),
+# Prose yedeği: aynı fiyat kalıbı, karat etiketiyle AYNI metin parçasında.
+_PROSE_GOLD = re.compile(
+    r"(?P<karat>\d{1,2}(?:[.,]\d)?)\s*karat[^0-9]{0,40}?"
+    r"(?P<num>\d{1,4}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?)\s*(?:dkk|kr\.?)\b",
+    re.IGNORECASE,
+)
+_PROSE_SILVER: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (
+        re.compile(
+            label + r"[^0-9]{0,40}?(?P<num>\d{1,4}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?)\s*(?:dkk|kr\.?)\b",
+            re.IGNORECASE,
+        ),
+        key,
+    )
+    for label, key in (
+        (r"fins[øo]lv", "999"),
+        (r"sterling", "925"),
+        (r"3\s*-?\s*t[åa]rnet", "830"),
+    )
 )
 
+# Makullük bantları — tablo dışı metinlerden gelen saflık/ölçü benzeri
+# değerlerin profile sızmasını engeller (ör. "22 karat 9,16" saflık notu).
+GOLD_MIN_DKK = Decimal("100")
+GOLD_MAX_DKK = Decimal("10000")
+SILVER_MIN_DKK = Decimal("1")
+SILVER_MAX_DKK = Decimal("1000")
 
-def _danish_to_decimal(raw: str) -> Decimal | None:
-    try:
-        return quantize_2(Decimal(raw.replace(".", "").replace(",", ".")))
-    except (InvalidOperation, AttributeError):
+
+def _price_to_decimal(raw: str) -> Decimal | None:
+    """Fiyat hücresini Decimal'e çevirir; ondalık/binlik ayırıcılarını çözümler.
+
+    "280.00" → 280.00 (2 haneli kuyruk = ondalık nokta), "1.234" → 1234
+    (3 haneli kuyruk = binlik), "1.234,56" → 1234.56, "280,00" → 280.00.
+    """
+    match = _PRICE_CELL.search(raw or "")
+    if not match:
         return None
+    num = match.group("num").replace(" ", "")
+    if "," in num and "." in num:
+        if num.rfind(",") > num.rfind("."):
+            num = num.replace(".", "").replace(",", ".")
+        else:
+            num = num.replace(",", "")
+    elif "," in num:
+        num = num.replace(",", ".")
+    else:
+        parts = num.split(".")
+        if len(parts) > 1 and len(parts[-1]) == 3:
+            num = num.replace(".", "")
+    try:
+        value = Decimal(num)
+    except InvalidOperation:
+        return None
+    return value if value.is_finite() and value > 0 else None
+
+
+def _row_cells(html: str) -> list[list[str]]:
+    """Rendered HTML'deki tablo satırlarını hücre metni listesi olarak döndürür."""
+    rows: list[list[str]] = []
+    for row in re.finditer(r"<tr[^>]*>(.*?)</tr>", html or "", re.S | re.I):
+        cells: list[str] = []
+        for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row.group(1), re.S | re.I):
+            text = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", cell))).strip()
+            if text:
+                cells.append(text)
+        if cells:
+            rows.append(cells)
+    return rows
+
+
+def _row_price(cells: list[str]) -> Decimal | None:
+    for cell in reversed(cells):
+        value = _price_to_decimal(cell)
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_table_rates(html: str) -> tuple[dict[str, str], dict[str, str]]:
+    gold: dict[str, str] = {}
+    silver: dict[str, str] = {}
+    for cells in _row_cells(html):
+        first = cells[0]
+        gold_match = _GOLD_ROW.match(first)
+        if gold_match:
+            key = gold_match.group("karat").replace(",", ".")
+            value = _row_price(cells[1:])
+            if value is not None and GOLD_MIN_DKK <= value <= GOLD_MAX_DKK and key not in gold:
+                gold[key] = str(quantize_2(value))
+            continue
+        for pattern, key in _SILVER_ROWS:
+            if pattern.search(first):
+                value = _row_price(cells[1:])
+                if value is not None and SILVER_MIN_DKK <= value <= SILVER_MAX_DKK and key not in silver:
+                    silver[key] = str(quantize_2(value))
+                break
+    return gold, silver
+
+
+def _extract_prose_rates(html: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Tablosuz sayfalar için yedek: aynı metin parçasında etiket + DKK'lı fiyat."""
+    text = unescape(re.sub(r"<[^>]+>", " ", html or ""))
+    gold: dict[str, str] = {}
+    for match in _PROSE_GOLD.finditer(text):
+        key = match.group("karat").replace(",", ".")
+        value = _price_to_decimal(match.group("num") + " dkk")
+        if value is not None and GOLD_MIN_DKK <= value <= GOLD_MAX_DKK and key not in gold:
+            gold[key] = str(quantize_2(value))
+    silver: dict[str, str] = {}
+    for pattern, key in _PROSE_SILVER:
+        found = pattern.search(text)
+        if found:
+            value = _price_to_decimal(found.group("num") + " dkk")
+            if value is not None and SILVER_MIN_DKK <= value <= SILVER_MAX_DKK and key not in silver:
+                silver[key] = str(quantize_2(value))
+    return gold, silver
 
 
 def parse_priser_content(html: str) -> dict[str, Any]:
-    """Rendered sayfa içeriğinden karat/gümüş fiyat haritası çıkarır (saf, test edilebilir)."""
-    text = unescape(re.sub(r"<[^>]+>", " ", html or ""))
-    gold: dict[str, str] = {}
-    for match in _GOLD_LINE.finditer(text):
-        karat_key = match.group("karat").replace(",", ".")
-        # profil anahtarları: 8, 9, 10, 14, 18, 21, 21.6, 22, 24 (+ ikinci 22K ayrı ele alınır)
-        value = _danish_to_decimal(match.group("price"))
-        if value is not None and value > 0 and karat_key not in gold:
-            gold[karat_key] = str(value)
-    silver: dict[str, str] = {}
-    for pattern, key in _SILVER_LABELS:
-        found = pattern.search(text)
-        if found:
-            value = _danish_to_decimal(found.group(1))
-            if value is not None and value > 0:
-                silver[key] = str(value)
+    """Rendered sayfa içeriğinden karat/gümüş fiyat haritası çıkarır (saf, test edilebilir).
+
+    Önce tablo satırları (canlı sitenin biçimi), bulunamazsa DKK-ekli prose
+    yedeği denenir. Fiyat hücresi DKK/kr. eki taşımadan asla kabul edilmez.
+    """
+    gold, silver = _extract_table_rates(html)
+    prose_gold, prose_silver = _extract_prose_rates(html)
+    for key, value in prose_gold.items():
+        gold.setdefault(key, value)
+    for key, value in prose_silver.items():
+        silver.setdefault(key, value)
     return {"gold_rates_dkk": gold, "silver_rates_dkk": silver}
 
 
 async def fetch_wp_priser_rates() -> dict[str, Any]:
-    """WP REST'ten Priser sayfasını çekip ayrıştırır.
+    """WP REST'ten fiyat sayfalarını çekip ayrıştırır.
 
-    Dönen: {gold_rates_dkk, silver_rates_dkk, fetched_at, page_id, page_title}
-    Hata durumunda anlamlı mesajla ValueError yükseltir (çağıran HTTP'ye çevirir).
+    Önce bilinen slug'lar (guldpriser + soelvpriser) doğrudan istenir; slug
+    değişmişse "priser" aramasıyla (per_page=100) en yüksek skorlu sayfalar
+    seçilir. Dönen: {gold_rates_dkk, silver_rates_dkk, fetched_at, page_id,
+    page_title, silver_page_id}. Hata durumunda anlamlı mesajla ValueError
+    yükseltir (çağıran HTTP'ye çevirir).
     """
     settings = get_settings()
     base = (settings.wordpress_base_url or "").strip().rstrip("/")
@@ -77,30 +197,72 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
     auth = None
     if settings.wp_app_username and settings.wp_app_password:
         auth = (settings.wp_app_username, settings.wp_app_password)
-    async with httpx.AsyncClient(timeout=20.0, auth=auth) as client:
-        response = await client.get(
-            f"{base}/wp-json/wp/v2/pages",
-            params={"search": "priser", "per_page": 20, "_fields": "id,title,content"},
-        )
-        response.raise_for_status()
-        pages = response.json()
-    if not isinstance(pages, list) or not pages:
-        raise ValueError("WP'de 'priser' araması sayfa döndürmedi.")
 
-    best: dict[str, Any] | None = None
-    best_parsed: dict[str, Any] | None = None
-    for page in pages:
-        content = ((page.get("content") or {}).get("rendered")) or ""
-        parsed = parse_priser_content(content)
-        score = len(parsed["gold_rates_dkk"]) + len(parsed["silver_rates_dkk"])
-        if score and (best_parsed is None or score > len(best_parsed["gold_rates_dkk"]) + len(best_parsed["silver_rates_dkk"])):
-            best, best_parsed = page, parsed
-    if best is None or best_parsed is None:
-        raise ValueError("Priser sayfalarında ayrıştırılabilir karat fiyatı bulunamadı.")
+    async with httpx.AsyncClient(timeout=20.0, auth=auth) as client:
+        candidates: list[dict[str, Any]] = []
+        for slug in (GOLD_PAGE_SLUG, SILVER_PAGE_SLUG):
+            response = await client.get(
+                f"{base}/wp-json/wp/v2/pages",
+                params={"slug": slug, "_fields": "id,title,content"},
+            )
+            response.raise_for_status()
+            pages = response.json()
+            if isinstance(pages, list):
+                candidates.extend(pages)
+
+        slug_parsed = [parse_priser_content(_rendered(p)) for p in candidates]
+        if not (
+            any(p["gold_rates_dkk"] for p in slug_parsed)
+            and any(p["silver_rates_dkk"] for p in slug_parsed)
+        ):
+            response = await client.get(
+                f"{base}/wp-json/wp/v2/pages",
+                params={"search": "priser", "per_page": 100, "_fields": "id,title,content"},
+            )
+            response.raise_for_status()
+            pages = response.json()
+            if isinstance(pages, list):
+                candidates.extend(pages)
+
+    if not candidates:
+        raise ValueError("WP'de fiyat sayfası bulunamadı (guldpriser/soelvpriser slug'ları boş).")
+
+    best_gold: tuple[dict[str, Any], dict[str, Any]] | None = None
+    best_silver: tuple[dict[str, Any], dict[str, Any]] | None = None
+    for page in candidates:
+        parsed = parse_priser_content(_rendered(page))
+        if parsed["gold_rates_dkk"] and (
+            best_gold is None
+            or len(parsed["gold_rates_dkk"]) > len(best_gold[1]["gold_rates_dkk"])
+        ):
+            best_gold = (page, parsed)
+        if parsed["silver_rates_dkk"] and (
+            best_silver is None
+            or len(parsed["silver_rates_dkk"]) > len(best_silver[1]["silver_rates_dkk"])
+        ):
+            best_silver = (page, parsed)
+
+    if best_gold is None and best_silver is None:
+        raise ValueError("Fiyat sayfalarında DKK etiketli karat fiyatı bulunamadı.")
+
+    gold_parsed = (best_gold or (None, {"gold_rates_dkk": {}}))[1]
+    silver_parsed = (best_silver or (None, {"silver_rates_dkk": {}}))[1]
+    primary = best_gold or best_silver
+    assert primary is not None
+    title = ((primary[0].get("title") or {}).get("rendered")) or ""
+    if best_silver is not None and best_gold is not None and best_silver[0].get("id") != best_gold[0].get("id"):
+        silver_title = ((best_silver[0].get("title") or {}).get("rendered")) or ""
+        if silver_title and silver_title not in title:
+            title = f"{title} + {silver_title}".strip(" +")
 
     return {
-        **best_parsed,
+        "gold_rates_dkk": gold_parsed["gold_rates_dkk"],
+        "silver_rates_dkk": silver_parsed["silver_rates_dkk"],
         "fetched_at": utc_now().isoformat(),
-        "page_id": best.get("id"),
-        "page_title": ((best.get("title") or {}).get("rendered")) or "",
+        "page_id": primary[0].get("id"),
+        "page_title": title,
     }
+
+
+def _rendered(page: dict[str, Any]) -> str:
+    return ((page.get("content") or {}).get("rendered")) or ""
