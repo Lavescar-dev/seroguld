@@ -20,6 +20,8 @@ const GOLD_CALCULATOR_TARGETS = [
   { value: 'gold:21', label: '21K' },
   { value: 'gold:21.6', label: '21.6K' },
   { value: 'gold:22', label: '22K' },
+  // R2-10 takip: klasik hesaplayıcı da 22K-2 hedefini destekler (modern parite).
+  { value: 'gold:22b', label: '22K-2' },
   { value: 'gold:24', label: '24K' },
 ] as const;
 
@@ -50,6 +52,7 @@ export function VariableValuesSheetEditor({
   setCalculators,
   onUpdateGoldRow,
   onUpdateSilverRow,
+  onApplyGoldCalculatorTarget,
   title = 'Variable værdier',
   description = 'AFG v3 contract: EUR truth, FX, AFG notu ve calculator blokları burada tutulur.',
   layout = 'full',
@@ -66,6 +69,8 @@ export function VariableValuesSheetEditor({
   setCalculators: Dispatch<SetStateAction<PosWorkspaceCalculators>>;
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  // R2-10 takip: 'gold:22b' hedefi 22K-2 extra satırına yönlendirilir (hook tarafında).
+  onApplyGoldCalculatorTarget?: (rowKey: string, totalWeight: string) => void;
   title?: string;
   description?: string;
   layout?: 'full' | 'compactSidebar';
@@ -153,7 +158,12 @@ export function VariableValuesSheetEditor({
     if (!row.target_row_key) return;
     const totalWeight = formatDecimalFixed(parseDecimalValue(row.total_weight));
     if (kind === 'gold') {
-      onUpdateGoldRow(row.target_row_key, 'gram', totalWeight);
+      // R2-10 takip: 'gold:22b' hedefi 22K-2 extra satırına yönlendirilir (hook).
+      if (onApplyGoldCalculatorTarget) {
+        onApplyGoldCalculatorTarget(row.target_row_key, totalWeight);
+      } else {
+        onUpdateGoldRow(row.target_row_key, 'gram', totalWeight);
+      }
       return;
     }
     onUpdateSilverRow(row.target_row_key, 'gram', totalWeight);

@@ -326,3 +326,65 @@ def test_platinum_and_bar_rows_price_live_ignoring_frozen_zero_offer(monkeypatch
         await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_22b_quarter_row_prices_from_independent_22b_rate(monkeypatch) -> None:
+    """R2-10 takip / roadmap madde 2 — 22K-2 (karat '22b') extra satırı.
+
+    '22b' sabit grid'e ALINMAZ (gold:22 ile karat eşleşmesi çakışır); quarter-extra
+    olarak gold_rates_dkk['22b'] bağımsız fiyatından çözülür — gold:22 fiyatından
+    DEĞİL. Purity 22/24 = 91.67. Dropdown'dan oluşturulan satır bu hattı kullanır.
+    """
+    profile = json.dumps(
+        {
+            "gold_rates_dkk": {"8": "950", "14": "1662.50", "18": "2137.50", "21": "2493.75", "21.6": "2565.00", "22": "2612.50", "22b": "2500.00", "24": "2850.00"},
+            "silver_rates_dkk": {"999": "14.56", "925": "13.48", "830": "12.10"},
+        }
+    )
+    monkeypatch.setattr(
+        market_rate_profile,
+        "get_settings",
+        lambda: Settings(_env_file=None, database_url="sqlite+aiosqlite:///test.db", inventory_market_rate_profile_json=profile),
+    )
+
+    async def scenario() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            clerk = User(email="karat22b-clerk@test.local", password_hash="x", name="C", role=RoleEnum.ADMIN)
+            cust = User(email="karat22b-cust@test.local", password_hash="x", name="K", role=RoleEnum.CUSTOMER)
+            session.add_all([clerk, cust])
+            await session.flush()
+            pos_session = PosSession(
+                session_code="EXTRA002", display_token="display-extra-22b", clerk_user_id=clerk.id, customer_id=cust.id,
+                trade_side=PosTradeSideEnum.BUY_FROM_CUSTOMER, margin_percent_internal=Decimal("0.00"),
+                rate_source=PosRateSourceEnum.MANUAL, live_rate_dkk=Decimal("2850.00"),
+                status=PosSessionStatusEnum.DRAFT, visible_snapshot={},
+                notes=json.dumps({"kind": "purchase_workspace_v1", "workspace_revision": 1}),
+            )
+            session.add(pos_session)
+            await session.flush()
+            session.add(
+                PosSessionLine(
+                    pos_session_id=pos_session.id, line_no=1, product_type=ProductTypeEnum.JEWELRY,
+                    metal_type=MetalTypeEnum.YELLOW_GOLD, weight_grams=Decimal("5.00"), purity_karat="22b",
+                    purity_percentage=Decimal("91.67"), rate_dkk=Decimal("0"), margin_percent_internal=Decimal("0"),
+                    line_offer_dkk=Decimal("0"),
+                    notes=json.dumps({"source": "purchase_workspace", "row_key": "extra:22b-1", "kind": "quarter", "metal": "gold", "karat": "22b", "label": "22K-2"}),
+                )
+            )
+            await session.commit()
+
+            ws = await build_purchase_workspace(session, pos_session=pos_session)
+            row = next(r for r in ws.extra_rows if r.karat == "22b")
+            assert row.label == "22K-2"
+            assert row.rate_dkk == Decimal("2500.00")  # bağımsız 22b fiyatı (22 → 2612.50 DEĞİL)
+            assert row.unit_price_dkk == Decimal("2500.00")  # avance 0
+            assert row.line_total_dkk == Decimal("12500.00")  # 2500 × 5
+            assert row.purity_percentage == Decimal("91.67")  # karat_numeric_key('22b') → 22/24
+
+        await engine.dispose()
+
+    asyncio.run(scenario())

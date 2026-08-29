@@ -81,6 +81,7 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     onUpdateExtraRow: () => undefined,
     onDeleteExtraRow: () => undefined,
     onAddExtraRows: () => undefined,
+    onApplyGoldCalculatorTarget: () => undefined,
     onUpdateGoldRow: () => undefined,
     onUpdateSilverRow: () => undefined,
     activeWorkspaceView: 'system',

@@ -42,6 +42,12 @@ export function formatDecimalFixed(value: string | number | null | undefined) {
   return parseDecimalValue(value).toFixed(2);
 }
 
+// R2-10 takip: altın karat anahtarını kullanıcı etiketine çevirir.
+// '22b' ikinci 22K seviyesidir — B1 onayıyla etiket "22K-2"; diğer anahtarlar "NK".
+export function formatKaratLabel(karat: string): string {
+  return karat === '22b' ? '22K-2' : `${karat}K`;
+}
+
 function formatRatePlaceholder(value: string | number | null | undefined) {
   const text = String(value ?? '').trim();
   if (!text || parseDecimalValue(text) === 0) {

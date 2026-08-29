@@ -5,7 +5,7 @@ import { formatMoney, formatNumber } from '@/lib/format';
 import type { PosWorkspace, PosWorkspaceBankInfo, PosWorkspaceMarketRates } from '@/types';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
-import { formatDecimalFixed, parseDecimalValue } from './marketRates';
+import { formatDecimalFixed, formatKaratLabel, parseDecimalValue } from './marketRates';
 import type {
   CompanionMode,
   EditableBarRow,
@@ -134,7 +134,7 @@ export function AfregningsSheetEditor({
   onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onDeleteExtraRow: (rowKey: string) => void;
-  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number; allowEmptyGram?: boolean }>) => void;
   bankInfo: PosWorkspaceBankInfo;
   setBankInfo: Dispatch<SetStateAction<PosWorkspaceBankInfo>>;
   paymentMethod: PaymentMethod;
@@ -968,7 +968,7 @@ function ExtraRowsPanel({
   marketRates: PosWorkspaceMarketRates;
   onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onDeleteExtraRow: (rowKey: string) => void;
-  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number; allowEmptyGram?: boolean }>) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [quarterKarat, setQuarterKarat] = useState<string>('22');
@@ -1041,7 +1041,7 @@ function ExtraRowsPanel({
                 <td className="border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-800">
                   {row.label}
                   <span className="ml-2 bg-violet-100 px-1.5 py-0.5 text-xs font-bold text-violet-700">
-                    {row.kind === 'quarter' ? `${row.karat}K` : `Sølv ${row.karat}`}
+                    {row.kind === 'quarter' ? formatKaratLabel(row.karat) : `Sølv ${row.karat}`}
                   </span>
                 </td>
                 <td className="border border-orange-300 bg-orange-50 px-1.5 py-2" style={{ width: '7rem' }}>
@@ -1095,7 +1095,7 @@ function ExtraRowsPanel({
                 className="border border-amber-300 bg-white px-2 py-1 text-xs font-bold text-amber-800"
               >
                 {QUARTER_KARAT_OPTIONS.map((karat) => (
-                  <option key={karat} value={karat}>{karat}K · {formatDecimalFixed(marketRates.gold_rates_dkk?.[karat] ?? '0')} kr/g</option>
+                  <option key={karat} value={karat}>{formatKaratLabel(karat)} · {formatDecimalFixed(marketRates.gold_rates_dkk?.[karat] ?? '0')} kr/g</option>
                 ))}
               </select>
             </div>

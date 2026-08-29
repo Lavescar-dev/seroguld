@@ -278,7 +278,8 @@ export type AlisPageProps = {
   onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onDeleteExtraRow: (rowKey: string) => void;
-  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
+  onApplyGoldCalculatorTarget: (rowKey: string, totalWeight: string) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number; allowEmptyGram?: boolean }>) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -389,6 +390,7 @@ export function AlisPage(props: AlisPageProps) {
     onUpdatePtPdRow,
     onUpdateExtraRow,
     onDeleteExtraRow,
+    onApplyGoldCalculatorTarget,
     onAddExtraRows,
     activeWorkspaceView,
     setActiveWorkspaceView,
@@ -505,6 +507,7 @@ export function AlisPage(props: AlisPageProps) {
           onUpdatePtPdRow={onUpdatePtPdRow}
           onUpdateExtraRow={onUpdateExtraRow}
           onDeleteExtraRow={onDeleteExtraRow}
+          onApplyGoldCalculatorTarget={onApplyGoldCalculatorTarget}
           onAddExtraRows={onAddExtraRows}
           onUpdateSilverRow={onUpdateSilverRow}
           activeWorkspaceView={activeWorkspaceView}
@@ -603,7 +606,8 @@ function ActiveWorkspaceView(props: {
   onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onDeleteExtraRow: (rowKey: string) => void;
-  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
+  onApplyGoldCalculatorTarget: (rowKey: string, totalWeight: string) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number; allowEmptyGram?: boolean }>) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -674,6 +678,7 @@ function ActiveWorkspaceView(props: {
     onUpdateExtraRow,
     onDeleteExtraRow,
     onAddExtraRows,
+    onApplyGoldCalculatorTarget,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -1117,6 +1122,7 @@ function ActiveWorkspaceView(props: {
                   setCalculators={setCalculators}
                   onUpdateGoldRow={onUpdateGoldRow}
                   onUpdateSilverRow={onUpdateSilverRow}
+                  onApplyGoldCalculatorTarget={onApplyGoldCalculatorTarget}
                   layout="compactSidebar"
                   showSettings={false}
                 />

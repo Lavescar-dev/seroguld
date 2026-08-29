@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { syncMarketRateState } from '../marketRates';
+import { formatKaratLabel, syncMarketRateState } from '../marketRates';
 import type { PosWorkspaceMarketRates } from '@/types';
 
 const current: PosWorkspaceMarketRates = {
@@ -55,5 +55,17 @@ describe('syncMarketRateState (DKK-only sözleşme)', () => {
     });
     expect(next.silver_dkk).toBe('8.25');
     expect(next.silver_matrix.find((row) => row.row_key === 'silver:2')?.dkk_per_gram).toBe('8.25');
+  });
+});
+
+describe('formatKaratLabel (roadmap madde 2 — B1 etiket onayı)', () => {
+  it("'22b' ikinci 22K seviyesi olarak '22K-2' etiketlenir", () => {
+    expect(formatKaratLabel('22b')).toBe('22K-2');
+  });
+
+  it('diğer karat anahtarları NK biçiminde kalır', () => {
+    expect(formatKaratLabel('22')).toBe('22K');
+    expect(formatKaratLabel('21.6')).toBe('21.6K');
+    expect(formatKaratLabel('24')).toBe('24K');
   });
 });

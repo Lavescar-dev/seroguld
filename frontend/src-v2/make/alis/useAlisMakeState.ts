@@ -2124,6 +2124,23 @@ export function useAlisMakeState(): AlisPageProps {
     updateSectionRow('gold', rowKey, field, value);
   }
 
+  // Hesaplayıcı "Aktar" hedefi gold:karat anahtarı taşır. 'gold:22b' sabit
+  // grid'de yoktur (backend karat eşleşmesi); 22K-2 extra satırına yönlendirilir:
+  // varsa mevcut satır güncellenir, yoksa satır oluşturulup gram doğrudan yazılır.
+  function applyGoldCalculatorTarget(rowKey: string, totalWeight: string) {
+    const karatKey = rowKey.replace(/^gold:/, '');
+    if (karatKey !== '22b') {
+      updateGoldRow(rowKey, 'gram', totalWeight);
+      return;
+    }
+    const existing = extraRowsRef.current.find((row) => row.metal === 'gold' && row.karat === '22b');
+    if (existing) {
+      updateExtraRow(existing.row_key, 'gram', totalWeight);
+      return;
+    }
+    addExtraRows([{ kind: 'quarter', metal: 'gold', karat: '22b', label: '22K-2', gram: Number(normalizeTextInput(totalWeight)) || 0 }]);
+  }
+
   function updateSilverRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
     updateSectionRow('silver', rowKey, field, value);
   }
@@ -2161,12 +2178,14 @@ export function useAlisMakeState(): AlisPageProps {
 
   // Hesaplayıcı blok aktarımı: çeyrek/kniv toplamını YENİ satır olarak ekler.
   function addExtraRows(
-    rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>,
+    rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number; allowEmptyGram?: boolean }>,
   ) {
     markLocalWorkspaceEdit();
     const stamp = Date.now();
     const created: EditableExtraRow[] = rows
-      .filter((row) => row.gram > 0)
+      // allowEmptyGram: dropdown'dan eklenen 22K-2 (karat '22b') satırı gram 0 ile
+      // oluşturulur; hesaplayıcıdan gelen satırlar ise yine gram > 0 şartına bağlı.
+      .filter((row) => row.allowEmptyGram || row.gram > 0)
       .map((row, index) => {
         const rateStr = row.metal === 'gold'
           ? marketRates.gold_rates_dkk?.[row.karat]
@@ -2730,6 +2749,7 @@ export function useAlisMakeState(): AlisPageProps {
     onUpdateExtraRow: updateExtraRow,
     onDeleteExtraRow: deleteExtraRow,
     onAddExtraRows: addExtraRows,
+    onApplyGoldCalculatorTarget: applyGoldCalculatorTarget,
     onUpdateSilverRow: updateSilverRow,
     activeWorkspaceView,
     setActiveWorkspaceView: handleWorkspaceViewChange,
