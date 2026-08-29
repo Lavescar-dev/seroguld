@@ -1786,7 +1786,9 @@ impl IdentityScannerError {
 
     #[cfg(target_os = "windows")]
     const fn acquisition_failed() -> Self {
-        Self::new("ACQUISITION_FAILED", "Tarama tamamlanamadı.", true)
+        // Roadmap madde 3: WIA exit 1 cihaz meşgul/yanıtsız olabilir — kullanıcıya
+        // ipucu taşıyan mesaj (iptal ve cihaz-yok zaten ayrık kodlu).
+        Self::new("ACQUISITION_FAILED", "Tarama tamamlanamadı — cihaz meşgul veya yanıt vermiyor olabilir.", true)
     }
 
     #[cfg(target_os = "windows")]

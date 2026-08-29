@@ -706,6 +706,7 @@ function ModernIdentityScanner({
   setCustomer: Dispatch<SetStateAction<EditableCustomer>>;
 }) {
   const identity = useIdentityScan({ customer, setCustomer });
+  const [identityDragActive, setIdentityDragActive] = useState(false);
 
   return (
     <div className="rounded-sg-md border border-sg-border bg-sg-surface p-3 sm:col-span-2">
@@ -715,7 +716,21 @@ function ModernIdentityScanner({
           {identity.status === 'applied' ? 'Alanlar uygulandı' : identity.status === 'review' ? 'İnceleme gerekli' : identity.status === 'acquiring' ? 'Okunuyor' : identity.status === 'unavailable' ? 'Destek yok' : 'Hazır'}
         </span>
       </div>
-      <div className="mt-3 rounded-sg-md border-2 border-dashed border-sg-border bg-sg-surface-soft p-4 text-center">
+      <div
+        className={`mt-3 rounded-sg-md border-2 border-dashed bg-sg-surface-soft p-4 text-center ${identityDragActive ? 'border-sg-accent ring-2 ring-sg-accent/40' : 'border-sg-border'}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (identity.capabilities.file) setIdentityDragActive(true);
+        }}
+        onDragLeave={() => setIdentityDragActive(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIdentityDragActive(false);
+          const file = Array.from(event.dataTransfer?.files || []).find((item) => /\.(jpe?g|png|tiff?|bmp)$/i.test(item.name));
+          if (file) void identity.dropFile(file, 'front');
+        }}
+        title="Kimlik görüntüsünü buraya sürükleyip bırakabilirsiniz"
+      >
         <Camera className="mx-auto h-6 w-6 text-sg-accent" />
         <p className="mt-2 text-xs text-sg-text">Kimlik fotoğrafını yükleyin veya tarayıcıdan okutun — alanlar otomatik dolar.</p>
         <div className="mt-3 flex flex-wrap justify-center gap-2"><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('front')} className={shellButtonClass('secondary')}>Fotoğraf yükle (ön yüz)</button><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('front')} className={shellButtonClass('secondary')}>Tarayıcıdan tara</button><button type="button" onClick={() => void identity.refreshCapabilities()} className={shellButtonClass('ghost')}>Yenile</button>{identity.result?.documentType === 'id_card' ? <><button type="button" disabled={!identity.capabilities.file || identity.status === 'acquiring'} onClick={() => void identity.pickFile('back')} className={shellButtonClass('ghost')}>Fotoğraf yükle (arka yüz)</button><button type="button" disabled={!identity.capabilities.scanner || identity.status === 'acquiring'} onClick={() => void identity.acquire('back')} className={shellButtonClass('ghost')}>Arka yüz tara</button></> : null}</div>
