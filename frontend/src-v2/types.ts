@@ -888,6 +888,7 @@ export interface PosDisplaySnapshot {
   silver_rows?: PosWorkspaceSilverRow[];
   bar_rows?: PosWorkspaceBarRow[];
   ptpd_rows?: PosWorkspacePtPdRow[];
+  extra_rows?: PosWorkspaceExtraRow[];
   kniv_rows?: PosWorkspaceCalculatorRow[];
   lines: PosDisplayLine[];
   updated_at: string;
@@ -1063,6 +1064,23 @@ export interface PosWorkspacePtPdRow {
   line_total_dkk: string;
 }
 
+// R2-01 — dinamik "Kniv / Çeyrek altın" satırı.
+export interface PosWorkspaceExtraRow {
+  row_key: string;
+  line_id?: string | null;
+  line_no?: number | null;
+  kind: 'kniv' | 'quarter';
+  label: string;
+  metal: 'gold' | 'silver';
+  karat: string;
+  purity_percentage: string;
+  gram: string;
+  avance_percent: string;
+  rate_dkk: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+}
+
 export interface PosWorkspaceSilverRow {
   row_key: string;
   line_id?: string | null;
@@ -1124,6 +1142,7 @@ export interface PosWorkspace {
   silver_rows: PosWorkspaceSilverRow[];
   bar_rows?: PosWorkspaceBarRow[];
   ptpd_rows?: PosWorkspacePtPdRow[];
+  extra_rows?: PosWorkspaceExtraRow[];
   invoice_gold: PosWorkspaceInvoiceGoldSheet;
   invoice_misc_mode: 'auto' | 'manual';
   invoice_misc: PosWorkspaceInvoiceMiscSheet;

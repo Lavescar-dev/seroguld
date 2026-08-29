@@ -1202,6 +1202,7 @@ def _build_settings_screen_out() -> SettingsScreenOut:
         market_rates_live_fx_enabled=bool(settings.market_rates_live_fx_enabled),
         market_rates_live_platinum_enabled=bool(settings.market_rates_live_platinum_enabled),
         market_rates_live_palladium_enabled=bool(settings.market_rates_live_palladium_enabled),
+        wp_priser_last_fetch=settings.wp_priser_last_fetch,
         firma_adi=settings.invoice_seller_name,
         firma_cvr=settings.invoice_seller_cvr,
         firma_telefon=settings.invoice_seller_phone,

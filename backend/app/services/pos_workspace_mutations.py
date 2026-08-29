@@ -548,6 +548,52 @@ async def replace_purchase_workspace_sections(
         session.add(line)
         next_line_no += 1
 
+    # R2-01 — dinamik "Kniv / Çeyrek altın" satırları. Sabit tanım yok; satır
+    # kendi metal+karat bilgisini notes'ta taşır, fiyat build sırasında canlı
+    # çözülür. purity: altın karat/24, gümüş lodighed/1000.
+    for row in getattr(payload, "extra_rows", None) or []:
+        gram = core.quantize_2(core.to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        margin = core.quantize_2(core.to_decimal(row.avance_percent))
+        if row.metal == "gold":
+            rate = core.quantize_2(core.to_decimal(market_rates.gold_rates_dkk.get(row.karat) or Decimal("0")))
+            from app.services.market_rate_profile import karat_numeric_key
+
+            purity = core.quantize_2(core.to_decimal(karat_numeric_key(row.karat)) / Decimal("24") * Decimal("100"))
+            metal_enum = MetalTypeEnum.YELLOW_GOLD
+        else:
+            rate = core.quantize_2(core.to_decimal(market_rates.silver_rates_dkk.get(row.karat) or Decimal("0")))
+            purity = core.quantize_2(core.to_decimal(row.karat) / Decimal("1000") * Decimal("100"))
+            metal_enum = MetalTypeEnum.SILVER
+        unit_price = core._workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=margin)
+        line = PosSessionLine(
+            pos_session_id=pos_session.id,
+            line_no=next_line_no,
+            product_type=ProductTypeEnum.JEWELRY,
+            metal_type=metal_enum,
+            weight_grams=gram,
+            purity_karat=str(row.karat),
+            purity_percentage=purity,
+            rate_dkk=rate,
+            margin_percent_internal=margin,
+            line_offer_dkk=core._workspace_row_line_total(unit_price_dkk=unit_price, gram=gram),
+            notes=json.dumps(
+                {
+                    "source": "purchase_workspace",
+                    "row_key": str(row.row_key),
+                    "kind": str(row.kind),
+                    "metal": str(row.metal),
+                    "karat": str(row.karat),
+                    "label": str(row.label),
+                    "type_label": str(row.label),
+                },
+                ensure_ascii=True,
+            ),
+        )
+        session.add(line)
+        next_line_no += 1
+
     pos_session.notes = core._serialize_workspace_note_payload(note_payload)
     gold_24k_dkk = core.quantize_2(core.to_decimal(market_rates.gold_24k_dkk))
     if market_rates_changed:

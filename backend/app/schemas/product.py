@@ -146,6 +146,10 @@ class ProductPublishRequest(AppBaseModel):
     publish_profile: str | None = None
     # Sikke üretim yılı (Årstal); None=dokunma, 0/negatif=temizle.
     production_year: int | None = None
+    # R1-21: "Nyhed" rozeti — True: _sg_nyhed meta + bitiş tarihi yazılır;
+    # False: republish'te AÇIKÇA temizlenir; None: mevcut rozete dokunulmaz
+    # (alanı göndermeyen çağrılar rozeti bozamaz).
+    mark_as_new: bool | None = None
 
 
 class ProductWooImportRequest(AppBaseModel):

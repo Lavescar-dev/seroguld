@@ -1,4 +1,8 @@
 import { buildMediaUrl } from '@/lib/media';
+import { useQueryClient } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/api';
+import { labelMetalType, labelProductType } from '@/lib/format';
+import { WooPhotoThumb } from '@/make/woocommerce/WooPhotoThumb';
 import { type Dispatch, type FormEvent, type SetStateAction, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
@@ -355,7 +359,7 @@ function StokForm({
         ) : null}
 
         <div>
-          <label className={labelCls}>Uzunluk</label>
+          <label className={labelCls}>Uzunluk (cm)</label>
           <input
             type="text"
             value={editing.olcuUzunluk || ''}
@@ -647,6 +651,33 @@ function ProductPhotoSection({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  // R1-36: kart sürükle-sırala — bırakınca sıra kalıcılaşır, ilk görsel Primær.
+  const queryClient = useQueryClient();
+  const [dragPhotoId, setDragPhotoId] = useState<string | null>(null);
+  async function commitOrder(orderedIds: string[]) {
+    try {
+      await apiRequest(`/api/products/${product.id}/photos/order`, {
+        method: 'PUT',
+        body: JSON.stringify({ photo_ids: orderedIds }),
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['depolama'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+      ]);
+    } catch {
+      // sıralama kalıcılaşamadıysa liste yenilenince eski sıraya döner
+    }
+  }
+  function handlePhotoDrop(targetId: string) {
+    if (!dragPhotoId || dragPhotoId === targetId) return;
+    const ids = (product.photos || []).map((item) => String(item.id || item.url));
+    const from = ids.indexOf(dragPhotoId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    void commitOrder(ids.filter((id) => (product.photos || []).some((item) => String(item.id) === id)));
+    setDragPhotoId(null);
+  }
   const attachedUrls = (product.photos || []).map((photo) => photo.url);
 
   return (
@@ -704,8 +735,16 @@ function ProductPhotoSection({
         {product.photos.length > 0 ? (
           <div className="grid grid-cols-3 gap-2">
             {product.photos.slice(0, 9).map((photo) => (
-              <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200 bg-white">
-                <img src={buildMediaUrl(photo.url)} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
+              <div
+                key={photo.id || photo.url}
+                draggable={Boolean(photo.id)}
+                onDragStart={() => setDragPhotoId(String(photo.id || photo.url))}
+                onDragOver={(event) => { if (dragPhotoId) event.preventDefault(); }}
+                onDrop={(event) => { event.preventDefault(); event.stopPropagation(); handlePhotoDrop(String(photo.id || photo.url)); }}
+                className={`group relative cursor-grab overflow-hidden border bg-white ${dragPhotoId === String(photo.id || photo.url) ? 'border-sg-accent opacity-60' : 'border-brand-200'}`}
+                title="Sürükleyerek sıralayın — ilk görsel Primær olur"
+              >
+                <WooPhotoThumb photo={photo} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
                 {photo.id ? (
                   <button
                     type="button"
@@ -1058,8 +1097,8 @@ function InventoryDetailDrawer({
             <section className="grid grid-cols-2 gap-3">
               <DetailField label="Kategori" value={product.inventory_category || '—'} />
               <DetailField label="Alt kategori" value={product.inventory_subcategory || '—'} />
-              <DetailField label="Ürün tipi" value={product.product_type} />
-              <DetailField label="Metal" value={product.metal_type} />
+              <DetailField label="Ürün tipi" value={labelProductType(product.product_type)} />
+              <DetailField label="Metal" value={labelMetalType(product.metal_type)} />
               <DetailField label="Toplam gram" value={`${product.total_weight_grams || product.weight_grams || '0'} g`} mono />
               <DetailField label="Saf metal" value={`${product.pure_gold_grams || '—'} g`} mono />
               <DetailField label="Alış" value={`${product.purchase_price_dkk} DKK`} mono />
@@ -1081,7 +1120,7 @@ function InventoryDetailDrawer({
               <DetailField label="Woo durumu" value={product.is_published_to_site ? 'Yayında' : product.shop_sync_status || 'Hazırlanmadı'} />
               <DetailField label="Lokasyon" value={product.storage_location || '—'} />
               <DetailField label="Üretici" value={product.producer || '—'} />
-              <DetailField label="Uzunluk" value={product.length_cm || '—'} mono />
+              <DetailField label="Uzunluk" value={product.length_cm ? (/[a-z]/i.test(String(product.length_cm)) ? String(product.length_cm) : String(product.length_cm) + ' cm') : '—'} mono />
               <DetailField label="Genişlik / Kalınlık / Çap" value={[product.width_mm ? `${product.width_mm} mm` : null, product.thickness_mm ? `${product.thickness_mm} mm` : null, product.diameter_mm ? `Ø ${product.diameter_mm} mm` : null].filter(Boolean).join(' · ') || '—'} mono />
               <DetailField label="Temizlik" value={product.needs_cleaning ? 'Gerekli' : 'Temiz'} />
               <DetailField label="Operasyon sınıfı" value={product.operation_classification || '—'} />

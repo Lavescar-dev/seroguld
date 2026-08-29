@@ -70,7 +70,7 @@ def test_silver_fractional_line_recomputes_net_offer_with_buy_margin() -> None:
 
     payload = build_uniconta_lines_from_pos_lines([line])[0]
 
-    assert expected == Decimal("1.55")
+    assert expected == Decimal("2.61")
     assert _payload_total(payload) == expected
     assert "Sølv" in str(payload["Text"])
     assert "0.125g" in str(payload["Text"])
@@ -104,4 +104,4 @@ def test_sell_side_margin_is_reflected_in_uniconta_line_total() -> None:
         [line], trade_side=PosTradeSideEnum.SELL_TO_CUSTOMER
     )[0]
 
-    assert _payload_total(payload) == Decimal("10.80")
+    assert _payload_total(payload) == Decimal("14.00")

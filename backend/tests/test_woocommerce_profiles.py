@@ -64,7 +64,7 @@ def test_jewelry_attributes_and_strip():
     assert attrs["Renhed"] == "0,585"
     assert attrs["Vægt"] == "1,15g"
     assert attrs["Længde"] == "1,40cm"
-    assert _spec_strip_text(_p()) == "Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
+    assert _spec_strip_text(_p()) == "Vare nr. : 1201, Vægt: 1,15g Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
 
 
 def test_gold_coin_attributes_include_dimensions_and_year():

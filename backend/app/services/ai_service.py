@@ -118,6 +118,11 @@ class AIService:
         diameter = (
             str(product.diameter_mm) if getattr(product, "diameter_mm", None) is not None else "-"
         )
+        # R1-35: kayıtta DOLU olan ölçüler prompt'a zorunlu veri olarak girer —
+        # model dolu alan için asla "ikke oplyst / belirtilmemiş" üretemez.
+        length_cm = str(getattr(product, "length_cm", None) or "-")
+        width_mm = str(product.width_mm) if getattr(product, "width_mm", None) is not None else "-"
+        thickness_mm = str(product.thickness_mm) if getattr(product, "thickness_mm", None) is not None else "-"
 
         from app.services.woocommerce_profiles import (
             PROFILE_BAR,
@@ -156,8 +161,9 @@ class AIService:
             )
             spec_hint = (
                 "specifikationer + afsluttende CTA. Specifikationslisten skal mindst "
-                "indeholde: Vare nr., Vægt (g), Karat/Renhed og mål (hvis kendt) — samme "
-                "struktur som referencesiden."
+                "indeholde: Vare nr., Vægt (g), Karat/Renhed og mål (hvis kendt), og derefter "
+                "referencesidens kategorier: Materiale, Design, Overflade, Stil, Lukning, "
+                "Anvendelse — samme struktur som referencesiden (R1-12)."
             )
 
         return (
@@ -181,6 +187,11 @@ class AIService:
             f"- Renhed: {purity}%\n"
             f"- Reference: {ref}\n"
             f"- Diameter: {diameter} mm\n"
+            f"- Længde: {length_cm}\n"
+            f"- Bredde: {width_mm} mm\n"
+            f"- Tykkelse: {thickness_mm} mm\n"
+            "VIGTIGT: Skriv ALDRIG 'ikke oplyst' eller 'ukendt' for et felt der har en værdi ovenfor "
+            "(alt undtagen '-'). Brug de faktiske mål i teksten.\n"
         )
 
     @staticmethod

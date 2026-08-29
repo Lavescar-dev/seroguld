@@ -83,11 +83,11 @@ def test_display_snapshot_includes_lines():
 
             snapshot = await display_snapshot(session, pos_session)
             assert snapshot.line_count == 2
-            assert snapshot.lines_total_dkk == Decimal("13062.33")
+            assert snapshot.lines_total_dkk == Decimal("14532.07")
             assert len(snapshot.lines) == 2
             assert snapshot.lines[0].line_no == 1
             assert snapshot.lines[1].line_no == 2
-            assert snapshot.final_offer_dkk == Decimal("13062.33")
+            assert snapshot.final_offer_dkk == Decimal("14532.07")
 
         await engine.dispose()
 
@@ -133,7 +133,7 @@ def test_realtime_display_snapshot_keeps_lines_and_totals():
                     purity_percentage=Decimal("75.00"),
                     rate_dkk=Decimal("615.50"),
                     margin_percent_internal=Decimal("8.00"),
-                    line_offer_dkk=Decimal("5096.34"),
+                    line_offer_dkk=Decimal("5635.56"),
                 )
             )
             await session.commit()
@@ -149,9 +149,9 @@ def test_realtime_display_snapshot_keeps_lines_and_totals():
             )
             snapshot = await build_realtime_display_snapshot(session, pos_session, preview)
             assert snapshot.line_count == 1
-            assert snapshot.lines_total_dkk == Decimal("5096.34")
+            assert snapshot.lines_total_dkk == Decimal("5635.56")
             # Alışta satır toplamı müşteri ekranındaki nihai tutarı belirler.
-            assert snapshot.final_offer_dkk == Decimal("5096.34")
+            assert snapshot.final_offer_dkk == Decimal("5635.56")
             assert len(snapshot.lines) == 1
 
         await engine.dispose()

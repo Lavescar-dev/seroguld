@@ -61,8 +61,16 @@ def build_afg_workbook_bytes_from_workspace(workspace: "PosWorkspaceOut", *, syn
         email=workspace.customer.email,
         identity_doc=workspace.customer.identity_doc_number,
     )
-    core._apply_afg_workspace_rows(sheet, core._afg_gold_rows_from_workspace(workspace), core._afg_silver_rows_from_workspace(workspace), workspace.bar_rows, workspace.ptpd_rows)
+    core._apply_afg_workspace_rows(
+        sheet,
+        core._afg_gold_rows_from_workspace(workspace),
+        core._afg_silver_rows_from_workspace(workspace),
+        workspace.bar_rows,
+        workspace.ptpd_rows,
+        extra_rows=getattr(workspace, "extra_rows", None) or [],
+    )
     core._apply_afg_footer_cells(sheet)
+    core._apply_afg_declaration_cells(sheet)
     core._apply_afg_calculator_cells(sheet, workspace.calculators)
     core._apply_afg_summary_cells(
         sheet,
@@ -125,6 +133,7 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
     )
     core._apply_afg_detail_rows(sheet, core._aggregate_detail_gold_rows(detail), core._aggregate_detail_silver_rows(detail), core._aggregate_detail_bar_rows(detail), core._aggregate_detail_ptpd_rows(detail))
     core._apply_afg_footer_cells(sheet)
+    core._apply_afg_declaration_cells(sheet)
     core._apply_afg_summary_cells(
         sheet,
         net_amount_dkk=core.quantize_2(core.to_decimal(detail.net_amount_dkk)),
@@ -241,8 +250,17 @@ def workspace_normalized_afg_values(workspace: "PosWorkspaceOut") -> dict[str, s
     return values
 
 
-def parse_afg_workspace_inputs_from_workbook(content: bytes):
+def parse_afg_workspace_inputs_from_workbook(content: bytes, *, legacy_percent_avance: bool = False):
     core = _core()
+
+    # R2-07: B kolonu YENI belgelerde HAM kr/g ("Mer pris") tasir; yalniz
+    # TARIHSEL (eski) calisma kitaplarinda yuzde-fraksiyondur. legacy cagiran
+    # (historical_afg_import) True gecer; canli round-trip ham okur — boylece
+    # negatif (−15) ve 0<v<1 kr/g degerleri 100x bozulmaz.
+    def _avance_from_cell(raw):
+        if legacy_percent_avance:
+            return core._percent_from_excel(raw)
+        return core.quantize_2(core._decimal_from_excel(raw))
     workbook = load_workbook(io.BytesIO(content), keep_vba=True, data_only=False)
     calculated_workbook = load_workbook(io.BytesIO(content), keep_vba=True, data_only=True)
     if core.AFG_PRIMARY_SHEET not in workbook.sheetnames:
@@ -326,7 +344,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         PosWorkspaceGoldRowInput(
             karat=Decimal(row_key.split(":", 1)[1]),
             gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
-            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
+            avance_percent=_avance_from_cell(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
         )
         for idx, row_key in enumerate(core.AFG_GOLD_ROW_KEYS, start=core.AFG_GOLD_ROW_START)
     ]
@@ -334,7 +352,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         PosWorkspaceSilverRowInput(
             type_code=row_key.split(":", 1)[1],
             gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
-            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
+            avance_percent=_avance_from_cell(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
         )
         for idx, row_key in enumerate(core.AFG_SILVER_ROW_KEYS, start=core.AFG_SILVER_ROW_START)
     ]
@@ -342,7 +360,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         PosWorkspaceBarRowInput(
             bar_type=bar_type,
             gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
-            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
+            avance_percent=_avance_from_cell(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
         )
         for bar_type, idx in (("gold", core.AFG_BAR_GOLD_ROW), ("silver", core.AFG_BAR_SILVER_ROW))
     ]
@@ -350,7 +368,7 @@ def parse_afg_workspace_inputs_from_workbook(content: bytes):
         PosWorkspacePtPdRowInput(
             metal=metal,
             gram=core._decimal_from_excel(numeric_cell_value(sheet, calculated_sheet, f"F{idx}")),
-            avance_percent=core._percent_from_excel(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
+            avance_percent=_avance_from_cell(numeric_cell_value(sheet, calculated_sheet, f"B{idx}")),
         )
         for metal, idx in (("platinum", core.AFG_PTPD_PLATINUM_ROW), ("palladium", core.AFG_PTPD_PALLADIUM_ROW))
     ]

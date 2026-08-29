@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import os
+from contextlib import contextmanager
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -61,7 +64,38 @@ from app.services.pos_service import (
     update_purchase_workspace_customer,
     update_purchase_workspace_draft_customer,
 )
+from app.config import get_settings
+from app.services.market_rate_profile import GOLD_RATE_KEYS, SILVER_RATE_KEYS
 from app.utils.helpers import quantize_2, to_decimal
+
+
+@contextmanager
+def _global_market_profile(*, gold_24k: str = "937.99", silver: str = "14.56"):
+    """Alış artık ORANLARI global manuel profilden (canlı tek kaynak) okur; taslak
+    kendi kopyasını tutmaz. Bu yardımcı, testin beklediği oranı global profile
+    yazar ve teardown'da geri alır (cache dahil)."""
+    from app.services.market_rate_profile import karat_numeric_key
+
+    gold_map = {
+        key: str(quantize_2(Decimal(gold_24k) * Decimal(karat_numeric_key(key)) / Decimal("24")))
+        for key in GOLD_RATE_KEYS
+    }
+    silver_map = {
+        key: str(quantize_2(Decimal(silver) * Decimal(key) / Decimal("999"))) for key in SILVER_RATE_KEYS
+    }
+    payload = json.dumps({"gold_rates_dkk": gold_map, "silver_rates_dkk": silver_map})
+    env_key = "INVENTORY_MARKET_RATE_PROFILE_JSON"
+    prior = os.environ.get(env_key)
+    os.environ[env_key] = payload
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop(env_key, None)
+        else:
+            os.environ[env_key] = prior
+        get_settings.cache_clear()
 
 
 def _save_workbook_bytes(workbook) -> bytes:
@@ -210,7 +244,8 @@ def test_afg_workspace_workbook_round_trip_preserves_companion_sheet_inputs():
 
         await engine.dispose()
 
-    asyncio.run(run())
+    with _global_market_profile():
+        asyncio.run(run())
 
 
 def test_afg_workspace_callback_applies_lines_without_selected_customer_when_customer_fields_blank():
@@ -271,7 +306,8 @@ def test_afg_workspace_callback_applies_lines_without_selected_customer_when_cus
 
         await engine.dispose()
 
-    asyncio.run(run())
+    with _global_market_profile():
+        asyncio.run(run())
 
 
 def test_afg_workspace_shadow_customer_round_trip_without_linked_customer():

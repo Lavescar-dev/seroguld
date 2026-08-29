@@ -260,9 +260,11 @@ def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
     twice = _apply_spec_strip(once, "Vare nr. : 1427 Længde: 1,40cm")
     assert twice.count(SPEC_STRIP_MARKER_START) == 1
     assert twice.count("Vare nr. : 1427") == 1
-    assert twice.index(SPEC_STRIP_MARKER_START) == 0  # her zaman başta
+    # A2: şerit paragrafın ALTINDA (paragraf → yeşil kutu → kapanış satırı).
+    assert twice.index("<p>Metin</p>") == 0
+    assert twice.index(SPEC_STRIP_MARKER_START) > twice.index("<p>Metin</p>")
 
-    # Referans düzeni: Vare nr. + doldurulmuş ölçüler (ağırlık şeride girmez).
+    # Referans düzeni (R2-18): Vare nr. → Vægt → doldurulmuş ölçüler.
     pendant = _product(
         reference_number="1201",
         length_cm="1,40cm",
@@ -270,15 +272,15 @@ def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
         thickness_mm=Decimal("5.22"),
         diameter_mm=None,
     )
-    assert _spec_strip_text(pendant) == "Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
+    assert _spec_strip_text(pendant) == "Vare nr. : 1201, Vægt: 19,65g Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
 
     # Yalnız çaplı ürün (yüzük): sadece Diameter.
     ring = _product(reference_number="1427", length_cm=None, width_mm=None, thickness_mm=None, diameter_mm=Decimal("5.97"))
-    assert _spec_strip_text(ring) == "Vare nr. : 1427 Diameter: 5,97mm"
+    assert _spec_strip_text(ring) == "Vare nr. : 1427, Vægt: 19,65g Diameter: 5,97mm"
 
     # Ölçüsüz ürün: yalnız Vare nr.
     plain = _product(reference_number="9000", length_cm=None, width_mm=None, thickness_mm=None, diameter_mm=None)
-    assert _spec_strip_text(plain) == "Vare nr. : 9000"
+    assert _spec_strip_text(plain) == "Vare nr. : 9000, Vægt: 19,65g"
 
     payload, _ = build_publish_payload(
         product=pendant,
@@ -287,14 +289,15 @@ def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
         images=[],
         settings=_settings(),
     )
-    strip = "Vare nr. : 1201 Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
-    # Şerit iki yerde: kısa açıklamanın ve uzun açıklamanın başında.
-    assert payload["short_description"].startswith(SPEC_STRIP_MARKER_START)
-    assert strip in payload["short_description"]
-    assert payload["description"].startswith(SPEC_STRIP_MARKER_START)
-    assert strip in payload["description"]
-    # AI'dan gelen kısa açıklama korunur, şeridin arkasına eklenir.
-    assert "Elegant armbånd." in payload["short_description"]
+    strip = "Vare nr. : 1201, Vægt: 19,65g Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
+    # A2: şerit iki açıklamada da paragrafın ALTINDA; kısa açıklamada
+    # kapanış satırı ("Detaljeret…") en sonda kalır.
+    short = payload["short_description"]
+    assert strip in short and strip in payload["description"]
+    assert short.index("Elegant armbånd.") < short.index(SPEC_STRIP_MARKER_START)
+    assert payload["description"].index(SPEC_STRIP_MARKER_START) > 0
+    closing = "Detaljeret oplysninger ses længere nede under specifikationer."
+    assert short.index(SPEC_STRIP_MARKER_START) < short.index(closing)
 
 
 def test_category_override_beats_settings_map() -> None:
@@ -311,3 +314,89 @@ def test_category_override_beats_settings_map() -> None:
     assert meta["_yoast_wpseo_primary_product_cat"] == "555"
     # Harita boş olsa bile override varken kategori uyarısı üretilmez.
     assert not any("Kategori" in warning for warning in warnings)
+
+
+def test_payload_carries_sku_stock_and_min_price_meta() -> None:
+    """R1-29 (SKU + stok=1) ve R1-28/33 (markup / minimum fiyat meta)."""
+    product = _product(reference_number="S2593")
+    product.purchase_price_dkk = Decimal("5000")
+    settings = _settings()
+    settings.woocommerce_stonex_meta_map_json = (
+        '{"metal_type": "mt_key", "markup_percent": "markup_key", "minimum_price": "min_key"}'
+    )
+    settings.woocommerce_metal_markup_percent = "35"
+    settings.woocommerce_minimum_margin_percent = "10"
+    payload, warnings = build_publish_payload(
+        product=product,
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=settings,
+    )
+    assert payload["sku"] == "S2593"
+    assert payload["manage_stock"] is True
+    assert payload["stock_quantity"] == 1
+    assert payload["stock_status"] == "instock"
+    assert payload["sold_individually"] is True
+    meta = {item["key"]: item["value"] for item in payload["meta_data"]}
+    assert meta.get("markup_key") == "35"
+    # minimum_price = alış × 1,10 (fixture alışı _product'tan gelir; sadece varlık + pozitiflik)
+    assert "min_key" in meta and Decimal(meta["min_key"]) > 0
+    assert not [w for w in warnings if "SKU" in w]
+
+
+def test_new_badge_meta_marked_and_cleared() -> None:
+    """R1-21: Nyhed rozeti — işaretli → _sg_nyhed=1 + bitiş; işaretsiz → temizleme."""
+    marked, _ = build_publish_payload(
+        product=_product(),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(woocommerce_new_badge_days=30),
+        mark_as_new=True,
+    )
+    meta = _meta_map(marked)
+    assert meta["_sg_nyhed"] == "1"
+    from datetime import date
+
+    until = date.fromisoformat(str(meta["_sg_nyhed_until"]))
+    delta_days = (until - date.today()).days
+    assert 29 <= delta_days <= 30
+
+    cleared, _ = build_publish_payload(
+        product=_product(),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+        mark_as_new=False,
+    )
+    meta = _meta_map(cleared)
+    # Açık False → rozet meta'ları boş değerle temizlenir.
+    assert meta["_sg_nyhed"] == "" and meta["_sg_nyhed_until"] == ""
+
+    untouched, _ = build_publish_payload(
+        product=_product(),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    meta = _meta_map(untouched)
+    # None (alan gönderilmedi) → rozete HİÇ dokunulmaz; eski rozet silinmez.
+    assert "_sg_nyhed" not in meta and "_sg_nyhed_until" not in meta
+
+
+def test_spec_strip_wrapped_in_green_box() -> None:
+    """R1-13/R1-32: şerit yeşil kutu div'iyle sarılır ve idempotent kalır."""
+    payload, _ = build_publish_payload(
+        product=_product(reference_number="1201"),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    short = payload["short_description"]
+    assert 'class="sg-spec-box"' in short
+    assert short.count("sg-spec-box") == 1
+    assert "Vare nr. : 1201" in short

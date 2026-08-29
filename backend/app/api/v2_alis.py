@@ -61,6 +61,7 @@ from app.api.v2_support import artifact_file_response
 from app.database import get_db
 from app.models.enums import PosTradeSideEnum
 from app.models.user import User
+from app.schemas.base import AppBaseModel
 from app.schemas.document_artifact import DocumentArtifactReconcilePreviewOut
 from app.schemas.historical_afg_import import HistoricalAfgImportApplyOut, HistoricalAfgImportPreviewOut
 from app.schemas.address import CustomerMatchOut, CustomerMatchRequest, KdsAddressResolveOut, KdsAddressSearchOut
@@ -580,6 +581,159 @@ async def get_alis_document_detail_v2(
     admin: User = Depends(require_admin),
 ) -> PosDocumentDetailOut:
     return await get_legacy_pos_document_detail(sequence_no=sequence_no, db=db, _=admin)
+
+
+class AlisDocumentLinkCustomerIn(AppBaseModel):
+    customer_id: UUID
+
+
+@router.post("/alis/documents/auto-link-customers")
+async def post_alis_documents_auto_link_customers_v2(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    """B5/R2-17 — bağlantısız TARİHSEL belgeleri toplu ön eşleştir.
+
+    Belge snapshot'ında CPR tutulmaz (PII kararı); CPR eşleşmesi yalnız import
+    anında yapılır. Bu araç sonradan eklenen müşteriler için e-posta (birebir)
+    → ad+telefon (normalize) sırasıyla yeniden dener. TEK aday varsa bağlar;
+    birden çok aday = belirsiz, hiç aday = eşleşmedi — ikisi de elle bırakılır.
+    """
+    from sqlalchemy import select as _select
+
+    from app.models.enums import RoleEnum as _RoleEnum
+    from app.models.pos_session import PosSession as _PosSession
+    from app.models.transaction import Transaction as _Transaction
+    from app.services.historical_afg_import import _normalise_phone
+
+    documents = (
+        await db.scalars(
+            _select(PosDocument)
+            .join(_PosSession, _PosSession.id == PosDocument.pos_session_id)
+            .where(PosDocument.uniconta_sync_status == "historical")
+            .where(_PosSession.customer_id.is_(None))
+        )
+    ).all()
+    customers = (await db.scalars(_select(User).where(User.role == _RoleEnum.CUSTOMER))).all()
+    by_email: dict[str, list[User]] = {}
+    by_name_phone: dict[tuple[str, str], list[User]] = {}
+    for customer in customers:
+        email = (customer.email or "").strip().lower()
+        if email:
+            by_email.setdefault(email, []).append(customer)
+        name = " ".join((customer.name or "").split()).casefold()
+        phone = _normalise_phone(getattr(customer, "phone", None))
+        if name and phone:
+            by_name_phone.setdefault((name, phone), []).append(customer)
+
+    linked = ambiguous = unmatched = 0
+    for document in documents:
+        candidates: list[User] = []
+        email = (document.customer_email or "").strip().lower()
+        if email and email in by_email:
+            candidates = by_email[email]
+        else:
+            name = " ".join((document.customer_name or "").split()).casefold()
+            phone = _normalise_phone(document.customer_phone)
+            if name and phone:
+                candidates = by_name_phone.get((name, phone), [])
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                ambiguous += 1
+            else:
+                unmatched += 1
+            continue
+        customer = candidates[0]
+        transactions = (
+            await db.scalars(
+                _select(_Transaction).where(_Transaction.pos_document_sequence_no == document.sequence_no)
+            )
+        ).all()
+        for txn in transactions:
+            txn.customer_id = customer.id
+        pos_session = await db.get(_PosSession, document.pos_session_id)
+        if pos_session is not None:
+            pos_session.customer_id = customer.id
+        db.add(
+            PosDocumentAudit(
+                sequence_no=document.sequence_no,
+                pos_session_id=document.pos_session_id,
+                action="historical_autolink_customer",
+                actor_user_id=admin.id,
+                actor_email=admin.email,
+                payload_json=json.dumps({"new_customer_id": str(customer.id)}, ensure_ascii=False),
+                note=f"Toplu ön eşleştirme: {customer.name}",
+            )
+        )
+        linked += 1
+    await db.commit()
+    return {"ok": True, "scanned": len(documents), "linked": linked, "ambiguous": ambiguous, "unmatched": unmatched}
+
+
+@router.post("/alis/documents/{sequence_no}/link-customer")
+async def post_alis_document_link_customer_v2(
+    sequence_no: int,
+    payload: AlisDocumentLinkCustomerIn,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    """R2-17 — tarihsel (içe aktarılmış) belgeyi doğru müşteriye ELLE bağla.
+
+    Otomatik eşleşme (CPR → e-posta → ad+telefon) yanlış/duplike müşteriye
+    düştüyse operatör buradan düzeltir. Yalnız 'historical' belgelerde izinli —
+    canlı finalize edilmiş belgelerin müşterisi değiştirilemez. Belgenin donmuş
+    müşteri SNAPSHOT alanlarına (ad/adres) dokunulmaz; yalnız bağ güncellenir.
+    """
+    from sqlalchemy import select as _select
+
+    from app.models.enums import RoleEnum as _RoleEnum
+    from app.models.pos_session import PosSession as _PosSession
+    from app.models.transaction import Transaction as _Transaction
+
+    document = await db.scalar(_select(PosDocument).where(PosDocument.sequence_no == sequence_no))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    if document.uniconta_sync_status != "historical":
+        raise HTTPException(
+            status_code=422,
+            detail="Yalnız tarihsel içe aktarılmış belgeler yeniden bağlanabilir.",
+        )
+    customer = await db.get(User, payload.customer_id)
+    if customer is None or customer.role != _RoleEnum.CUSTOMER:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı.")
+
+    transactions = (
+        await db.scalars(_select(_Transaction).where(_Transaction.pos_document_sequence_no == sequence_no))
+    ).all()
+    previous_ids = sorted({str(txn.customer_id) for txn in transactions if txn.customer_id})
+    for txn in transactions:
+        txn.customer_id = customer.id
+    pos_session = await db.get(_PosSession, document.pos_session_id)
+    if pos_session is not None:
+        pos_session.customer_id = customer.id
+
+    db.add(
+        PosDocumentAudit(
+            sequence_no=document.sequence_no,
+            pos_session_id=document.pos_session_id,
+            action="historical_relink_customer",
+            actor_user_id=admin.id,
+            actor_email=admin.email,
+            payload_json=json.dumps(
+                {"previous_customer_ids": previous_ids, "new_customer_id": str(customer.id)},
+                ensure_ascii=False,
+            ),
+            note=f"Tarihsel belge müşterisi elle bağlandı: {customer.name}",
+        )
+    )
+    await db.commit()
+    return {
+        "ok": True,
+        "sequence_no": document.sequence_no,
+        "customer_id": str(customer.id),
+        "customer_name": customer.name,
+        "transaction_count": len(transactions),
+    }
 
 
 @router.get("/alis/documents/{sequence_no}/export")

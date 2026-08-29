@@ -55,7 +55,9 @@ const resources = {
 void i18n.init({
   resources,
   lng: 'tr',
-  fallbackLng: 'tr',
+  // X1: eksik anahtar Danca arayüzde TÜRKÇE'ye düşmesin — mağaza/müşteri dili
+  // Danca olduğu için fallback 'da'. (Operatör 'tr' seçtiğinde tr zaten tam.)
+  fallbackLng: 'da',
   interpolation: { escapeValue: false },
   returnNull: false,
 });

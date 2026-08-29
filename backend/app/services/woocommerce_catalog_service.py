@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import String, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.product import Product
 from app.models.woocommerce_catalog import WooCommerceCatalogItem, WooCommerceCatalogState
@@ -227,7 +228,7 @@ def normalize_remote_product(payload: dict) -> dict:
         "remote_status": "publish",
         "catalog_visibility": str(payload.get("catalog_visibility") or "").strip()[:30] or None,
         "stock_status": str(payload.get("stock_status") or "").strip()[:30] or None,
-        "stock_quantity": _integer(payload.get("stock_quantity")),
+        "stock_quantity": (lambda v: max(0, v) if isinstance(v, int) else v)(_integer(payload.get("stock_quantity"))),  # X7: negatif stok clamp
         "price_dkk": _decimal(payload.get("price")),
         "regular_price_dkk": _decimal(payload.get("regular_price")),
         "sale_price_dkk": _decimal(payload.get("sale_price")),
@@ -677,6 +678,76 @@ async def get_catalog_item_detail(db: AsyncSession, *, catalog_item_id: UUID) ->
             payload, ("_yoast_wpseo_metadesc", "rank_math_description", "crm_meta_description")
         ),
     )
+
+
+async def update_catalog_item_content(
+    db: AsyncSession,
+    *,
+    catalog_item_id: UUID,
+    name: str | None = None,
+    short_description_html: str | None = None,
+    description_html: str | None = None,
+    seo_title: str | None = None,
+    meta_description: str | None = None,
+) -> WooCatalogItemDetailOut:
+    """R1-16: katalog cekmecesinden icerik duzenleme — Woo'ya yazar + yerel
+    snapshot'i gunceller. None alanlara dokunulmaz; SEO meta'lari yayin
+    yoluyla ayni sekilde HER IKI eklenti anahtarina yazilir (site eklentisi
+    bilinmiyor; tek anahtar yazmak RankMath sitede bayat deger birakir)."""
+    item = await db.get(WooCommerceCatalogItem, catalog_item_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WooCommerce katalog ürünü bulunamadı.")
+    # KOPYA al: ORM dict'ini yerinde mutasyona ugratmak SQLAlchemy'ce izlenmez.
+    payload = dict(item.source_payload_json) if isinstance(item.source_payload_json, dict) else {}
+    existing_meta = payload.get("meta_data") if isinstance(payload.get("meta_data"), list) else []
+
+    wc_payload: dict = {}
+    if name is not None and name.strip():
+        wc_payload["name"] = name.strip()
+    if short_description_html is not None:
+        wc_payload["short_description"] = short_description_html
+    if description_html is not None:
+        wc_payload["description"] = description_html
+    meta_updates: list[dict] = []
+    if seo_title is not None:
+        meta_updates.append({"key": "_yoast_wpseo_title", "value": seo_title})
+        meta_updates.append({"key": "rank_math_title", "value": seo_title})
+    if meta_description is not None:
+        meta_updates.append({"key": "_yoast_wpseo_metadesc", "value": meta_description})
+        meta_updates.append({"key": "rank_math_description", "value": meta_description})
+        meta_updates.append({"key": "crm_meta_description", "value": meta_description})
+    if meta_updates:
+        wc_payload["meta_data"] = meta_updates
+    if not wc_payload:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Güncellenecek alan yok.")
+
+    service = WooCommerceService()
+    result = await service._wc_request("PUT", f"/products/{item.woocommerce_product_id}", json_payload=wc_payload)
+
+    # Yerel snapshot: Woo yanıtı otoritedir (kendi normalize ettigi HTML doner).
+    if isinstance(result, dict):
+        for field in ("name", "short_description", "description"):
+            if field in result:
+                payload[field] = result.get(field)
+        if isinstance(result.get("meta_data"), list):
+            payload["meta_data"] = result["meta_data"]
+        elif meta_updates:
+            merged = {str(e.get("key")): e for e in existing_meta if isinstance(e, dict)}
+            for entry in meta_updates:
+                merged[entry["key"]] = entry
+            payload["meta_data"] = list(merged.values())
+        item.source_payload_json = dict(payload)
+        # JSON kolonu: eski/yeni dict ayni nesne soyundan gelirse degisiklik
+        # gorulmez — products.py photos ile ayni tuzak; acikca isaretle.
+        flag_modified(item, "source_payload_json")
+        if wc_payload.get("name"):
+            item.name = str(result.get("name") or wc_payload["name"])[:255]
+    await _bump_revision(db)
+    await db.commit()
+    # onupdate kolonları (updated_at) commit'te expire olur; async erişim
+    # senkron lazy-refresh'e izin vermez — açıkça yenile.
+    await db.refresh(item)
+    return await get_catalog_item_detail(db, catalog_item_id=catalog_item_id)
 
 
 async def unpublish_catalog_item(

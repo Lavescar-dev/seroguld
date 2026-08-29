@@ -784,11 +784,14 @@ function BucketWorkspaceView({
   const grandTotals = useMemo(
     () =>
       documents.reduce(
-        (sum, document) => ({
-          weight: sum.weight + toFloat(document.total_weight_grams),
-          amount: sum.amount + toFloat(document.net_amount_dkk),
-          pure: sum.pure + toFloat(document.total_pure_gold_grams),
-        }),
+        (sum, document) => {
+          const lineTotals = sumLines(document.lines);
+          return {
+            weight: sum.weight + toFloat(document.total_weight_grams),
+            amount: sum.amount + lineTotals.amount,
+            pure: sum.pure + toFloat(document.total_pure_gold_grams),
+          };
+        },
         { weight: 0, amount: 0, pure: 0 },
       ),
     [documents],
@@ -940,7 +943,7 @@ function BucketWorkspaceView({
                         {formatNumber(document.total_weight_grams, ' g')}
                       </td>
                       <td className={`${TD} border-amber-200 bg-amber-50/60 text-right font-semibold text-brand-900`} style={monoStyle}>
-                        {formatMoney(document.net_amount_dkk)}
+                        {formatMoney(String(sumLines(document.lines).amount))}
                       </td>
                       <td className={`${TD} border-amber-300 bg-amber-100/70 text-center font-black text-amber-900`} style={monoStyle}>
                         {formatNumber(document.total_pure_gold_grams, ' g')}

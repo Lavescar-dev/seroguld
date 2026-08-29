@@ -8,7 +8,6 @@ import httpx
 
 from app.config import get_settings
 from app.services.ecb_fx import DEFAULT_EUR_DKK_FX, EcbFxService
-from app.services.metals_dev import MetalsDevService
 from app.utils.helpers import quantize_2
 
 
@@ -158,15 +157,9 @@ class GoldPriceService:
         rates: dict[str, Decimal] = {}
         meta: dict[str, dict[str, Any]] = {}
 
-        metals_dev = MetalsDevService()
-        if metals_dev.enabled:
-            fetched = await metals_dev.fetch_rates()
-            if fetched is not None:
-                dev_rates, observed_at = fetched
-                for key, value in dev_rates.items():
-                    rates[key] = value
-                    meta[key] = {"source": "live", "observed_at": observed_at, "stale": False}
-
+        # R1-20/R2-06: metals.dev kaldırıldı — karat fiyatlarının tek kaynağı
+        # WP "Priser" sayfasıdır (wp_priser_service); Pt/Pd/EUR oto değerleri
+        # Stooq zinciriyle çözülür.
         missing = [key for key in self._FALLBACK_RATES if key not in rates]
         if missing:
             headers = {"User-Agent": "SeroGuldCRM/1.0 (+local demo)"}

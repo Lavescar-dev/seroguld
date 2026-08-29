@@ -11,6 +11,7 @@ export const GOLD_MATRIX_ROWS = [
   { key: '21', label: '21K', lodighed: '875' },
   { key: '21.6', label: '21.6K', lodighed: '900' },
   { key: '22', label: '22K', lodighed: '916' },
+  { key: '22b', label: '22K-2', lodighed: '916' },  // R2-10: ikinci 22K fiyat seviyesi
   { key: '24', label: '24K', lodighed: '999' },
 ] as const;
 
@@ -21,7 +22,7 @@ export const SILVER_MATRIX_ROWS = [
   { key: '800', label: 'Plet', lodighed: '—' },
 ] as const;
 
-const GOLD_RATE_ORDER = ['8', '14', '18', '21', '21.6', '22', '24'] as const;
+const GOLD_RATE_ORDER = ['8', '14', '18', '21', '21.6', '22', '22b', '24'] as const;
 const SILVER_RATE_ORDER = ['999', '925', '830', '800'] as const;
 type MatrixRateDrafts = { fx: string; gold: Record<string, string>; silver: Record<string, string> };
 
@@ -62,18 +63,18 @@ export function syncMarketRateState(
   overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_24k_dkk' | 'gold_rates_dkk' | 'silver_rates_dkk'>>,
 ): PosWorkspaceMarketRates {
   const eur_dkk_fx = normalizeTextInput(String(overrides?.eur_dkk_fx ?? current.eur_dkk_fx ?? '7.45'));
-  // Kanonik birim DKK/g: 24K override'ı karatlara DOĞRUDAN fan edilir, kurla
-  // çevrim yapılmaz ("382 girildi, 2850 oldu" hatasının kökü buydu).
+  // CANLI TEK KAYNAK — altın per-karat BAĞIMSIZ: her karat elle girilir; hiçbir
+  // karat başka bir karattan (özellikle 24K'dan) DOĞRUSAL TÜRETİLMEZ. 24K override'ı
+  // yalnızca '24' anahtarını günceller (eski "24K girilince tüm karatlar ezilir"
+  // = 8K 750 iken 950 olur hatasının kökü buydu). Kur çevrimi de yapılmaz.
   const gold24DkkOverride = overrides?.gold_24k_dkk;
   const goldRates = Object.fromEntries(
-    GOLD_RATE_ORDER.map((key) => [
-      key,
-      formatDecimalFixed(
-        gold24DkkOverride === undefined
-          ? overrides?.gold_rates_dkk?.[key] ?? current.gold_rates_dkk?.[key] ?? '0'
-          : parseDecimalValue(gold24DkkOverride) * (parseDecimalValue(key) / 24),
-      ),
-    ]),
+    GOLD_RATE_ORDER.map((key) => {
+      const perKaratOverride = overrides?.gold_rates_dkk?.[key];
+      if (perKaratOverride !== undefined) return [key, formatDecimalFixed(perKaratOverride)];
+      if (key === '24' && gold24DkkOverride !== undefined) return [key, formatDecimalFixed(gold24DkkOverride)];
+      return [key, formatDecimalFixed(current.gold_rates_dkk?.[key] ?? '0')];
+    }),
   ) as Record<string, string>;
   const silverRates = Object.fromEntries(
     SILVER_RATE_ORDER.map((key) => [
@@ -101,7 +102,7 @@ export function syncMarketRateState(
       label: row.label,
       lodighed: row.lodighed,
       dkk_per_gram: goldRates[row.key],
-      karat: parseDecimalValue(row.key).toFixed(2),
+      karat: parseDecimalValue(row.key.replace(/[^0-9.]/g, '')).toFixed(2),  // '22b' → 22.00
       type_code: '1',
     })),
     silver_matrix: SILVER_MATRIX_ROWS.map((row, index) => ({

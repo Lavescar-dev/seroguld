@@ -256,7 +256,7 @@ function Write-SourceFingerprintManifest {
     }) -join "`n"
   $manifest = [ordered]@{
     schema = 2
-    product_version = "0.3.12"
+    product_version = "0.3.23"
     source_head = $Head
     source_diff_sha256 = Get-TextSha256 $diff
     source_untracked_sha256 = Get-TextSha256 $untracked
@@ -392,16 +392,20 @@ function Invoke-ExcelBridgeProtocolSmoke {
   $info.EnvironmentVariables["SEROGULD_PROGRAM_DATA"] = $ProgramDataRoot
   $process = [System.Diagnostics.Process]::Start($info)
   try {
-    # The nonexistent path intentionally stops before COM/Excel is loaded.
-    # It still proves the packaged executable can receive the bridge JSON over
-    # stdin; without a console subsystem PyInstaller exposes stdin as None.
+    # The minimal payload (only workbook_path) intentionally fails config
+    # validation before COM/Excel is loaded. It still proves the packaged
+    # executable can receive the bridge JSON over stdin; without a console
+    # subsystem PyInstaller exposes stdin as None.
+    # R2-11: excel-bridge artık başarısızlık türüne göre ayrı exit kodu döner.
+    # Bu payload token/URL taşımadığı için config-invalid = exit 10 verir
+    # (eski tek-tip exit 1 yerine). Protokol yine kanıtlanır.
     $process.StandardInput.WriteLine('{"workbook_path":"C:\\__sero_bridge_protocol_smoke_missing__.xlsm"}')
     $process.StandardInput.Close()
     if (-not $process.WaitForExit(15000)) {
       $process.Kill()
       throw "Packaged Excel bridge stdin protocol timeout"
     }
-    if ($process.ExitCode -ne 1) {
+    if ($process.ExitCode -ne 10) {
       throw "Packaged Excel bridge protocol beklenmeyen exit code: $($process.ExitCode)"
     }
   } finally {

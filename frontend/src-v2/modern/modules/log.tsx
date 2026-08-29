@@ -158,7 +158,8 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                           type="button"
                           disabled={state.routeBusy || terminal}
                           onClick={() => state.onRoute(line, destination)}
-                          className={`rounded-sg-md border px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${dest === destination ? activeClass : 'border-sg-border bg-sg-surface text-sg-text-soft hover:bg-sg-surface-soft'}`}
+                          aria-pressed={dest === destination}
+                          className={`rounded-sg-md border px-2.5 py-1 text-[11px] font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${dest === destination ? `${activeClass} ring-1 ring-current` : 'border-sg-border bg-sg-surface-soft text-sg-text hover:border-sg-accent hover:bg-sg-surface'}`}
                         >
                           {label}
                         </button>
@@ -170,7 +171,7 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
                               L{line.line_no} · {formatNumber(line.weight_grams, ' g')} · {formatNumber(line.pure_gold_grams, ' has')} · {formatMoney(line.line_total_dkk)}
                             </p>
                             {terminal ? (
-                              <span className={`rounded-sg-sm border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${line.product_status === 'melted' ? 'border-sg-red/30 bg-sg-red-soft text-sg-red' : 'border-sg-border bg-sg-surface text-sg-text-soft'}`}>
+                              <span className={`cursor-default rounded-full border border-transparent px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${line.product_status === 'melted' ? 'border-sg-red/30 bg-sg-red-soft text-sg-red' : 'border-sg-border bg-sg-surface text-sg-text-soft'}`}>
                                 {line.product_status === 'melted' ? 'Eritildi' : 'Satıldı'}
                               </span>
                             ) : (

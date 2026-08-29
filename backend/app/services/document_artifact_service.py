@@ -197,19 +197,19 @@ def _afg_row_editable_cells() -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for offset, row_key in enumerate(AFG_GOLD_ROW_KEYS, start=AFG_GOLD_ROW_START):
         karat = row_key.split(":", 1)[1]
-        rows.append({"cell_ref": f"B{offset}", "label": f"Guld {karat}k Avance %", "input_kind": "percent", "field": f"{row_key}:avance"})
+        rows.append({"cell_ref": f"B{offset}", "label": f"Guld {karat}k Mer pris kr/g", "input_kind": "decimal", "field": f"{row_key}:avance"})
         rows.append({"cell_ref": f"F{offset}", "label": f"Guld {karat}k Gram", "input_kind": "decimal", "field": f"{row_key}:gram"})
     for offset, row_key in enumerate(AFG_SILVER_ROW_KEYS, start=AFG_SILVER_ROW_START):
         type_code = row_key.split(":", 1)[1]
-        rows.append({"cell_ref": f"B{offset}", "label": f"Gümüş {type_code} Avance %", "input_kind": "percent", "field": f"{row_key}:avance"})
+        rows.append({"cell_ref": f"B{offset}", "label": f"Gümüş {type_code} Mer pris kr/g", "input_kind": "decimal", "field": f"{row_key}:avance"})
         rows.append({"cell_ref": f"F{offset}", "label": f"Gümüş {type_code} Gram", "input_kind": "decimal", "field": f"{row_key}:gram"})
-    rows.append({"cell_ref": f"B{AFG_BAR_GOLD_ROW}", "label": "Guldbarre Avance %", "input_kind": "percent", "field": "bar:gold:avance"})
+    rows.append({"cell_ref": f"B{AFG_BAR_GOLD_ROW}", "label": "Guldbarre Mer pris kr/g", "input_kind": "decimal", "field": "bar:gold:avance"})
     rows.append({"cell_ref": f"F{AFG_BAR_GOLD_ROW}", "label": "Guldbarre Gram", "input_kind": "decimal", "field": "bar:gold:gram"})
-    rows.append({"cell_ref": f"B{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Avance %", "input_kind": "percent", "field": "bar:silver:avance"})
+    rows.append({"cell_ref": f"B{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Mer pris kr/g", "input_kind": "decimal", "field": "bar:silver:avance"})
     rows.append({"cell_ref": f"F{AFG_BAR_SILVER_ROW}", "label": "Sølvbarre Gram", "input_kind": "decimal", "field": "bar:silver:gram"})
-    rows.append({"cell_ref": f"B{AFG_PTPD_PLATINUM_ROW}", "label": "Platin Avance %", "input_kind": "percent", "field": "ptpd:platinum:avance"})
+    rows.append({"cell_ref": f"B{AFG_PTPD_PLATINUM_ROW}", "label": "Platin Mer pris kr/g", "input_kind": "decimal", "field": "ptpd:platinum:avance"})
     rows.append({"cell_ref": f"F{AFG_PTPD_PLATINUM_ROW}", "label": "Platin Gram", "input_kind": "decimal", "field": "ptpd:platinum:gram"})
-    rows.append({"cell_ref": f"B{AFG_PTPD_PALLADIUM_ROW}", "label": "Palladium Avance %", "input_kind": "percent", "field": "ptpd:palladium:avance"})
+    rows.append({"cell_ref": f"B{AFG_PTPD_PALLADIUM_ROW}", "label": "Palladium Mer pris kr/g", "input_kind": "decimal", "field": "ptpd:palladium:avance"})
     rows.append({"cell_ref": f"F{AFG_PTPD_PALLADIUM_ROW}", "label": "Palladium Gram", "input_kind": "decimal", "field": "ptpd:palladium:gram"})
     return rows
 
@@ -1141,6 +1141,20 @@ def _apply_afg_footer_cells(sheet) -> None:
     sheet["C54"] = "         " + " - ".join(part for part in line2_parts if part)
 
 
+# R2-09 — üç maddelik beyan (AML/PEP dahil). ÇEVİRİ KATMANI DIŞINDA: metin
+# sabit Danca'dır, arayüz dili değişse de değişmez. Şablonda C47 başlık +
+# C48/C49 ilk iki madde zaten var; C50 (aynı stille boş hücre) 3. PEP maddesi
+# için kod tarafından doldurulur. Idempotent: her üretimde tam metin yazılır.
+from app.services.pos_value_helpers import AFG_DECLARATION_HEADER, AFG_DECLARATION_ITEMS  # noqa: E402
+
+
+def _apply_afg_declaration_cells(sheet) -> None:
+    sheet["C47"] = AFG_DECLARATION_HEADER
+    sheet["C48"] = AFG_DECLARATION_ITEMS[0]
+    sheet["C49"] = AFG_DECLARATION_ITEMS[1]
+    sheet["C50"] = AFG_DECLARATION_ITEMS[2]
+
+
 def _compose_afg_postal_line(postal_code: str | None, city: str | None) -> str | None:
     postal_text = str(postal_code or "").strip()
     city_text = str(city or "").strip()
@@ -1354,11 +1368,39 @@ def _apply_afg_summary_cells(
     sheet["D42"] = "—" if payment_method == "cash" else (account_number or "—")
     sheet["H38"] = net_amount_dkk
     sheet["H40"] = net_amount_dkk
+    # R2-15: KDV yokken (varsayılan alış akışı) belgede "Moms 0,00" satırı
+    # GÖRÜNMEZ — G42 etiketi ve H42 tutarı boşaltılır. A42 sözleşme hücresi
+    # (round-trip parse) her durumda yazılmaya devam eder. H43 kodda doğrudan
+    # gross ile yazıldığı için SUM kırılmaz.
     sheet["A42"] = 1 if vat_amount_dkk > 0 else 0
-    sheet["H42"] = vat_amount_dkk
+    if vat_amount_dkk > 0:
+        sheet["G42"] = "Moms"
+        sheet["H42"] = vat_amount_dkk
+    else:
+        sheet["G42"] = None
+        sheet["H42"] = None
     sheet["H43"] = gross_amount_dkk
     sheet["C44"] = "Not:"
     sheet["D44"] = note or None
+
+
+def _write_afg_mer_pris(sheet, idx: int, avance_percent) -> None:
+    """R2-07: B kolonu artık 'Mer pris' (kr/g) taşır — yüzde-fraksiyon DEĞİL.
+
+    Değer HAM kr/g olarak yazılır (eski /100 bölmesi kaldırıldı) ve hücrenin
+    yüzde numFmt'i kalıntısı '1500%' göstermesin diye sayı formatı sabitlenir.
+    Negatif serbest (−15 → birim fiyattan düşer)."""
+    cell = sheet[f"B{idx}"]
+    cell.value = quantize_2(to_decimal(avance_percent))
+    cell.number_format = "#,##0.00"
+
+
+def _apply_afg_mer_pris_header(sheet) -> None:
+    # Şablondaki B20 başlığı '↓' — belge kolonunu adlandır (R2-07/R2-15).
+    sheet["B20"] = "Mer pris"
+
+
+AFG_EXTRA_ROW = 37  # şablondaki tek boş grid satırı — kniv/çeyrek "i alt" agregatı
 
 
 def _apply_afg_workspace_rows(
@@ -1367,7 +1409,9 @@ def _apply_afg_workspace_rows(
     silver_rows: Iterable[PosWorkspaceSilverRowOut],
     bar_rows: Iterable["PosWorkspaceBarRowOut"] = (),
     ptpd_rows: Iterable["PosWorkspacePtPdRowOut"] = (),
+    extra_rows: Iterable = (),
 ) -> None:
+    _apply_afg_mer_pris_header(sheet)
     total_gold_grams = Decimal("0.00")
     total_gold_amount = Decimal("0.00")
     total_gold_pure = Decimal("0.00")
@@ -1384,7 +1428,7 @@ def _apply_afg_workspace_rows(
         total_gold_amount += line_total
         total_gold_pure += pure
         sheet[f"A{idx}"] = 1
-        sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
+        _write_afg_mer_pris(sheet, idx, row.avance_percent)
         sheet[f"C{idx}"] = "Guld"
         sheet[f"D{idx}"] = to_decimal(row.karat)
         sheet[f"E{idx}"] = row.lodighed
@@ -1401,7 +1445,7 @@ def _apply_afg_workspace_rows(
         total_silver_amount += line_total
         total_silver_pure += pure
         sheet[f"A{idx}"] = row.type_code
-        sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
+        _write_afg_mer_pris(sheet, idx, row.avance_percent)
         sheet[f"C{idx}"] = row.label
         sheet[f"E{idx}"] = row.lodighed if row.lodighed != "—" else None
         sheet[f"F{idx}"] = gram
@@ -1423,7 +1467,7 @@ def _apply_afg_workspace_rows(
             total_silver_amount += line_total
             total_silver_pure += pure
         sheet[f"A{idx}"] = 6 if row.bar_type == "gold" else 7
-        sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
+        _write_afg_mer_pris(sheet, idx, row.avance_percent)
         sheet[f"C{idx}"] = row.label
         sheet[f"D{idx}"] = Decimal("24") if row.bar_type == "gold" else None
         sheet[f"E{idx}"] = row.lodighed
@@ -1439,13 +1483,56 @@ def _apply_afg_workspace_rows(
         # Pt/Pd altın/gümüş toplam bloklarına (D75-I75) girmez; belge içi
         # SUM(F22:F37)/SUM(H22:H37) satırları zaten kapsar.
         sheet[f"A{idx}"] = 8 if row.metal == "platinum" else 9
-        sheet[f"B{idx}"] = quantize_2(to_decimal(row.avance_percent) / Decimal("100"))
+        _write_afg_mer_pris(sheet, idx, row.avance_percent)
         sheet[f"C{idx}"] = row.label
         sheet[f"D{idx}"] = None
         sheet[f"E{idx}"] = row.lodighed
         sheet[f"F{idx}"] = gram
         sheet[f"G{idx}"] = unit_price
         sheet[f"H{idx}"] = line_total
+
+    # R2-01 — dinamik kniv/çeyrek satırları: şablon gridinde tek boş satır (37)
+    # olduğundan hepsi tek "i alt" agregatı olarak yazılır. Böylece belgedeki
+    # satır toplamı, uygulamanın (extra dahil) özet toplamıyla UYUŞUR. Satır 37
+    # round-trip parse'ında okunmaz — Excel'de bu satıra yapılan düzenleme
+    # bilinçli olarak yok sayılır (kaynak: uygulamadaki hesaplayıcı).
+    extra_list = list(extra_rows or [])
+    if extra_list:
+        extra_gram = Decimal("0.00")
+        extra_total = Decimal("0.00")
+        for row in extra_list:
+            gram = quantize_2(to_decimal(row.gram))
+            line_total = quantize_2(to_decimal(row.line_total_dkk))
+            extra_gram += gram
+            extra_total += line_total
+            pure = quantize_2(gram * (to_decimal(row.purity_percentage) / Decimal("100")))
+            if str(getattr(row, "metal", "")) == "gold":
+                total_gold_grams += gram
+                total_gold_amount += line_total
+                total_gold_pure += pure
+            else:
+                total_silver_grams += gram
+                total_silver_amount += line_total
+                total_silver_pure += pure
+        idx = AFG_EXTRA_ROW
+        sheet[f"A{idx}"] = None
+        sheet[f"B{idx}"] = None
+        # Etiket gerçek bileşimi yansıtır: yalnız kniv → "Kniv", yalnız çeyrek →
+        # "Møntguld" (22K-2 çeyrekler dahil), karışık → ikisi birden. R2-10 çeyrek
+        # satırları Møntguld'dur; agregata bıçak etiketi yapışmasın.
+        kinds = {str(getattr(row, "kind", "")) for row in extra_list}
+        if kinds == {"kniv"}:
+            extra_label = "Kniv (i alt)"
+        elif kinds == {"quarter"}:
+            extra_label = "Møntguld (i alt)"
+        else:
+            extra_label = "Kniv / Møntguld (i alt)"
+        sheet[f"C{idx}"] = extra_label
+        sheet[f"D{idx}"] = None
+        sheet[f"E{idx}"] = None
+        sheet[f"F{idx}"] = quantize_2(extra_gram)
+        sheet[f"G{idx}"] = None
+        sheet[f"H{idx}"] = quantize_2(extra_total)
 
     sheet["D75"] = total_gold_grams
     sheet["E75"] = total_gold_amount
@@ -1550,6 +1637,7 @@ def _apply_afg_detail_rows(
     G30/G31/G32 hayalet literalleri dahil) 37'ye kadar temizlenir. Sıra:
     altın 8→24, Guldbarre, Sølvbarre, gümüş Finsølv→Plet, Platin, Palladium.
     """
+    _apply_afg_mer_pris_header(sheet)
     total_gold_grams = Decimal("0.00")
     total_gold_amount = Decimal("0.00")
     total_gold_pure = Decimal("0.00")
@@ -1576,7 +1664,7 @@ def _apply_afg_detail_rows(
         filled.append(
             {
                 "type_code": 1,
-                "avance": quantize_2(to_decimal(row["avance_percent"]) / Decimal("100")),
+                "avance": quantize_2(to_decimal(row["avance_percent"])),
                 "label": "Guld",
                 "karat": karat,
                 "lodighed": row["lodighed"],
@@ -1603,7 +1691,7 @@ def _apply_afg_detail_rows(
         filled.append(
             {
                 "type_code": 6 if is_gold else 7,
-                "avance": quantize_2(to_decimal(row.get("avance_percent") or 0) / Decimal("100")),
+                "avance": quantize_2(to_decimal(row.get("avance_percent") or 0)),
                 "label": "Guldbarre" if is_gold else "Sølvbarre",
                 "karat": Decimal("24") if is_gold else None,
                 "lodighed": "999.9" if is_gold else "999",
@@ -1627,7 +1715,7 @@ def _apply_afg_detail_rows(
         filled.append(
             {
                 "type_code": row["type_code"],
-                "avance": quantize_2(to_decimal(row["avance_percent"]) / Decimal("100")),
+                "avance": quantize_2(to_decimal(row["avance_percent"])),
                 "label": row["label"],
                 "karat": None,
                 "lodighed": lodighed if lodighed.isdigit() else None,
@@ -1648,7 +1736,7 @@ def _apply_afg_detail_rows(
         filled.append(
             {
                 "type_code": 8 if is_platinum else 9,
-                "avance": quantize_2(to_decimal(row.get("avance_percent") or 0) / Decimal("100")),
+                "avance": quantize_2(to_decimal(row.get("avance_percent") or 0)),
                 "label": "Platin" if is_platinum else "Palladium",
                 "karat": None,
                 "lodighed": "950" if is_platinum else "500",
@@ -1661,7 +1749,7 @@ def _apply_afg_detail_rows(
     idx = AFG_GOLD_ROW_START
     for entry in filled:
         sheet[f"A{idx}"] = entry["type_code"]
-        sheet[f"B{idx}"] = entry["avance"]
+        _write_afg_mer_pris(sheet, idx, entry["avance"])
         sheet[f"C{idx}"] = entry["label"]
         sheet[f"D{idx}"] = entry["karat"]
         sheet[f"E{idx}"] = entry["lodighed"]
@@ -1717,10 +1805,14 @@ def _workspace_normalized_afg_values(workspace: PosWorkspaceOut) -> dict[str, st
     return document_artifact_afg.workspace_normalized_afg_values(workspace)
 
 
-def parse_afg_workspace_inputs_from_workbook(content: bytes) -> AfgWorkspaceArtifactInputs:
+def parse_afg_workspace_inputs_from_workbook(
+    content: bytes, *, legacy_percent_avance: bool = False
+) -> AfgWorkspaceArtifactInputs:
     from app.services import document_artifact_afg
 
-    return document_artifact_afg.parse_afg_workspace_inputs_from_workbook(content)
+    return document_artifact_afg.parse_afg_workspace_inputs_from_workbook(
+        content, legacy_percent_avance=legacy_percent_avance
+    )
 
 
 def build_afg_workspace_reconcile_preview(

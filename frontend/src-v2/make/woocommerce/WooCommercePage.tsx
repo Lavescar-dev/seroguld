@@ -1,3 +1,4 @@
+import { apiRequest } from '@/lib/api';
 import { buildMediaUrl } from '@/lib/media';
 import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -46,6 +47,19 @@ import {
   type WooFilter,
   type WooMakeState,
 } from './useWooMakeState';
+
+// R1-10: yayın öncesi şablon önizleme yanıtı (backend publish-preview).
+type PublishPreview = {
+  name: string | null;
+  slug: string | null;
+  regular_price: string | null;
+  sku: string | null;
+  categories: { id: number }[];
+  short_description: string | null;
+  description: string | null;
+  attributes: { name?: string; options?: string[] }[];
+  warnings: string[];
+};
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 const sansStyle = { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" } as const;
@@ -902,7 +916,10 @@ export function MakeWooCommercePage({
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [yeniPanelAcik, setYeniPanelAcik] = useState(false);
   const [seoGoster, setSeoGoster] = useState(false);
+  const [hamDuzenle, setHamDuzenle] = useState(false);
   const [surface, setSurface] = useState<'catalog' | 'local'>('catalog');
+  // R1-10: yayın öncesi şablon önizleme (saf payload; Woo'ya istek atılmaz).
+  const [publishPreview, setPublishPreview] = useState<PublishPreview | null>(null);
 
   const fullState = {
     filter,
@@ -1370,13 +1387,26 @@ export function MakeWooCommercePage({
                     ) : null}
                   </div>
 
-                  <textarea
-                    value={aiDraft}
-                    onChange={(event) => setAiDraft(event.target.value)}
-                    rows={5}
-                    className="w-full border border-brand-300 px-3 py-2.5 text-sm text-brand-800 outline-none focus:border-indigo-500"
-                    placeholder="Danca ürün açıklaması..."
-                  />
+                  {seoTamMi && !hamDuzenle ? (
+                    <div className="flex items-center justify-between border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <p className="text-xs text-emerald-800">AI çıktısı ayrıştırıldı — alanlar aşağıdaki SEO paketinde. Ham etiketli metin gizlendi.</p>
+                      <button
+                        type="button"
+                        onClick={() => setHamDuzenle(true)}
+                        className="border border-brand-300 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-brand-600 hover:bg-brand-100"
+                      >
+                        Ham metni düzenle
+                      </button>
+                    </div>
+                  ) : (
+                    <textarea
+                      value={aiDraft}
+                      onChange={(event) => setAiDraft(event.target.value)}
+                      rows={5}
+                      className="w-full border border-brand-300 px-3 py-2.5 text-sm text-brand-800 outline-none focus:border-indigo-500"
+                      placeholder="Danca ürün açıklaması..."
+                    />
+                  )}
 
                   <div className="overflow-hidden border border-brand-300">
                     <button
@@ -1432,12 +1462,42 @@ export function MakeWooCommercePage({
                         style={monoStyle}
                       />
                       <span className="text-sm font-bold text-brand-500">DKK</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // R1-26/R1-31: Butikspris önerisi — spot × gram × (1+markup), min-fiyat tabanlı.
+                          void (async () => {
+                            try {
+                              const suggestion = await apiRequest<{ suggested_price_dkk: string | null; reason: string | null }>(`/api/products/${secilenId}/price-suggestion`);
+                              if (suggestion.suggested_price_dkk) setPublishPrice(suggestion.suggested_price_dkk);
+                              else if (suggestion.reason) window.alert(`Fiyat önerilemedi: ${suggestion.reason}`);
+                            } catch {
+                              window.alert('Fiyat önerisi alınamadı.');
+                            }
+                          })();
+                        }}
+                        className="border border-emerald-500 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-wider text-emerald-700 hover:bg-emerald-100"
+                        title="Güncel karat oranı × gram × (1+markup) — minimum fiyat tabanlı öneri"
+                      >
+                        Öner
+                      </button>
                     </div>
+
+                    <label className="flex items-center gap-2 text-xs font-bold text-brand-700">
+                      <input
+                        type="checkbox"
+                        checked={catalogState.publishNewBadge}
+                        onChange={(event) => catalogState.setPublishNewBadge(event.target.checked)}
+                        className="h-4 w-4 accent-emerald-600"
+                      />
+                      Nyhed-rozet (yeni ürün · 30 gün)
+                    </label>
 
                     <WooCategoryPicker
                       categories={catalogState.categories}
                       selectedIds={catalogState.publishCategoryIds}
                       onToggle={catalogState.togglePublishCategory}
+                      onMakePrimary={(id) => catalogState.setPublishCategoryIds([id, ...catalogState.publishCategoryIds.filter((value) => value !== id)])}
                       onRefresh={() => void catalogState.refreshCategories()}
                       loading={catalogState.categoriesLoading}
                       error={catalogState.categoriesError}
@@ -1467,6 +1527,24 @@ export function MakeWooCommercePage({
                       >
                         {isPublishing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Globe className="h-3.5 w-3.5" />}
                         Siteye Yayınla
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // R1-10: yayın öncesi şablon önizleme — panelin güncel
+                          // (kaydedilmemiş dahil) durumuyla, ağ erişimsiz saf payload.
+                          void (async () => {
+                            const preview = await catalogState.fetchPublishPreview();
+                            if (preview) setPublishPreview(preview);
+                            else window.alert('Önizleme alınamadı.');
+                          })();
+                        }}
+                        disabled={!detail}
+                        className="flex items-center gap-2 border border-brand-300 bg-white px-4 py-2.5 text-xs font-black text-brand-700 hover:bg-brand-50 disabled:opacity-50"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Önizleme
                       </button>
 
                       {detail?.is_published_to_site ? (
@@ -1560,6 +1638,56 @@ export function MakeWooCommercePage({
             await createProductFromDraft(draft);
           }}
         />
+      ) : null}
+
+      {publishPreview ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setPublishPreview(null)}>
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto border border-brand-300 bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-brand-200 bg-brand-50 px-5 py-3">
+              <p className="text-xs font-black uppercase tracking-wider text-brand-700">Yayın önizlemesi — sitede böyle görünecek</p>
+              <button type="button" onClick={() => setPublishPreview(null)} className="text-xs font-black text-brand-500 hover:text-brand-800">Kapat ✕</button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <h3 className="text-lg font-black text-brand-900">{publishPreview.name || '—'}</h3>
+                <p className="text-xs text-brand-500" style={monoStyle}>
+                  /{publishPreview.slug || ''} · SKU: {publishPreview.sku || '—'} · {publishPreview.regular_price || '—'} DKK
+                  {publishPreview.categories.length ? ` · ${publishPreview.categories.length} kategori` : ' · kategori yok'}
+                </p>
+              </div>
+              {publishPreview.warnings.length ? (
+                <div className="space-y-1 border border-amber-200 bg-amber-50 px-3 py-2">
+                  {publishPreview.warnings.map((warning, index) => (
+                    <p key={index} className="text-xs text-amber-700">⚠ {warning}</p>
+                  ))}
+                </div>
+              ) : null}
+              <div>
+                <p className="mb-1 text-xs font-black uppercase tracking-wider text-brand-500">Kısa açıklama</p>
+                <div className="prose prose-sm max-w-none border border-brand-200 bg-brand-50/40 px-4 py-3 text-sm" dangerouslySetInnerHTML={{ __html: publishPreview.short_description || '<p>—</p>' }} />
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-black uppercase tracking-wider text-brand-500">Uzun açıklama</p>
+                <div className="prose prose-sm max-w-none border border-brand-200 px-4 py-3 text-sm" dangerouslySetInnerHTML={{ __html: publishPreview.description || '<p>—</p>' }} />
+              </div>
+              {publishPreview.attributes.length ? (
+                <div>
+                  <p className="mb-1 text-xs font-black uppercase tracking-wider text-brand-500">Yderligere information</p>
+                  <table className="w-full border border-brand-200 text-sm">
+                    <tbody>
+                      {publishPreview.attributes.map((attribute, index) => (
+                        <tr key={index} className={index % 2 ? 'bg-brand-50/40' : ''}>
+                          <td className="border-b border-brand-100 px-3 py-1.5 font-bold text-brand-700">{attribute.name || '—'}</td>
+                          <td className="border-b border-brand-100 px-3 py-1.5 text-brand-800">{(attribute.options || []).join(', ')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

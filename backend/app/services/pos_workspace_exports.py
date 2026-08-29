@@ -9,7 +9,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from app.schemas.pos import PosWorkspaceBankInfo, PosWorkspaceCustomerOut, PosWorkspaceOut
-from app.services.pos_value_helpers import fmt_decimal as _fmt_decimal
+from app.services.pos_value_helpers import AFG_DECLARATION_HEADER, AFG_DECLARATION_ITEMS, fmt_decimal as _fmt_decimal
 from app.utils.helpers import quantize_2, to_decimal
 
 
@@ -62,6 +62,71 @@ def workspace_preview_lines(workspace: PosWorkspaceOut) -> list[dict[str, str]]:
                 "line_total": _fmt_decimal(row.line_total_dkk),
                 "pure_metal_grams": _fmt_decimal(quantize_2(gram * (purity / Decimal('100')))),
                 "metal_label": "Sølv",
+            }
+        )
+        line_no += 1
+
+    # Bar / Pt-Pd / dinamik (kniv-çeyrek) satırları da önizleme/CSV'ye girer —
+    # eksik kalmaları taslak çıktısında tutar-satır uyuşmazlığı yaratıyordu.
+    for row in getattr(workspace, "bar_rows", None) or []:
+        gram = quantize_2(to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        purity = quantize_2(to_decimal(row.purity_percentage))
+        lines.append(
+            {
+                "line_no": str(line_no),
+                "type": str(row.label),
+                "fineness": f"{_fmt_decimal(purity)}%",
+                "lodighed": str(row.lodighed),
+                "gram": _fmt_decimal(gram),
+                "avance": _fmt_decimal(row.avance_percent),
+                "unit_price": _fmt_decimal(row.unit_price_dkk),
+                "line_total": _fmt_decimal(row.line_total_dkk),
+                "pure_metal_grams": _fmt_decimal(quantize_2(gram * (purity / Decimal('100')))),
+                "metal_label": "Guld" if str(row.bar_type) == "gold" else "Sølv",
+            }
+        )
+        line_no += 1
+
+    for row in getattr(workspace, "ptpd_rows", None) or []:
+        gram = quantize_2(to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        purity = quantize_2(to_decimal(row.purity_percentage))
+        lines.append(
+            {
+                "line_no": str(line_no),
+                "type": str(row.label),
+                "fineness": f"{_fmt_decimal(purity)}%",
+                "lodighed": str(row.lodighed),
+                "gram": _fmt_decimal(gram),
+                "avance": _fmt_decimal(row.avance_percent),
+                "unit_price": _fmt_decimal(row.unit_price_dkk),
+                "line_total": _fmt_decimal(row.line_total_dkk),
+                "pure_metal_grams": _fmt_decimal(quantize_2(gram * (purity / Decimal('100')))),
+                "metal_label": str(row.label),
+            }
+        )
+        line_no += 1
+
+    for row in getattr(workspace, "extra_rows", None) or []:
+        gram = quantize_2(to_decimal(row.gram))
+        if gram <= 0:
+            continue
+        purity = quantize_2(to_decimal(row.purity_percentage))
+        lines.append(
+            {
+                "line_no": str(line_no),
+                "type": str(row.label),
+                "fineness": f"{_fmt_decimal(purity)}%",
+                "lodighed": str(row.karat),
+                "gram": _fmt_decimal(gram),
+                "avance": _fmt_decimal(row.avance_percent),
+                "unit_price": _fmt_decimal(row.unit_price_dkk),
+                "line_total": _fmt_decimal(row.line_total_dkk),
+                "pure_metal_grams": _fmt_decimal(quantize_2(gram * (purity / Decimal('100')))),
+                "metal_label": "Guld" if str(row.metal) == "gold" else "Sølv",
             }
         )
         line_no += 1
@@ -287,8 +352,10 @@ def render_purchase_workspace_print_html(
     {f'<div class="disclaimer"><strong>Not:</strong> {html_escape(workspace.afg_note)}</div>' if workspace.afg_note else ''}
 
     <div class="disclaimer">
-      Undertegnede erklærer hermed, at de solgte varer er min ejendom og sælges frivilligt.
-      Varerne kan ikke returneres efter afregning. Prisen er beregnet på baggrund af dagens guld- og sølvpris.
+      <strong>{html_escape(AFG_DECLARATION_HEADER)}</strong><br>
+      1. {html_escape(AFG_DECLARATION_ITEMS[0])}<br>
+      2. {html_escape(AFG_DECLARATION_ITEMS[1])}<br>
+      3. {html_escape(AFG_DECLARATION_ITEMS[2])}
     </div>
     {print_script}
   </body>

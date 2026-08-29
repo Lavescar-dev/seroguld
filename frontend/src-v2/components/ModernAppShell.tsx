@@ -91,6 +91,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         items: [
           item('/dashboard', t('navigation.dashboard'), 'İş kutusu', LayoutDashboard),
           item('/', t('navigation.purchase'), 'AFG workspace', Package, state.stats.alisList),
+          item('/?view=belgeler', 'AFG Belgeleri', 'Købsjournaler', FileText, state.stats.alisList),
           item('/musteriler', t('navigation.customers'), 'Kundedatabase', Users, state.stats.customerCount),
           item('/depolama', t('navigation.inventory'), 'Lager / ürün', Database, state.stats.depoCount),
           item('/log', 'Log / AFG Defteri', 'AFG → melt', FileText, state.stats.logCount),

@@ -74,8 +74,8 @@ def test_resolve_period_bounds_supports_all_values():
 def test_csv_export_contains_header_and_rows():
     csv_payload = _build_csv_content(_sample_rows())
     assert "product_number,product_type,metal_type,status,purchase_price_dkk,sale_price_dkk,profit_dkk,purchase_date" in csv_payload
-    assert "0048,bracelet,platinum,for_sale,12146.09" in csv_payload
-    assert "0049,ring,yellow_gold,sold,5000.00,6500.00,1500.00" in csv_payload
+    assert "0048,Armbånd,Platin,for_sale,12146.09" in csv_payload
+    assert "0049,Ring,Guld,sold,5000.00,6500.00,1500.00" in csv_payload
 
 
 def test_xlsx_export_returns_zip_payload():

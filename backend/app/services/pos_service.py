@@ -63,6 +63,7 @@ from app.schemas.pos import (
     PosWorkspaceFinalizeResponse,
     PosWorkspaceBarRowOut,
     PosWorkspacePtPdRowOut,
+    PosWorkspaceExtraRowOut,
     PosWorkspaceGoldRowOut,
     PosWorkspaceInvoiceGoldRowOut,
     PosWorkspaceInvoiceGoldSheetOut,
@@ -1256,22 +1257,11 @@ async def build_purchase_workspace(
         )
         if line is not None and gram > 0:
             has_zero_price_candidate = has_zero_price_candidate or repair_row_price
-        unit_price = (
-            _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
-            if repair_row_price
-            else
-            quantize_2(to_decimal(line.line_offer_dkk) / gram)
-            if line is not None and line.line_offer_dkk is not None and gram > 0
-            else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
-        )
-        line_total = (
-            _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
-            if repair_row_price
-            else
-            quantize_2(to_decimal(line.line_offer_dkk))
-            if line is not None and line.line_offer_dkk is not None
-            else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
-        )
+        # CANLI: birim fiyat DAİMA güncel matris oranından hesaplanır
+        # (unit = rate + mer_pris kr/g, R2-07); donmuş line_offer_dkk GÖSTERİLMEZ.
+        # Böylece oran değişince açık alış satırı anında güncellenir.
+        unit_price = _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        line_total = _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
         if gram > 0:
             active_line_count += 1
             total_weight += gram
@@ -1312,22 +1302,11 @@ async def build_purchase_workspace(
         )
         if line is not None and gram > 0:
             has_zero_price_candidate = has_zero_price_candidate or repair_row_price
-        unit_price = (
-            _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
-            if repair_row_price
-            else
-            quantize_2(to_decimal(line.line_offer_dkk) / gram)
-            if line is not None and line.line_offer_dkk is not None and gram > 0
-            else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
-        )
-        line_total = (
-            _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
-            if repair_row_price
-            else
-            quantize_2(to_decimal(line.line_offer_dkk))
-            if line is not None and line.line_offer_dkk is not None
-            else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
-        )
+        # CANLI: birim fiyat DAİMA güncel matris oranından hesaplanır
+        # (unit = rate + mer_pris kr/g, R2-07); donmuş line_offer_dkk GÖSTERİLMEZ.
+        # Böylece oran değişince açık alış satırı anında güncellenir.
+        unit_price = _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        line_total = _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
         if gram > 0:
             active_line_count += 1
             total_weight += gram
@@ -1359,16 +1338,12 @@ async def build_purchase_workspace(
         avance = quantize_2(to_decimal(line.margin_percent_internal if line is not None else 0))
         rate = _workspace_market_rate_dkk(market_rates, row_key)
         purity = quantize_2(to_decimal(definition["purity_percentage"]))
-        unit_price = (
-            quantize_2(to_decimal(line.line_offer_dkk) / gram)
-            if line is not None and line.line_offer_dkk is not None and gram > 0
-            else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
-        )
-        line_total = (
-            quantize_2(to_decimal(line.line_offer_dkk))
-            if line is not None and line.line_offer_dkk is not None
-            else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
-        )
+        # CANLI TEK HESAP (F0.4): bar satırı da altın/gümüş gibi DAİMA güncel
+        # matris oranından hesaplanır; donmuş line_offer_dkk GÖSTERİLMEZ. Aksi
+        # halde offer=0 kalan bar satırı 615,50 oran varken bile 0 görünüyordu
+        # (R1-24). Oran > 0 iken toplam asla 0 kalmaz.
+        unit_price = _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        line_total = _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
         if gram > 0:
             active_line_count += 1
             total_weight += gram
@@ -1403,16 +1378,11 @@ async def build_purchase_workspace(
         avance = quantize_2(to_decimal(line.margin_percent_internal if line is not None else 0))
         rate = _workspace_market_rate_dkk(market_rates, row_key)
         purity = quantize_2(to_decimal(definition["purity_percentage"]))
-        unit_price = (
-            quantize_2(to_decimal(line.line_offer_dkk) / gram)
-            if line is not None and line.line_offer_dkk is not None and gram > 0
-            else _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
-        )
-        line_total = (
-            quantize_2(to_decimal(line.line_offer_dkk))
-            if line is not None and line.line_offer_dkk is not None
-            else _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
-        )
+        # CANLI TEK HESAP (F0.4): platin/palladyum satırı da DAİMA güncel matris
+        # oranından hesaplanır; donmuş line_offer_dkk GÖSTERİLMEZ — R1-23'teki
+        # "33 g × 280 ama TOPLAM 0" para hatasının kökü buydu (offer=0 donmuştu).
+        unit_price = _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        line_total = _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
         if gram > 0:
             active_line_count += 1
             total_weight += gram
@@ -1426,6 +1396,53 @@ async def build_purchase_workspace(
                 metal=str(definition["metal"]),
                 label=str(definition["label"]),
                 lodighed=str(definition["lodighed"]),
+                purity_percentage=purity,
+                gram=gram,
+                avance_percent=avance,
+                rate_dkk=rate,
+                unit_price_dkk=unit_price,
+                line_total_dkk=line_total,
+            )
+        )
+
+    # R2-01 — DİNAMİK "Kniv / Çeyrek altın" satırları: sabit tanımlara oturmayan,
+    # gümüş altındaki sekmeden eklenen satırlar. Fiyat metal+karattan CANLI
+    # çözülür (F0.4 tek hesap), mer pris eklenir. Toplamlara dahil edilir.
+    extra_rows: list[PosWorkspaceExtraRowOut] = []
+    for line in pos_lines:
+        meta = _parse_workspace_line_meta(line.notes)
+        kind = str(meta.get("kind") or "")
+        if kind not in ("kniv", "quarter"):
+            continue
+        metal = str(meta.get("metal") or ("gold" if kind == "quarter" else "silver"))
+        karat = str(meta.get("karat") or "")
+        gram = quantize_2(to_decimal(line.weight_grams))
+        avance = quantize_2(to_decimal(line.margin_percent_internal))
+        if metal == "gold":
+            rate = quantize_2(to_decimal(market_rates.gold_rates_dkk.get(karat) or Decimal("0")))
+        else:
+            rate = quantize_2(to_decimal(market_rates.silver_rates_dkk.get(karat) or Decimal("0")))
+        purity = quantize_2(to_decimal(line.purity_percentage or 0))
+        unit_price = _workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=avance)
+        line_total = _workspace_row_line_total(unit_price_dkk=unit_price, gram=gram)
+        if gram > 0:
+            active_line_count += 1
+            total_weight += gram
+            if metal == "gold":
+                gold_weight += gram
+            else:
+                silver_weight += gram
+            total_pure += quantize_2(gram * (purity / Decimal("100")))
+            total_amount += line_total
+        extra_rows.append(
+            PosWorkspaceExtraRowOut(
+                row_key=str(meta.get("row_key") or f"extra:{line.line_no}"),
+                line_id=line.id,
+                line_no=line.line_no,
+                kind=kind,
+                label=str(meta.get("label") or ("Çeyrek altın" if kind == "quarter" else "Kniv")),
+                metal=metal,
+                karat=karat,
                 purity_percentage=purity,
                 gram=gram,
                 avance_percent=avance,
@@ -1481,6 +1498,7 @@ async def build_purchase_workspace(
         silver_rows=silver_rows,
         bar_rows=bar_rows,
         ptpd_rows=ptpd_rows,
+        extra_rows=extra_rows,
         invoice_gold=invoice_gold,
         invoice_misc_mode=invoice_misc_mode,
         invoice_misc=invoice_misc,
@@ -2577,7 +2595,7 @@ async def build_pos_receipt_context(
                 "product_number": line.product_number or "-",
                 "reference_number": line.reference_number or "-",
                 "product_type": _display_product_type(line.product_type),
-                "metal_type": _display_metal_type(line.metal_type),
+                "metal_type": _metal_value(line.metal_type),  # ham enum; Danca etiket renderer'da (X2)
                 "weight_grams": (_fmt_decimal(line.weight_grams) if line.weight_grams is not None else "-"),
                 "purity_karat": purity_karat_value,
                 "purity_percentage": purity_percentage_value,
@@ -2609,7 +2627,7 @@ async def build_pos_receipt_context(
                 "product_number": product.product_number,
                 "reference_number": product.reference_number or "-",
                 "product_type": _display_product_type(product.product_type),
-                "metal_type": _display_metal_type(product.metal_type),
+                "metal_type": _metal_value(product.metal_type),  # ham enum; Danca etiket renderer'da (X2)
                 "weight_grams": _fmt_decimal(product.weight_grams),
                 "purity_karat": purity_karat_value,
                 "purity_percentage": purity_percentage_value,
@@ -2667,7 +2685,7 @@ async def build_pos_receipt_context(
             else str(primary_line.get("product_type", "-") if primary_line else "-")
         ),
         "metal_type": (
-            _display_metal_type(product.metal_type)
+            _metal_value(product.metal_type)  # ham enum; Danca etiket renderer'da (X2)
             if product is not None
             else str(primary_line.get("metal_type", "-") if primary_line else "-")
         ),

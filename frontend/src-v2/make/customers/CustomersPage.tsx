@@ -30,6 +30,7 @@ import type { CustomerOut, PosDocumentDetail, PosDocumentListItem } from '@/type
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import type { CustomerDraft, CustomerHistoryLogMeta, CustomersPageProps } from './types';
+import { CustomerOcrPanel } from './CustomerOcrPanel';
 
 const cellInput =
   'w-full border border-brand-300 bg-white px-2 py-1 text-sm text-brand-900 outline-none focus:border-brand-700 focus:bg-brand-50';
@@ -612,6 +613,17 @@ export function CustomersPage({
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className={`flex min-h-0 flex-col overflow-hidden ${selectedCustomer ? 'w-3/5 border-r-2 border-brand-200' : 'flex-1'}`}>
+          {showNewRow ? (
+            <div className="flex-shrink-0 px-4 pt-3">
+              <CustomerOcrPanel
+                onApply={(fields) => {
+                  (Object.entries(fields) as Array<[keyof typeof fields, string | undefined]>).forEach(([field, value]) => {
+                    if (value) onNewDraftChange(field, value);
+                  });
+                }}
+              />
+            </div>
+          ) : null}
           <div className="flex flex-shrink-0 items-center bg-brand-800 px-4 py-2">
             <span className="text-xs font-semibold text-brand-400">
               Toplam: <span className="font-mono font-black text-brand-200">{customers.length}</span> müşteri

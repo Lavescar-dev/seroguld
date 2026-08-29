@@ -34,7 +34,7 @@ $DefenderScanFinishedAt = $null
 $DefenderScanTool = $null
 $DefenderScanThreatCount = 0
 $script:ArtifactChecks = [ordered]@{}
-$ProductVersion = "0.3.12"
+$ProductVersion = "0.3.23"
 $CustomerRuntimeSeedRelativePath = "runtime\seroguld-runtime\runtime-seed.env"
 
 function Get-CustomerRuntimeSeedAllowedKeys {
@@ -440,8 +440,18 @@ function Assert-NoUpxCompression {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
       throw "UPX gate için PE dosyası bulunamadı: $path"
     }
-    $bytes = [System.IO.File]::ReadAllBytes($path)
-    $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
+    # Gerçek UPX imzaları PE bölüm tablosunda (dosyanın BAŞINDA) yaşar.
+    # Tüm dosyayı taramak, sıkıştırılmış NSIS payload'ında 4 baytlık desenin
+    # RASTGELE çıkmasıyla yanlış pozitif veriyordu (267MB'ta ~%25/build).
+    # Yalnız ilk 16KB (DOS+PE başlıkları + section adları) taranır.
+    $stream = [System.IO.File]::OpenRead($path)
+    try {
+      $headBytes = New-Object byte[] ([Math]::Min(16384, $stream.Length))
+      $null = $stream.Read($headBytes, 0, $headBytes.Length)
+    } finally {
+      $stream.Dispose()
+    }
+    $ascii = [System.Text.Encoding]::ASCII.GetString($headBytes)
     if ($ascii.Contains("UPX0") -or $ascii.Contains("UPX1") -or $ascii.Contains("UPX2") -or $ascii.Contains("UPX!")) {
       throw "PE/Runtime UPX sıkıştırması tespit edildi: $path"
     }

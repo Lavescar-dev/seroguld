@@ -65,7 +65,7 @@ function buildFallbackProfile(): GlobalMarketRateProfile {
   const silver999 = 7.8;
   return {
     eur_dkk_fx: '7.45',
-    gold_rates_dkk: Object.fromEntries(GOLD_MATRIX_ROWS.map((row) => [row.key, ((gold24 * Number(row.key)) / 24).toFixed(2)])),
+    gold_rates_dkk: Object.fromEntries(GOLD_MATRIX_ROWS.map((row) => [row.key, ((gold24 * (Number(row.key.replace(/[^0-9.]/g, '')) || 24)) / 24).toFixed(2)])),
     silver_rates_dkk: Object.fromEntries(SILVER_PROFILE_ROWS.map((row) => [row.key, ((silver999 * Number(row.key)) / 999).toFixed(2)])),
     gold_24k_dkk: gold24.toFixed(2),
     silver_dkk: silver999.toFixed(2),
@@ -87,10 +87,22 @@ function toDraft(profile: GlobalMarketRateProfile): GlobalMarketRateDraft {
     silver_rates_dkk: profile.silver_rates_dkk,
     gold_24k_dkk: profile.gold_24k_dkk,
     silver_dkk: profile.silver_dkk,
+    // Pt/Pd'yi de aktar: aksi halde syncMarketRateState bunları 0'a düşürür ve
+    // aşağıdaki `...workspace` yayılımı profildeki GERÇEK değeri (280/335) 0.00
+    // ile ezerdi — "Platin/Palladyum niye 0" hatasının tam kökü buydu.
+    platinum_dkk: profile.platinum_dkk,
+    palladium_dkk: profile.palladium_dkk,
     gold_matrix: [],
     silver_matrix: [],
   });
-  return { ...profile, ...workspace, silver_rates_dkk: { ...profile.silver_rates_dkk } };
+  return {
+    ...profile,
+    ...workspace,
+    // Profildeki kanonik Pt/Pd değerleri her durumda korunur.
+    platinum_dkk: profile.platinum_dkk,
+    palladium_dkk: profile.palladium_dkk,
+    silver_rates_dkk: { ...profile.silver_rates_dkk },
+  };
 }
 
 function validPositive(value: string) {
@@ -152,6 +164,11 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
       void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       void queryClient.invalidateQueries({ queryKey: ['settings-v2'] });
+      // CANLI YANSIMA: oran editörü kaydedince açık AFG alış taslağı + listesi
+      // yeniden çekilir; fiyat artık backend'de global profilden hesaplandığı
+      // için satır birim fiyatları ANINDA yeni oranı gösterir.
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'alis'] });
       setErrorMessage(null);
       setIsOpen(false);
     },
@@ -205,6 +222,28 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
         setErrorMessage('Altın karat ve gümüş saflık oranları pozitif olmalı — lütfen boş/0 bırakılan alanları doldurun.');
         return;
       }
+      // X4: bant dışı değerler (ons/10g/øre karışıklığı) kaydı engellemez ama
+      // açık onay ister — 6392,10 DKK/g gibi bir değer doğrudan ödemeye vurur.
+      const outOfBand: string[] = [];
+      for (const row of GOLD_MATRIX_ROWS) {
+        if (rateBandWarning('gold', draft.gold_rates_dkk[row.key] || '')) outOfBand.push(`Altın ${row.label}`);
+      }
+      for (const row of SILVER_PROFILE_ROWS) {
+        if (rateBandWarning('silver', draft.silver_rates_dkk[row.key] || '')) outOfBand.push(`Gümüş ${row.label}`);
+      }
+      if (rateBandWarning('gold', draft.gold_bar_dkk)) outOfBand.push('Guldbarre');
+      if (rateBandWarning('silver', draft.silver_bar_dkk)) outOfBand.push('Sølvbarre');
+      if (rateBandWarning('silver', draft.plet_dkk)) outOfBand.push('Pletsølv');
+      if (rateBandWarning('fx', draft.eur_dkk_fx)) outOfBand.push('EUR/DKK');
+      if (rateBandWarning('ptpd', draft.platinum_dkk)) outOfBand.push('Platin');
+      if (rateBandWarning('ptpd', draft.palladium_dkk)) outOfBand.push('Palladyum');
+      if (outOfBand.length > 0) {
+        const proceed = window.confirm(
+          `Şu alanlar beklenen DKK/g aralığının DIŞINDA: ${outOfBand.join(', ')}.\n` +
+            'Değerler ons/10g/øre karışıklığı olabilir ve doğrudan ödenen tutara yansır.\n\nYine de kaydedilsin mi?',
+        );
+        if (!proceed) return;
+      }
       setErrorMessage(null);
       saveMutation.mutate();
     },
@@ -227,16 +266,42 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
   };
 }
 
-function TextRateInput({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled: boolean }) {
+// X4: birim/aralık makullük bantları (DKK/g; fx = EUR/DKK). Amaç ons/10g/øre
+// karışıklığını yakalamak: 6392,10 "Guldbarre" ~ons fiyatıdır, gram değil.
+// Bant AŞIMI kaydı engellemez — alan işaretlenir ve Kaydet'te onay istenir.
+const RATE_BANDS: Record<'gold' | 'silver' | 'ptpd' | 'fx', [number, number]> = {
+  gold: [50, 2000],
+  silver: [0.5, 100],
+  ptpd: [20, 2000],
+  fx: [5, 10],
+};
+
+function rateBandWarning(kind: 'gold' | 'silver' | 'ptpd' | 'fx', raw: string): string | null {
+  const value = Number(String(raw || '').replace(',', '.'));
+  if (!Number.isFinite(value) || value <= 0) return null; // boş/geçersiz ayrı denetimde
+  const [min, max] = RATE_BANDS[kind];
+  if (value < min || value > max) {
+    return kind === 'fx'
+      ? `Beklenen EUR/DKK aralığı ${min}–${max} — değer birim hatası olabilir.`
+      : `Beklenen aralık ${min}–${max} DKK/g — ons/10g/øre karışıklığı olabilir.`;
+  }
+  return null;
+}
+
+function TextRateInput({ value, onChange, disabled, warning }: { value: string; onChange: (value: string) => void; disabled: boolean; warning?: string | null }) {
   return (
-    <input
-      type="text"
-      inputMode="decimal"
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-sg-sm border border-sg-border bg-sg-surface px-3 py-2 text-sm font-semibold text-sg-text outline-none transition focus:border-sg-accent disabled:cursor-not-allowed disabled:opacity-60"
-    />
+    <div>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        title={warning || undefined}
+        className={`w-full rounded-sg-sm border px-3 py-2 text-sm font-semibold text-sg-text outline-none transition focus:border-sg-accent disabled:cursor-not-allowed disabled:opacity-60 ${warning ? 'border-amber-500 bg-amber-50' : 'border-sg-border bg-sg-surface'}`}
+      />
+      {warning ? <p className="mt-0.5 text-[10px] leading-tight text-amber-600">{warning}</p> : null}
+    </div>
   );
 }
 
@@ -263,6 +328,7 @@ function AutoFieldToggle({ on, meta, dark, onToggle }: { on: boolean; meta: Glob
 }
 
 export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { controller: GlobalMarketRatesController; variant?: 'modern' | 'classic' }) {
+  const queryClient = useQueryClient();
   if (!controller.isOpen) return null;
   const { draft } = controller;
   const dark = variant === 'classic';
@@ -320,7 +386,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
               {GOLD_MATRIX_ROWS.map((row) => (
                 <label key={row.key} className="space-y-1">
                   <span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>{row.label} · {row.lodighed}</span>
-                  <TextRateInput value={draft.gold_rates_dkk[row.key] || ''} disabled={false} onChange={(value) => controller.updateGoldRate(row.key, value)} />
+                  <TextRateInput value={draft.gold_rates_dkk[row.key] || ''} disabled={false} onChange={(value) => controller.updateGoldRate(row.key, value)} warning={rateBandWarning('gold', draft.gold_rates_dkk[row.key] || '')} />
                 </label>
               ))}
             </div>
@@ -335,7 +401,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
               {SILVER_PROFILE_ROWS.map((row) => (
                 <label key={row.key} className="space-y-1">
                   <span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>{row.label} · {row.lodighed}</span>
-                  <TextRateInput value={draft.silver_rates_dkk[row.key] || ''} disabled={false} onChange={(value) => controller.updateSilverRate(row.key, value)} />
+                  <TextRateInput value={draft.silver_rates_dkk[row.key] || ''} disabled={false} onChange={(value) => controller.updateSilverRate(row.key, value)} warning={rateBandWarning('silver', draft.silver_rates_dkk[row.key] || '')} />
                 </label>
               ))}
             </div>
@@ -344,9 +410,9 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
           <section className={sectionClass}>
             <p className="mb-3 text-sm font-semibold">Bar ve Plet fiyatları</p>
             <div className="grid gap-3 sm:grid-cols-3">
-              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Guldbarre 999,9 DKK/g</span><TextRateInput value={draft.gold_bar_dkk} disabled={false} onChange={controller.updateGoldBar} /></label>
-              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Sølvbarre 999 DKK/g</span><TextRateInput value={draft.silver_bar_dkk} disabled={false} onChange={controller.updateSilverBar} /></label>
-              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Pletsølv DKK/g</span><TextRateInput value={draft.plet_dkk} disabled={false} onChange={controller.updatePlet} /></label>
+              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Guldbarre 999,9 DKK/g</span><TextRateInput value={draft.gold_bar_dkk} disabled={false} onChange={controller.updateGoldBar} warning={rateBandWarning('gold', draft.gold_bar_dkk)} /></label>
+              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Sølvbarre 999 DKK/g</span><TextRateInput value={draft.silver_bar_dkk} disabled={false} onChange={controller.updateSilverBar} warning={rateBandWarning('silver', draft.silver_bar_dkk)} /></label>
+              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Pletsølv DKK/g</span><TextRateInput value={draft.plet_dkk} disabled={false} onChange={controller.updatePlet} warning={rateBandWarning('silver', draft.plet_dkk)} /></label>
             </div>
             <p className={`mt-2 ${metaClass}`}>Bar fiyatları normal karat/saflık fiyatlarından bağımsızdır; Plet saflık oranıyla hesaplanmaz.</p>
           </section>
@@ -356,15 +422,15 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>EUR / DKK</span><AutoFieldToggle on={fieldAutoDisabled('eur_dkk_fx')} meta={rateMeta.eur_dkk_fx} dark={dark} onToggle={() => controller.toggleAutoField('eur_dkk_fx')} /></span>
-                <TextRateInput value={draft.eur_dkk_fx} disabled={fieldAutoDisabled('eur_dkk_fx')} onChange={controller.updateFx} />
+                <TextRateInput value={draft.eur_dkk_fx} disabled={fieldAutoDisabled('eur_dkk_fx')} onChange={controller.updateFx} warning={rateBandWarning('fx', draft.eur_dkk_fx)} />
               </label>
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>Platin DKK/g</span><AutoFieldToggle on={fieldAutoDisabled('platinum_dkk')} meta={rateMeta.platinum_dkk} dark={dark} onToggle={() => controller.toggleAutoField('platinum_dkk')} /></span>
-                <TextRateInput value={draft.platinum_dkk} disabled={fieldAutoDisabled('platinum_dkk')} onChange={controller.updatePlatinum} />
+                <TextRateInput value={draft.platinum_dkk} disabled={fieldAutoDisabled('platinum_dkk')} onChange={controller.updatePlatinum} warning={rateBandWarning('ptpd', draft.platinum_dkk)} />
               </label>
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>Palladyum DKK/g</span><AutoFieldToggle on={fieldAutoDisabled('palladium_dkk')} meta={rateMeta.palladium_dkk} dark={dark} onToggle={() => controller.toggleAutoField('palladium_dkk')} /></span>
-                <TextRateInput value={draft.palladium_dkk} disabled={fieldAutoDisabled('palladium_dkk')} onChange={controller.updatePalladium} />
+                <TextRateInput value={draft.palladium_dkk} disabled={fieldAutoDisabled('palladium_dkk')} onChange={controller.updatePalladium} warning={rateBandWarning('ptpd', draft.palladium_dkk)} />
               </label>
             </div>
             <p className={`mt-2 ${metaClass}`}>Rozete tıklayarak alanı manuel/otomatik yapın. Otomatikte değer metals.dev/ECB'den canlı gelir; canlı değer alınamazsa mevcut değer korunur (AFG fiyatları sıfırlanmaz).</p>
@@ -374,6 +440,26 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
         </div>
 
         <footer className={`flex items-center justify-end gap-2 border-t px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
+          <button
+            type="button"
+            onClick={() => {
+              // R2-06: karat/gümüş fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
+              void (async () => {
+                try {
+                  const result = await apiRequest<{ applied_gold: Record<string, string>; fetched_at: string }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
+                  await queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
+                  await queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
+                  window.alert(`WP Priser uygulandı: ${Object.keys(result.applied_gold || {}).length} karat güncellendi.`);
+                } catch (fetchError) {
+                  window.alert(fetchError instanceof Error ? fetchError.message : 'WP Priser çekilemedi.');
+                }
+              })();
+            }}
+            className={dark ? 'mr-auto border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800' : 'mr-auto rounded-sg-sm border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800'}
+            title="Karat ve gümüş fiyatlarını seroguld.dk Priser sayfasından çek"
+          >
+            WP&apos;den çek
+          </button>
           <button type="button" onClick={controller.close} className={dark ? 'border border-brand-300 bg-white px-4 py-2 text-sm font-bold text-brand-700' : 'rounded-sg-sm border border-sg-border px-4 py-2 text-sm font-semibold text-sg-text'}>Vazgeç</button>
           <button type="button" onClick={controller.save} disabled={controller.isSaving} className={dark ? 'inline-flex items-center gap-2 bg-brand-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-50' : 'inline-flex items-center gap-2 rounded-sg-sm bg-sg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50'}>
             <Save className="h-4 w-4" />{controller.isSaving ? 'Kaydediliyor…' : 'Kaydet'}

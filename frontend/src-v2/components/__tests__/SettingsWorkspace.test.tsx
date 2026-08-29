@@ -47,13 +47,19 @@ const config: ApiConfig = {
 };
 
 describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) => {
-  it('updates and saves the canonical live market-rate toggle', () => {
+  it('toggles a single auto field independently and derives the master live flag', () => {
     const onUpdate = vi.fn();
     const onSave = vi.fn();
     render(
       <SettingsWorkspace
         variant={variant}
-        config={{ ...config, market_rates_live_enabled: false }}
+        config={{
+          ...config,
+          market_rates_live_enabled: false,
+          market_rates_live_fx_enabled: false,
+          market_rates_live_platinum_enabled: false,
+          market_rates_live_palladium_enabled: false,
+        }}
         saved={false}
         isSaving={false}
         confirmReset={false}
@@ -71,9 +77,12 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Piyasa oranları/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Canlı piyasa fiyatlarını otomatik kullan/ }));
+    // "Ya hepsi otomatik" master kapısı YOK; yalnız Platin alanı otomatiğe alınır.
+    fireEvent.click(screen.getByRole('checkbox', { name: /Platin/ }));
     fireEvent.click(screen.getByRole('button', { name: /Değişiklikleri kaydet/ }));
 
+    expect(onUpdate).toHaveBeenCalledWith('market_rates_live_platinum_enabled', true);
+    // Master bayrak türevdir: bir alan otomatiğe alınınca true olur.
     expect(onUpdate).toHaveBeenCalledWith('market_rates_live_enabled', true);
     expect(onSave).toHaveBeenCalledTimes(1);
   });
@@ -100,7 +109,8 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Entegrasyonlar/ }));
-    fireEvent.click(screen.getByRole('tab', { name: /Uniconta/ }));
+    // R1-18: entegrasyonlar accordion — servis başlığı buton olarak açılır.
+    fireEvent.click(screen.getByRole('button', { name: /Uniconta/ }));
 
     expect(screen.getByDisplayValue('Købsmoms')).toBeInTheDocument();
     expect(screen.getByDisplayValue('KøbBrugtmoms')).toBeInTheDocument();

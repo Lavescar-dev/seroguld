@@ -35,6 +35,7 @@ import type {
   PosWorkspaceFinalizeResponse,
   PosWorkspaceBarRow,
   PosWorkspacePtPdRow,
+  PosWorkspaceExtraRow,
   PosWorkspaceGoldRow,
   PosWorkspaceInvoiceGoldRow,
   PosWorkspaceInvoiceMiscRow,
@@ -50,6 +51,7 @@ import type {
   EditableCalculatorRow,
   EditableBarRow,
   EditablePtPdRow,
+  EditableExtraRow,
   EditableGoldRow,
   EditableInvoiceGoldRow,
   EditableInvoiceMiscRow,
@@ -102,6 +104,7 @@ function buildDefaultGoldRatesDkk(gold24Dkk: string) {
     ['21', 21],
     ['21.6', 21.6],
     ['22', 22],
+    ['22b', 22],
     ['24', 24],
   ] as const;
   return Object.fromEntries(defs.map(([key, karat]) => [key, (gold24 * karat) / 24])) as Record<string, number>;
@@ -137,6 +140,7 @@ function buildDefaultMarketRates(gold24Dkk: string, silverDkk: string, fx = DEFA
       { row_key: 'gold:21', label: '21K', lodighed: '875', dkk_per_gram: goldRates['21'].toFixed(2), karat: '21.00', type_code: '1' },
       { row_key: 'gold:21.6', label: '21.6K', lodighed: '900', dkk_per_gram: goldRates['21.6'].toFixed(2), karat: '21.60', type_code: '1' },
       { row_key: 'gold:22', label: '22K', lodighed: '916', dkk_per_gram: goldRates['22'].toFixed(2), karat: '22.00', type_code: '1' },
+      { row_key: 'gold:22b', label: '22K-2', lodighed: '916', dkk_per_gram: goldRates['22b'].toFixed(2), karat: '22.00', type_code: '1' },
       { row_key: 'gold:24', label: '24K', lodighed: '999', dkk_per_gram: goldRates['24'].toFixed(2), karat: '24.00', type_code: '1' },
     ],
     silver_matrix: [
@@ -205,6 +209,7 @@ function workspaceRowsPayload(
   invoiceMiscRows: EditableInvoiceMiscRow[],
   barRows: EditableBarRow[] = [],
   ptpdRows: EditablePtPdRow[] = [],
+  extraRows: EditableExtraRow[] = [],
 ) {
   return {
     gold_rows: goldRows.map((row) => ({
@@ -212,6 +217,18 @@ function workspaceRowsPayload(
       gram: Number(normalizeTextInput(row.gram || '0')),
       avance_percent: Number(normalizeTextInput(row.avance_percent || '0')),
     })),
+    // R2-01: dinamik kniv/çeyrek satırları (gram > 0 olanlar gönderilir).
+    extra_rows: extraRows
+      .filter((row) => Number(normalizeTextInput(row.gram || '0')) > 0)
+      .map((row) => ({
+        row_key: row.row_key,
+        kind: row.kind,
+        label: row.label,
+        metal: row.metal,
+        karat: row.karat,
+        gram: Number(normalizeTextInput(row.gram || '0')),
+        avance_percent: Number(normalizeTextInput(row.avance_percent || '0')),
+      })),
     silver_rows: silverRows.map((row) => ({
       type_code: row.type_code,
       gram: Number(normalizeTextInput(row.gram || '0')),
@@ -398,6 +415,22 @@ function toEditablePtPdRows(rows: PosWorkspacePtPdRow[] | undefined): EditablePt
     metal: row.metal,
     label: row.label,
     lodighed: row.lodighed,
+    purity_percentage: row.purity_percentage,
+    gram: row.gram,
+    avance_percent: row.avance_percent,
+    rate_dkk: row.rate_dkk,
+    unit_price_dkk: row.unit_price_dkk,
+    line_total_dkk: row.line_total_dkk,
+  }));
+}
+
+function toEditableExtraRows(rows: PosWorkspaceExtraRow[] | undefined): EditableExtraRow[] {
+  return (rows || []).map((row) => ({
+    row_key: row.row_key,
+    kind: row.kind,
+    label: row.label,
+    metal: row.metal,
+    karat: row.karat,
     purity_percentage: row.purity_percentage,
     gram: row.gram,
     avance_percent: row.avance_percent,
@@ -711,6 +744,7 @@ export function useAlisMakeState(): AlisPageProps {
   const [goldRows, setGoldRows] = useState<EditableGoldRow[]>([]);
   const [barRows, setBarRows] = useState<EditableBarRow[]>([]);
   const [ptpdRows, setPtpdRows] = useState<EditablePtPdRow[]>([]);
+  const [extraRows, setExtraRows] = useState<EditableExtraRow[]>([]);
   const [silverRows, setSilverRows] = useState<EditableSilverRow[]>([]);
   const [activeWorkspaceView, setActiveWorkspaceViewState] = useState<WorkspaceSurfaceView>('system');
   const [numbering, setNumbering] = useState<EditableWorkspaceNumbering>({
@@ -742,6 +776,7 @@ export function useAlisMakeState(): AlisPageProps {
   // PUT'ların 409/400 toast'ları ("3 hata" gözlemi) bu kaynaktan geliyordu.
   const finalizeInFlightRef = useRef(false);
   const ptpdRowsRef = useRef<EditablePtPdRow[]>([]);
+  const extraRowsRef = useRef<EditableExtraRow[]>([]);
   const silverRowsRef = useRef<EditableSilverRow[]>([]);
 
   const autosaveKeyRef = useRef('');
@@ -882,6 +917,7 @@ export function useAlisMakeState(): AlisPageProps {
         invoiceMiscRows,
         barRowsRef.current,
         ptpdRowsRef.current,
+        extraRowsRef.current,
       ),
       customer,
     });
@@ -904,6 +940,7 @@ export function useAlisMakeState(): AlisPageProps {
     setGoldRows(toEditableGoldRows(data.gold_rows));
     setBarRows(toEditableBarRows(data.bar_rows));
     setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
+    setExtraRows(toEditableExtraRows(data.extra_rows));
     setSilverRows(toEditableSilverRows(data.silver_rows));
     setNumbering(toEditableNumbering(data.numbering_preview));
     setInvoiceGoldMode(data.invoice_gold_mode);
@@ -940,6 +977,7 @@ export function useAlisMakeState(): AlisPageProps {
       toEditableInvoiceMiscRows(data.invoice_misc.rows),
       toEditableBarRows(data.bar_rows),
       toEditablePtPdRows(data.ptpd_rows),
+      toEditableExtraRows(data.extra_rows),
     );
     // Legacy drafts with grams but zero persisted pricing are rendered from
     // the resolved rate matrix, then persisted through the normal revisioned
@@ -1243,6 +1281,7 @@ export function useAlisMakeState(): AlisPageProps {
         invoiceMiscRows,
         barRowsRef.current,
         ptpdRowsRef.current,
+        extraRowsRef.current,
       );
       if (JSON.stringify(currentSectionsPayload) !== JSON.stringify(payload)) {
         workspaceRevisionRef.current = data.workspace_revision || workspaceRevisionRef.current;
@@ -1254,6 +1293,7 @@ export function useAlisMakeState(): AlisPageProps {
       setGoldRows(toEditableGoldRows(data.gold_rows));
       setBarRows(toEditableBarRows(data.bar_rows));
       setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
+      setExtraRows(toEditableExtraRows(data.extra_rows));
       setSilverRows(toEditableSilverRows(data.silver_rows));
       setNumbering(toEditableNumbering(data.numbering_preview));
       setInvoiceGoldMode(data.invoice_gold_mode);
@@ -1705,6 +1745,9 @@ export function useAlisMakeState(): AlisPageProps {
   useEffect(() => {
     ptpdRowsRef.current = ptpdRows;
   }, [ptpdRows]);
+  useEffect(() => {
+    extraRowsRef.current = extraRows;
+  }, [extraRows]);
 
   useEffect(() => {
     silverRowsRef.current = silverRows;
@@ -1730,6 +1773,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscRows,
       barRows,
       ptpdRows,
+      extraRows,
     );
     const serialized = JSON.stringify(payload);
     if (serialized === autosaveKeyRef.current) {
@@ -1749,6 +1793,7 @@ export function useAlisMakeState(): AlisPageProps {
     silverRows,
     barRows,
     ptpdRows,
+    extraRows,
     bankInfo,
     marketRates,
     paymentMethod,
@@ -2092,6 +2137,68 @@ export function useAlisMakeState(): AlisPageProps {
     updateSectionRow('ptpd', rowKey, field, value);
   }
 
+  // R2-01 — dinamik kniv/çeyrek satırları.
+  function updateExtraRow(rowKey: string, field: 'gram' | 'avance_percent', value: string) {
+    markLocalWorkspaceEdit();
+    const normalized = normalizeTextInput(value);
+    // UX tuzağı önlemi: gram 0/boş bırakmak satırı SESSİZCE silmesin (backend
+    // gram<=0 satırı kalıcılaştırmaz). Silme yalnız açık "Sil" butonuyla olur;
+    // geçersiz/0 gram girişi önceki değeri korur.
+    if (field === 'gram' && !(Number(normalized || '0') > 0)) return;
+    const nextRows = extraRowsRef.current.map((row) =>
+      row.row_key === rowKey ? { ...row, [field]: normalized } : row,
+    );
+    extraRowsRef.current = nextRows;
+    setExtraRows(nextRows);
+  }
+
+  function deleteExtraRow(rowKey: string) {
+    // R2-08 — satır silme: dinamik satırı listeden çıkar; autosave güncel toplamı yazar.
+    markLocalWorkspaceEdit();
+    const nextRows = extraRowsRef.current.filter((row) => row.row_key !== rowKey);
+    extraRowsRef.current = nextRows;
+    setExtraRows(nextRows);
+  }
+
+  // Hesaplayıcı blok aktarımı: çeyrek/kniv toplamını YENİ satır olarak ekler.
+  function addExtraRows(
+    rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>,
+  ) {
+    markLocalWorkspaceEdit();
+    const stamp = Date.now();
+    const created: EditableExtraRow[] = rows
+      .filter((row) => row.gram > 0)
+      .map((row, index) => {
+        const rateStr = row.metal === 'gold'
+          ? marketRates.gold_rates_dkk?.[row.karat]
+          : marketRates.silver_rates_dkk?.[row.karat];
+        const rate = Number(normalizeTextInput(String(rateStr ?? '0')));
+        const gram = row.gram;
+        const total = rate * gram;
+        const karatNumeric = Number(String(row.karat).replace(/[^0-9.]/g, '')) || 0;  // '22b' → 22
+        const purity = row.metal === 'gold'
+          ? (karatNumeric / 24) * 100
+          : (karatNumeric / 1000) * 100;
+        return {
+          row_key: `extra:${stamp}-${index}`,
+          kind: row.kind,
+          label: row.label,
+          metal: row.metal,
+          karat: row.karat,
+          purity_percentage: purity.toFixed(2),
+          gram: gram.toFixed(2),
+          avance_percent: '0',
+          rate_dkk: rate.toFixed(2),
+          unit_price_dkk: rate.toFixed(2),
+          line_total_dkk: total.toFixed(2),
+        };
+      });
+    if (created.length === 0) return;
+    const nextRows = [...extraRowsRef.current, ...created];
+    extraRowsRef.current = nextRows;
+    setExtraRows(nextRows);
+  }
+
   function updateNumbering(field: keyof EditableWorkspaceNumbering, value: string) {
     markLocalWorkspaceEdit();
     setNumbering((current) => ({
@@ -2219,6 +2326,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscRows,
       barRowsRef.current,
       ptpdRowsRef.current,
+      extraRowsRef.current,
     );
     if (JSON.stringify(nextSectionsPayload) !== autosaveKeyRef.current) {
       queuedSectionsPayloadRef.current = nextSectionsPayload;
@@ -2331,6 +2439,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscRows,
       barRowsRef.current,
       ptpdRowsRef.current,
+      extraRowsRef.current,
     );
     if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
 
@@ -2374,6 +2483,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscRows,
       barRowsRef.current,
       ptpdRowsRef.current,
+      extraRowsRef.current,
     );
     if (JSON.stringify(sectionsPayload) !== autosaveKeyRef.current) return true;
 
@@ -2403,6 +2513,7 @@ export function useAlisMakeState(): AlisPageProps {
       invoiceMiscRows,
       barRowsRef.current,
       ptpdRowsRef.current,
+      extraRowsRef.current,
     );
     const customer = workspace?.customer.customer_id
       ? customerForm
@@ -2631,8 +2742,12 @@ export function useAlisMakeState(): AlisPageProps {
     onUpdateGoldRow: updateGoldRow,
     barRows,
     ptpdRows,
+    extraRows,
     onUpdateBarRow: updateBarRow,
     onUpdatePtPdRow: updatePtPdRow,
+    onUpdateExtraRow: updateExtraRow,
+    onDeleteExtraRow: deleteExtraRow,
+    onAddExtraRows: addExtraRows,
     onUpdateSilverRow: updateSilverRow,
     activeWorkspaceView,
     setActiveWorkspaceView: handleWorkspaceViewChange,

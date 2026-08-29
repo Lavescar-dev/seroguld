@@ -100,6 +100,8 @@ class SettingsScreenOut(AppBaseModel):
     market_rates_live_fx_enabled: bool = True
     market_rates_live_platinum_enabled: bool = True
     market_rates_live_palladium_enabled: bool = True
+    # R1-17: WP Priser son cekim zamani (bilgi amacli, salt-okunur).
+    wp_priser_last_fetch: str = ""
     firma_adi: str
     firma_cvr: str
     firma_telefon: str

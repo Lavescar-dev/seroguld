@@ -10,7 +10,14 @@ from app.utils.env_file import upsert_env_values
 
 # Kanonik operatör birimi DKK/g'dir.  EUR alanları yalnız eski kayıtları
 # okurken (env profili, session note payload'ları) çevrim için tanınır.
-GOLD_RATE_KEYS = ("8", "14", "18", "21", "21.6", "22", "24")
+# R2-10: "22b" = ikinci 22K fiyat seviyesi (ayni 916 safligi, farkli alis
+# kategorisi — orn. hurda vs sikke). Sayisal islemlerde 22'ye esdegerdir.
+GOLD_RATE_KEYS = ("8", "14", "18", "21", "21.6", "22", "22b", "24")
+KARAT_NUMERIC_ALIAS = {"22b": "22"}
+
+
+def karat_numeric_key(key: str) -> str:
+    return KARAT_NUMERIC_ALIAS.get(str(key), str(key))
 SILVER_RATE_KEYS = ("999", "925", "830")
 LEGACY_SILVER_EUR_KEYS = ("999", "925", "830", "800")
 DEFAULT_EUR_DKK_FX = Decimal("7.45")
@@ -40,7 +47,7 @@ def _q(value: Any, places: int = 2) -> Decimal:
 
 
 def _gold_purity_factor(key: str) -> Decimal:
-    return _decimal(key) / Decimal("24")
+    return _decimal(karat_numeric_key(key)) / Decimal("24")
 
 
 def _silver_purity_factor(key: str) -> Decimal:

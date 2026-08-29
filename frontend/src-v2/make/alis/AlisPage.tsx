@@ -1,3 +1,7 @@
+import { useQueryClient } from '@tanstack/react-query';
+
+import { apiRequest } from '@/lib/api';
+import { FIRMA } from '@/lib/firma';
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -21,6 +25,7 @@ import {
   UserPlus,
   X,
   Zap,
+  Link2,
 } from 'lucide-react';
 
 import {
@@ -46,11 +51,13 @@ import {
 import { CustomerAlisSummaryStrip } from './CustomerAlisSummaryStrip';
 import { CustomerEditorTable, CustomerInfoTable } from './customerEditors';
 import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor } from './sheetEditors';
+import { RelinkCustomerModal } from './RelinkCustomerModal';
 import type {
   CompanionMode,
   EditableCustomer,
   EditableBarRow,
   EditablePtPdRow,
+  EditableExtraRow,
   EditableGoldRow,
   EditableInvoiceGoldRow,
   EditableInvoiceMiscRow,
@@ -263,10 +270,14 @@ export type AlisPageProps = {
   goldRows: EditableGoldRow[];
   barRows: EditableBarRow[];
   ptpdRows: EditablePtPdRow[];
+  extraRows: EditableExtraRow[];
   silverRows: EditableSilverRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onDeleteExtraRow: (rowKey: string) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -370,10 +381,14 @@ export function AlisPage(props: AlisPageProps) {
     silverRows,
     barRows,
     ptpdRows,
+    extraRows,
     onUpdateGoldRow,
     onUpdateSilverRow,
     onUpdateBarRow,
     onUpdatePtPdRow,
+    onUpdateExtraRow,
+    onDeleteExtraRow,
+    onAddExtraRows,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -483,9 +498,13 @@ export function AlisPage(props: AlisPageProps) {
           silverRows={silverRows}
           barRows={barRows}
           ptpdRows={ptpdRows}
+          extraRows={extraRows}
           onUpdateGoldRow={onUpdateGoldRow}
           onUpdateBarRow={onUpdateBarRow}
           onUpdatePtPdRow={onUpdatePtPdRow}
+          onUpdateExtraRow={onUpdateExtraRow}
+          onDeleteExtraRow={onDeleteExtraRow}
+          onAddExtraRows={onAddExtraRows}
           onUpdateSilverRow={onUpdateSilverRow}
           activeWorkspaceView={activeWorkspaceView}
           setActiveWorkspaceView={setActiveWorkspaceView}
@@ -576,10 +595,14 @@ function ActiveWorkspaceView(props: {
   goldRows: EditableGoldRow[];
   barRows: EditableBarRow[];
   ptpdRows: EditablePtPdRow[];
+  extraRows: EditableExtraRow[];
   silverRows: EditableSilverRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onDeleteExtraRow: (rowKey: string) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   activeWorkspaceView: WorkspaceSurfaceView;
   setActiveWorkspaceView: (nextView: WorkspaceSurfaceView) => void | Promise<void>;
@@ -642,10 +665,14 @@ function ActiveWorkspaceView(props: {
     silverRows,
     barRows,
     ptpdRows,
+    extraRows,
     onUpdateGoldRow,
     onUpdateSilverRow,
     onUpdateBarRow,
     onUpdatePtPdRow,
+    onUpdateExtraRow,
+    onDeleteExtraRow,
+    onAddExtraRows,
     activeWorkspaceView,
     setActiveWorkspaceView,
     numbering,
@@ -859,9 +886,9 @@ function ActiveWorkspaceView(props: {
                   <p className="mb-2 text-xs font-black uppercase tracking-widest text-brand-500">Sero Guld</p>
                   <p className="text-xs text-brand-600">Køb og salg af guld, sølv og smykker</p>
                   <div className="mono mt-3 space-y-0.5 text-xs text-brand-600">
-                    <p>Tlf: +45 00 00 00 00</p>
-                    <p>CVR: 00 00 00 00</p>
-                    <p>www.seroguld.dk</p>
+                    <p>Tlf: {FIRMA.tlf}</p>
+                    <p>CVR: {FIRMA.cvr}</p>
+                    <p>{FIRMA.web}</p>
                   </div>
                 </div>
 
@@ -885,13 +912,14 @@ function ActiveWorkspaceView(props: {
                 <div className="border border-brand-200 bg-white px-4 py-4 shadow-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <span
-                      className={`inline-flex border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${
+                      role="status"
+                      className={`inline-flex items-center gap-1.5 border-2 px-3 py-1.5 text-xs font-black uppercase tracking-widest ${
                         hasSelectedCustomer
                           ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
-                          : 'border-amber-300 bg-amber-50 text-amber-700'
+                          : 'animate-pulse border-amber-500 bg-amber-100 text-amber-900'
                       }`}
                     >
-                      {hasSelectedCustomer ? 'Müşteri bağlı' : 'Müşteri seçimi bekleniyor'}
+                      {hasSelectedCustomer ? 'Müşteri bağlı' : '⚠ Müşteri seçimi bekleniyor'}
                     </span>
                   </div>
                   <div className="mt-3 space-y-1.5">
@@ -930,6 +958,7 @@ function ActiveWorkspaceView(props: {
                         void onFinalize();
                       }}
                       disabled={finalizePending || !hasSelectedCustomer}
+                      title={!hasSelectedCustomer ? 'Önce müşteri seçin' : undefined}
                       className="inline-flex items-center justify-center whitespace-nowrap border border-green-600 bg-green-700 px-5 py-2 text-xs font-black uppercase tracking-widest text-white transition-colors hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Save className="mr-2 h-4 w-4" />
@@ -1099,10 +1128,14 @@ function ActiveWorkspaceView(props: {
             silverRows={silverRows}
             barRows={barRows}
             ptpdRows={ptpdRows}
+            extraRows={extraRows}
             onUpdateGoldRow={onUpdateGoldRow}
             onUpdateSilverRow={onUpdateSilverRow}
             onUpdateBarRow={onUpdateBarRow}
             onUpdatePtPdRow={onUpdatePtPdRow}
+            onUpdateExtraRow={onUpdateExtraRow}
+            onDeleteExtraRow={onDeleteExtraRow}
+            onAddExtraRows={onAddExtraRows}
             bankInfo={bankInfo}
             setBankInfo={setBankInfo}
             paymentMethod={paymentMethod}
@@ -1176,6 +1209,17 @@ function WorkspaceExcelSurface({ workspaceId }: { workspaceId: string }) {
 }
 
 function StartWorkspaceView(props: StartWorkspaceViewProps) {
+  // B5: toplu eslestirme sonrasi liste/musteri onbelleklerini tazelemek icin.
+  const queryClient = useQueryClient();
+  // R2-14: sol menü "AFG Belgeleri" girişi ?view=belgeler ile gelir — belge
+  // listesi bölümüne kaydır.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('view') === 'belgeler') {
+      window.setTimeout(() => {
+        document.getElementById('afg-belgeler-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+    }
+  }, []);
   const {
     draftWorkspace,
     onResumeDraft,
@@ -1398,6 +1442,36 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
             </div>
           </div>
 
+          <span id="afg-belgeler-anchor" />
+          {/* B5/R2-17: bağlantısız tarihsel belgeler için toplu ön eşleştirme.
+              Snapshot'ta CPR tutulmaz — eşleşme e-posta → ad+telefon; tek aday bağlanır. */}
+          <div className="mb-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    const result = await apiRequest<{ scanned: number; linked: number; ambiguous: number; unmatched: number }>(
+                      '/api/v2/alis/documents/auto-link-customers',
+                      { method: 'POST' },
+                    );
+                    window.alert(
+                      `Toplu eşleştirme: ${result.scanned} bağlantısız tarihsel belge tarandı — ` +
+                        `${result.linked} bağlandı, ${result.ambiguous} belirsiz (birden çok aday), ${result.unmatched} eşleşmedi.`,
+                    );
+                    await queryClient.invalidateQueries({ queryKey: ['pos'] });
+                    await queryClient.invalidateQueries({ queryKey: ['customers'] });
+                  } catch {
+                    window.alert('Toplu eşleştirme çalıştırılamadı.');
+                  }
+                })();
+              }}
+              className="border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-50"
+              title="Bağlantısız tarihsel belgeleri e-posta → ad+telefon ile müşterilere bağlamayı dener; tek aday varsa bağlar"
+            >
+              Tarihsel belgeleri otomatik eşle
+            </button>
+          </div>
           {savedPurchaseLayout === 'cards' ? (
             <SavedPurchaseCardList
               documents={filteredAndSorted}
@@ -1462,6 +1536,8 @@ function SavedPurchaseTable({
   sortConfig,
   onToggleSort,
 }: SavedPurchaseListRendererProps) {
+  // R2-17: tarihsel belgeyi doğru müşteriye elle bağlama
+  const [relinkDocument, setRelinkDocument] = useState<PosSavedPurchaseListItem | null>(null);
   const sortArrow = (key: SavedPurchaseSortKey) => {
     if (!sortConfig || sortConfig.key !== key) return '↕';
     return sortConfig.direction === 'asc' ? '↑' : '↓';
@@ -1471,6 +1547,8 @@ function SavedPurchaseTable({
       ? 'cursor-pointer select-none bg-brand-200 hover:bg-brand-300'
       : 'cursor-pointer select-none hover:bg-brand-200';
   return (
+    <>
+    {relinkDocument ? <RelinkCustomerModal document={relinkDocument} onClose={() => setRelinkDocument(null)} /> : null}
     <table className="w-full border-collapse">
       <thead>
         <tr className="border-b-2 border-brand-400">
@@ -1740,6 +1818,17 @@ function SavedPurchaseTable({
                       )}
                     </button>
                   ) : null}
+                  {document.uniconta_sync_status === 'historical' ? (
+                    <button
+                      type="button"
+                      onClick={() => setRelinkDocument(document)}
+                      className="flex h-5 w-5 items-center justify-center border border-transparent text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-900"
+                      title="Belgeyi müşteriye bağla (tarihsel içe aktarma)"
+                      aria-label="Belgeyi müşteriye bağla"
+                    >
+                      <Link2 className="h-3 w-3" />
+                    </button>
+                  ) : null}
                   {document.uniconta_sync_status === 'cancelled' && document.uniconta_credit_note_number ? (
                     <span
                       className="flex h-5 items-center px-1.5 text-[9px] font-black uppercase tracking-widest text-rose-700"
@@ -1755,6 +1844,7 @@ function SavedPurchaseTable({
         )}
       </tbody>
     </table>
+    </>
   );
 }
 
@@ -2103,7 +2193,7 @@ function SavedPurchaseExcelPreview({ document }: { document: PosSavedPurchaseLis
       </table>
       <div className="flex items-center justify-between bg-brand-900 px-3 py-2">
         <span className="text-xs font-black uppercase tracking-wider text-brand-400">Toplam</span>
-        <span className="text-xs font-black text-amber-300">{Number(document.gross_amount_dkk || 0).toFixed(2)} DKK</span>
+        <span className="text-xs font-black text-amber-300">{formatMoney(document.gross_amount_dkk || 0)}</span>
       </div>
       <div className="flex items-center gap-1.5 border-t border-emerald-200 bg-emerald-50 px-3 py-1.5">
         <FileSpreadsheet className="h-3 w-3 text-emerald-600" />
@@ -2335,18 +2425,18 @@ function SavedPurchaseDetailModal({
                     )}
                     <tr className="bg-brand-100">
                       <td colSpan={3} className="border border-brand-300 px-3 py-2 text-right text-xs font-black uppercase tracking-wider text-brand-600">NET ALIŞ</td>
-                      <td className="border border-brand-300 px-3 py-2 text-right font-black text-brand-900" style={monoStyle}>{Number(detail.net_amount_dkk || 0).toFixed(2)} DKK</td>
+                      <td className="border border-brand-300 px-3 py-2 text-right font-black text-brand-900" style={monoStyle}>{formatMoney(detail.net_amount_dkk || 0)}</td>
                     </tr>
                     <tr className="bg-brand-100">
                       <td colSpan={3} className="border border-brand-300 px-3 py-2 text-right text-xs font-black uppercase tracking-wider text-brand-600">KDV %{Number(detail.vat_rate_percent || 0).toFixed(0)}</td>
-                      <td className="border border-brand-300 px-3 py-2 text-right font-black text-brand-900" style={monoStyle}>{Number(detail.vat_amount_dkk || 0).toFixed(2)} DKK</td>
+                      <td className="border border-brand-300 px-3 py-2 text-right font-black text-brand-900" style={monoStyle}>{formatMoney(detail.vat_amount_dkk || 0)}</td>
                     </tr>
                     <tr className="bg-brand-900">
                       <td colSpan={3} className="border border-brand-700 px-3 py-2 text-right text-xs font-black uppercase tracking-wider text-brand-400">
                         ÖDENECEK / TOPLAM
                       </td>
                       <td className="border border-brand-700 px-3 py-2 text-right font-black text-amber-300" style={monoStyle}>
-                        {Number(detail.gross_amount_dkk || 0).toFixed(2)} DKK
+                        {formatMoney(detail.gross_amount_dkk || 0)}
                       </td>
                     </tr>
                   </tbody>

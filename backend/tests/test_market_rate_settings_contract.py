@@ -182,7 +182,7 @@ def test_saved_profile_json_round_trips_through_settings(monkeypatch: pytest.Mon
 
     payload = {
         "eur_dkk_fx": "7.45",
-        "gold_rates_dkk": {"8": "130", "14": "382", "18": "470", "21": "540", "21.6": "555", "22": "565", "24": "612"},
+        "gold_rates_dkk": {"8": "130", "14": "382", "18": "470", "21": "540", "21.6": "555", "22": "565", "22b": "565", "24": "612"},
         "silver_rates_dkk": {"999": "8.10", "925": "7.40", "830": "6.60"},
         "plet_dkk": "0.02",
         "gold_bar_dkk": "620",
@@ -217,7 +217,7 @@ def test_save_persists_per_field_auto_flags(monkeypatch: pytest.MonkeyPatch) -> 
 
     base = {
         "eur_dkk_fx": "7.45",
-        "gold_rates_dkk": {"8": "130", "14": "382", "18": "470", "21": "540", "21.6": "555", "22": "565", "24": "612"},
+        "gold_rates_dkk": {"8": "130", "14": "382", "18": "470", "21": "540", "21.6": "555", "22": "565", "22b": "565", "24": "612"},
         "silver_rates_dkk": {"999": "8.10", "925": "7.40", "830": "6.60"},
         "plet_dkk": "0.02", "gold_bar_dkk": "620", "silver_bar_dkk": "8.30",
         "platinum_dkk": "300", "palladium_dkk": "340",

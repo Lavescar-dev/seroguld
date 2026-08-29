@@ -37,6 +37,7 @@ const DEFAULT_CONFIG: ApiConfig = {
   market_rates_live_fx_enabled: true,
   market_rates_live_platinum_enabled: true,
   market_rates_live_palladium_enabled: true,
+  wp_priser_last_fetch: '',
   metals_dev_api_key: '',
   firma_adi: 'Sero Guld',
   firma_cvr: '',

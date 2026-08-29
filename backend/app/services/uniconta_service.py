@@ -49,6 +49,7 @@ RETRYABLE_STATUS_CODES = {500, 502, 503, 504, 408, 429}
 
 # U18 — Friendly error mesaj eşleşmeleri (UI tarafına gönderilir)
 ERROR_MESSAGE_TR: dict[str, str] = {
+    "ArgumentMissing": "Uniconta isteğinde zorunlu bir alan eksik (ArgumentMissing). Belge yerelde tamamlandı; ERP gönderimi kuyruğa alındı.",
     "GenerateDebtorInvoice 400": "Uniconta fatura oluşturulamadı: payload doğrulama hatası.",
     "Connect aborted": "Uniconta'ya bağlanılamadı. Ağ bağlantınızı kontrol edin.",
     "timeout": "Uniconta yanıt vermedi (timeout). Lütfen tekrar deneyin.",
@@ -383,7 +384,22 @@ class UnicontaClient:
                 self._last_call_ok = True
                 if not response.content:
                     return None
-                return response.json()
+                # R1-08: Uniconta 2xx ile JSON YERİNE düz metin dönebiliyor
+                # ("ArgumentMissing" = istekte zorunlu alan eksik). Koşulsuz
+                # response.json() burada ham JSONDecodeError fırlatıp "Alışı
+                # tamamla"yı çökertiyordu. JSON değilse okunabilir hata ver,
+                # ham gövdeyi (eksik argüman ipucu) logla.
+                try:
+                    return response.json()
+                except ValueError:
+                    body = (response.text or "").strip()
+                    self._last_call_ok = False
+                    LOGGER.error(
+                        "Uniconta %s %s: JSON değil, düz metin yanıt: %s",
+                        method, path, body[:300],
+                    )
+                    detail = ERROR_MESSAGE_TR.get(body, body[:200] or "boş yanıt")
+                    raise UnicontaError(f"Uniconta {method} {path}: {detail}")
 
             # Loop bitti, hala fail
             self._last_call_at = datetime.now(timezone.utc)

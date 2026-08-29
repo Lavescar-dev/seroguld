@@ -204,12 +204,35 @@ class PhotoService:
         return remaining
 
 
+def reorder_photos(product, photo_ids: list[str]) -> list[dict]:
+    """R1-36 — operatörün sürükle-bırak sırası kalıcılaşır.
+
+    Verilen id sırası sort_order olarak yazılır; İLK görsel otomatik Primær
+    olur (diğerleri düşer). Listede olmayan (eşzamanlı eklenen) fotoğraflar
+    mevcut göreli sırasıyla sona eklenir."""
+    photos = list(product.photos or [])
+    by_id = {str(item.get("id")): item for item in photos if item.get("id")}
+    ordered: list[dict] = []
+    for photo_id in photo_ids:
+        item = by_id.pop(str(photo_id), None)
+        if item is not None:
+            ordered.append(item)
+    # id'siz veya listede anılmayanlar sona (mevcut sırayla)
+    ordered.extend(item for item in photos if item not in ordered)
+    for index, item in enumerate(ordered):
+        item["sort_order"] = index
+        item["is_primary"] = index == 0
+    return ordered
+
+
 def sorted_photos_for_publish(product) -> list[dict]:
-    """is_primary önce, sonra uploaded_at — Woo/AI tüketicilerinin ortak sırası
-    (images[0] öne çıkan görsel olur)."""
+    """Operatör sırası (sort_order) esastır; yoksa is_primary önce, sonra
+    uploaded_at — Woo/AI tüketicilerinin ortak sırası (images[0] öne çıkan
+    görsel olur)."""
     photos = list(product.photos or [])
     photos.sort(
         key=lambda item: (
+            item.get("sort_order") if isinstance(item.get("sort_order"), int) else 10_000,
             0 if bool(item.get("is_primary")) else 1,
             str(item.get("uploaded_at") or ""),
         )

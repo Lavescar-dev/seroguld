@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Check, ChevronDown, ChevronRight, Eye, Pencil, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 import type { ModernCustomersViewModel } from '@/modern/adapters/customers';
-import { formatDate, formatMoney, formatNumber, formatRelativeTime } from '@/lib/format';
+import { formatDate, formatMoney, formatNumber, formatRelativeTime, labelMetalType } from '@/lib/format';
 import type { CustomerDraft } from '@/make/customers/types';
 import type { PosDocumentDetail } from '@/types';
 import { CustomerWorkspacePanel } from '@/components/CustomerWorkspacePanel';
@@ -289,7 +289,7 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                                     <p className="font-semibold text-sg-text">{formatMoney(line.line_total_dkk)}</p>
                                   </div>
                                   <p className="mt-1 text-xs text-sg-text-soft">
-                                    {line.metal_type === 'silver' ? 'Gümüş' : line.metal_type === 'gold' ? 'Altın' : line.metal_type || '—'}
+                                    {labelMetalType(line.metal_type)}
                                     {line.weight_grams ? ` · ${formatNumber(line.weight_grams, ' g')}` : ''}
                                     {line.purity_karat ? ` · ${line.purity_karat}K` : ''}
                                   </p>
@@ -356,7 +356,7 @@ function ModernAfgPreviewDrawer({
                     <p className="font-semibold text-sg-text">{formatMoney(line.line_total_dkk)}</p>
                   </div>
                   <p className="mt-1 text-xs text-sg-text-soft">
-                    {line.metal_type === 'silver' ? 'Gümüş' : line.metal_type === 'gold' ? 'Altın' : line.metal_type || '—'}
+                    {labelMetalType(line.metal_type)}
                     {line.weight_grams ? ` · ${formatNumber(line.weight_grams, ' g')}` : ''}
                     {line.purity_karat ? ` · ${line.purity_karat}K` : ''}
                   </p>

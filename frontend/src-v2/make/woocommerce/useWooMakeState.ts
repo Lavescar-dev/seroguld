@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
@@ -284,6 +284,9 @@ export interface WooMakeState {
   setPublishProfile: (value: string) => void;
   publishYear: string;
   setPublishYear: (value: string) => void;
+  // R1-21: "Nyhed" rozeti checkbox'ı (30 gün; süre backend ayarından).
+  publishNewBadge: boolean;
+  setPublishNewBadge: (value: boolean) => void;
   setPublishCategoryIds: (ids: number[]) => void;
   togglePublishCategory: (id: number) => void;
   catalogDetailId: string | null;
@@ -293,8 +296,33 @@ export interface WooMakeState {
   linkCatalogItem: (catalogItemId: string, productId: string) => void;
   unlinkCatalogItem: (catalogItemId: string) => void;
   unpublishCatalogItem: (catalogItemId: string) => void;
+  // R1-16: cekmeceden icerik duzenleme (Woo'ya yazar)
+  updateCatalogContent: (catalogItemId: string, body: WooCatalogContentUpdate) => Promise<boolean>;
+  // R1-10: panelin GÜNCEL (kaydedilmemiş dahil) durumuyla yayın önizlemesi
+  fetchPublishPreview: () => Promise<WooPublishPreview | null>;
   isCatalogActionPending: boolean;
 }
+
+// R1-10: yayın öncesi şablon önizleme yanıtı (backend publish-preview).
+export type WooPublishPreview = {
+  name: string | null;
+  slug: string | null;
+  regular_price: string | null;
+  sku: string | null;
+  categories: { id: number }[];
+  short_description: string | null;
+  description: string | null;
+  attributes: { name?: string; options?: string[] }[];
+  warnings: string[];
+};
+
+export type WooCatalogContentUpdate = {
+  name?: string | null;
+  short_description_html?: string | null;
+  description_html?: string | null;
+  seo_title?: string | null;
+  meta_description?: string | null;
+};
 
 export function resolveWooSelectedProductId(
   requestedProductId: string | null,
@@ -579,6 +607,13 @@ export function useWooMakeState(): WooMakeState {
   const [publishCategoryIds, setPublishCategoryIds] = useState<number[]>([]);
   const [publishProfile, setPublishProfile] = useState<string>('');
   const [publishYear, setPublishYear] = useState<string>('');
+  // R1-21: ilk yayın varsayılanı işaretli; republish'te ürünün mevcut durumuna göre.
+  const [publishNewBadge, setPublishNewBadge] = useState<boolean>(true);
+  // Operatör bu oturumda kutuya dokundu mu? Dokunmadıysa republish rozete
+  // DOKUNMAZ (null gönderilir) — refetch'ler seçimi ezmesin diye ürün
+  // değişiminde sıfırlanır.
+  const [publishNewBadgeTouched, setPublishNewBadgeTouched] = useState(false);
+  const badgeProductIdRef = useRef<string | null>(null);
   const [catalogDetailId, setCatalogDetailId] = useState<string | null>(null);
 
   const bootstrapQuery = useQuery({
@@ -705,6 +740,13 @@ export function useWooMakeState(): WooMakeState {
     // Override varsa onu, yoksa türetilen profili göster; yıl varsa doldur.
     setPublishProfile(product.woocommerce_publish_profile || product.resolved_publish_profile || '');
     setPublishYear(product.production_year ? String(product.production_year) : '');
+    // R1-21: rozet default'u YALNIZ ürün değişince kur — fotoğraf/AI kayıt
+    // refetch'leri operatörün işaretini ezmesin.
+    if (badgeProductIdRef.current !== product.id) {
+      badgeProductIdRef.current = product.id;
+      setPublishNewBadge(!product.is_published_to_site);
+      setPublishNewBadgeTouched(false);
+    }
   }, [detailQuery.data]);
 
   async function invalidateProduct(productId?: string | null) {
@@ -768,6 +810,10 @@ export function useWooMakeState(): WooMakeState {
           category_ids: publishCategoryIds,
           publish_profile: publishProfile || '',
           production_year: publishYear.trim() ? Number(publishYear) : 0,
+          // İlk yayın veya operatör dokunduysa açık değer; yoksa null =
+          // mevcut rozete dokunma (backend None'ı atlar).
+          mark_as_new:
+            !detailQuery.data?.is_published_to_site || publishNewBadgeTouched ? publishNewBadge : null,
         }),
       }),
     onSuccess: async (payload) => {
@@ -778,7 +824,11 @@ export function useWooMakeState(): WooMakeState {
       // Kısmi sorunlar (ör. yüklenemeyen fotoğraf) yayını durdurmaz ama
       // operatör görmeden geçmemeli.
       for (const warning of payload.warnings || []) {
-        toast.error('Yayın uyarısı', warning);
+        // R1-27: StoneX haritası boşsa operatörü doğrudan probe akışına yönlendir.
+        const enriched = warning.includes('StoneX meta haritası boş')
+          ? warning + ' Ayarlar → WooCommerce eşlemeleri bölümündeki probe aracıyla bir kez doldurun.'
+          : warning;
+        toast.error('Yayın uyarısı', enriched);
       }
     },
     onError: (error) => toast.error('Ürün yayınlanamadı', extractApiMessage(error, 'Sunucu hatası')),
@@ -868,6 +918,8 @@ export function useWooMakeState(): WooMakeState {
             regular_price_dkk: Number(draft.satisHasJiyati || draft.alimFiyati || '0'),
             name: draft.urunAdi.trim() || undefined,
             category_ids: draft.kategoriIds,
+            // R1-21: wizard yayını tanımı gereği ilk yayın — rozet işaretli.
+            mark_as_new: true,
           }),
         });
         current = payload.product;
@@ -966,6 +1018,19 @@ export function useWooMakeState(): WooMakeState {
     onError: (error) => toast.error('Yayından kaldırılamadı', extractApiMessage(error, 'Sunucu hatası')),
   });
 
+  const catalogContentMutation = useMutation({
+    mutationFn: ({ catalogItemId, body }: { catalogItemId: string; body: WooCatalogContentUpdate }) =>
+      apiRequest<WooCatalogItemDetail>(`/api/v2/woocommerce/catalog/${catalogItemId}/content`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: async () => {
+      await invalidateCatalogDetail();
+      toast.success('Katalog içeriği sitede güncellendi');
+    },
+    onError: (error) => toast.error('İçerik güncellenemedi', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
   const refreshCategories = useCallback(async () => {
     try {
       const payload = await apiRequest<WooCategoriesPayload>('/api/v2/woocommerce/categories?refresh=true');
@@ -1049,6 +1114,24 @@ export function useWooMakeState(): WooMakeState {
         manualReviewMutation.mutate(detailQuery.data.id);
       }
     },
+    fetchPublishPreview: async () => {
+      const product = detailQuery.data;
+      if (!product) return null;
+      try {
+        const params = new URLSearchParams();
+        const price = Number(publishPrice || '0');
+        if (price > 0) params.set('regular_price_dkk', String(price));
+        const previewName = product.display_name || secilen?.urun || '';
+        if (previewName) params.set('name', previewName);
+        // Kaydedilmemiş panel seçimleri de önizlemeye girer (backend rollback'ler).
+        params.set('category_ids', publishCategoryIds.join(','));
+        if (publishProfile) params.set('publish_profile', publishProfile);
+        if (publishYear.trim()) params.set('production_year', publishYear.trim());
+        return await apiRequest<WooPublishPreview>(`/api/products/${product.id}/publish-preview?${params.toString()}`);
+      } catch {
+        return null;
+      }
+    },
     publish: () => {
       if (detailQuery.data) {
         publishMutation.mutate({
@@ -1118,6 +1201,11 @@ export function useWooMakeState(): WooMakeState {
     setPublishProfile,
     publishYear,
     setPublishYear,
+    publishNewBadge,
+    setPublishNewBadge: (value: boolean) => {
+      setPublishNewBadgeTouched(true);
+      setPublishNewBadge(value);
+    },
     togglePublishCategory,
     catalogDetailId,
     openCatalogDetail: setCatalogDetailId,
@@ -1126,8 +1214,19 @@ export function useWooMakeState(): WooMakeState {
     linkCatalogItem: (catalogItemId: string, productId: string) => catalogLinkMutation.mutate({ catalogItemId, productId }),
     unlinkCatalogItem: (catalogItemId: string) => catalogUnlinkMutation.mutate(catalogItemId),
     unpublishCatalogItem: (catalogItemId: string) => catalogUnpublishMutation.mutate(catalogItemId),
+    updateCatalogContent: async (catalogItemId: string, body: WooCatalogContentUpdate) => {
+      try {
+        await catalogContentMutation.mutateAsync({ catalogItemId, body });
+        return true;
+      } catch {
+        return false;
+      }
+    },
     isCatalogActionPending:
-      catalogLinkMutation.isPending || catalogUnlinkMutation.isPending || catalogUnpublishMutation.isPending,
+      catalogLinkMutation.isPending ||
+      catalogUnlinkMutation.isPending ||
+      catalogUnpublishMutation.isPending ||
+      catalogContentMutation.isPending,
   };
 }
 

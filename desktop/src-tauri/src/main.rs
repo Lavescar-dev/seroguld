@@ -903,7 +903,21 @@ impl RuntimeSupervisor {
         loop {
             match launched.child.try_wait() {
                 Ok(Some(status)) => {
-                    return Err(format!("Excel bridge başlatılamadı: {status}"));
+                    // R2-11: exit kodunu okunabilir Danca nedene çevir. Runtime
+                    // excel-bridge modunda türe göre kod veriyor (10/11/12).
+                    let reason = match status.code() {
+                        Some(10) => {
+                            "Excel-sessionens konfiguration er ugyldig (arbejdsmappe uden for det tilladte område)."
+                        }
+                        Some(11) => "Arbejdsmappen (Excel-filen) blev ikke fundet.",
+                        Some(12) => {
+                            "Microsoft Excel er ikke installeret eller kunne ikke startes (COM ikke tilgængelig)."
+                        }
+                        _ => "Excel kunne ikke startes af en ukendt årsag.",
+                    };
+                    return Err(format!(
+                        "{reason} (Excel-bro afsluttede: {status}). Detaljer i loggen."
+                    ));
                 }
                 Ok(None) if Instant::now() < probe_deadline => {
                     sleep(Duration::from_millis(50));
@@ -2959,6 +2973,49 @@ async fn pick_identity_scan_file(side: String) -> Result<IdentityScanResult, Ide
     }
 }
 
+/// R2-03 — sürükle-bırakla gelen kimlik görüntüsü. Webview'daki File nesnesinin
+/// OS yolu yoktur; bayt içeriği base64 ile alınır, geçici kimlik-tarama dizinine
+/// yazılır, aynı OCR hattından geçirilir ve geçici dosya hemen silinir (kalıcı
+/// kopya tutulmaz — mevcut tarama yaşam döngüsüyle birebir aynı gizlilik).
+#[tauri::command]
+async fn identity_scan_from_bytes(
+    app: AppHandle,
+    side: String,
+    data_base64: String,
+) -> Result<IdentityScanResult, IdentityScannerError> {
+    validate_identity_scan_side(&side)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let bytes = BASE64
+            .decode(data_base64.as_bytes())
+            .map_err(|_| IdentityScannerError::invalid_image())?;
+        if bytes.is_empty() || bytes.len() > IDENTITY_SCAN_MAX_BYTES {
+            return Err(IdentityScannerError::file_too_large());
+        }
+        let mime = identity_mime_type(&bytes).ok_or_else(IdentityScannerError::invalid_image)?;
+        let extension = match mime {
+            "image/jpeg" => "jpg",
+            "image/png" => "png",
+            "image/tiff" => "tif",
+            "image/bmp" => "bmp",
+            _ => return Err(IdentityScannerError::invalid_image()),
+        };
+        let temp = TemporaryIdentityImage::new(&app)?;
+        let target = temp.directory.join(format!("identity-drop.{extension}"));
+        fs::write(&target, &bytes).map_err(|_| IdentityScannerError::acquisition_failed())?;
+        let result = build_windows_identity_scan_result(&side, "file", &target);
+        let _ = fs::remove_file(&target);
+        result
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, side, data_base64);
+        Err(IdentityScannerError::unsupported_platform())
+    }
+}
+
 /// Scans are returned directly to the frontend and are never persisted by the desktop shell.
 /// This command lets callers use one explicit lifecycle method without retaining file paths.
 #[tauri::command]
@@ -3563,6 +3620,7 @@ fn main() {
             get_identity_scanner_capabilities,
             acquire_identity_scan,
             pick_identity_scan_file,
+            identity_scan_from_bytes,
             discard_identity_scan,
             pick_document_import_file,
             export_document_bytes,

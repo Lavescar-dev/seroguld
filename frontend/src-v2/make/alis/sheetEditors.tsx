@@ -1,6 +1,7 @@
-import { type Dispatch, type SetStateAction } from 'react';
+import { AFG_DECLARATION_HEADER, AFG_DECLARATION_ITEMS, FIRMA_FOOTER_LINE } from '@/lib/firma';
+import { type Dispatch, type SetStateAction, useState } from 'react';
 
-import { formatNumber } from '@/lib/format';
+import { formatMoney, formatNumber } from '@/lib/format';
 import type { PosWorkspace, PosWorkspaceBankInfo, PosWorkspaceMarketRates } from '@/types';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
@@ -9,6 +10,7 @@ import type {
   CompanionMode,
   EditableBarRow,
   EditablePtPdRow,
+  EditableExtraRow,
   EditableCustomer,
   EditableGoldRow,
   EditableInvoiceGoldRow,
@@ -57,10 +59,26 @@ function computeInvoiceGoldLodighed(row: EditableInvoiceGoldRow) {
   return row.fineness.trim() || INVOICE_GOLD_DEFAULT_LODIGHED[row.code] || row.lodighed || '—';
 }
 
+function findGoldRatePerKarat(marketRates: PosWorkspaceMarketRates, karat: number): number | null {
+  const rates = marketRates.gold_rates_dkk || {};
+  for (const [key, value] of Object.entries(rates)) {
+    if (Math.abs(parseDecimalValue(key) - karat) < 0.001) {
+      const numeric = parseDecimalValue(value);
+      if (numeric > 0) return numeric;
+    }
+  }
+  return null;
+}
+
 function computeInvoiceGoldUnitPrice(row: EditableInvoiceGoldRow, marketRates: PosWorkspaceMarketRates) {
   if (row.code === '1') {
     const karat = parseDecimalValue(row.fineness);
     if (karat > 0) {
+      // CANLI TEK KAYNAK: per-karat oran DOĞRUDAN kullanılır; 24K'dan doğrusal
+      // TÜRETME (× karat / 24) YOK — 8K=750 iken 950'ye dönüşen hata biter.
+      const perKarat = findGoldRatePerKarat(marketRates, karat);
+      if (perKarat != null) return perKarat;
+      // Standart olmayan ayar (matriste yok) için son çare orantısal tahmin.
       return (parseDecimalValue(marketRates.gold_24k_dkk) * karat) / 24;
     }
   }
@@ -92,10 +110,14 @@ export function AfregningsSheetEditor({
   silverRows,
   barRows,
   ptpdRows,
+  extraRows,
   onUpdateGoldRow,
   onUpdateSilverRow,
   onUpdateBarRow,
   onUpdatePtPdRow,
+  onUpdateExtraRow,
+  onDeleteExtraRow,
+  onAddExtraRows,
   bankInfo,
   setBankInfo,
 }: {
@@ -105,10 +127,14 @@ export function AfregningsSheetEditor({
   silverRows: EditableSilverRow[];
   barRows: EditableBarRow[];
   ptpdRows: EditablePtPdRow[];
+  extraRows: EditableExtraRow[];
   onUpdateGoldRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateSilverRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdateBarRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
   onUpdatePtPdRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onDeleteExtraRow: (rowKey: string) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
   bankInfo: PosWorkspaceBankInfo;
   setBankInfo: Dispatch<SetStateAction<PosWorkspaceBankInfo>>;
   paymentMethod: PaymentMethod;
@@ -137,11 +163,11 @@ export function AfregningsSheetEditor({
               <th className="w-8 border border-brand-300 bg-brand-100 px-3 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600">#</th>
               <th className="w-12 border border-brand-300 bg-brand-100 px-3 py-2.5 text-center text-xs font-black uppercase tracking-wider text-brand-600">Type</th>
               <th className="border border-brand-300 bg-brand-100 px-3 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600">Açıklama</th>
-              <th className="w-28 border border-orange-200 bg-orange-50 px-3 py-2.5 text-center text-xs font-black uppercase tracking-wider text-orange-700">Avance %</th>
+              <th className="w-28 border border-orange-200 bg-orange-50 px-3 py-2.5 text-center text-xs font-black uppercase tracking-wider text-orange-700">Mer pris (kr/g)</th>
               <th className="w-24 border border-brand-300 bg-brand-100 px-3 py-2.5 text-center text-xs font-black uppercase tracking-wider text-brand-600">Karat</th>
               <th className="w-20 border border-brand-300 bg-brand-100 px-3 py-2.5 text-center text-xs font-black uppercase tracking-wider text-brand-600">Lødighed</th>
               <th className="w-28 border border-amber-300 bg-amber-100 px-3 py-2.5 text-center text-xs font-black uppercase tracking-wider text-amber-800">Vægt i g</th>
-              <th className="w-32 border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-right text-xs font-black uppercase tracking-wider text-emerald-700">Enhedspris/g</th>
+              <th className="w-32 border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-right text-xs font-black uppercase tracking-wider text-emerald-700" title="Matris oranı + Mer pris — satırın EFEKTİF birim fiyatı">Enhedspris/g · inkl. mer pris</th>
               <th className="w-36 border border-emerald-300 bg-emerald-100 px-3 py-2.5 text-right text-xs font-black uppercase tracking-wider text-emerald-800">I alt (DKK)</th>
             </tr>
           </thead>
@@ -166,11 +192,11 @@ export function AfregningsSheetEditor({
                     <div className="flex items-center">
                       <CommittedNumericInput
                         value={row.avance_percent}
-                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }}
                         onCommit={(_, canonical) => onUpdateGoldRow(row.row_key, 'avance_percent', canonical)}
                         className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
                       />
-                      <span className="ml-1 text-xs font-bold text-orange-400">%</span>
+                      <span className="ml-1 text-xs font-bold text-orange-400">kr/g</span>
                     </div>
                   </td>
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-bold text-amber-700">{row.karat}</td>
@@ -210,61 +236,7 @@ export function AfregningsSheetEditor({
                 </div>
               </td>
             </tr>
-            {silverRows.map((row, index) => {
-              const hasGram = parseDecimalValue(row.gram) > 0;
-              return (
-                <tr
-                  key={row.row_key}
-                  className={`border-b transition-colors ${hasGram ? 'border-slate-200 border-l-4 border-l-slate-400' : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
-                  style={{ background: hasGram ? '#f8fafc' : '#ffffff' }}
-                >
-                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + index + 1}</td>
-                  <td className="border border-brand-300 px-2 py-2.5 text-center">
-                    <span className="mono bg-slate-200 px-2 py-0.5 text-xs font-black text-slate-700">{row.type_code}</span>
-                  </td>
-                  <td className="border border-brand-300 px-3 py-2.5">
-                    <span className="text-sm font-semibold text-brand-800">{row.label}</span>
-                    <span className="mono ml-2 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{row.lodighed}‰</span>
-                  </td>
-                  <td className="border border-orange-300 bg-orange-50 px-1.5 py-2">
-                    <div className="flex items-center">
-                      <CommittedNumericInput
-                        value={row.avance_percent}
-                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
-                        onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'avance_percent', canonical)}
-                        className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
-                      />
-                      <span className="ml-1 text-xs font-bold text-orange-400">%</span>
-                    </div>
-                  </td>
-                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-300">—</td>
-                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-semibold text-slate-500">{row.lodighed}</td>
-                  <td className="border border-slate-300 bg-slate-50 px-1.5 py-2">
-                    <CommittedNumericInput
-                      value={row.gram}
-                      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
-                      onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'gram', canonical)}
-                      className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
-                        hasGram
-                          ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'
-                          : 'border-slate-200 bg-white text-brand-700 focus:border-slate-400'
-                      }`}
-                    />
-                  </td>
-                  <td className="mono border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-right text-sm">
-                    <span className={hasGram ? 'font-semibold text-emerald-700' : 'text-brand-300'}>
-                      {hasGram ? Number(row.unit_price_dkk).toFixed(2) : '—'}
-                    </span>
-                  </td>
-                  <td className={`mono border px-3 py-2.5 text-right text-sm ${
-                    hasGram ? 'border-slate-300 bg-slate-100 font-black text-slate-800' : 'border-brand-300 bg-brand-50 text-brand-300'
-                  }`}>
-                    {hasGram ? Number(row.line_total_dkk).toFixed(2) : '—'}
-                  </td>
-                </tr>
-              );
-            })}
-            {barRows.map((row, index) => {
+            {barRows.filter((row) => row.bar_type === 'gold').map((row, index) => {
               const hasGram = parseDecimalValue(row.gram) > 0;
               const isGold = row.bar_type === 'gold';
               return (
@@ -285,11 +257,11 @@ export function AfregningsSheetEditor({
                     <div className="flex items-center">
                       <CommittedNumericInput
                         value={row.avance_percent}
-                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }}
                         onCommit={(_, canonical) => onUpdateBarRow(row.row_key, 'avance_percent', canonical)}
                         className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
                       />
-                      <span className="ml-1 text-xs font-bold text-orange-400">%</span>
+                      <span className="ml-1 text-xs font-bold text-orange-400">kr/g</span>
                     </div>
                   </td>
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-500">{isGold ? '24' : '—'}</td>
@@ -299,6 +271,115 @@ export function AfregningsSheetEditor({
                       value={row.gram}
                       rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
                       onCommit={(_, canonical) => onUpdateBarRow(row.row_key, 'gram', canonical)}
+                      className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
+                        hasGram
+                          ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'
+                          : 'border-slate-200 bg-white text-brand-700 focus:border-slate-400'
+                      }`}
+                    />
+                  </td>
+                  <td className="mono border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-right text-sm">
+                    <span className={hasGram ? 'font-semibold text-emerald-700' : 'text-brand-300'}>
+                      {hasGram ? Number(row.unit_price_dkk).toFixed(2) : '—'}
+                    </span>
+                  </td>
+                  <td className={`mono border px-3 py-2.5 text-right text-sm ${
+                    hasGram ? 'border-slate-300 bg-slate-100 font-black text-slate-800' : 'border-brand-300 bg-brand-50 text-brand-300'
+                  }`}>
+                    {hasGram ? Number(row.line_total_dkk).toFixed(2) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+            {barRows.filter((row) => row.bar_type === 'silver').map((row, index) => {
+              const hasGram = parseDecimalValue(row.gram) > 0;
+              const isGold = row.bar_type === 'gold';
+              return (
+                <tr
+                  key={row.row_key}
+                  className={`border-b transition-colors ${hasGram ? (isGold ? 'border-amber-200 border-l-4 border-l-amber-500' : 'border-slate-200 border-l-4 border-l-slate-500') : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
+                  style={{ background: hasGram ? (isGold ? '#fffbeb' : '#f8fafc') : '#ffffff' }}
+                >
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + silverRows.length + index + 1}</td>
+                  <td className="border border-brand-300 px-2 py-2.5 text-center">
+                    <span className={`mono px-2 py-0.5 text-xs font-black ${isGold ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-700'}`}>{isGold ? '6' : '7'}</span>
+                  </td>
+                  <td className="border border-brand-300 px-3 py-2.5">
+                    <span className="text-sm font-semibold text-brand-800">{row.label}</span>
+                    <span className="mono ml-2 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{row.lodighed}‰</span>
+                  </td>
+                  <td className="border border-orange-300 bg-orange-50 px-1.5 py-2">
+                    <div className="flex items-center">
+                      <CommittedNumericInput
+                        value={row.avance_percent}
+                        rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }}
+                        onCommit={(_, canonical) => onUpdateBarRow(row.row_key, 'avance_percent', canonical)}
+                        className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
+                      />
+                      <span className="ml-1 text-xs font-bold text-orange-400">kr/g</span>
+                    </div>
+                  </td>
+                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-500">{isGold ? '24' : '—'}</td>
+                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-semibold text-slate-500">{row.lodighed}</td>
+                  <td className="border border-slate-300 bg-slate-50 px-1.5 py-2">
+                    <CommittedNumericInput
+                      value={row.gram}
+                      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                      onCommit={(_, canonical) => onUpdateBarRow(row.row_key, 'gram', canonical)}
+                      className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
+                        hasGram
+                          ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'
+                          : 'border-slate-200 bg-white text-brand-700 focus:border-slate-400'
+                      }`}
+                    />
+                  </td>
+                  <td className="mono border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-right text-sm">
+                    <span className={hasGram ? 'font-semibold text-emerald-700' : 'text-brand-300'}>
+                      {hasGram ? Number(row.unit_price_dkk).toFixed(2) : '—'}
+                    </span>
+                  </td>
+                  <td className={`mono border px-3 py-2.5 text-right text-sm ${
+                    hasGram ? 'border-slate-300 bg-slate-100 font-black text-slate-800' : 'border-brand-300 bg-brand-50 text-brand-300'
+                  }`}>
+                    {hasGram ? Number(row.line_total_dkk).toFixed(2) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+            {silverRows.map((row, index) => {
+              const hasGram = parseDecimalValue(row.gram) > 0;
+              return (
+                <tr
+                  key={row.row_key}
+                  className={`border-b transition-colors ${hasGram ? 'border-slate-200 border-l-4 border-l-slate-400' : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
+                  style={{ background: hasGram ? '#f8fafc' : '#ffffff' }}
+                >
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + index + 1}</td>
+                  <td className="border border-brand-300 px-2 py-2.5 text-center">
+                    <span className="mono bg-slate-200 px-2 py-0.5 text-xs font-black text-slate-700">{row.type_code}</span>
+                  </td>
+                  <td className="border border-brand-300 px-3 py-2.5">
+                    <span className="text-sm font-semibold text-brand-800">{row.label}</span>
+                    <span className="mono ml-2 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{row.lodighed}‰</span>
+                  </td>
+                  <td className="border border-orange-300 bg-orange-50 px-1.5 py-2">
+                    <div className="flex items-center">
+                      <CommittedNumericInput
+                        value={row.avance_percent}
+                        rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }}
+                        onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'avance_percent', canonical)}
+                        className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
+                      />
+                      <span className="ml-1 text-xs font-bold text-orange-400">kr/g</span>
+                    </div>
+                  </td>
+                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-300">—</td>
+                  <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm font-semibold text-slate-500">{row.lodighed}</td>
+                  <td className="border border-slate-300 bg-slate-50 px-1.5 py-2">
+                    <CommittedNumericInput
+                      value={row.gram}
+                      rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                      onCommit={(_, canonical) => onUpdateSilverRow(row.row_key, 'gram', canonical)}
                       className={`mono w-full border px-2 py-1 text-center text-sm font-bold outline-none ${
                         hasGram
                           ? 'border-slate-400 bg-white text-slate-900 focus:border-slate-600'
@@ -340,11 +421,11 @@ export function AfregningsSheetEditor({
                     <div className="flex items-center">
                       <CommittedNumericInput
                         value={row.avance_percent}
-                        rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 2 }}
+                        rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }}
                         onCommit={(_, canonical) => onUpdatePtPdRow(row.row_key, 'avance_percent', canonical)}
                         className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
                       />
-                      <span className="ml-1 text-xs font-bold text-orange-400">%</span>
+                      <span className="ml-1 text-xs font-bold text-orange-400">kr/g</span>
                     </div>
                   </td>
                   <td className="mono border border-brand-300 px-3 py-2.5 text-center text-sm text-brand-500">—</td>
@@ -409,6 +490,14 @@ export function AfregningsSheetEditor({
         </table>
       </div>
 
+      <ExtraRowsPanel
+        extraRows={extraRows}
+        marketRates={workspace.market_rates}
+        onUpdateExtraRow={onUpdateExtraRow}
+        onDeleteExtraRow={onDeleteExtraRow}
+        onAddExtraRows={onAddExtraRows}
+      />
+
       <div className="grid grid-cols-2 divide-x-2 divide-brand-200 border-t-2 border-brand-300">
         <div className="bg-brand-50 px-6 py-4">
           <div className="mb-4 flex items-center gap-2">
@@ -469,7 +558,7 @@ export function AfregningsSheetEditor({
               <tr className="border-b border-brand-200">
                 <td className="py-2.5 text-xs font-bold uppercase tracking-wider text-brand-600">Subtotal</td>
                 <td className="py-2.5 text-right font-semibold text-brand-900" style={monoStyle}>
-                  {Number(workspace.summary.total_amount_dkk || 0).toFixed(2)} DKK
+                  {formatMoney(workspace.summary.total_amount_dkk || 0)}
                 </td>
               </tr>
               <tr className="border-b border-brand-200">
@@ -513,11 +602,14 @@ export function AfregningsSheetEditor({
           </div>
           <div>
             <p className="mb-3 text-xs font-black uppercase tracking-widest text-brand-600">Erklæring</p>
-            <p className="text-xs leading-relaxed text-brand-500">
-              Undertegnede erklærer hermed, at de solgte varer er min ejendom og sælges frivilligt. Varerne kan ikke
-              returneres efter afregning. Prisen er beregnet på baggrund af dagens guld- og sølvpris.
-            </p>
-            <p className="mt-2 text-xs text-brand-400">Sero Guld · Tlf: +45 00 00 00 00 · CVR: 00 00 00 00</p>
+            {/* R2-09: belgeyle birebir 3 maddelik beyan (PEP dahil); X3: gerçek Tlf/CVR. */}
+            <p className="text-xs font-semibold text-brand-600">{AFG_DECLARATION_HEADER}</p>
+            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs leading-relaxed text-brand-500">
+              {AFG_DECLARATION_ITEMS.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-brand-400">{FIRMA_FOOTER_LINE}</p>
           </div>
         </div>
       </div>
@@ -612,7 +704,7 @@ export function InvoiceGoldSheetEditor({
                 <th className="w-36 border border-brand-200 bg-brand-100 px-3 py-2 text-left text-[10px] font-black uppercase tracking-widest text-brand-500">Finhed / Karat</th>
                 <th className="w-28 border border-brand-200 bg-brand-100 px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-brand-500">Lødighed</th>
                 <th className="w-32 border border-amber-200 bg-amber-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-amber-700">Gram</th>
-                <th className="w-36 border border-emerald-200 bg-emerald-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-emerald-700">Enhedspris / g</th>
+                <th className="w-36 border border-emerald-200 bg-emerald-50 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-emerald-700" title="Matris oranı + Mer pris — satırın EFEKTİF birim fiyatı">Enhedspris / g · inkl. mer pris</th>
                 <th className="w-40 border border-emerald-300 bg-emerald-100 px-3 py-2 text-right text-[10px] font-black uppercase tracking-widest text-emerald-800">I alt</th>
               </tr>
             </thead>
@@ -831,6 +923,253 @@ export function InvoiceMiscSheetEditor({
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// R2-01 — "Kniv / Çeyrek altın" paneli (gümüş bölümünün altında).
+// Çeyrek altın: sabit gramajlar 1,75 / 3,508 / 7,016 / 17,54 g — varsayılan 22K
+// (karat seçilebilir). Kniv: sabit gramajlar 4 / 6 / 8 / 10 g — gümüş
+// (saflık seçilebilir). Adet girilir, blok "I alt" toplamı görünür, blok
+// bazında TEK aktarım butonu AFG'ye YENİ satır ekler (üzerine yazmaz, ikinci
+// kez aktarılamaz — buton aktarınca adetleri sıfırlar). Eklenen satırlar
+// listede görünür, gram/mer pris düzenlenebilir ve silinebilir (R2-08).
+
+const QUARTER_WEIGHTS = [
+  { key: 'ceyrek', label: 'Çeyrek', gram: 1.75 },
+  { key: 'yarim', label: 'Yarım', gram: 3.508 },
+  { key: 'tam', label: 'Tam', gram: 7.016 },
+  { key: 'ata', label: 'Ata', gram: 17.54 },
+] as const;
+
+const KNIV_WEIGHTS = [
+  { key: 'k4', label: 'Kniv 4 g', gram: 4 },
+  { key: 'k6', label: 'Kniv 6 g', gram: 6 },
+  { key: 'k8', label: 'Kniv 8 g', gram: 8 },
+  { key: 'k10', label: 'Kniv 10 g', gram: 10 },
+] as const;
+
+const QUARTER_KARAT_OPTIONS = ['22', '22b', '21.6', '24'] as const;  // R2-10: 22b = ikinci 22K seviyesi
+const KNIV_SILVER_OPTIONS = [
+  { key: '999', label: 'Finsølv 999' },
+  { key: '925', label: 'Sterling 925' },
+  { key: '830', label: '3 tårnet 830' },
+] as const;
+
+function ExtraRowsPanel({
+  extraRows,
+  marketRates,
+  onUpdateExtraRow,
+  onDeleteExtraRow,
+  onAddExtraRows,
+}: {
+  extraRows: EditableExtraRow[];
+  marketRates: PosWorkspaceMarketRates;
+  onUpdateExtraRow: (rowKey: string, field: 'gram' | 'avance_percent', value: string) => void;
+  onDeleteExtraRow: (rowKey: string) => void;
+  onAddExtraRows: (rows: Array<{ kind: 'kniv' | 'quarter'; metal: 'gold' | 'silver'; karat: string; label: string; gram: number }>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [quarterKarat, setQuarterKarat] = useState<string>('22');
+  const [knivPurity, setKnivPurity] = useState<string>('999');
+  const [quarterCounts, setQuarterCounts] = useState<Record<string, string>>({});
+  const [knivCounts, setKnivCounts] = useState<Record<string, string>>({});
+
+  const quarterRate = parseDecimalValue(marketRates.gold_rates_dkk?.[quarterKarat] ?? '0');
+  const knivRate = parseDecimalValue(marketRates.silver_rates_dkk?.[knivPurity] ?? '0');
+
+  const quarterTotalGram = QUARTER_WEIGHTS.reduce(
+    (sum, item) => sum + item.gram * (parseDecimalValue(quarterCounts[item.key] || '0') || 0), 0,
+  );
+  const knivTotalGram = KNIV_WEIGHTS.reduce(
+    (sum, item) => sum + item.gram * (parseDecimalValue(knivCounts[item.key] || '0') || 0), 0,
+  );
+
+  function transferQuarter() {
+    if (quarterTotalGram <= 0) return;
+    onAddExtraRows(
+      QUARTER_WEIGHTS
+        .map((item) => ({ item, count: Math.max(0, Math.floor(parseDecimalValue(quarterCounts[item.key] || '0'))) }))
+        .filter(({ count }) => count > 0)
+        .map(({ item, count }) => ({
+          kind: 'quarter' as const,
+          metal: 'gold' as const,
+          karat: quarterKarat,
+          label: `${item.label} altın × ${count}`,
+          gram: item.gram * count,
+        })),
+    );
+    setQuarterCounts({});
+  }
+
+  function transferKniv() {
+    if (knivTotalGram <= 0) return;
+    onAddExtraRows(
+      KNIV_WEIGHTS
+        .map((item) => ({ item, count: Math.max(0, Math.floor(parseDecimalValue(knivCounts[item.key] || '0'))) }))
+        .filter(({ count }) => count > 0)
+        .map(({ item, count }) => ({
+          kind: 'kniv' as const,
+          metal: 'silver' as const,
+          karat: knivPurity,
+          label: `${item.label} × ${count}`,
+          gram: item.gram * count,
+        })),
+    );
+    setKnivCounts({});
+  }
+
+  return (
+    <div className="border-t-2 border-brand-300">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between bg-brand-800 px-4 py-2 text-left"
+      >
+        <span className="text-xs font-black uppercase tracking-widest text-brand-300">
+          Kniv / Çeyrek altın {extraRows.length > 0 ? `· ${extraRows.length} satır` : ''}
+        </span>
+        <span className="text-xs font-bold text-brand-300">{open ? '▲ Kapat' : '▼ Aç'}</span>
+      </button>
+
+      {extraRows.length > 0 ? (
+        <table className="w-full border-collapse">
+          <tbody>
+            {extraRows.map((row) => (
+              <tr key={row.row_key} className="border-b border-brand-200 bg-violet-50/40">
+                <td className="border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-800">
+                  {row.label}
+                  <span className="ml-2 bg-violet-100 px-1.5 py-0.5 text-xs font-bold text-violet-700">
+                    {row.kind === 'quarter' ? `${row.karat}K` : `Sølv ${row.karat}`}
+                  </span>
+                </td>
+                <td className="border border-orange-300 bg-orange-50 px-1.5 py-2" style={{ width: '7rem' }}>
+                  <div className="flex items-center">
+                    <CommittedNumericInput
+                      value={row.avance_percent}
+                      rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }}
+                      onCommit={(_, canonical) => onUpdateExtraRow(row.row_key, 'avance_percent', canonical)}
+                      className="mono w-full border border-orange-200 bg-white px-2 py-1 text-center text-sm text-orange-800 outline-none focus:border-orange-500"
+                    />
+                    <span className="ml-1 text-xs font-bold text-orange-400">kr/g</span>
+                  </div>
+                </td>
+                <td className="border border-amber-300 bg-amber-50 px-1.5 py-2" style={{ width: '8rem' }}>
+                  <CommittedNumericInput
+                    value={row.gram}
+                    rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }}
+                    onCommit={(_, canonical) => onUpdateExtraRow(row.row_key, 'gram', canonical)}
+                    className="mono w-full border border-amber-400 bg-white px-2 py-1 text-center text-sm font-bold text-amber-900 outline-none focus:border-amber-600"
+                  />
+                </td>
+                <td className="mono border border-emerald-300 bg-emerald-50 px-3 py-2 text-right text-sm font-semibold text-emerald-700" style={{ width: '9rem' }}>
+                  {formatNumber(row.line_total_dkk)}
+                  <span className="ml-1 text-xs text-emerald-400">DKK</span>
+                </td>
+                <td className="border border-rose-200 px-1.5 py-2 text-center" style={{ width: '4rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteExtraRow(row.row_key)}
+                    aria-label={`${row.label} satırını sil`}
+                    className="border border-rose-300 bg-rose-50 px-2 py-1 text-xs font-black text-rose-700 hover:bg-rose-100"
+                  >
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      {open ? (
+        <div className="grid grid-cols-2 divide-x-2 divide-brand-200 bg-brand-50">
+          <div className="px-4 py-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-black uppercase tracking-widest text-amber-700">Çeyrek altın</p>
+              <select
+                value={quarterKarat}
+                onChange={(event) => setQuarterKarat(event.target.value)}
+                aria-label="Çeyrek altın karat"
+                className="border border-amber-300 bg-white px-2 py-1 text-xs font-bold text-amber-800"
+              >
+                {QUARTER_KARAT_OPTIONS.map((karat) => (
+                  <option key={karat} value={karat}>{karat}K · {formatDecimalFixed(marketRates.gold_rates_dkk?.[karat] ?? '0')} kr/g</option>
+                ))}
+              </select>
+            </div>
+            {QUARTER_WEIGHTS.map((item) => (
+              <div key={item.key} className="mb-1 flex items-center gap-2">
+                <span className="mono w-28 text-xs font-semibold text-brand-700">{item.label} · {item.gram} g</span>
+                <CommittedNumericInput
+                  value={quarterCounts[item.key] || ''}
+                  rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 0 }}
+                  onCommit={(_, canonical) => setQuarterCounts((current) => ({ ...current, [item.key]: canonical }))}
+                  className="mono w-16 border border-brand-300 bg-white px-2 py-1 text-center text-sm"
+                  aria-label={`${item.label} adet`}
+                />
+                <span className="text-xs text-brand-400">adet</span>
+              </div>
+            ))}
+            <div className="mt-2 flex items-center justify-between border-t border-brand-200 pt-2">
+              <span className="mono text-xs font-bold text-brand-800">
+                I alt: {quarterTotalGram.toFixed(2)} g · {formatNumber(quarterTotalGram * quarterRate)} DKK
+              </span>
+              <button
+                type="button"
+                onClick={transferQuarter}
+                disabled={quarterTotalGram <= 0}
+                className="border border-amber-500 bg-amber-100 px-3 py-1 text-xs font-black uppercase text-amber-800 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Aktar
+              </button>
+            </div>
+          </div>
+
+          <div className="px-4 py-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-600">Kniv (sølv)</p>
+              <select
+                value={knivPurity}
+                onChange={(event) => setKnivPurity(event.target.value)}
+                aria-label="Kniv gümüş saflığı"
+                className="border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700"
+              >
+                {KNIV_SILVER_OPTIONS.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label} · {formatDecimalFixed(marketRates.silver_rates_dkk?.[option.key] ?? '0')} kr/g</option>
+                ))}
+              </select>
+            </div>
+            {KNIV_WEIGHTS.map((item) => (
+              <div key={item.key} className="mb-1 flex items-center gap-2">
+                <span className="mono w-28 text-xs font-semibold text-brand-700">{item.label}</span>
+                <CommittedNumericInput
+                  value={knivCounts[item.key] || ''}
+                  rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 0 }}
+                  onCommit={(_, canonical) => setKnivCounts((current) => ({ ...current, [item.key]: canonical }))}
+                  className="mono w-16 border border-brand-300 bg-white px-2 py-1 text-center text-sm"
+                  aria-label={`${item.label} adet`}
+                />
+                <span className="text-xs text-brand-400">adet</span>
+              </div>
+            ))}
+            <div className="mt-2 flex items-center justify-between border-t border-brand-200 pt-2">
+              <span className="mono text-xs font-bold text-brand-800">
+                I alt: {knivTotalGram.toFixed(2)} g · {formatNumber(knivTotalGram * knivRate)} DKK
+              </span>
+              <button
+                type="button"
+                onClick={transferKniv}
+                disabled={knivTotalGram <= 0}
+                className="border border-slate-500 bg-slate-100 px-3 py-1 text-xs font-black uppercase text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Aktar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

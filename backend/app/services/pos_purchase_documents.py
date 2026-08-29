@@ -283,7 +283,7 @@ async def build_purchase_workspace_csv_export(
         ["Adresse", workspace.customer.address or "—"],
         ["Postnr.", workspace.customer.postal_code or "—"],
         [],
-        ["Type", "Saflık", "Lødighed", "Gram", "Avance %", "Birim", "Toplam"],
+        ["Type", "Saflık", "Lødighed", "Gram", "Mer pris (kr/g)", "Birim", "Toplam"],
         *[
             [
                 line["type"],

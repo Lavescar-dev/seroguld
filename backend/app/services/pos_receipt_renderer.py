@@ -12,6 +12,8 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+from app.services.pos_value_helpers import display_metal_type_da
+
 _PDF_FONT_READY: tuple[str, str] | None = None
 
 
@@ -88,7 +90,7 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
             f"<td>{line.get('product_number', '-')}</td>"
             f"<td>{line.get('reference_number', '-')}</td>"
             f"<td>{line.get('product_type', '-')}</td>"
-            f"<td>{line.get('metal_type', '-')}</td>"
+            f"<td>{display_metal_type_da(line.get('metal_type'))}</td>"
             f"<td>{line.get('fineness_label', '-')}</td>"
             f"<td>{line.get('weight_grams', '-')} g</td>"
             f"<td>{line.get('pure_metal_grams', '-')} g</td>"
@@ -267,7 +269,7 @@ def render_pos_receipt_pdf(context: dict[str, Any]) -> bytes:
                 line.get("product_number", "-"),
                 line.get("reference_number", "-"),
                 line.get("product_type", "-"),
-                line.get("metal_type", "-"),
+                display_metal_type_da(line.get("metal_type")),
                 line.get("fineness_label", "-"),
                 f"{line.get('weight_grams', '-')} g",
                 f"{line.get('pure_metal_grams', '-')} g",

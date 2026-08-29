@@ -3,6 +3,7 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, us
 import {
   acquireIdentityScan,
   getIdentityScannerCapabilities,
+  identityScanFromBytes,
   pickIdentityScanFile,
 } from '@/lib/desktop';
 
@@ -376,7 +377,15 @@ export function useIdentityScan({
     if (!hasParsedIdentityFields(nextResult)) {
       if (!resultRef.current) setPreviews({});
       setStatus((current) => current === 'review' ? 'review' : 'error');
-      setError(raw ? 'Belge tanınamadı; kimlik bilgilerini elle girin.' : 'Tarayıcı metin sonucu döndürmedi.');
+      // R2-04: tek genel mesaj yerine neden sınıfı — OCR metin verdi mi,
+      // vermediyse cihaz/görüntü; verdiyse belge türü tanınmadı (hangi türler
+      // desteklendiği söylenir). Kısmi MRZ zaten merge ile korunuyor.
+      const lineCount = raw ? raw.split('\n').filter(Boolean).length : 0;
+      setError(
+        !raw
+          ? 'Tarayıcı/görüntü metin döndürmedi — görüntü kalitesini veya cihazı kontrol edin.'
+          : `Belge türü tanınamadı (${lineCount} satır okundu). Desteklenen: pas, ID-kort, kørekort, sundhedskort. Bilgileri elle girebilirsiniz.`,
+      );
       return;
     }
     setResult((current) => mergeIdentityResults(current, nextResult));
@@ -413,6 +422,26 @@ export function useIdentityScan({
     }
   }, [capabilities.file, receive]);
 
+  // R2-03 — sürükle-bırak: bırakılan görüntü doğrudan OCR akışına girer.
+  const dropFile = useCallback(async (file: File, side: 'front' | 'back' = 'front') => {
+    if (!capabilities.file) return;
+    setStatus('acquiring');
+    setError(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      let binary = '';
+      const view = new Uint8Array(buffer);
+      const chunk = 0x8000;
+      for (let index = 0; index < view.length; index += chunk) {
+        binary += String.fromCharCode(...view.subarray(index, index + chunk));
+      }
+      receive(await identityScanFromBytes(side, btoa(binary)), side);
+    } catch (scanError) {
+      setStatus('ready');
+      setError(scanError instanceof Error ? scanError.message : 'Kimlik dosyası okunamadı.');
+    }
+  }, [capabilities.file, receive]);
+
   const confirm = useCallback(() => {
     if (!result) return;
     setCustomer((current) => applyConfirmedIdentityResult(current, result));
@@ -437,8 +466,9 @@ export function useIdentityScan({
     error,
     acquire,
     pickFile,
+    dropFile,
     confirm,
     clear,
     refreshCapabilities,
-  }), [acquire, capabilities, clear, confirm, error, pickFile, previews, refreshCapabilities, result, status]);
+  }), [acquire, capabilities, clear, confirm, dropFile, error, pickFile, previews, refreshCapabilities, result, status]);
 }

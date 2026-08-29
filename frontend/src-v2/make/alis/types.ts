@@ -63,6 +63,23 @@ export type EditablePtPdRow = {
   line_total_dkk: string;
 };
 
+// R2-01 — dinamik "Kniv / Çeyrek altın" satırı. Gümüş bölümünün altındaki
+// sekmeden eklenir; sabit karat/bar tanımına oturmaz, kendi metal+karat
+// bilgisini taşır. quarter = çeyrek altın (varsayılan 22K), kniv = gümüş.
+export type EditableExtraRow = {
+  row_key: string;
+  kind: 'kniv' | 'quarter';
+  label: string;
+  metal: 'gold' | 'silver';
+  karat: string;
+  purity_percentage: string;
+  gram: string;
+  avance_percent: string;
+  rate_dkk: string;
+  unit_price_dkk: string;
+  line_total_dkk: string;
+};
+
 export type PaymentMethod = 'bank';
 export type CompanionMode = 'auto' | 'manual';
 export type WorkspaceSurfaceView = 'system' | 'excel';

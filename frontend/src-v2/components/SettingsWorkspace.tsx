@@ -29,7 +29,7 @@ import { getLocale, t } from '@/lib/locale';
 type SettingsVariant = 'classic' | 'modern';
 type ConfigKey = keyof ApiConfig;
 type CategoryKey = 'appearance' | 'market' | 'integrations' | 'data';
-type IntegrationKey = 'openai' | 'opmc' | 'metals' | 'woocommerce' | 'wordpress' | 'uniconta';
+type IntegrationKey = 'openai' | 'opmc' | 'woocommerce' | 'wordpress' | 'uniconta';
 
 type SettingsWorkspaceProps = {
   variant: SettingsVariant;
@@ -117,14 +117,6 @@ const INTEGRATIONS: Array<{
       { key: 'opmc_api_url', label: 'API URL', placeholder: 'https://api.opmc.dk/v1', wide: true },
       { key: 'opmc_api_key', label: 'API anahtarı (opsiyonel)', placeholder: 'opmc_...', secret: true },
       { key: 'opmc_webhook_secret', label: 'Webhook gizli anahtarı', placeholder: 'whsec_...', secret: true },
-    ],
-  },
-  {
-    key: 'metals',
-    label: 'metals.dev',
-    description: 'Canlı EUR/DKK kuru ve Platin/Palladyum fiyat beslemesi (DKK/gram).',
-    fields: [
-      { key: 'metals_dev_api_key', label: 'API anahtarı', placeholder: 'metals_...', secret: true, wide: true },
     ],
   },
   {
@@ -262,10 +254,10 @@ export function SettingsWorkspace({
   monitorSlot,
 }: SettingsWorkspaceProps) {
   const [category, setCategory] = useState<CategoryKey>('appearance');
-  const [integration, setIntegration] = useState<IntegrationKey>('openai');
+  // R1-18: entegrasyonlar accordion — tek seferde bir blok açık, null = hepsi kapalı.
+  const [integration, setIntegration] = useState<IntegrationKey | null>('openai');
   const classic = variant === 'classic';
   const activeCopy = CATEGORY_COPY[category];
-  const selectedIntegration = INTEGRATIONS.find((item) => item.key === integration) || INTEGRATIONS[0];
   const [forgetPasswordStatus, setForgetPasswordStatus] = useState<'idle' | 'saved' | 'failed'>('idle');
   const integrationStatus = useMemo(() => new Map(apiStatus.map((item) => [item.name.toLowerCase(), item.ok])), [apiStatus]);
 
@@ -375,29 +367,56 @@ export function SettingsWorkspace({
               {category === 'market' ? (
                 <div className="max-w-5xl space-y-7">
                   <div className={`p-4 ${classic ? 'border border-brand-200 bg-brand-50' : 'rounded-xl border border-slate-200 bg-slate-50'}`}>
-                    <label className="flex cursor-pointer items-start gap-4">
-                      <input type="checkbox" checked={Boolean(config.market_rates_live_enabled)} onChange={(event) => onUpdate('market_rates_live_enabled', event.target.checked)} className="mt-1 h-4 w-4 accent-blue-600" />
-                      <span>
-                        <span className="block text-sm font-semibold">Canlı piyasa fiyatlarını otomatik kullan</span>
-                        <span className="mt-1 block text-sm leading-6 text-slate-500">Kapalıyken üst çubuktaki oran editöründe kaydedilen global profil kullanılır.</span>
-                      </span>
-                    </label>
-                    {config.market_rates_live_enabled ? (
-                      <div className={`mt-4 space-y-2 border-t pt-3 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Otomatikte kalacak alanlar</p>
-                        {([
-                          ['market_rates_live_fx_enabled', 'EUR/DKK kuru'],
-                          ['market_rates_live_platinum_enabled', 'Platin DKK/g'],
-                          ['market_rates_live_palladium_enabled', 'Palladyum DKK/g'],
-                        ] as const).map(([key, label]) => (
-                          <label key={key} className="flex cursor-pointer items-center gap-3">
-                            <input type="checkbox" checked={Boolean(config[key])} onChange={(event) => onUpdate(key, event.target.checked)} className="h-4 w-4 accent-blue-600" />
-                            <span className="text-sm">{label}</span>
-                          </label>
-                        ))}
-                        <p className="text-xs leading-5 text-slate-500">İşareti kaldırılan alan manuel değerinde kalır ve oran editöründen düzenlenebilir.</p>
-                      </div>
-                    ) : null}
+                    <p className="text-sm font-semibold">Otomatik oran alanları</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      Yalnız bu üç alan istenirse canlı kaynaktan (Stooq) otomatik çekilebilir; her biri <strong>bağımsızdır</strong>
+                      {' '}(hepsi bir arada olmak zorunda değil). Altın ve gümüş karat oranları <strong>WP "Priser" sayfasından</strong>
+                      {' '}çekilir veya üst çubuktaki oran editöründen elle girilir.
+                    </p>
+                    {(() => {
+                      const AUTO_FIELDS = [
+                        ['market_rates_live_fx_enabled', 'EUR / DKK kuru'],
+                        ['market_rates_live_platinum_enabled', 'Platin · DKK/g'],
+                        ['market_rates_live_palladium_enabled', 'Palladyum · DKK/g'],
+                      ] as const;
+                      // Master bayrak TÜREVDİR: üç alandan en az biri otomatikse açık.
+                      // Kullanıcıya "ya hepsi otomatik" kapısı YOK.
+                      const setAutoField = (key: (typeof AUTO_FIELDS)[number][0], checked: boolean) => {
+                        onUpdate(key, checked);
+                        const anyOn = AUTO_FIELDS.some(([fieldKey]) =>
+                          fieldKey === key ? checked : Boolean(config[fieldKey]),
+                        );
+                        onUpdate('market_rates_live_enabled', anyOn);
+                      };
+                      return (
+                        <div className={`mt-4 space-y-1 border-t pt-3 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
+                          {AUTO_FIELDS.map(([key, label]) => {
+                            const auto = Boolean(config[key]);
+                            return (
+                              <label key={key} className="flex cursor-pointer items-center justify-between gap-4 py-1.5">
+                                <span className="text-sm">{label}</span>
+                                <span className="inline-flex items-center gap-2 text-xs">
+                                  <span className={auto ? 'text-slate-400' : 'font-semibold text-slate-700'}>Manuel</span>
+                                  <input type="checkbox" checked={auto} onChange={(event) => setAutoField(key, event.target.checked)} className="h-4 w-4 accent-blue-600" />
+                                  <span className={auto ? 'font-semibold text-blue-700' : 'text-slate-400'}>Oto · canlı kur</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                          <p className="mt-2 text-xs leading-5 text-slate-500">Manuelde bırakılan alan, oran editöründeki değerinde kalır.</p>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div className={`p-4 ${classic ? 'border border-emerald-300 bg-emerald-50' : 'rounded-xl border border-emerald-200 bg-emerald-50'}`}>
+                    <p className="text-sm font-semibold text-emerald-800">WP "Priser" sayfası — tek karat/gümüş kaynağı</p>
+                    <p className="mt-1 text-sm leading-6 text-emerald-700">
+                      Karat ve gümüş oranları seroguld.dk "Priser" sayfasından çekilir (üst çubuk → Au/Ag → <strong>WP'den çek</strong>).
+                      Elle ezilen değerler bir sonraki çekime kadar korunur.
+                    </p>
+                    <p className="mt-2 text-xs font-semibold text-emerald-800">
+                      Son çekim: {config.wp_priser_last_fetch ? new Date(config.wp_priser_last_fetch).toLocaleString('da-DK') : 'henüz çekilmedi'}
+                    </p>
                   </div>
                   <section>
                     <h3 className="text-sm font-semibold">Mevcut oran özeti</h3>
@@ -420,33 +439,41 @@ export function SettingsWorkspace({
               ) : null}
 
               {category === 'integrations' ? (
-                <div>
-                  <div className="flex gap-2 overflow-x-auto pb-2" role="tablist" aria-label="Entegrasyon seçimi">
-                    {INTEGRATIONS.map((item) => {
-                      const active = item.key === integration;
-                      const status = integrationStatus.get(item.label.toLowerCase());
-                      return (
-                        <button key={item.key} type="button" role="tab" aria-selected={active} onClick={() => setIntegration(item.key)} className={`inline-flex shrink-0 items-center gap-2 px-3.5 py-2.5 text-sm font-semibold transition ${active ? (classic ? 'bg-brand-800 text-white' : 'rounded-lg bg-blue-600 text-white') : (classic ? 'border border-brand-200 bg-white text-brand-700 hover:bg-brand-50' : 'rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}`}>
-                          <span className={`h-2 w-2 rounded-full ${status ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                          {item.label}
+                <div className="space-y-3">
+                  {/* R1-18: her servis kendi accordion bloğunda — durum + alanlar + test bir arada. */}
+                  {INTEGRATIONS.map((item) => {
+                    const open = item.key === integration;
+                    const status = integrationStatus.get(item.label.toLowerCase());
+                    return (
+                      <section key={item.key} className={classic ? 'border border-brand-200 bg-white' : 'rounded-xl border border-slate-200 bg-white'}>
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          onClick={() => setIntegration(open ? null : item.key)}
+                          className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left ${classic ? 'hover:bg-brand-50' : 'hover:bg-slate-50'}`}
+                        >
+                          <span className="flex min-w-0 items-center gap-3">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${status ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                            <span className="truncate text-sm font-semibold">{item.label}</span>
+                            <span className="hidden truncate text-xs text-slate-400 sm:inline">{item.description}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold ${status ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'} ${classic ? 'border border-current/20' : 'rounded-full'}`}>
+                              {status ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                              {status ? 'Yapılandırıldı' : 'Eksik'}
+                            </span>
+                            <span className="text-xs text-slate-400">{open ? '▲' : '▼'}</span>
+                          </span>
                         </button>
-                      );
-                    })}
-                  </div>
-                  <section className={`mt-5 border-t pt-6 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
-                    <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold">{selectedIntegration.label}</h3>
-                        <p className="mt-1 text-sm text-slate-500">{selectedIntegration.description}</p>
-                      </div>
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold ${integrationStatus.get(selectedIntegration.label.toLowerCase()) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'} ${classic ? 'border border-current/20' : 'rounded-full'}`}>
-                        {integrationStatus.get(selectedIntegration.label.toLowerCase()) ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-                        {integrationStatus.get(selectedIntegration.label.toLowerCase()) ? 'Yapılandırıldı' : 'Eksik'}
-                      </span>
-                    </div>
-                    <div className="grid max-w-4xl gap-x-5 gap-y-5 sm:grid-cols-2">{selectedIntegration.fields.map(renderField)}</div>
-                    {selectedIntegration.key === 'woocommerce' ? <WooMappingSettingsPanel variant={variant} /> : null}
-                  </section>
+                        {open ? (
+                          <div className={`border-t px-4 pb-5 pt-4 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
+                            <div className="grid max-w-4xl gap-x-5 gap-y-5 sm:grid-cols-2">{item.fields.map(renderField)}</div>
+                            {item.key === 'woocommerce' ? <WooMappingSettingsPanel variant={variant} /> : null}
+                          </div>
+                        ) : null}
+                      </section>
+                    );
+                  })}
                 </div>
               ) : null}
 

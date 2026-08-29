@@ -43,6 +43,7 @@ from app.schemas.product import (
 from app.schemas.woocommerce import (
     WooCatalogItemDetailOut,
     WooCatalogItemOut,
+    WooCatalogContentUpdateIn,
     WooCatalogLinkIn,
     WooCatalogListOut,
     WooCatalogStatusOut,
@@ -67,6 +68,7 @@ from app.services.woocommerce_catalog_service import (
     preview_catalog_sync,
     unlink_catalog_item,
     unpublish_catalog_item,
+    update_catalog_item_content,
 )
 from app.utils.helpers import utc_now
 from app.services.product_service import get_product_or_404, to_product_out
@@ -269,6 +271,25 @@ async def post_woocommerce_catalog_unpublish_v2(
         await legacy_unpublish_product(product_id=item.linked_product_id, db=db, admin=admin)
         return await unpublish_catalog_item(db, catalog_item_id=catalog_item_id, skip_remote=True)
     return await unpublish_catalog_item(db, catalog_item_id=catalog_item_id)
+
+
+@router.patch("/woocommerce/catalog/{catalog_item_id}/content", response_model=WooCatalogItemDetailOut)
+async def patch_woocommerce_catalog_content_v2(
+    catalog_item_id: UUID,
+    payload: WooCatalogContentUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> WooCatalogItemDetailOut:
+    """R1-16: katalog cekmecesinden ad/aciklama/SEO duzenleme — Woo'ya yazar."""
+    return await update_catalog_item_content(
+        db,
+        catalog_item_id=catalog_item_id,
+        name=payload.name,
+        short_description_html=payload.short_description_html,
+        description_html=payload.description_html,
+        seo_title=payload.seo_title,
+        meta_description=payload.meta_description,
+    )
 
 
 @router.post("/woocommerce/catalog/{catalog_item_id}/link", response_model=WooCatalogItemOut)

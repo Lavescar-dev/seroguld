@@ -28,6 +28,8 @@ export interface ApiConfig {
   market_rates_live_fx_enabled: boolean;
   market_rates_live_platinum_enabled: boolean;
   market_rates_live_palladium_enabled: boolean;
+  // R1-17: WP Priser son cekim (ISO; salt-okunur bilgi; eski yanıtlar için ops.)
+  wp_priser_last_fetch?: string;
   metals_dev_api_key: string;
   firma_adi: string;
   firma_cvr: string;

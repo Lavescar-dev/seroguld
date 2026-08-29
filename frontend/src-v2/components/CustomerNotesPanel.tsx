@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp, History, Pencil, Plus, Save, StickyNote, Trash2, X } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
+import { translateVisibleCopy } from '@/i18n/copy';
+import { useAppLocale } from '@/i18n';
 import { formatRelativeTime } from '@/lib/format';
 
 type CustomerNote = {
@@ -32,6 +34,9 @@ export function CustomerNotesPanel({
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState('');
+  // X1: textarea placeholder'ı runtime çevirisi tarafından atlanır (kullanıcı
+  // içeriği çevrilmesin diye) — bu yüzden burada elle çevrilir.
+  const { activeLocale } = useAppLocale();
   const [editing, setEditing] = useState<CustomerNote | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
 
@@ -108,7 +113,7 @@ export function CustomerNotesPanel({
       <div className="border-t border-sg-border bg-white p-3">
         {editing ? <div className="mb-2 flex items-center justify-between text-xs text-amber-800"><span>Not düzenleniyor · v{editing.version}</span><button type="button" onClick={() => { setEditing(null); setDraft(''); }}><X className="h-4 w-4" /></button></div> : null}
         <div className="flex items-end gap-2">
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} maxLength={4000} placeholder="Manuel müşteri notu ekle…" className="min-h-16 flex-1 resize-none rounded-lg border border-sg-border px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent" />
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows={2} maxLength={4000} placeholder={translateVisibleCopy('Manuel müşteri notu ekle…', activeLocale)} className="min-h-16 flex-1 resize-none rounded-lg border border-sg-border px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent" />
           <button type="button" onClick={submit} disabled={!draft.trim() || pending} className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-sg-accent px-3 text-xs font-semibold text-white disabled:opacity-50">{editing ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{pending ? 'Kaydediliyor' : editing ? 'Kaydet' : 'Not ekle'}</button>
         </div>
         {error ? <p className="mt-2 text-xs text-red-600">{error instanceof Error ? error.message : 'Not işlemi tamamlanamadı.'}</p> : null}

@@ -7,7 +7,15 @@ Create Date: 2026-08-20 12:00:00.000000
 Referans numarası üretimi eşzamanlı finalize'da aynı değeri iki kez
 verebiliyordu ve kolonun unique kısıtı yoktu; çakışma sessizce kalıcı
 oluyordu. NULL'lara dokunmayan (elle referanssız ürünler) kısmi unique
-index eklenir. Zaten çift kayıt varsa migration erken ve yazmadan durur.
+index eklenir.
+
+Zaten çift kayıt varsa migration ELLE müdahale beklemeden kendi çözer:
+her çakışan grupta en uygun satır (canlı > yumuşak silinmiş, sonra en eski)
+referansı korur; fazlalıklar referanssız (NULL) bırakılır. Böylece paketli
+uygulama açılırken migration takılıp "yerel çalışma alanı hazır değil"
+ekranında kalmaz. reference_number VARCHAR(10) olduğu için sonekle
+tekilleştirme yapılamaz; fazlalık satırlar NULL'lanır ve operatör UI'dan
+yeniden referans atayabilir.
 """
 
 from typing import Sequence, Union
@@ -28,18 +36,41 @@ _PREDICATE = "reference_number IS NOT NULL"
 def upgrade() -> None:
     bind = op.get_bind()
 
-    duplicate = bind.execute(
+    # Çift referanslı grupları migration İÇİNDE çöz (elle temizlik gerektirmez):
+    # her grupta bir satır referansı korur, diğerleri NULL'lanır. Korunacak
+    # satır önceliği: önce canlı (deleted_at IS NULL), sonra en eski (created_at),
+    # eşitlikte id. Kısmi unique index yalnız NOT NULL satırları kapsadığından
+    # bu güvenli ve tekrar çalıştırılabilir (idempotent).
+    duplicate_groups = bind.execute(
         sa.text(
             "SELECT reference_number FROM products "
             "WHERE reference_number IS NOT NULL "
-            "GROUP BY reference_number HAVING COUNT(*) > 1 LIMIT 1"
+            "GROUP BY reference_number HAVING COUNT(*) > 1"
         )
-    ).first()
-    if duplicate is not None:
-        raise RuntimeError(
-            "products.reference_number çift kayıt içeriyor "
-            f"(örn. {duplicate[0]!r}); unique index eklenmeden önce elle "
-            "temizlenmelidir."
+    ).fetchall()
+    cleared = 0
+    for row in duplicate_groups:
+        reference = row[0]
+        members = bind.execute(
+            sa.text(
+                "SELECT id FROM products WHERE reference_number = :reference "
+                "ORDER BY (deleted_at IS NOT NULL), created_at, id"
+            ),
+            {"reference": reference},
+        ).fetchall()
+        for extra in members[1:]:
+            bind.execute(
+                sa.text("UPDATE products SET reference_number = NULL WHERE id = :id"),
+                {"id": extra[0]},
+            )
+            cleared += 1
+    if cleared:
+        # ASCII-ONLY: paketli runtime'ın stdout'u cp1252; Türkçe karakter yazmak
+        # UnicodeEncodeError ile migration'ı çökertir (0.3.14'te bu satır böyle
+        # patlamıştı). Operatör referanssız kalan ürünleri UI'dan yeniden atar.
+        print(
+            f"[0037] resolved {len(duplicate_groups)} duplicate reference "
+            f"group(s); cleared reference_number on {cleared} extra row(s)."
         )
 
     existing = {index["name"] for index in sa.inspect(bind).get_indexes("products")}

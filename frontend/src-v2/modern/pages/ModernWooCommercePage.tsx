@@ -332,7 +332,22 @@ function specStripPreview(detail: WooMakeState['detail']): string {
   return dims.length ? `${base} ${dims.join(', ')}` : base;
 }
 
+// R1-10: yayın öncesi şablon önizleme yanıtı (backend publish-preview).
+type PublishPreviewData = {
+  name: string | null;
+  slug: string | null;
+  regular_price: string | null;
+  sku: string | null;
+  categories: { id: number }[];
+  short_description: string | null;
+  description: string | null;
+  attributes: { name?: string; options?: string[] }[];
+  warnings: string[];
+};
+
 function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
+  // Hooks erken dönüşten ÖNCE gelmeli.
+  const [publishPreview, setPublishPreview] = useState<PublishPreviewData | null>(null);
   const detail = state.detail;
   if (!detail) return <ModernLoadingState title="Yayın alanı hazırlanıyor" />;
   const ready = isPublishReady(detail) && seoMissing.length === 0 && Number(state.publishPrice || 0) > 0;
@@ -384,12 +399,17 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
         ) : null}
       </div>
       <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
+      <label className="flex max-w-sm items-center gap-2 text-sm text-sg-text">
+        <input type="checkbox" checked={state.publishNewBadge} onChange={(event) => state.setPublishNewBadge(event.target.checked)} className="h-4 w-4 accent-sg-green-strong" />
+        Nyhed-rozet (yeni ürün · 30 gün)
+      </label>
       <div className="max-w-xl">
         <p className="mb-2 text-sm font-semibold text-sg-text">WP'de hangi grup(lar)a yayınlansın?</p>
         <WooCategoryPicker
           categories={state.categories}
           selectedIds={state.publishCategoryIds}
           onToggle={state.togglePublishCategory}
+          onMakePrimary={(id) => state.setPublishCategoryIds([id, ...state.publishCategoryIds.filter((value) => value !== id)])}
           onRefresh={() => void state.refreshCategories()}
           loading={state.categoriesLoading}
           error={state.categoriesError}
@@ -400,6 +420,21 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
       <div className="flex flex-wrap gap-2">
         <ModernButton tone="success" icon={Globe} disabled={!ready || state.isPublishing} onClick={state.publish}>
           {state.isPublishing ? 'Yayınlanıyor…' : 'Siteye yayınla'}
+        </ModernButton>
+        <ModernButton
+          tone="ghost"
+          icon={Eye}
+          onClick={() => {
+            // R1-10: yayın öncesi şablon önizleme — panelin güncel (kaydedilmemiş
+            // dahil) durumuyla; saf payload, Woo'ya istek atılmaz.
+            void (async () => {
+              const preview = await state.fetchPublishPreview();
+              if (preview) setPublishPreview(preview);
+              else window.alert('Önizleme alınamadı.');
+            })();
+          }}
+        >
+          Önizleme
         </ModernButton>
         {detail.is_published_to_site ? (
           <ModernButton
@@ -414,6 +449,56 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
           </ModernButton>
         ) : null}
       </div>
+
+      {publishPreview ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setPublishPreview(null)}>
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-sg-lg border border-sg-border bg-sg-surface shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-sg-border px-5 py-3">
+              <p className="text-sm font-semibold text-sg-text">Yayın önizlemesi — sitede böyle görünecek</p>
+              <ModernButton tone="ghost" size="sm" icon={X} onClick={() => setPublishPreview(null)}>Kapat</ModernButton>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-sg-text">{publishPreview.name || '—'}</h3>
+                <p className="text-xs text-sg-text-soft">
+                  /{publishPreview.slug || ''} · SKU: {publishPreview.sku || '—'} · {publishPreview.regular_price || '—'} DKK
+                  {publishPreview.categories.length ? ` · ${publishPreview.categories.length} kategori` : ' · kategori yok'}
+                </p>
+              </div>
+              {publishPreview.warnings.length ? (
+                <div className="space-y-1 rounded-sg-md border border-amber-200 bg-amber-50 px-3 py-2">
+                  {publishPreview.warnings.map((warning, index) => (
+                    <p key={index} className="text-xs text-amber-700">⚠ {warning}</p>
+                  ))}
+                </div>
+              ) : null}
+              <div>
+                <p className="mb-1 text-xs font-semibold text-sg-text-soft">Kısa açıklama</p>
+                <div className="prose prose-sm max-w-none rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3 text-sm text-sg-text" dangerouslySetInnerHTML={{ __html: publishPreview.short_description || '<p>—</p>' }} />
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold text-sg-text-soft">Uzun açıklama</p>
+                <div className="prose prose-sm max-w-none rounded-sg-md border border-sg-border px-4 py-3 text-sm text-sg-text" dangerouslySetInnerHTML={{ __html: publishPreview.description || '<p>—</p>' }} />
+              </div>
+              {publishPreview.attributes.length ? (
+                <div>
+                  <p className="mb-1 text-xs font-semibold text-sg-text-soft">Yderligere information</p>
+                  <table className="w-full rounded-sg-md border border-sg-border text-sm">
+                    <tbody>
+                      {publishPreview.attributes.map((attribute, index) => (
+                        <tr key={index} className={index % 2 ? 'bg-sg-surface-soft' : ''}>
+                          <td className="border-b border-sg-border px-3 py-1.5 font-semibold text-sg-text">{attribute.name || '—'}</td>
+                          <td className="border-b border-sg-border px-3 py-1.5 text-sg-text">{(attribute.options || []).join(', ')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

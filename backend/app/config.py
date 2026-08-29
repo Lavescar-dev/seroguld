@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     woocommerce_category_map_json: str = ""
     woocommerce_stonex_meta_map_json: str = ""
     woocommerce_badge_meta_json: str = ""
+    # R1-21: "Nyhed" rozeti kaç gün geçerli (yayın anından itibaren).
+    woocommerce_new_badge_days: int = 30
     # Takı ürünlerinin uzun açıklamasının sonuna eklenen sabit Danca blok;
     # boş = koda gömülü varsayılan (DESC_FOOTER_DA_DEFAULT). Env tek satır.
     woocommerce_desc_footer_html: str = ""
@@ -106,6 +108,16 @@ class Settings(BaseSettings):
     # Yatırım ürünleri (külçe/sikke/platin) alt bloğu; boşsa gömülü default.
     woocommerce_desc_footer_investment_html: str = ""
     woocommerce_primary_term_meta_key: str = "_yoast_wpseo_primary_product_cat"
+    # R1-28/R1-31/R1-33: metal eklentisi fiyat alanları için merkezi oranlar.
+    woocommerce_metal_markup_percent: str = "0"
+    woocommerce_minimum_margin_percent: str = "0"
+    # R2-16: AFG tamamlaninca musteriye otomatik e-posta (seroguld.dk / Simply SMTP).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_address: str = ""
+    afg_email_enabled: bool = False
 
     wordpress_base_url: str = ""
     wp_app_username: str = ""
@@ -195,6 +207,8 @@ class Settings(BaseSettings):
     metals_dev_url: str = "https://api.metals.dev/v1/latest"
     metals_dev_timeout_seconds: float = 8.0
     metals_dev_cache_seconds: int = 1800
+    # R2-06/R1-17: WP Priser sayfasindan son basarili cekim (ISO, refresh yazar).
+    wp_priser_last_fetch: str = ""
     ecb_fx_url: str = (
         "https://data-api.ecb.europa.eu/service/data/EXR/D.DKK.EUR.SP00.A"
         "?lastNObservations=1&format=csvdata"

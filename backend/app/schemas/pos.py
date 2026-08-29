@@ -378,19 +378,25 @@ class PosPostalLookupOut(AppBaseModel):
 class PosWorkspaceGoldRowInput(AppBaseModel):
     karat: Decimal = Field(ge=0)
     gram: Decimal = Field(default=Decimal("0"), ge=0)
-    avance_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): yüzde değil, birim fiyata eklenen düzeltme.
+    # Negatif serbest, üst sınır yok (eski ge=0/le=100 kaldırıldı).
+    avance_percent: Decimal = Field(default=Decimal("0"))
 
 
 class PosWorkspaceSilverRowInput(AppBaseModel):
     type_code: str = Field(min_length=1, max_length=10)
     gram: Decimal = Field(default=Decimal("0"), ge=0)
-    avance_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): yüzde değil, birim fiyata eklenen düzeltme.
+    # Negatif serbest, üst sınır yok (eski ge=0/le=100 kaldırıldı).
+    avance_percent: Decimal = Field(default=Decimal("0"))
 
 
 class PosWorkspaceBarRowInput(AppBaseModel):
     bar_type: Literal["gold", "silver"]
     gram: Decimal = Field(default=Decimal("0"), ge=0)
-    avance_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): yüzde değil, birim fiyata eklenen düzeltme.
+    # Negatif serbest, üst sınır yok (eski ge=0/le=100 kaldırıldı).
+    avance_percent: Decimal = Field(default=Decimal("0"))
 
 
 class PosWorkspaceBarRowOut(AppBaseModel):
@@ -411,7 +417,9 @@ class PosWorkspaceBarRowOut(AppBaseModel):
 class PosWorkspacePtPdRowInput(AppBaseModel):
     metal: Literal["platinum", "palladium"]
     gram: Decimal = Field(default=Decimal("0"), ge=0)
-    avance_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): yüzde değil, birim fiyata eklenen düzeltme.
+    # Negatif serbest, üst sınır yok (eski ge=0/le=100 kaldırıldı).
+    avance_percent: Decimal = Field(default=Decimal("0"))
 
 
 class PosWorkspacePtPdRowOut(AppBaseModel):
@@ -563,12 +571,44 @@ class PosWorkspaceCalculatorsOut(AppBaseModel):
     silver_rows: list[PosWorkspaceCalculatorRowOut] = Field(default_factory=list)
 
 
+# R2-01 — "Kniv / Çeyrek altın": gümüş bölümünün altındaki sekmeden eklenen
+# DİNAMİK satırlar. Sabit karat/bar/ptpd tanımlarına oturmaz; kendi satır
+# kaydını taşır. quarter = çeyrek altın (varsayılan 22K·916, karat seçilebilir);
+# kniv = genelde gümüş (metal/karat seçilebilir). Fiyat matristen (metal+karat)
+# canlı çözülür; mer pris eklenir.
+class PosWorkspaceExtraRowInput(AppBaseModel):
+    row_key: str = Field(min_length=1, max_length=64)
+    kind: Literal["kniv", "quarter"]
+    label: str = Field(min_length=1, max_length=80)
+    metal: Literal["gold", "silver"]
+    karat: str = Field(min_length=1, max_length=8)  # gold key ("22") / silver lodighed ("999")
+    gram: Decimal = Field(default=Decimal("0"), ge=0)
+    avance_percent: Decimal = Field(default=Decimal("0"))  # mer pris (kr/g), negatif serbest
+
+
+class PosWorkspaceExtraRowOut(AppBaseModel):
+    row_key: str
+    line_id: UUID | None = None
+    line_no: int | None = None
+    kind: str
+    label: str
+    metal: str
+    karat: str
+    purity_percentage: Decimal
+    gram: Decimal
+    avance_percent: Decimal
+    rate_dkk: Decimal
+    unit_price_dkk: Decimal
+    line_total_dkk: Decimal
+
+
 class PosWorkspaceSectionsUpdate(AppBaseModel):
     base_revision: int | None = Field(default=None, ge=1)
     gold_rows: list[PosWorkspaceGoldRowInput] = Field(default_factory=list)
     silver_rows: list[PosWorkspaceSilverRowInput] = Field(default_factory=list)
     bar_rows: list[PosWorkspaceBarRowInput] = Field(default_factory=list)
     ptpd_rows: list[PosWorkspacePtPdRowInput] = Field(default_factory=list)
+    extra_rows: list[PosWorkspaceExtraRowInput] = Field(default_factory=list)
     bank_info: PosWorkspaceBankInfo | None = None
     market_rates: PosWorkspaceMarketRates | None = None
     afg_note: str | None = Field(default=None, max_length=1000)
@@ -633,6 +673,7 @@ class PosWorkspaceOut(AppBaseModel):
     silver_rows: list[PosWorkspaceSilverRowOut] = Field(default_factory=list)
     bar_rows: list[PosWorkspaceBarRowOut] = Field(default_factory=list)
     ptpd_rows: list[PosWorkspacePtPdRowOut] = Field(default_factory=list)
+    extra_rows: list[PosWorkspaceExtraRowOut] = Field(default_factory=list)
     invoice_gold: PosWorkspaceInvoiceGoldSheetOut = Field(default_factory=PosWorkspaceInvoiceGoldSheetOut)
     invoice_misc_mode: str = Field(default="auto", pattern="^(auto|manual)$")
     invoice_misc: PosWorkspaceInvoiceMiscSheetOut = Field(default_factory=PosWorkspaceInvoiceMiscSheetOut)

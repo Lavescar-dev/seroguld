@@ -87,7 +87,7 @@ function ModernInventoryEditor({ state }: { state: ModernDepolamaViewModel['stat
           <NumericDraftInput id="inventory-count" label="Adet" value={editing.adet} onCommit={(adet) => update({ adet: Math.max(1, Math.round(adet)) })} />
           <NumericDraftInput id="inventory-price" label="Alış fiyatı (DKK)" value={editing.alisFiyati} onCommit={(alisFiyati) => update({ alisFiyati })} />
           {editing.mainKat === 'taki' ? <NumericDraftInput id="inventory-shop-price" label="Shop fiyatı (DKK)" value={editing.shopFiyati} onCommit={(shopFiyati) => update({ shopFiyati })} /> : null}
-          <label htmlFor="inventory-length" className="text-xs font-semibold text-sg-text-soft">Uzunluk<input id="inventory-length" name="length_cm" value={editing.olcuUzunluk || ''} onChange={(event) => update({ olcuUzunluk: event.target.value || undefined })} placeholder="45cm / 18-19cm" className={editorInputClass} /></label>
+          <label htmlFor="inventory-length" className="text-xs font-semibold text-sg-text-soft">Uzunluk (cm)<input id="inventory-length" name="length_cm" value={editing.olcuUzunluk || ''} onChange={(event) => update({ olcuUzunluk: event.target.value || undefined })} placeholder="45cm / 18-19cm" className={editorInputClass} /></label>
           <NumericDraftInput id="inventory-width" label="Genişlik (mm)" value={editing.olcuGenislik} onCommit={(value) => update({ olcuGenislik: value || undefined })} />
           <NumericDraftInput id="inventory-thickness" label="Kalınlık (mm)" value={editing.olcuKalinlik} onCommit={(value) => update({ olcuKalinlik: value || undefined })} />
           <NumericDraftInput id="inventory-diameter" label="Çap (mm)" value={editing.olcuCap} onCommit={(value) => update({ olcuCap: value || undefined })} />

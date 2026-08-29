@@ -2126,7 +2126,7 @@ def main(argv: list[str] | None = None) -> int:
         if mode == "excel-probe":
             return excel_probe()
         return excel_bridge()
-    except Exception:
+    except Exception as exc:
         try:
             if not logging.getLogger().handlers:
                 _configure_fallback_logging(mode)
@@ -2135,6 +2135,19 @@ def main(argv: list[str] | None = None) -> int:
             # No user-facing traceback/dialog is allowed from a windowed
             # runtime, even when ProgramData and TEMP are unavailable.
             pass
+        # R2-11: "Excel'de aç" tek tip exit code 1 ile düşüyordu; Rust tarafı
+        # nedeni söyleyemiyordu. Excel-bridge modunda başarısızlık türüne göre
+        # ayrı exit kodu ver — Rust bunları okunabilir Danca mesaja çevirir:
+        #   10 = oturum/yapılandırma geçersiz (JSON veya yönetilen klasör dışı)
+        #   11 = çalışma dosyası bulunamadı
+        #   12 = Microsoft Excel / COM bileşeni yok veya başlatılamadı
+        if mode == "excel-bridge":
+            if isinstance(exc, ModuleNotFoundError) or type(exc).__name__ == "com_error":
+                return 12
+            if isinstance(exc, FileNotFoundError):
+                return 11
+            if isinstance(exc, (ValueError, json.JSONDecodeError)):
+                return 10
         return 1
 
 

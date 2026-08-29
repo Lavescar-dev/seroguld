@@ -166,7 +166,7 @@ def _make_lines(sections: object) -> tuple[list[HistoricalAfgLine], list[str]]:
         if rate <= 0:
             errors.append(f"{definition['label']} için oran bulunamadı.")
             continue
-        unit_price = pos_core._workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=margin)
+        unit_price = _legacy_percent_unit_price(rate, margin)
         lines.append(
             HistoricalAfgLine(
                 line_no=line_no,
@@ -198,7 +198,7 @@ def _make_lines(sections: object) -> tuple[list[HistoricalAfgLine], list[str]]:
         if rate <= 0:
             errors.append(f"{definition['label']} için oran bulunamadı.")
             continue
-        unit_price = pos_core._workspace_row_unit_price_from_matrix(rate_dkk=rate, avance_percent=margin)
+        unit_price = _legacy_percent_unit_price(rate, margin)
         lines.append(
             HistoricalAfgLine(
                 line_no=line_no,
@@ -573,7 +573,7 @@ def _parse_upload(upload: HistoricalAfgUpload) -> HistoricalAfgParsed:
         pass
     try:
         legacy_number, issued_at = _metadata_from_workbook(upload.content)
-        inputs = parse_afg_workspace_inputs_from_workbook(upload.content)
+        inputs = parse_afg_workspace_inputs_from_workbook(upload.content, legacy_percent_avance=True)
     except (OSError, KeyError, ValueError, InvalidOperation) as exc:
         return HistoricalAfgParsed(
             upload=upload,
@@ -729,6 +729,16 @@ async def _resolve_customer(
         return await create_customer(session, payload), "created_customer", []
     except HTTPException as exc:
         return None, "blocked", [str(exc.detail)]
+
+
+def _legacy_percent_unit_price(rate_dkk, margin_percent):
+    """Tarihsel belgeler YUZDE avance tasir (R2-07 oncesi semantik).
+
+    Canli 'Mer pris' (kr/g additive) formulu tarihsel veriye UYGULANMAZ —
+    aksi halde %8 avance +8 kr/g olarak okunur ve tutar ters yonde sapar
+    (dogrulama: 650 kr/g @ %8 -> 598,00 olmali; additive 658,00 uretiyordu).
+    """
+    return quantize_2(to_decimal(rate_dkk) * (Decimal("1") - to_decimal(margin_percent) / Decimal("100")))
 
 
 async def _duplicate_reason(session: AsyncSession, parsed: HistoricalAfgParsed) -> str | None:

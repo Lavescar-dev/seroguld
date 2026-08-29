@@ -32,12 +32,13 @@ describe('syncMarketRateState (DKK-only sözleşme)', () => {
     expect(next.gold_rates_dkk['24']).toBe('615.50');
   });
 
-  it('fans a 24K override across karats directly in DKK', () => {
+  it('a 24K override updates ONLY 24K — other karats are never derived/overwritten', () => {
     const next = syncMarketRateState(current, { gold_24k_dkk: '620' });
     expect(next.gold_24k_dkk).toBe('620.00');
-    expect(next.gold_rates_dkk['8']).toBe('206.67');
-    expect(next.gold_rates_dkk['14']).toBe('361.67');
     expect(next.gold_rates_dkk['24']).toBe('620.00');
+    // Per-karat oranlar BAĞIMSIZ: 24K değişimi 8K/14K'yı ASLA ezmez (fan-out yok).
+    expect(next.gold_rates_dkk['8']).toBe('205.17');
+    expect(next.gold_rates_dkk['14']).toBe('359.04');
   });
 
   it('fx is context only — changing it never changes DKK rates', () => {

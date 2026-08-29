@@ -223,7 +223,14 @@ export function useCustomersMakeState(): CustomersPageProps {
       setCustomerPage(Math.max(1, Math.min(page, customerTotalPages)));
     },
     selectedId,
-    onSelectCustomer: (customerId) => setSelectedCustomerId(customerId),
+    onSelectCustomer: (customerId) => {
+      // R2-02: müşteri seçimi yeni-müşteri formunu kapatır (tek mod).
+      if (customerId) {
+        setShowNewRow(false);
+        setNewDraft(EMPTY_DRAFT);
+      }
+      setSelectedCustomerId(customerId);
+    },
     editingId,
     showNewRow,
     onToggleNewRow: () => {
@@ -232,6 +239,10 @@ export function useCustomersMakeState(): CustomersPageProps {
         const next = !current;
         if (!next) {
           setNewDraft(EMPTY_DRAFT);
+        } else {
+          // R1-04: yeni-müşteri moduna geçerken seçili müşteri temizlenir —
+          // "seçili + boş NY KUNDE formu aynı anda" durumu (R2-02) biter.
+          setSelectedCustomerId(null);
         }
         return next;
       });

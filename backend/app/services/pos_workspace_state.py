@@ -132,13 +132,16 @@ def _silver_definition_by_lodighed(lodighed: str) -> dict[str, str | Decimal] | 
 
 
 def _default_gold_rate_map(*, gold_24k_dkk: Decimal) -> dict[str, Decimal]:
-    core = _core()
+    # R2-10: harita PROFIL anahtar kumesini izler (22b dahil) — workspace'in
+    # sabit satir tanimlari degil. Boylelikle dinamik satirlar/ceyrek hesaplayici
+    # 22b fiyatina erisebilir; sabit grid 7 satir kalir (sablon kisiti).
+    from app.services.market_rate_profile import GOLD_RATE_KEYS as PROFILE_GOLD_KEYS
+    from app.services.market_rate_profile import karat_numeric_key
+
     gold_24k = quantize_2(to_decimal(gold_24k_dkk))
     return {
-        str(item["row_key"]).split(":", 1)[1]: quantize_2(
-            gold_24k * (to_decimal(item["karat"]) / Decimal("24"))
-        )
-        for item in core.GOLD_WORKSPACE_ROWS
+        key: quantize_2(gold_24k * (to_decimal(karat_numeric_key(key)) / Decimal("24")))
+        for key in PROFILE_GOLD_KEYS
     }
 
 
@@ -239,8 +242,8 @@ def _market_rate_payload_to_workspace(
         }
 
     gold_rates_dkk = {
-        key: _workspace_positive_decimal(raw_gold_dkk.get(key), gold_fallback_map[key])
-        for key in core.GOLD_RATE_KEYS
+        key: _workspace_positive_decimal(raw_gold_dkk.get(key), gold_fallback_map.get(key, Decimal("0.01")))
+        for key in gold_fallback_map
     }
     silver_rates_dkk = {
         key: _workspace_positive_decimal(raw_silver_dkk.get(key), silver_fallback_map[key])
@@ -336,7 +339,12 @@ def _workspace_market_rate_dkk(market_rates: PosWorkspaceMarketRates, row_key: s
 
 
 def _workspace_row_unit_price_from_matrix(*, rate_dkk: Decimal, avance_percent: Decimal) -> Decimal:
-    return quantize_2(to_decimal(rate_dkk) * (Decimal("1.00") - (to_decimal(avance_percent) / Decimal("100"))))
+    # R2-07 "Mer pris": ``avance_percent`` parametresi artık YÜZDE avance DEĞİL,
+    # gram başına EKLENEN düzeltme (kr/g). Efektif birim fiyat = enhedspris (matris
+    # oranı) + mer pris. Negatif de olabilir (ör. −15 → oran 650 iken 635 kr/g).
+    # İç ad geriye dönük uyum için korunur; anlam kr/g additive'dir. Satır kaydı
+    # (margin_percent_internal) bu değeri kr/g olarak taşır.
+    return quantize_2(to_decimal(rate_dkk) + to_decimal(avance_percent))
 
 
 def _default_calculator_rows(kind: str) -> list[dict[str, Any]]:
@@ -842,28 +850,18 @@ def _workspace_edit_source(value: str | None) -> tuple[UUID | None, int | None]:
 
 
 async def _workspace_market_rates_from_session(pos_session: PosSession) -> PosWorkspaceMarketRates:
-    note_payload = _parse_workspace_note_payload(pos_session.notes)
-    # This helper is also called by workspace mutation handlers.  Never make
-    # network I/O while a mutation transaction is open: a slow/unavailable
-    # Stooq request would keep SQLite locked and the browser would report a
-    # generic ``Load failed`` transport error.  Live refresh endpoints still
-    # call ``get_rates`` explicitly and populate this cache.
-    market_payload = note_payload.get("market_rates", {}) if isinstance(note_payload.get("market_rates"), dict) else {}
-    if not market_payload and pos_session.rate_source != PosRateSourceEnum.MANUAL:
-        market_payload = get_effective_market_rate_profile_cached()
+    # CANLI TEK KAYNAK: altın/gümüş per-karat oranları HER ZAMAN güncel manuel
+    # profilden (get_effective_market_rate_profile) gelir. Taslağın donmuş
+    # kopyası (pos_session.notes["market_rates"]) artık KULLANILMAZ — böylece
+    # oran editöründe yapılan değişiklik açık alışa ANINDA yansır (eski donmuş
+    # 950 hatası biter). Cache'li okuma: mutasyon transaction'ı açıkken ağ I/O
+    # yapmaz (canlı yenileme uçları get_rates ile cache'i doldurur).
     rates = get_effective_market_rate_profile_cached()
     live_gold_fallback = quantize_2(to_decimal(rates.get("gold_24k_dkk", 0)))
-    manual_gold_fallback = quantize_2(to_decimal(pos_session.manual_rate_dkk))
-    gold_fallback = (
-        manual_gold_fallback
-        if pos_session.rate_source == PosRateSourceEnum.MANUAL and manual_gold_fallback > 0
-        else live_gold_fallback
-    )
     silver_fallback = quantize_2(to_decimal(rates.get("silver_dkk", 0)))
-
     return _market_rate_payload_to_workspace(
-        market_payload,
-        fallback_gold_24k_dkk=gold_fallback,
+        rates,
+        fallback_gold_24k_dkk=live_gold_fallback,
         fallback_silver_dkk=silver_fallback,
     )
 

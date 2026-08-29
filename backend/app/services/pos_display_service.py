@@ -182,6 +182,9 @@ async def _attach_display_workspace_rows(
         for row in [*workspace.calculators.gold_rows, *workspace.calculators.silver_rows]
         if row.count > 0 and row.total_weight > 0
     ]
+    # R1-23/R1-24 kapanışı: başlıktaki TOPLAM da CANLI workspace özetinden gelir.
+    # Eski hali donmuş line_offer_dkk toplamıydı — oran editöründe değişiklik
+    # sonrası grid canlı, TOPLAM bayat (ör. 0,00) görünebiliyordu.
     return snapshot.model_copy(
         update={
             "gold_rows": workspace.gold_rows,
@@ -189,6 +192,11 @@ async def _attach_display_workspace_rows(
             "bar_rows": workspace.bar_rows,
             "ptpd_rows": workspace.ptpd_rows,
             "kniv_rows": kniv_rows,
+            "lines_total_dkk": workspace.summary.total_amount_dkk,
+            "final_offer_dkk": workspace.summary.gross_amount_dkk,
+            "total_weight_grams": workspace.summary.total_weight_grams,
+            "total_pure_gold_grams": workspace.summary.total_pure_gold_grams,
+            "line_count": workspace.summary.active_line_count,
         }
     )
 

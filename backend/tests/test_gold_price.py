@@ -92,14 +92,6 @@ async def test_one_failed_metal_does_not_break_the_others(monkeypatch):
 
     monkeypatch.setattr(GoldPriceService, "_fetch_stooq_close", fake_stooq)
 
-    class DisabledMetalsDev:
-        enabled = False
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-    monkeypatch.setattr("app.services.gold_price.MetalsDevService", DisabledMetalsDev)
-
     rates = await service.get_rates(force_refresh=True)
     meta = GoldPriceService.cached_meta_or_fallback()
 

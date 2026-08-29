@@ -78,7 +78,7 @@ def test_render_pos_receipt_html_renders_all_lines():
             "product_number": "0101",
             "reference_number": "9681",
             "product_type": "Bilezik",
-            "metal_type": "Sarı Altın",
+            "metal_type": "yellow_gold",
             "fineness_label": "22K / 91.60%",
             "weight_grams": "12.50",
             "pure_metal_grams": "11.45",
@@ -91,7 +91,7 @@ def test_render_pos_receipt_html_renders_all_lines():
             "product_number": "0102",
             "reference_number": "9682",
             "product_type": "Yüzük",
-            "metal_type": "Beyaz Altın",
+            "metal_type": "white_gold",
             "fineness_label": "18K / 75.00%",
             "weight_grams": "8.00",
             "pure_metal_grams": "6.00",
@@ -104,8 +104,10 @@ def test_render_pos_receipt_html_renders_all_lines():
     html = render_pos_receipt_html(ctx)
     assert "0101" in html
     assert "0102" in html
-    assert "Sarı Altın" in html
-    assert "Beyaz Altın" in html
+    # X2/R2-15: müşteriye görünen belge Danca etiket kullanır; ham "yellow_gold" sızmaz.
+    assert "Guld" in html
+    assert "Hvidguld" in html
+    assert "yellow_gold" not in html
     assert "6500.00 DKK" in html
     assert "5646.09 DKK" in html
 

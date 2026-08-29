@@ -152,7 +152,7 @@ def test_pos_session_line_bulk_create():
             assert created[0].line_offer_dkk is not None
             assert created[1].line_offer_dkk is not None
             await session.refresh(pos_session)
-            assert pos_session.final_offer_dkk == Decimal("13062.33")
+            assert pos_session.final_offer_dkk == Decimal("14457.33")
             assert pos_session.product_type.value == "bracelet"
             assert pos_session.metal_type.value == "yellow_gold"
 

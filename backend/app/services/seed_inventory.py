@@ -118,11 +118,40 @@ def _notes_marker(row: dict) -> str:
     return " ".join(bits)
 
 
+# R1-37: nominal karat -> saflik tablosu (0039 migration'i ile ayni degerler).
+# Import sirasinda nominal tabloya oturmayan deger nominale sabitlenir ve
+# uyari loglanir; standart disi karat (orn. 6K) elle girildigi gibi korunur.
+_NOMINAL_PURITY_BY_KARAT: dict[str, Decimal] = {
+    "8": Decimal("33.3"),
+    "9": Decimal("37.5"),
+    "10": Decimal("41.7"),
+    "14": Decimal("58.5"),
+    "18": Decimal("75.0"),
+    "21": Decimal("87.5"),
+    "21.6": Decimal("90.0"),
+    "22": Decimal("91.6"),
+    "24": Decimal("99.9"),
+}
+
+
+def _validated_purity(purity_karat: str | None, purity_pct: Decimal | None) -> Decimal | None:
+    if purity_karat is None or purity_pct is None:
+        return purity_pct
+    key = str(purity_karat).strip().upper().removesuffix("K").strip()
+    nominal = _NOMINAL_PURITY_BY_KARAT.get(key)
+    if nominal is None or purity_pct == nominal:
+        return purity_pct
+    logger.warning(
+        "Seed purity mismatch for %s: %s -> nominal %s", purity_karat, purity_pct, nominal
+    )
+    return nominal
+
+
 def _build_product(row: dict, product_number: str, reference_number: str | None = None) -> Product:
     metal = MetalTypeEnum(row["metal_type"])
     ptype = ProductTypeEnum(row["product_type"])
     weight = _dec(row["weight_grams"]) or Decimal("0.01")
-    purity_pct = _dec(row.get("purity_percentage"))
+    purity_pct = _validated_purity(row.get("purity_karat"), _dec(row.get("purity_percentage")))
     # Preserve the file's fine-gold figure; only compute if the file lacked one.
     pure_gold = _dec(row.get("pure_gold_grams"))
     if pure_gold is None and purity_pct is not None:

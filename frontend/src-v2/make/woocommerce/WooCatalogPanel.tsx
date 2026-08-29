@@ -13,7 +13,7 @@ import {
   Search,
 } from 'lucide-react';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { openExternalUrl } from '@/lib/desktop';
@@ -189,6 +189,37 @@ export function stripHtmlToText(value: string | null | undefined): string {
 function WooCatalogDetailDrawer({ state, classic, buttonClass }: { state: WooMakeState; classic: boolean; buttonClass: string }) {
   const detail = state.catalogDetail;
   const [linkTargetId, setLinkTargetId] = useState('');
+  // R1-16: çekmece içi içerik düzenleme — kaydet Woo'ya yazar.
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editSeoTitle, setEditSeoTitle] = useState('');
+  const [editMetaDesc, setEditMetaDesc] = useState('');
+  const [editShort, setEditShort] = useState('');
+  const [editLong, setEditLong] = useState('');
+  // Açılıştaki değerler: kaydet YALNIZ değişen alanları gönderir (backend
+  // None = dokunma) — bayat snapshot WP'de sonradan yapılmış düzenlemeleri ezmesin.
+  const editBaselineRef = useRef<Record<string, string>>({});
+  const openEditor = () => {
+    if (!detail) return;
+    const baseline = {
+      name: detail.name || '',
+      seo_title: detail.seo_title || '',
+      meta_description: detail.meta_description || '',
+      short: detail.short_description_html || '',
+      long: detail.description_html || '',
+    };
+    editBaselineRef.current = baseline;
+    setEditName(baseline.name);
+    setEditSeoTitle(baseline.seo_title);
+    setEditMetaDesc(baseline.meta_description);
+    setEditShort(baseline.short);
+    setEditLong(baseline.long);
+    setEditOpen(true);
+  };
+  // Çekmece başka bir katalog kaydına geçerse editör bayat alanlarla kalmasın.
+  useEffect(() => {
+    setEditOpen(false);
+  }, [detail?.id]);
   const close = () => state.openCatalogDetail(null);
   const seoRows: Array<[string, string]> = detail
     ? [
@@ -239,15 +270,80 @@ function WooCatalogDetailDrawer({ state, classic, buttonClass }: { state: WooMak
             </div>
 
             <div className={classic ? 'border border-brand-200' : 'rounded-sg-md border border-sg-border-soft'}>
-              <p className={`border-b px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? 'border-brand-200 text-brand-500' : 'border-sg-border-soft text-sg-text-soft'}`}>SEO & açıklamalar</p>
-              <div className="space-y-3 p-3">
-                {seoRows.map(([label, value]) => (
-                  <div key={label}>
-                    <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{label}</p>
-                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{value}</p>
-                  </div>
-                ))}
+              <div className={`flex items-center justify-between border-b px-3 py-2 ${classic ? 'border-brand-200' : 'border-sg-border-soft'}`}>
+                <p className={`text-[10px] font-bold uppercase tracking-[0.14em] ${classic ? 'text-brand-500' : 'text-sg-text-soft'}`}>SEO & açıklamalar</p>
+                <button type="button" className={buttonClass} onClick={() => (editOpen ? setEditOpen(false) : openEditor())}>
+                  {editOpen ? 'Düzenlemeyi kapat' : 'Düzenle'}
+                </button>
               </div>
+              {editOpen ? (
+                <div className="space-y-3 p-3">
+                  {/* R1-16: düzenlenen alanlar kaydedilince doğrudan sitedeki ürüne yazılır. */}
+                  {([
+                    ['Ürün adı', editName, setEditName, false],
+                    ['SEO başlığı', editSeoTitle, setEditSeoTitle, false],
+                    ['Meta açıklama', editMetaDesc, setEditMetaDesc, true],
+                    ['Kısa açıklama (HTML)', editShort, setEditShort, true],
+                    ['Açıklama (HTML)', editLong, setEditLong, true],
+                  ] as Array<[string, string, (value: string) => void, boolean]>).map(([label, value, setter, multiline]) => (
+                    <label key={label} className="block">
+                      <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{label}</span>
+                      {multiline ? (
+                        <textarea
+                          value={value}
+                          onChange={(event) => setter(event.target.value)}
+                          rows={label.startsWith('Açıklama') ? 8 : 3}
+                          className={classic ? 'mt-1 w-full border border-brand-300 bg-white px-2 py-1.5 text-xs' : 'mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs'}
+                        />
+                      ) : (
+                        <input
+                          value={value}
+                          onChange={(event) => setter(event.target.value)}
+                          className={classic ? 'mt-1 w-full border border-brand-300 bg-white px-2 py-1.5 text-xs' : 'mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-2 py-1.5 text-xs'}
+                        />
+                      )}
+                    </label>
+                  ))}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className={classic ? 'border border-emerald-700 bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50' : 'rounded-sg-md bg-sg-green-strong px-3 py-2 text-xs font-semibold text-white disabled:opacity-50'}
+                      disabled={state.isCatalogActionPending}
+                      onClick={() => {
+                        void (async () => {
+                          const baseline = editBaselineRef.current;
+                          // Yalnız değişen alanlar; değişmeyenler gönderilmez (null=dokunma).
+                          const body = {
+                            name: editName !== baseline.name ? editName : null,
+                            seo_title: editSeoTitle !== baseline.seo_title ? editSeoTitle : null,
+                            meta_description: editMetaDesc !== baseline.meta_description ? editMetaDesc : null,
+                            short_description_html: editShort !== baseline.short ? editShort : null,
+                            description_html: editLong !== baseline.long ? editLong : null,
+                          };
+                          if (Object.values(body).every((value) => value === null)) {
+                            setEditOpen(false);
+                            return;
+                          }
+                          const ok = await state.updateCatalogContent(detail.id, body);
+                          if (ok) setEditOpen(false);
+                        })();
+                      }}
+                    >
+                      {state.isCatalogActionPending ? 'Kaydediliyor…' : 'Siteye kaydet'}
+                    </button>
+                    <button type="button" className={buttonClass} onClick={() => setEditOpen(false)}>Vazgeç</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 p-3">
+                  {seoRows.map(([label, value]) => (
+                    <div key={label}>
+                      <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${classic ? 'text-brand-400' : 'text-sg-text-soft'}`}>{label}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed">{value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

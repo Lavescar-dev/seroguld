@@ -197,39 +197,37 @@ function CprInput({
 
   const validation = useMemo(() => validateCpr(value), [value]);
   const isPartial = suffix === '????' || validation.digits.length !== 10;
-  const showValidation = !isPartial && Boolean(value);
+  // R1-06: uyarı yazarken değil, alandan ÇIKINCA (blur) gösterilir.
+  const [blurred, setBlurred] = useState(false);
+  const showValidation = blurred && !isPartial && Boolean(value);
+  // Mod-11 zorunlu DEĞİL: 2007 sonrası verilen bazı CPR'lar mod-11 geçmez ama
+  // geçerlidir. Format doğruysa mod-11 sonucu yalnız nötr bilgi olarak kalır.
   const validationTone = !showValidation
     ? null
-    : validation.formatOk && validation.mod11Ok
+    : validation.formatOk
       ? 'ok'
-      : validation.formatOk
-        ? 'warn'
-        : 'err';
+      : 'err';
 
   const validationIcon =
     validationTone === 'ok' ? (
       <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600" />
-    ) : validationTone === 'warn' ? (
-      <AlertCircle className="h-3 w-3 flex-shrink-0 text-amber-600" />
     ) : validationTone === 'err' ? (
       <AlertCircle className="h-3 w-3 flex-shrink-0 text-red-600" />
     ) : null;
 
   const validationMessage =
     validationTone === 'ok'
-      ? 'CPR mod-11 doğrulandı'
-      : validationTone === 'warn'
-        ? validation.reason || 'Mod-11 kontrolü başarısız (uyarı)'
-        : validationTone === 'err'
-          ? validation.reason || 'CPR geçersiz'
-          : null;
+      ? validation.mod11Ok
+        ? 'CPR doğrulandı'
+        : 'CPR biçimi geçerli (mod-11 bilgisi: eşleşmedi — 2007 sonrası CPR normal)'
+      : validationTone === 'err'
+        ? validation.reason || 'CPR biçimi: GGAAYY + 4 hane bekleniyor'
+        : null;
 
   const validationTextClass =
     validationTone === 'ok'
       ? 'text-emerald-700'
-      : validationTone === 'warn'
-        ? 'text-amber-700'
-        : 'text-red-700';
+      : 'text-red-700';
 
   if (value && value.includes('-')) {
     const suffixInputCls = `${className} !w-16 text-center !px-1 ${
@@ -237,9 +235,7 @@ function CprInput({
     } ${
       validationTone === 'ok'
         ? 'border-emerald-300 bg-emerald-50 ring-1 ring-emerald-300'
-        : validationTone === 'warn'
-          ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-300'
-          : validationTone === 'err'
+        : validationTone === 'err'
             ? 'border-red-300 bg-red-50 ring-1 ring-red-300'
             : ''
     }`;
@@ -253,7 +249,7 @@ function CprInput({
               if (next.length > 6) next = next.slice(0, 6);
               onChange(next + (suffix || next.length === 6 ? `-${suffix}` : ''));
             }}
-            onBlur={onBlur}
+            onBlur={() => { setBlurred(true); onBlur?.(); }}
             className={`${className} !w-20 text-center !px-1`}
             style={style}
             placeholder="DDMMYY"
@@ -265,7 +261,7 @@ function CprInput({
             onFocus={(event) => {
               if (event.target.value === '????') onChange(`${prefix}-`);
             }}
-            onBlur={onBlur}
+            onBlur={() => { setBlurred(true); onBlur?.(); }}
             className={suffixInputCls}
             style={style}
             placeholder="0000"
@@ -286,11 +282,9 @@ function CprInput({
   const baseInputCls = `${className} ${
     validationTone === 'ok'
       ? 'border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200'
-      : validationTone === 'warn'
-        ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-200'
-        : validationTone === 'err'
-          ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
-          : ''
+      : validationTone === 'err'
+        ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+        : ''
   }`;
 
   return (
@@ -299,7 +293,7 @@ function CprInput({
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          onBlur={onBlur}
+          onBlur={() => { setBlurred(true); onBlur?.(); }}
           className={baseInputCls}
           style={style}
           placeholder="120385-1234"
@@ -385,9 +379,26 @@ export function CustomerEditorTable({
     setCustomer((current) => ({ ...current, [field]: value }));
   }
 
+  const [identityDragActive, setIdentityDragActive] = useState(false);
   return (
     <div>
-      <div className="border-b-2 border-brand-400">
+      <div
+        className={`border-b-2 border-brand-400 ${identityDragActive ? 'ring-2 ring-emerald-400' : ''}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (identity.capabilities.file) setIdentityDragActive(true);
+        }}
+        onDragLeave={() => setIdentityDragActive(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIdentityDragActive(false);
+          const file = Array.from(event.dataTransfer?.files || []).find((item) =>
+            /\.(jpe?g|png|tiff?|bmp)$/i.test(item.name),
+          );
+          if (file) void identity.dropFile(file, 'front');
+        }}
+        title="Kimlik görüntüsünü buraya sürükleyip bırakabilirsiniz"
+      >
         <div className="flex items-center justify-between bg-brand-900 px-4 py-2">
           <div className="flex items-center gap-2">
             <ScanLine className="h-3.5 w-3.5 flex-shrink-0 text-emerald-400" />
@@ -450,7 +461,7 @@ export function CustomerEditorTable({
           <div className="border-b border-emerald-300 bg-emerald-50 px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Okunan alanları inceleyin</p>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
-              {Object.entries(identity.result.fields).map(([field, parsed]) => parsed ? (
+              {Object.entries(identity.result.fields).filter(([field]) => field !== 'identity_doc_country').map(([field, parsed]) => parsed ? (
                 <p key={field} className="text-xs text-emerald-900"><strong>{identityFieldLabel(field as IdentityFieldName)}:</strong> {parsed.value} <span className={parsed.review === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p>
               ) : null)}
             </div>
@@ -596,7 +607,7 @@ export function CustomerEditorTable({
             <span>
               Eşleşen müşteri: <strong>{customerMatch.response.matches[0]?.name}</strong>
               {onSelectMatchedCustomer && customerMatch.response.matches[0] ? (
-                <button type="button" onClick={() => onSelectMatchedCustomer(customerMatch.response!.matches[0].id)} className="ml-2 underline">Mevcut müşteriyi seç</button>
+                <button type="button" onClick={() => onSelectMatchedCustomer(customerMatch.response!.matches[0].id)} className="ml-2 inline-flex items-center border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 hover:bg-amber-200">Bu kayda geç</button>
               ) : null}
             </span>
           ) : null}

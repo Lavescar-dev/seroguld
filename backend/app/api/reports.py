@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
+from app.services.pos_value_helpers import display_metal_type_da, display_product_type_da
 from app.database import get_db
 from app.models.enums import ProductStatusEnum
 from app.models.product import Product
@@ -155,8 +156,8 @@ def _serialize_export_rows(records: Iterable[Any]) -> list[list[str]]:
         rows.append(
             [
                 _format_cell(record.product_number),
-                _format_cell(record.product_type),
-                _format_cell(record.metal_type),
+                _format_cell(display_product_type_da(record.product_type)),
+                _format_cell(display_metal_type_da(record.metal_type)),  # X2: ham enum yerine Danca etiket
                 _format_cell(record.status),
                 _format_cell(record.purchase_price_dkk),
                 _format_cell(record.sale_price_dkk),

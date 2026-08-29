@@ -343,6 +343,16 @@ export async function acquireIdentityScan(side: IdentityScanSide): Promise<Ident
 }
 
 /** Opens the native Windows file chooser for a validated local image fallback. */
+// R2-03: sürükle-bırakla gelen görüntüyü (webview File → base64) OCR hattına verir.
+export async function identityScanFromBytes(side: IdentityScanSide, dataBase64: string): Promise<IdentityScanResult> {
+  await requireIdentityScannerCapabilities();
+  try {
+    return await invokeDesktop<IdentityScanResult>('identity_scan_from_bytes', { side, dataBase64 });
+  } catch (error) {
+    throw identityScannerBridgeError(error);
+  }
+}
+
 export async function pickIdentityScanFile(side: IdentityScanSide): Promise<IdentityScanResult> {
   await requireIdentityScannerCapabilities();
   try {

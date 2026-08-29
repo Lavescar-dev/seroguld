@@ -29,6 +29,8 @@ interface WooCategoryPickerProps {
   categories: WooCategory[];
   selectedIds: number[];
   onToggle: (id: number) => void;
+  // R1-10: secili bir kategoriyi liste basina (=Primaer) tasir; opsiyonel.
+  onMakePrimary?: (id: number) => void;
   onRefresh: () => void;
   loading?: boolean;
   error?: string | null;
@@ -41,6 +43,7 @@ export function WooCategoryPicker({
   categories,
   selectedIds,
   onToggle,
+  onMakePrimary,
   onRefresh,
   loading = false,
   error = null,
@@ -146,6 +149,22 @@ export function WooCategoryPicker({
                 disabled={disabled}
               />
               <span className="min-w-0 flex-1 truncate">{item.name}</span>
+              {/* R1-10: ilk seçili kategori Primær olarak yayınlanır (payload'da
+                  primary_category_id = ilk id); diğer seçililer tek tıkla öne alınabilir. */}
+              {selectedIds[0] === item.id ? (
+                <span className={isModern ? 'rounded bg-sg-green-soft px-1.5 py-0.5 text-[10px] font-semibold text-sg-green-strong' : 'bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700'}>Primær</span>
+              ) : selectedIds.includes(item.id) && onMakePrimary ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onMakePrimary(item.id);
+                  }}
+                  className={isModern ? 'text-[10px] text-sg-accent hover:underline' : 'text-[10px] font-bold text-brand-500 hover:underline'}
+                >
+                  Primær yap
+                </button>
+              ) : null}
               <span className={isModern ? 'text-[10px] text-sg-text-soft' : 'text-[10px] text-brand-400'}>{item.count}</span>
             </label>
           ))

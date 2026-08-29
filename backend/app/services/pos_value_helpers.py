@@ -8,6 +8,17 @@ from app.models.enums import MetalTypeEnum, PosRateSourceEnum, PosTradeSideEnum,
 from app.models.pos_session import PosSession
 from app.utils.helpers import quantize_2, to_decimal
 
+# R2-09 — üç maddelik beyan (AML/PEP dahil). ÇEVİRİ KATMANI DIŞINDA: sabit
+# Danca; arayüz dili değişse de değişmez. Hem .xlsm belgesi (C47-C50) hem HTML
+# yazdırma çıktısı bu tek kaynaktan beslenir.
+AFG_DECLARATION_HEADER = "Jeg bekræfter herved at:"
+AFG_DECLARATION_ITEMS = (
+    "Smykkerne/sølvtøjet er solgt frit og ubehæftet til Sero Guld ApS og kan ikke returneres.",
+    "Varerne i denne handel er afregnet i henhold til dagsprisen på guld og sølv på www.seroguld.dk",
+    "Jeg er ikke en politisk eksponeret person (PEP) eller nærtstående familiemedlem/partner, som er politisk eksponeret.",
+)
+
+
 PRODUCT_LABEL_TR: dict[str, str] = {
     "bracelet": "Bilezik",
     "ring": "Yüzük",
@@ -22,6 +33,16 @@ METAL_LABEL_TR: dict[str, str] = {
     "yellow_gold": "Sarı Altın",
     "white_gold": "Beyaz Altın",
     "silver": "Gümüş",
+    "platinum": "Platin",
+    "palladium": "Palladium",
+}
+
+# X2/R2-15: Müşteriye görünen belge/ekran (Danca) için etiketler. İç anahtar
+# "yellow_gold" ASLA ham gösterilmez.
+METAL_LABEL_DA: dict[str, str] = {
+    "yellow_gold": "Guld",
+    "white_gold": "Hvidguld",
+    "silver": "Sølv",
     "platinum": "Platin",
     "palladium": "Palladium",
 }
@@ -96,6 +117,35 @@ def display_metal_type(value: MetalTypeEnum | str | None) -> str:
     return METAL_LABEL_TR.get(raw, raw)
 
 
+PRODUCT_LABEL_DA: dict[str, str] = {
+    "bracelet": "Armbånd",
+    "ring": "Ring",
+    "necklace": "Halskæde",
+    "earring": "Ørering",
+    "chain": "Kæde",
+    "bar": "Barre",
+    "jewelry": "Smykke",
+}
+
+
+def display_product_type_da(value: ProductTypeEnum | str | None) -> str:
+    raw = product_value(value)
+    if not raw:
+        return "-"
+    return PRODUCT_LABEL_DA.get(raw, PRODUCT_LABEL_DA.get(raw.lower(), "-"))
+
+
+def display_metal_type_da(value: MetalTypeEnum | str | None) -> str:
+    """Müşteriye görünen Danca metal etiketi (belge + müşteri ekranı).
+
+    İç anahtar ("yellow_gold" gibi) hiçbir zaman ham dönmez; bilinmeyen değer
+    için de "-" verilir ki ham anahtar sızmasın (X2)."""
+    raw = metal_value(value)
+    if not raw:
+        return "-"
+    return METAL_LABEL_DA.get(raw, METAL_LABEL_DA.get(raw.lower(), "-"))
+
+
 def fmt_decimal(value: Decimal | str | int | float | None, *, fallback: str = "-") -> str:
     if value is None:
         return fallback
@@ -128,13 +178,14 @@ def calculate_offer(
 
     normalized_margin = margin_percent if margin_percent is not None else Decimal("0")
     pure_grams = weight_grams * (purity_percentage / Decimal("100"))
-    margin_ratio = normalized_margin / Decimal("100")
-    if trade_side == PosTradeSideEnum.SELL_TO_CUSTOMER:
-        multiplier = Decimal("1") + margin_ratio
-    else:
-        multiplier = Decimal("1") - margin_ratio
+    # R2-07 "Mer pris": margin artık YÜZDE değil, gram başına kr/g düzeltmedir.
+    # Alışta orana EKLENİR (negatif = düşer); satışta da aynı işaretle eklenir.
+    # Eski yüzde-çarpan formülü (1 ± m/100) kaldırıldı — negatif mer pris'i
+    # %ZAM olarak yorumluyordu.
+    _ = trade_side  # yön farkı işareti mer pris'in kendisinde (± kr/g)
+    effective_rate = active_rate + normalized_margin
 
-    offer = pure_grams * active_rate * multiplier
+    offer = pure_grams * effective_rate
     return quantize_2(offer)
 
 

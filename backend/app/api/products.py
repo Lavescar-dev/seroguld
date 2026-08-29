@@ -620,6 +620,37 @@ async def upload_photos(
     return to_product_out(updated)
 
 
+@router.put("/{product_id}/photos/order")
+async def reorder_product_photos(
+    product_id: UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+) -> ProductOut:
+    """R1-36 — fotoğraf sırası kalıcılaşır; ilk görsel otomatik Primær olur
+    ve yayında Woo galeri sırası birebir bu sırayı izler."""
+    from app.services.photo_service import reorder_photos
+
+    photo_ids = payload.get("photo_ids")
+    if not isinstance(photo_ids, list) or not all(isinstance(item, str) for item in photo_ids):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="photo_ids listesi gerekli.")
+    product = await get_product_or_404(db, product_id)
+    product.photos = reorder_photos(product, photo_ids)
+    db.add(
+        ProductHistory(
+            product_id=product.id,
+            action="photo_reordered",
+            old_value=None,
+            new_value=jsonable_encoder({"order": photo_ids[:20]}),
+            performed_by=admin.id,
+            notes="Fotoğraf sırası güncellendi (ilk görsel Primær)",
+        )
+    )
+    await db.commit()
+    updated = await get_product_or_404(db, product.id)
+    return to_product_out(updated)
+
+
 @router.delete("/{product_id}/photos/{photo_id}")
 async def delete_photo(
     product_id: UUID,
@@ -722,6 +753,76 @@ async def update_ai_describe(
     return updated
 
 
+@router.get("/{product_id}/price-suggestion")
+async def get_price_suggestion(
+    product_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+) -> dict:
+    """R1-31/R1-26 — Butikspris önerisi (spot × gram × (1+markup), min-fiyat tabanlı)."""
+    from app.services.woocommerce import compute_suggested_shop_price
+
+    product = await get_product_or_404(db, product_id)
+    price, reason = compute_suggested_shop_price(product)
+    return {
+        "suggested_price_dkk": str(price) if price is not None else None,
+        "reason": reason,
+    }
+
+
+@router.get("/{product_id}/publish-preview")
+async def get_publish_preview(
+    product_id: UUID,
+    regular_price_dkk: Decimal | None = None,
+    name: str | None = None,
+    category_ids: str | None = None,
+    publish_profile: str | None = None,
+    production_year: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+) -> dict:
+    """R1-10 — yayın öncesi şablon önizleme: ağ erişimsiz saf payload kurulumu.
+
+    Woo'ya HİÇBİR istek atılmaz; fotoğraflar yüklenmez (images=[]). Panelde
+    henüz KAYDEDİLMEMİŞ seçimler (kategori/profil/yıl) query ile geçilir ve
+    yalnız bellekte uygulanır — sonda rollback ile kalıcılaşmaları engellenir.
+    """
+    from app.config import get_settings
+    from app.services.woocommerce import build_publish_payload
+
+    product = await get_product_or_404(db, product_id)
+    price = regular_price_dkk if regular_price_dkk and regular_price_dkk > 0 else (
+        product.shop_price_dkk or product.sale_price_dkk or Decimal("1")
+    )
+    if category_ids is not None:
+        parsed_ids = [int(value) for value in category_ids.split(",") if value.strip().isdigit()]
+        product.woocommerce_category_ids = parsed_ids or None
+    if publish_profile is not None:
+        product.woocommerce_publish_profile = publish_profile.strip().lower() or None
+    if production_year is not None:
+        product.production_year = production_year if production_year > 0 else None
+    payload, warnings = build_publish_payload(
+        product=product,
+        regular_price_dkk=Decimal(str(price)),
+        name=(name or "").strip() or None,
+        images=[],
+        settings=get_settings(),
+    )
+    # Önizleme override'ları asla persist edilmez.
+    await db.rollback()
+    return {
+        "name": payload.get("name"),
+        "slug": payload.get("slug"),
+        "regular_price": payload.get("regular_price"),
+        "sku": payload.get("sku"),
+        "categories": payload.get("categories") or [],
+        "short_description": payload.get("short_description"),
+        "description": payload.get("description"),
+        "attributes": payload.get("attributes") or [],
+        "warnings": warnings,
+    }
+
+
 @router.post("/{product_id}/publish")
 async def publish(
     product_id: UUID,
@@ -778,6 +879,7 @@ async def publish(
         "category_ids": payload.category_ids,
         "publish_profile": payload.publish_profile,
         "production_year": payload.production_year,
+        "mark_as_new": payload.mark_as_new,
     }
 
     try:
@@ -785,7 +887,21 @@ async def publish(
             product=product,
             regular_price_dkk=payload.regular_price_dkk,
             name=payload.name,
+            mark_as_new=payload.mark_as_new,
         )
+        # R1-31 mutabakat: girilen fiyat CRM hesabından belirgin sapıyorsa uyar
+        # (yayını engellemez — spot oynaması/bilinçli fiyat meşru olabilir).
+        from app.services.woocommerce import compute_suggested_shop_price
+
+        suggested, _reason = compute_suggested_shop_price(product)
+        if suggested and suggested > 0:
+            deviation = abs(Decimal(str(payload.regular_price_dkk)) - suggested) / suggested
+            if deviation > Decimal("0.15"):
+                publish_warnings = list(publish_warnings) + [
+                    f"Fiyat mutabakatı: girilen {quantize_2(payload.regular_price_dkk)} kr, "
+                    f"CRM hesabı {quantize_2(suggested)} kr'den %{(deviation * 100).quantize(Decimal('1'))} sapıyor "
+                    "(spot × gram × (1+markup))."
+                ]
     except HTTPException as exc:
         db.add(
             WooCommerceSyncLog(

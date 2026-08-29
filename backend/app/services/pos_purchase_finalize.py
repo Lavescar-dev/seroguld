@@ -74,6 +74,35 @@ async def finalize_purchase_workspace(
     if not pos_lines:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Kesinleştirme için en az bir satır gerekli.")
 
+    # CANLI FİNALİZE: satır fiyatlarını GÜNCEL piyasa matrisinden yeniden hesaplayıp
+    # dondur (rate × (1 − avance/100) × gram). Operatör oran editöründe bir değer
+    # değiştirip satıra dokunmadan finalize etse bile belge güncel oranı kullanır —
+    # donmuş/bayat tutarla kesinleşme (yanlış ödeme) olmaz. Matrise oturmayan
+    # (rate 0) satır mevcut değerinde kalır.
+    finalize_market_rates = await core._workspace_market_rates_from_session(pos_session)
+    for line in pos_lines:
+        meta = core._parse_workspace_line_meta(line.notes)
+        row_key = str(meta.get("row_key") or core._infer_workspace_row_key(line) or "")
+        kind = str(meta.get("kind") or "")
+        if kind in ("kniv", "quarter"):
+            # R2-01 dinamik satır: fiyat metal+karattan canlı çözülür.
+            karat = str(meta.get("karat") or "")
+            if str(meta.get("metal") or "") == "gold":
+                rate = core.quantize_2(core.to_decimal(finalize_market_rates.gold_rates_dkk.get(karat) or Decimal("0")))
+            else:
+                rate = core.quantize_2(core.to_decimal(finalize_market_rates.silver_rates_dkk.get(karat) or Decimal("0")))
+        else:
+            rate = core._workspace_market_rate_dkk(finalize_market_rates, row_key) if row_key else Decimal("0.00")
+        if rate > 0:
+            unit = core._workspace_row_unit_price_from_matrix(
+                rate_dkk=rate, avance_percent=core.to_decimal(line.margin_percent_internal)
+            )
+            line.rate_dkk = core.quantize_2(rate)
+            line.line_offer_dkk = core._workspace_row_line_total(
+                unit_price_dkk=unit, gram=core.quantize_2(core.to_decimal(line.weight_grams))
+            )
+    await session.flush()
+
     await core._sync_buy_session_summary_from_lines(session, pos_session=pos_session)
     target_total = core.quantize_2(
         sum((core.to_decimal(line.line_offer_dkk or Decimal("0")) for line in pos_lines), Decimal("0.00"))
@@ -216,6 +245,7 @@ async def finalize_purchase_workspace(
         await session.refresh(pos_session)
 
         await _sync_uniconta(session, source_document, source_session, pos_lines)
+        await _send_afg_email_best_effort(session, source_document, source_session)
 
         core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
         await core._emit_session_state(source_session)
@@ -275,6 +305,7 @@ async def finalize_purchase_workspace(
     await session.refresh(transaction)
 
     await _sync_uniconta(session, pos_document, pos_session, pos_lines)
+    await _send_afg_email_best_effort(session, pos_document, pos_session)
 
     core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
     await core._emit_session_state(pos_session)
@@ -373,3 +404,54 @@ async def _sync_uniconta(
         )
         await session.rollback()
         _ = exc
+
+
+async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_session: PosSession) -> None:
+    """R2-16 — finalize sonrası müşteriye afregningsbilag e-postası (PDF ekli).
+
+    SMTP yapılandırılmamışsa ANINDA çıkar (maliyetsiz). E-posta yoksa veya
+    gönderim düşerse belge geçmişine 'gönderilmedi' düşülür; finalize asla
+    e-posta yüzünden başarısız olmaz. PDF customer-audience bağlamından üretilir
+    (CPR maskeli).
+    """
+    core = _core()
+    from app.services.email_service import send_afg_email, smtp_configured
+
+    if not smtp_configured():
+        return
+    import json as _json
+
+    from app.models.pos_document_audit import PosDocumentAudit
+
+    to_address = (pos_document.customer_email or "").strip()
+    sent = False
+    note = ""
+    try:
+        pdf_bytes = None
+        try:
+            context = await core.build_pos_receipt_context(session, pos_session=pos_session, audience="customer")
+            from app.services.pos_receipt_renderer import render_pos_receipt_pdf
+
+            pdf_bytes = render_pos_receipt_pdf(context)
+        except Exception as exc:  # PDF üretilemezse ekleme olmadan dene
+            LOGGER.warning("AFG e-posta PDF üretilemedi (seq=%s): %s", pos_document.sequence_no, exc)
+        sent, note = send_afg_email(
+            to_address=to_address,
+            customer_name=pos_document.customer_name or "",
+            document_number=str(pos_document.sequence_no),
+            pdf_bytes=pdf_bytes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        note = f"E-posta akışı hatası: {exc}"
+    session.add(
+        PosDocumentAudit(
+            sequence_no=pos_document.sequence_no,
+            pos_session_id=pos_session.id,
+            action="afg_email_sent" if sent else "afg_email_skipped",
+            actor_user_id=None,
+            actor_email="system:afg_email",
+            payload_json=_json.dumps({"to": to_address or None, "sent": sent, "note": note}, ensure_ascii=False),
+            note=note[:500] or None,
+        )
+    )
+    await session.commit()

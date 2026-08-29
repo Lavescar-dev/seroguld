@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.models.product import Product
 from app.services.photo_service import sorted_photos_for_publish
 from app.services.woocommerce_profiles import effective_publish_profile, profile_traits
-from app.utils.helpers import quantize_2, utc_now
+from app.utils.helpers import quantize_2, to_decimal, utc_now
 
 
 PRODUCT_TYPE_DA = {
@@ -446,10 +446,13 @@ _STONEX_LOGICAL_FIELDS = {
     "diameter",
     "producer",
     "reference",
+    # R1-28/R1-33: metal eklentisi fiyat alanları (harita anahtarı varsa yazılır)
+    "markup_percent",
+    "minimum_price",
 }
 
 
-def _stonex_logical_value(product: Product, logical: str) -> str | None:
+def _stonex_logical_value(product: Product, logical: str, settings=None) -> str | None:
     if logical == "metal_type":
         return METAL_TYPE_DA.get(getattr(product.metal_type, "value", str(product.metal_type)))
     if logical == "metal_weight":
@@ -470,10 +473,25 @@ def _stonex_logical_value(product: Product, logical: str) -> str | None:
     if logical == "reference":
         reference = (product.reference_number or product.product_number or "").strip()
         return reference or None
+    if logical == "markup_percent":
+        # Ayarlardaki merkezi markup oranı (R1-31); ürün bazlı ezme ileride.
+        raw = str(getattr(settings, "woocommerce_metal_markup_percent", "") or "").strip() if settings else ""
+        return raw or None
+    if logical == "minimum_price":
+        # R1-33: alış maliyeti + minimum marj kuralı.
+        purchase = getattr(product, "purchase_price_dkk", None)
+        if purchase is None:
+            return None
+        try:
+            margin = Decimal(str(getattr(settings, "woocommerce_minimum_margin_percent", "0") or "0"))
+        except Exception:
+            margin = Decimal("0")
+        minimum = quantize_2(to_decimal(purchase) * (Decimal("1") + margin / Decimal("100")))
+        return str(minimum)
     return None
 
 
-def _build_stonex_meta(product: Product, stonex_map: dict[str, Any]) -> tuple[list[dict[str, str]], list[str]]:
+def _build_stonex_meta(product: Product, stonex_map: dict[str, Any], settings=None) -> tuple[list[dict[str, str]], list[str]]:
     if not stonex_map:
         return [], ["StoneX meta haritası boş — sitenin spot fiyat alanları doldurulmadı (probe aracıyla doldurun)."]
     meta: list[dict[str, str]] = []
@@ -482,7 +500,7 @@ def _build_stonex_meta(product: Product, stonex_map: dict[str, Any]) -> tuple[li
         if logical not in _STONEX_LOGICAL_FIELDS:
             warnings.append(f"StoneX haritasında bilinmeyen alan: {logical} — atlandı.")
             continue
-        value = _stonex_logical_value(product, str(logical))
+        value = _stonex_logical_value(product, str(logical), settings)
         if value is None:
             continue
         meta.append({"key": str(meta_key), "value": value})
@@ -524,6 +542,28 @@ def _build_badge_meta(badge_config: dict[str, Any], *, now=None) -> tuple[list[d
     return meta, warnings
 
 
+def _build_new_badge_meta(mark_as_new: bool | None, settings, *, now=None) -> tuple[list[dict[str, Any]], list[str]]:
+    """R1-21: Nyhed rozet meta'ları. True → _sg_nyhed=1 + _sg_nyhed_until;
+    False → boş değerlerle AÇIK temizleme; None → hiç yazma (mevcut rozet
+    olduğu gibi kalır — alanı göndermeyen çağrılar rozeti silmesin)."""
+    if mark_as_new is None:
+        return [], []
+    if not mark_as_new:
+        return [{"key": "_sg_nyhed", "value": ""}, {"key": "_sg_nyhed_until", "value": ""}], []
+    now = now or utc_now()
+    try:
+        days = int(getattr(settings, "woocommerce_new_badge_days", 30) or 30)
+    except (TypeError, ValueError):
+        days = 30
+    from datetime import timedelta
+
+    until = (now + timedelta(days=days)).date().isoformat()
+    return (
+        [{"key": "_sg_nyhed", "value": "1"}, {"key": "_sg_nyhed_until", "value": until}],
+        [],
+    )
+
+
 SPEC_STRIP_MARKER_START = "<!-- sg-spec -->"
 SPEC_STRIP_MARKER_END = "<!-- /sg-spec -->"
 
@@ -547,14 +587,23 @@ def _spec_strip_text(product: Product) -> str:
         if mode == "none":
             return base
         if product.weight_grams is not None:
-            return f"{base} V\u00e6gt: {_danish_number(quantize_2(product.weight_grams))} gram"
+            return f"{base} Vægt: {_danish_number(quantize_2(product.weight_grams))} gram"
         return base
 
+    # R2-18: Vægt vare nr.'dan HEMEN sonra gelir (referans: "Vare nr. : 1427,
+    # Vægt: 0,93g Diameter: 5,97mm").
+    if product.weight_grams is not None:
+        base = f"{base}, Vægt: {_danish_number(quantize_2(product.weight_grams))}g"
     dims: list[str] = []
     length = getattr(product, "length_cm", None)
     if length:
         # length_cm birim iceren serbest metindir (or. "1,40cm" / "18-19cm").
-        dims.append(f"L\u00e6ngde: {str(length).strip()}")
+        # X5: birimsiz ham sayi girildiyse 'cm' eklenir \u2014 "1.8" tek basina
+        # cm/mm belirsizligi yaratiyordu; alanin kanonik birimi cm'dir.
+        length_text = str(length).strip()
+        if length_text and not any(ch.isalpha() for ch in length_text):
+            length_text = f"{length_text}cm"
+        dims.append(f"L\u00e6ngde: {length_text}")
     if getattr(product, "width_mm", None) is not None:
         dims.append(f"Bredde: {_danish_number(quantize_2(product.width_mm))}mm")
     if getattr(product, "thickness_mm", None) is not None:
@@ -577,12 +626,26 @@ def _strip_spec_block(value: str) -> str:
 
 
 def _apply_spec_strip(value: str, strip_text: str) -> str:
-    """Spec şeridini idempotent marker'la içeriğin BAŞINA ekler."""
+    """Spec şeridini idempotent marker'la içeriğin SONUNA ekler.
+
+    A2 kararı: canlı referans sırası "paragraf → yeşil kutu → 'Detaljeret…'" —
+    şerit AI paragrafının ALTINA gelir (kapanış satırı daha sonra en alta
+    eklenir). Marker'lar konumdan bağımsız idempotentlik sağlar: eski başta
+    duran blok önce sökülür, sona yeniden yazılır.
+    """
     base = _strip_spec_block(value)
     if not strip_text:
         return base
-    block = f"{SPEC_STRIP_MARKER_START}<p>{strip_text}</p>{SPEC_STRIP_MARKER_END}"
-    return f"{block}\n{base}" if base else block
+    # R1-13/R1-32: şerit referans sitedeki YEŞİL KUTU görünümüyle basılır —
+    # düz metin değil. Inline stil tema bağımsız çalışır; marker idempotentliği korur.
+    block = (
+        f"{SPEC_STRIP_MARKER_START}"
+        '<div class="sg-spec-box" style="background:#e7f4ec;border:1px solid #bfe3cc;'
+        'border-left:4px solid #2f9e5f;padding:10px 14px;margin:12px 0;border-radius:4px;">'
+        f"<p style=\"margin:0;\">{strip_text}</p></div>"
+        f"{SPEC_STRIP_MARKER_END}"
+    )
+    return f"{base.rstrip()}\n{block}" if base else block
 
 
 def _apply_description_footer(description: str, footer_html: str) -> str:
@@ -633,6 +696,58 @@ def _slug_consistent(slug: str, product: Product) -> bool:
     return expected_token in slug
 
 
+def compute_suggested_shop_price(product: Product) -> tuple[Decimal | None, str | None]:
+    """R1-31/R1-26 — Butikspris önerisi: spot(karat) × gram × (1 + markup%).
+
+    Kaynak: global piyasa profili (tek canlı kaynak). Hesaplanamıyorsa (None,
+    neden) döner; asla sessizce 0 önermez. Minimum fiyat kuralı (alış +
+    minimum marj) taban olarak uygulanır.
+    """
+    from app.config import get_settings as _gs
+    from app.services.market_rate_profile import get_effective_market_rate_profile_cached
+
+    settings = _gs()
+    weight = to_decimal(product.weight_grams) if product.weight_grams is not None else None
+    if weight is None or weight <= 0:
+        return None, "Ağırlık (gram) girilmemiş."
+    rates = get_effective_market_rate_profile_cached()
+    metal = getattr(product.metal_type, "value", str(product.metal_type or ""))
+    rate: Decimal | None = None
+    if metal in ("yellow_gold", "white_gold"):
+        karat_key = str(product.purity_karat or "").upper().removesuffix("K").strip()
+        raw = (rates.get("gold_rates_dkk") or {}).get(karat_key)
+        if raw is None:
+            return None, f"Karat oranı bulunamadı ({product.purity_karat or 'karat yok'})."
+        rate = to_decimal(raw)
+    elif metal == "silver":
+        raw = rates.get("silver_dkk")
+        purity = to_decimal(product.purity_percentage or 0)
+        if raw is None or purity <= 0:
+            return None, "Gümüş oranı/saflığı eksik."
+        rate = to_decimal(raw) * purity / Decimal("99.9")
+    elif metal == "platinum":
+        rate = to_decimal(rates.get("platinum_dkk") or 0)
+    elif metal == "palladium":
+        rate = to_decimal(rates.get("palladium_dkk") or 0)
+    if rate is None or rate <= 0:
+        return None, "Bu metal için güncel oran yok."
+    try:
+        markup = Decimal(str(getattr(settings, "woocommerce_metal_markup_percent", "0") or "0"))
+    except Exception:
+        markup = Decimal("0")
+    price = quantize_2(rate * weight * (Decimal("1") + markup / Decimal("100")))
+    # Minimum fiyat tabanı: alış + minimum marj (R1-33 kuralıyla aynı).
+    if product.purchase_price_dkk is not None:
+        try:
+            min_margin = Decimal(str(getattr(settings, "woocommerce_minimum_margin_percent", "0") or "0"))
+        except Exception:
+            min_margin = Decimal("0")
+        floor = quantize_2(to_decimal(product.purchase_price_dkk) * (Decimal("1") + min_margin / Decimal("100")))
+        if price < floor:
+            price = floor
+    return price, None
+
+
 def build_publish_payload(
     *,
     product: Product,
@@ -640,6 +755,7 @@ def build_publish_payload(
     name: str | None,
     images: list[dict[str, Any]],
     settings,
+    mark_as_new: bool | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Ağ erişimi olmayan saf payload kurulumu (golden-test edilebilir).
 
@@ -690,11 +806,21 @@ def build_publish_payload(
             description_value = _apply_description_footer(description_value, footer_html)
 
     # Referans sitedeki spec şeridi ("Vare nr. : X, Vægt: Yg Diameter: Zmm")
-    # hem kısa açıklamanın hem uzun açıklamanın başına idempotent eklenir.
+    # A2: iki açıklamada da paragrafın ALTINA idempotent eklenir
+    # (paragraf → yeşil kutu → kapanış satırı).
     spec_text = _spec_strip_text(product)
     if spec_text:
         description_value = _apply_spec_strip(description_value, spec_text)
         short_description_value = _apply_spec_strip(short_description_value or "", spec_text)
+
+    # R1-34: kısa açıklamanın EN ALTINDA sabit kapanış satırı (jewelry).
+    closing_line = "Detaljeret oplysninger ses længere nede under specifikationer."
+    if (
+        profile_traits(effective_publish_profile(product)).get("footer_key") == "jewelry"
+        and short_description_value
+        and closing_line not in short_description_value
+    ):
+        short_description_value = f"{short_description_value.rstrip()}\n<p>{closing_line}</p>"
 
     resolved_name = name.strip() if name and name.strip() else (seo_title_value or _default_name_for(product))
     payload: dict[str, Any] = {
@@ -704,7 +830,17 @@ def build_publish_payload(
         "categories": categories,
         "status": "publish",
         "meta_data": [{"key": "crm_product_id", "value": str(product.id)}],
+        # R1-29: tekil parça mağazası — stok takibi açık, adet 1, tek satış.
+        "manage_stock": True,
+        "stock_quantity": 1,
+        "stock_status": "instock",
+        "sold_individually": True,
     }
+    sku_value = (product.reference_number or "").strip()
+    if sku_value:
+        payload["sku"] = sku_value
+    else:
+        warnings.append("Varenummer (SKU) boş: ürünün referans/lager numarası yok.")
 
     attributes = _build_attributes(product)
     if attributes:
@@ -734,13 +870,20 @@ def build_publish_payload(
             {"key": settings.woocommerce_primary_term_meta_key, "value": str(primary_category_id)}
         )
 
-    stonex_meta, stonex_warnings = _build_stonex_meta(product, stonex_map)
+    stonex_meta, stonex_warnings = _build_stonex_meta(product, stonex_map, settings)
     payload["meta_data"].extend(stonex_meta)
     warnings.extend(stonex_warnings)
 
     badge_meta, badge_warnings = _build_badge_meta(badge_config)
     payload["meta_data"].extend(badge_meta)
     warnings.extend(badge_warnings)
+
+    # R1-21: "Nyhed" rozeti — checkbox işaretliyse _sg_nyhed=1 + bitiş tarihi
+    # (yayın + woocommerce_new_badge_days gün); değilse republish rozetini
+    # temizler (boş değer). Tema/snippet bu meta'ları okuyarak rozeti çizer.
+    nyhed_meta, nyhed_warnings = _build_new_badge_meta(mark_as_new, settings)
+    payload["meta_data"].extend(nyhed_meta)
+    warnings.extend(nyhed_warnings)
 
     if images:
         payload["images"] = images
@@ -945,6 +1088,7 @@ class WooCommerceService:
         product: Product,
         regular_price_dkk: Decimal,
         name: str | None = None,
+        mark_as_new: bool | None = None,
     ) -> tuple[dict[str, Any], list[str]]:
         warnings: list[str] = []
 
@@ -971,6 +1115,7 @@ class WooCommerceService:
             name=name,
             images=images,
             settings=get_settings(),
+            mark_as_new=mark_as_new,
         )
         warnings.extend(payload_warnings)
 

@@ -131,5 +131,15 @@ class WooCatalogSyncOut(AppBaseModel):
     synced_at: datetime
 
 
+class WooCatalogContentUpdateIn(AppBaseModel):
+    """R1-16: katalog cekmecesi icerik duzenleme — None alanlara dokunulmaz."""
+
+    name: str | None = None
+    short_description_html: str | None = None
+    description_html: str | None = None
+    seo_title: str | None = None
+    meta_description: str | None = None
+
+
 class WooCatalogLinkIn(AppBaseModel):
     product_id: UUID
