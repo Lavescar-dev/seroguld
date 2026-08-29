@@ -10,7 +10,10 @@ type DockableCustomerNotesPanelProps = {
 };
 
 export function DockableCustomerNotesPanel({ customerId, customerName, manage = false }: DockableCustomerNotesPanelProps) {
-  const [open, setOpen] = useState(true);
+  // Roadmap madde 1: panel sağ alttaki değer/afregning sheet editörlerinin ve
+  // PDF hata toast'ının ÜZERİNE biniyordu (fixed overlay). Varsayılan kapalı
+  // başlar — tek tıkla açılır, çalışan editörü kapatmaz.
+  const [open, setOpen] = useState(false);
 
   if (!open) {
     return (

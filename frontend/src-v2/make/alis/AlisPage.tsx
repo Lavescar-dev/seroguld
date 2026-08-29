@@ -50,6 +50,7 @@ import {
 } from './marketRates';
 import { CustomerAlisSummaryStrip } from './CustomerAlisSummaryStrip';
 import { CustomerEditorTable, CustomerInfoTable } from './customerEditors';
+import { resolveCustomerPanelView } from './customerPanelState';
 import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor } from './sheetEditors';
 import { RelinkCustomerModal } from './RelinkCustomerModal';
 import type {
@@ -715,6 +716,8 @@ function ActiveWorkspaceView(props: {
     onCloseCustomerDisplay,
   } = props;
   const hasSelectedCustomer = Boolean(workspace.customer.customer_id);
+  // Roadmap madde 1: tek tri-state + müşteri bağlı mı — dört dış görünüm.
+  const customerPanelView = resolveCustomerPanelView(customerMode, hasSelectedCustomer);
   const liveTotalWeight = useMemo(
     () => [...goldRows, ...silverRows, ...barRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0),
     [goldRows, silverRows, barRows, ptpdRows],
@@ -970,7 +973,7 @@ function ActiveWorkspaceView(props: {
             </div>
 
             <div className="bg-white xl:self-start">
-              {hasSelectedCustomer ? (
+              {customerPanelView === 'attached' ? (
                 <>
                   <CustomerAlisSummaryStrip customerId={workspace.customer.customer_id} />
                   <CustomerInfoTable
@@ -986,7 +989,7 @@ function ActiveWorkspaceView(props: {
                   <div className="border-b border-brand-200 bg-brand-50 px-4 py-2">
                     <p className="text-xs font-black uppercase tracking-widest text-brand-700">Müşteri Seçimi</p>
                   </div>
-                  {!customerMode ? (
+                  {customerPanelView === 'pick-action' ? (
                     <div className="grid grid-cols-2 divide-x divide-brand-200">
                       <button
                         type="button"
@@ -1018,7 +1021,7 @@ function ActiveWorkspaceView(props: {
                     </div>
                   ) : null}
 
-                  {customerMode === 'existing' ? (
+                  {customerPanelView === 'search-existing' ? (
                     <div>
                       <div className="flex items-center space-x-2 border-b border-brand-200 px-3 py-2">
                         <Search className="h-3.5 w-3.5 text-brand-400" />
@@ -1060,7 +1063,7 @@ function ActiveWorkspaceView(props: {
                         )}
                       </div>
                     </div>
-                  ) : customerMode === 'new' ? (
+                  ) : customerPanelView === 'create-new' ? (
                     <form onSubmit={onCreateNewCustomer}>
                       <div className="flex justify-end border-b border-brand-200 px-4 py-1.5">
                         <button
