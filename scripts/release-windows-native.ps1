@@ -4,7 +4,16 @@ param(
   [switch]$SkipRuntime,
   [switch]$SkipFrontend,
   [switch]$SkipTauri,
+  # Backwards-compatible no-op: Defender scanning runs by default now, and this
+  # switch is kept only so existing CI/runbook invocations keep working.
   [switch]$RunDefenderScan,
+  # Opt out of the Defender scan.  Rejected together with -Finalize: a customer
+  # delivery must always be scanned.
+  [switch]$SkipDefenderScan,
+  # Optional Authenticode signing of the NSIS installer (certificate SHA-1
+  # thumbprint).  Empty (default) leaves the installer unsigned; a missing
+  # signtool or certificate only warns and skips, it never fails the release.
+  [string]$SignCertificateThumbprint = '',
   [string]$Root = "",
   [string]$OutputDirectory = "",
   [string]$RuntimeBuildDirectory = ""
@@ -28,13 +37,32 @@ $ReleaseWork = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 $NsisOutput = Join-Path $ReleaseWork "SERO-GULD-CRM-FULL-SETUP.exe"
 $ManifestPath = Join-Path $ReleaseWork "release-manifest.json"
+$UpdaterSignaturePath = "$NsisOutput.sig"
+$LatestJsonPath = Join-Path $ReleaseWork "latest.json"
 $DefenderScanStatus = "not-run"
 $DefenderScanStartedAt = $null
 $DefenderScanFinishedAt = $null
 $DefenderScanTool = $null
 $DefenderScanThreatCount = 0
+$CodeSigned = $false
+$SignerTool = $null
+$UpdaterSignature = $null
 $script:ArtifactChecks = [ordered]@{}
-$ProductVersion = "0.3.25"
+# The product version is read from the canonical desktop package manifest so a
+# release can never ship a version that drifted from the source tree.
+$desktopPackagePath = Join-Path $Root "desktop\package.json"
+if (-not (Test-Path -LiteralPath $desktopPackagePath -PathType Leaf)) {
+  throw "Desktop package.json bulunamadı: $desktopPackagePath"
+}
+try {
+  $desktopPackage = Get-Content -LiteralPath $desktopPackagePath -Raw | ConvertFrom-Json
+} catch {
+  throw "Desktop package.json JSON olarak okunamadı"
+}
+$ProductVersion = [string]$desktopPackage.version
+if ([string]::IsNullOrWhiteSpace($ProductVersion)) {
+  throw "Desktop package.json sürüm alanı boş; release sürümü belirlenemedi"
+}
 $CustomerRuntimeSeedRelativePath = "runtime\seroguld-runtime\runtime-seed.env"
 
 function Get-CustomerRuntimeSeedAllowedKeys {
@@ -232,6 +260,50 @@ function Assert-ReleaseSource {
     $configObject = $config | ConvertFrom-Json
   } catch {
     throw "Tauri yapılandırması JSON olarak okunamadı"
+  }
+  # Every pinned release version location must match the version this build is
+  # driven by (see the pin list in docs/WINDOWS_RELEASE_RUNBOOK_TR.md).
+  $versionMismatches = @()
+  try {
+    $desktopPackageCheck = Get-Content -LiteralPath (Join-Path $Root "desktop\package.json") -Raw | ConvertFrom-Json
+  } catch {
+    throw "Desktop package.json JSON olarak okunamadı"
+  }
+  if (([string]$desktopPackageCheck.version) -cne $ProductVersion) {
+    $versionMismatches += "desktop/package.json=$($desktopPackageCheck.version)"
+  }
+  try {
+    $frontendPackageCheck = Get-Content -LiteralPath (Join-Path $Root "frontend\package.json") -Raw | ConvertFrom-Json
+  } catch {
+    throw "Frontend package.json JSON olarak okunamadı"
+  }
+  if (([string]$frontendPackageCheck.version) -cne $ProductVersion) {
+    $versionMismatches += "frontend/package.json=$($frontendPackageCheck.version)"
+  }
+  if (([string]$configObject.version) -cne $ProductVersion) {
+    $versionMismatches += "desktop/src-tauri/tauri.conf.json=$($configObject.version)"
+  }
+  $cargoToml = Get-Content -LiteralPath (Join-Path $Root "desktop\src-tauri\Cargo.toml") -Raw
+  $cargoPackageSection = [regex]::Match($cargoToml, '(?ms)^\[package\]\s*(.*?)(?=\r?\n\[|\z)').Groups[1].Value
+  $cargoPackageVersion = [regex]::Match($cargoPackageSection, '(?m)^\s*version\s*=\s*"([^"]+)"').Groups[1].Value
+  if ($cargoPackageVersion -cne $ProductVersion) {
+    $versionMismatches += "desktop/src-tauri/Cargo.toml=$cargoPackageVersion"
+  }
+  $cargoLock = Get-Content -LiteralPath (Join-Path $Root "desktop\src-tauri\Cargo.lock") -Raw
+  $cargoLockVersion = [regex]::Match($cargoLock, '(?ms)\[\[package\]\]\s*name\s*=\s*"seroguld_crm_desktop"\s*version\s*=\s*"([^"]+)"').Groups[1].Value
+  if ($cargoLockVersion -cne $ProductVersion) {
+    $versionMismatches += "desktop/src-tauri/Cargo.lock(seroguld_crm_desktop)=$cargoLockVersion"
+  }
+  $backendAppVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $Root "backend\app\version.py") -Raw), '(?m)^\s*APP_VERSION\s*=\s*"([^"]+)"').Groups[1].Value
+  if ($backendAppVersion -cne $ProductVersion) {
+    $versionMismatches += "backend/app/version.py=$backendAppVersion"
+  }
+  $runtimeProductVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $Root "scripts\build-windows-runtime.ps1") -Raw), '(?m)^\s*product_version\s*=\s*"([^"]+)"').Groups[1].Value
+  if ($runtimeProductVersion -cne $ProductVersion) {
+    $versionMismatches += "scripts/build-windows-runtime.ps1=$runtimeProductVersion"
+  }
+  if ($versionMismatches.Count -gt 0) {
+    throw "Release sürüm pinleri $ProductVersion ile eşleşmiyor: $($versionMismatches -join ', ')"
   }
   if ($configObject.version -ne $ProductVersion -or
       $configObject.bundle.targets -ne "nsis" -or
@@ -595,6 +667,10 @@ function Verify-ReleaseArtifact {
     installer_size_bytes = (Get-Item -LiteralPath $Installer).Length
     installer_sha256 = $hash
     installer_payload_check = $payloadCheck
+    code_signed = $CodeSigned
+    signer_tool = $SignerTool
+    updater_signature = $UpdaterSignature
+    latest_json_path = $LatestJsonPath
     icon_sha256 = $iconChecks.ico_sha256
     icon_png_sha256 = $iconChecks.png_sha256
     icon_frames = $iconChecks.ico_frames
@@ -612,9 +688,111 @@ function Verify-ReleaseArtifact {
   Set-Content -LiteralPath "$Installer.sha256" -Value "$hash  $([System.IO.Path]::GetFileName($Installer))" -Encoding ASCII
 }
 
+function Get-SignToolPath {
+  $command = Get-Command signtool.exe -ErrorAction SilentlyContinue
+  if ($null -ne $command) { return $command.Source }
+  $programFilesX86 = [string]${env:ProgramFiles(x86)}
+  if ([string]::IsNullOrWhiteSpace($programFilesX86)) { return $null }
+  $kitsBinRoot = Join-Path $programFilesX86 "Windows Kits\10\bin"
+  if (-not (Test-Path -LiteralPath $kitsBinRoot -PathType Container)) { return $null }
+  $ranked = foreach ($candidate in @(Get-ChildItem -LiteralPath $kitsBinRoot -Filter "signtool.exe" -Recurse -File -ErrorAction SilentlyContinue)) {
+    if ($candidate.Directory.Name -ine "x64") { continue }
+    $parsedVersion = $null
+    if (-not [version]::TryParse($candidate.Directory.Parent.Name, [ref]$parsedVersion)) {
+      $parsedVersion = [version]::new(0, 0)
+    }
+    [pscustomobject]@{ Path = $candidate.FullName; Version = $parsedVersion }
+  }
+  $newest = @($ranked | Sort-Object -Property Version -Descending | Select-Object -First 1)
+  if ($newest.Count -eq 0) { return $null }
+  return $newest[0].Path
+}
+
+function Invoke-InstallerCodeSigning {
+  # Authenticode signing is deliberately optional: a missing signtool or an
+  # unusable certificate only warns so the verified (code_signed=false)
+  # artifact can still ship instead of failing the whole release.
+  if ([string]::IsNullOrWhiteSpace($SignCertificateThumbprint)) { return }
+  $signToolPath = Get-SignToolPath
+  if ([string]::IsNullOrWhiteSpace($signToolPath)) {
+    Write-Warning "signtool bulunamadı; installer kod imzası atlandı (code_signed=false)"
+    return
+  }
+  $signOutput = ""
+  try {
+    $signOutput = (& $signToolPath sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /sha1 $SignCertificateThumbprint $NsisOutput 2>&1 | Out-String)
+  } catch {
+    Write-Warning "signtool imzalama çağrısı başarısız; installer kod imzası atlandı (code_signed=false): $($_.Exception.Message)"
+    return
+  }
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "signtool imzalamadı (exit $LASTEXITCODE); installer kod imzası atlandı (code_signed=false): $($signOutput.Trim())"
+    return
+  }
+  $script:CodeSigned = $true
+  $script:SignerTool = $signToolPath
+  Write-Host "Installer Authenticode ile imzalandı: $signToolPath"
+
+  # Kod imzası PE byte'larını değiştirir: Tauri'nin bundle sırasında ürettiği
+  # .sig artık bayat. İmzalı final exe üzerinden imzayı yenile ki updater
+  # doğrulaması (latest.json) yüklenecek dosyayla eşleşsin.
+  # createUpdaterArtifacts aktif olduğu için signer key env her release
+  # çağrısında zaten mevcuttur (tauri build aksi halde başarısız olur).
+  $signKeyPath = $env:TAURI_SIGNING_PRIVATE_KEY_PATH
+  $signerArgs = @("run", "tauri", "--", "signer", "sign", "--force")
+  if (-not [string]::IsNullOrWhiteSpace($signKeyPath) -and (Test-Path -LiteralPath $signKeyPath -PathType Leaf)) {
+    $signerArgs += @("-k", $signKeyPath)
+  }
+  $signerArgs += $NsisOutput
+  Invoke-Checked -Command "npm.cmd" -Arguments $signerArgs -WorkingDirectory (Join-Path $Root "desktop")
+  if (-not (Test-Path -LiteralPath "$NsisOutput.sig" -PathType Leaf)) {
+    throw "tauri signer sign çalıştı ama $NsisOutput.sig üretilmedi"
+  }
+  Write-Host "Updater imzası imzalı installer üzerinden yenilendi: $NsisOutput.sig"
+}
+
+function Publish-UpdaterArtifacts {
+  # Tauri signs the freshly bundled installer while createUpdaterArtifacts is
+  # enabled.  The desktop updater refuses a release without that signature, so
+  # a missing .sig is a hard failure rather than a warning.  Authenticode
+  # imzalama koştuysa Invoke-InstallerCodeSigning imzalı final byte'lar
+  # üzerinden imzayı yeniledi ($NsisOutput.sig) — o önceliklidir.
+  $refreshedSignature = "$NsisOutput.sig"
+  if (Test-Path -LiteralPath $refreshedSignature -PathType Leaf) {
+    $script:UpdaterSignature = Get-Content -LiteralPath $refreshedSignature -Raw -Encoding UTF8
+  } else {
+    $builtSignature = "$($builtInstaller[0].FullName).sig"
+    if (-not (Test-Path -LiteralPath $builtSignature -PathType Leaf)) {
+      throw "updater imza dosyası yok — TAURI_SIGNING_PRIVATE_KEY env set edilmemis olabilir: $builtSignature"
+    }
+    Copy-Item -LiteralPath $builtSignature -Destination $UpdaterSignaturePath -Force
+    $script:UpdaterSignature = Get-Content -LiteralPath $UpdaterSignaturePath -Raw -Encoding UTF8
+  }
+  $latest = [ordered]@{
+    version = $ProductVersion
+    notes = "SERO GULD CRM $ProductVersion"
+    pub_date = (Get-Date).ToUniversalTime().ToString("o")
+    platforms = [ordered]@{
+      "windows-x86_64" = [ordered]@{
+        signature = $script:UpdaterSignature
+        url = "https://github.com/Lavescar-dev/seroguld/releases/download/seroguld-desktop-v$ProductVersion/SERO-GULD-CRM-FULL-SETUP.exe"
+      }
+    }
+  }
+  # BOM-less UTF-8: the updater fetches and JSON-parses this file directly.
+  $latestJson = $latest | ConvertTo-Json -Depth 5
+  [System.IO.File]::WriteAllText($LatestJsonPath, $latestJson, [System.Text.UTF8Encoding]::new($false))
+  Write-Host "Updater artifact üretildi: $UpdaterSignaturePath"
+  Write-Host "Updater manifesti üretildi: $LatestJsonPath"
+}
+
 Assert-ReleaseSource
-if ($Finalize -and -not $RunDefenderScan) {
-  throw "Final Downloads kopyası için -RunDefenderScan zorunludur"
+# Defender scanning runs by default; -RunDefenderScan is accepted for
+# backwards compatibility only and no longer changes behaviour.  A final
+# customer delivery must never skip the scan, so -SkipDefenderScan is rejected
+# alongside every other -Skip* shortcut.
+if ($Finalize -and $SkipDefenderScan) {
+  throw "Final Downloads kopyası için Defender taraması zorunludur; -SkipDefenderScan kullanılamaz"
 }
 if ($Finalize -and ($SkipRuntime -or $SkipFrontend -or $SkipTauri)) {
   throw "Final Downloads release'i runtime, frontend ve Tauri'yi aynı doğrulanmış çağrıda yeniden üretmelidir"
@@ -669,6 +847,8 @@ if (-not $SkipTauri -and $builtInstaller[0].LastWriteTime -lt $BuildStarted) {
   throw "NSIS çıktısı bu release çağrısında üretilmedi; eski artifact kesinlikle kullanılmayacak"
 }
 Copy-Item -LiteralPath $builtInstaller[0].FullName -Destination $NsisOutput -Force
+Invoke-InstallerCodeSigning
+Publish-UpdaterArtifacts
 Verify-ReleaseArtifact -Installer $NsisOutput
 
 function Write-DefenderManifest {
@@ -738,7 +918,7 @@ function Invoke-DefenderCustomScan {
   }
 }
 
-if ($RunDefenderScan) {
+if (-not $SkipDefenderScan) {
   Invoke-DefenderCustomScan
 }
 Write-DefenderManifest
