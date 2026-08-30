@@ -24,6 +24,17 @@
       "devCsp": "default-src 'self' asset: data: blob: filesystem: http://127.0.0.1:* http://localhost:* tauri: http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; connect-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* tauri: http://tauri.localhost https://tauri.localhost wss://tauri.localhost http://192.168.1.105:* ws://192.168.1.105:*; img-src 'self' asset: data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; style-src 'self' 'unsafe-inline' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; font-src 'self' data: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; script-src 'self' 'unsafe-eval' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; media-src 'self' data: blob: http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*; frame-src 'self' http://127.0.0.1:* http://localhost:* http://tauri.localhost https://tauri.localhost http://192.168.1.105:*;"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZGNzNFNDYxNzhCQTEzODMKUldTREU3cDRZZVJ6YjNwU1F3WXNHV0hCNUUwSEZDZnkxdEpLQkRTdkpLNW1WQXRvZllDMEpYT0wK",
+      "endpoints": [
+        "https://github.com/Lavescar-dev/seroguld/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "nsis",
@@ -46,6 +57,7 @@
         "startMenuFolder": "Sero Guld CRM",
         "installerHooks": "windows/installer-hooks.nsh"
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   }
 }

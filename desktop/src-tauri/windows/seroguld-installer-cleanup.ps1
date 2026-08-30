@@ -160,6 +160,20 @@ function Assert-PackagedBackendPortFree {
     Write-CleanupLog "Packaged backend port 8100 is free"
     return
   }
+  # An updater-driven upgrade launches NSIS PreInstall while the previous app
+  # instance is still shutting its packaged backend down.  Give the port a
+  # bounded drain window instead of failing the install on the first check.
+  $owners = @($listeners | ForEach-Object { [string]$_.OwningProcess } | Sort-Object -Unique) -join ', '
+  Write-CleanupLog "Packaged backend port 8100 is occupied by PID(s): $owners; waiting up to 30s for it to drain"
+  $deadline = (Get-Date).AddSeconds(30)
+  do {
+    Start-Sleep -Seconds 1
+    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort 8100 -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) {
+      Write-CleanupLog "Packaged backend port 8100 drained while waiting"
+      return
+    }
+  } while ((Get-Date) -lt $deadline)
   $owners = @($listeners | ForEach-Object { [string]$_.OwningProcess } | Sort-Object -Unique) -join ', '
   Write-CleanupLog "Packaged backend port 8100 remains occupied by PID(s): $owners"
   throw "Sero Guld yerel backend portu 8100 kullanımda; kuruluma devam edilemiyor"

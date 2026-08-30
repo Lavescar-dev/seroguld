@@ -134,3 +134,11 @@ Thumbs.db
 desktop.ini
 *.env.example
 .env.example
+
+# =========================
+# Tauri updater signing keys (NEVER COMMIT)
+# =========================
+.tauri/
+desktop/src-tauri/updater.key
+desktop/src-tauri/updater.key.pub
+desktop/src-tauri/updater.key.password

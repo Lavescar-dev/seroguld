@@ -28,6 +28,7 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, Url, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
@@ -54,6 +55,12 @@ const STARTUP_TIMEOUT_SECONDS: u64 = 30;
 // to the Retry / Discard / Return dialog within the product's ten-second
 // shutdown budget.
 const EXCEL_CLOSE_TIMEOUT_SECONDS: u64 = 10;
+// updater denetim isteği kullanıcının bekleme bütçesine bağlıdır; indirme yolu
+// yüzlerce MB'lık kurulum paketi yüzünden bilinçli olarak zaman aşımısızdır.
+const DESKTOP_UPDATE_CHECK_TIMEOUT_SECONDS: u64 = 10;
+// İlk otomatik denetim, migration/health ekranı yerleşmeden uygulamaya
+// karışmasın diye açılıştan sonra bekletilir.
+const DESKTOP_UPDATE_CHECK_DELAY_SECONDS: u64 = 20;
 #[cfg(target_os = "windows")]
 const KEYRING_SERVICE: &str = "dk.seroguld.crm";
 
@@ -383,6 +390,7 @@ struct RuntimeSupervisor {
     excel_launch_in_progress: AtomicBool,
     close_request_pending: AtomicBool,
     close_confirmed: AtomicBool,
+    shutdown_completed: AtomicBool,
 }
 
 impl RuntimeSupervisor {
@@ -412,6 +420,7 @@ impl RuntimeSupervisor {
             excel_launch_in_progress: AtomicBool::new(false),
             close_request_pending: AtomicBool::new(false),
             close_confirmed: AtomicBool::new(false),
+            shutdown_completed: AtomicBool::new(false),
         }
     }
 
@@ -633,6 +642,8 @@ impl RuntimeSupervisor {
         if self.start_in_progress.swap(true, Ordering::AcqRel) {
             return;
         }
+        // Yeni bir runtime oturumu başlıyor: kapatma korumasını yeniden kur.
+        self.shutdown_completed.store(false, Ordering::Release);
         self.start_inner(app);
         self.start_in_progress.store(false, Ordering::Release);
     }
@@ -1063,6 +1074,14 @@ impl RuntimeSupervisor {
     }
 
     fn shutdown(&self) {
+        // Kapatma yolları (onaylı pencere kapanışı, ExitRequested, updater
+        // kurulumu ve `Drop`) aynı oturumda üst üste binebilir.  Gövdeyi bir
+        // kez çalıştır: ikinci çağrı başarısız bir Excel kapanışını yeniden
+        // deneyip on saniye bloke edebilir.  Bayrak `start` içinde sıfırlanır
+        // ki `retry_desktop_startup` sonrası kapatma yeniden çalışabilsin.
+        if self.shutdown_completed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let _ = self.close_excel_bridge();
         self.stop_backend();
         let bridge_running = self
@@ -3580,6 +3599,106 @@ fn get_bootstrap_login_password() -> Option<String> {
     }
 }
 
+/// Sunucudaki güncellemenin frontend'e sadeleşmiş hâli.
+#[derive(Debug, Serialize, Clone)]
+struct DesktopUpdateInfo {
+    version: String,
+    current_version: String,
+    notes: Option<String>,
+}
+
+/// updater kurulumu Windows'ta `std::process::exit(0)` ile çıktığı için `Drop`
+/// çalışmaz.  Bu güvenlik ağı kancası `Send + Sync + 'static` olduğundan
+/// supervisor'a erişemez; yolu hazırlayıp çıkışın updater tarafından geldiğini
+/// desktop.log'a yazmayı dener.  Hazırlık başarısızsa sessizce vazgeçer.
+fn append_updater_exit_diagnostic() {
+    let Ok(paths) = DesktopPaths::prepare() else {
+        return;
+    };
+    if let Ok(mut log) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(paths.desktop_log())
+    {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_secs())
+            .unwrap_or_default();
+        let _ = writeln!(
+            log,
+            "{timestamp} [updater] Güncelleme kurulumu çıkışı başlatıldı"
+        );
+    }
+}
+
+/// updater'ı tek yerden kurar: çıkış öncesi güvenlik ağı kaydı her zaman bağlı.
+/// Denetim yolu sıkı zaman aşımı kullanır; kullanıcının on saniyelik bekleme
+/// bütçesini aşmasın.  İndirme/kurulum yolu bilinçli olarak zaman aşımısızdır
+/// (aynı istemci ayarı yüzlerce MB'lık paketi yarıda kesebilir).
+async fn desktop_update_info(app: &AppHandle) -> Result<Option<DesktopUpdateInfo>, String> {
+    let updater = app
+        .updater_builder()
+        .timeout(Duration::from_secs(DESKTOP_UPDATE_CHECK_TIMEOUT_SECONDS))
+        .on_before_exit(append_updater_exit_diagnostic)
+        .build()
+        .map_err(|error| format!("Güncelleme denetimi hazırlanamadı: {error}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| format!("Güncelleme sunucusuna ulaşılamadı: {error}"))?;
+    Ok(update.map(|update| DesktopUpdateInfo {
+        version: update.version,
+        current_version: update.current_version,
+        notes: update.body,
+    }))
+}
+
+#[tauri::command]
+async fn check_desktop_update(app: AppHandle) -> Result<Option<DesktopUpdateInfo>, String> {
+    desktop_update_info(&app).await
+}
+
+#[tauri::command]
+async fn install_desktop_update(
+    app: AppHandle,
+    state: State<'_, RuntimeSupervisor>,
+    on_progress: tauri::ipc::Channel<serde_json::Value>,
+) -> Result<(), String> {
+    // SIRA KRİTİK: Windows kurulumu `std::process::exit(0)` ile çıkar ve
+    // `Drop` çalıştırmaz.  Excel graceful kapanışı ile backend kill/wait
+    // zinciri bu yüzden indirme/kurulumdan ÖNCE tamamlanmalıdır; aksi hâlde
+    // workbook ve owned süreçler geride kalır.
+    state.shutdown();
+    let update = app
+        .updater_builder()
+        .on_before_exit(append_updater_exit_diagnostic)
+        .build()
+        .map_err(|error| format!("Güncelleme kurulumu hazırlanamadı: {error}"))?
+        .check()
+        .await
+        .map_err(|error| format!("Güncelleme sunucusuna ulaşılamadı: {error}"))?
+        .ok_or_else(|| "Kurulacak yeni sürüm bulunamadı".to_string())?;
+    update
+        .download_and_install(
+            |chunk_length, content_length| {
+                let _ = on_progress.send(serde_json::json!({
+                    "event": "progress",
+                    "chunkLength": chunk_length,
+                    "contentLength": content_length,
+                }));
+            },
+            || {
+                let _ = on_progress.send(serde_json::json!({ "event": "finished" }));
+            },
+        )
+        .await
+        .map_err(|error| format!("Güncelleme indirilemedi veya kurulamadı: {error}"))?;
+    // Windows'ta bu satıra normalde ulaşılmaz: kurulum süreci devralır ve
+    // uygulama `std::process::exit(0)` ile kapanır.
+    state.set_status("stopped", "Güncelleme kuruldu; uygulama kapatılıyor");
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -3589,6 +3708,9 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
+        // Güncelleme denetimi/kurulumu Rust tarafında yapılır; pubkey ve
+        // endpoint tauri.conf.json > plugins.updater içinden okunur.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let supervisor = RuntimeSupervisor::new();
             app.manage(supervisor);
@@ -3605,6 +3727,31 @@ fn main() {
                     }
                 }
             }
+            // Otomatik güncelleme denetimi: migration/health akışıyla
+            // karışmasın diye gecikmeli, sessiz ve yalnızca log'lu çalışır.
+            // Yeni sürüm varsa kullanıcıya ön yüze sinyal verilir; indirme
+            // yalnızca kullanıcının onayı ile başlar.
+            let update_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                sleep(Duration::from_secs(DESKTOP_UPDATE_CHECK_DELAY_SECONDS));
+                let supervisor = update_handle.state::<RuntimeSupervisor>();
+                let result = tauri::async_runtime::block_on(desktop_update_info(&update_handle));
+                match result {
+                    Ok(Some(info)) => {
+                        supervisor.append_diagnostic(
+                            "desktop-update-available",
+                            &format!("Yeni sürüm bulundu: {}", info.version),
+                        );
+                        if let Some(window) = update_handle.get_webview_window("main") {
+                            let _ = window.emit("desktop-update-available", info);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        supervisor.append_diagnostic("desktop-update-check-failed", &error);
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -3645,6 +3792,8 @@ fn main() {
             keyring_get,
             keyring_set,
             keyring_delete,
+            check_desktop_update,
+            install_desktop_update,
             get_bootstrap_login_password,
             backup::get_backup_native_config,
             backup::set_backup_schedule,
@@ -3673,6 +3822,18 @@ fn main() {
                 let _ = window.emit("desktop-close-confirmation", snapshot);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start tauri application");
+        .build(tauri::generate_context!())
+        .expect("failed to start tauri application")
+        .run(|app, event| match event {
+            // ExitRequested, onaylı pencere kapanışının yanı sıra `app.exit`
+            // gibi yollardan da gelir.  Kapatma zinciri (Excel + backend +
+            // Job Object) burada da garanti edilir; `shutdown` tek seferlik
+            // korumalı olduğu için ikinci çağrı sessizce pas geçilir.
+            tauri::RunEvent::ExitRequested { .. } => {
+                if let Some(supervisor) = app.try_state::<RuntimeSupervisor>() {
+                    supervisor.shutdown();
+                }
+            }
+            _ => {}
+        });
 }
