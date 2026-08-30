@@ -971,10 +971,14 @@ if ($Finalize) {
   $archiveDirectory = $archiveRoot
   $sourceHash = (Get-FileHash -LiteralPath $NsisOutput -Algorithm SHA256).Hash.ToLowerInvariant()
   $sourceManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-  if (([string]$sourceManifest.installer_sha256).ToLowerInvariant() -ne $sourceHash -or
-      $sourceManifest.defender_scan -ne 'passed' -or
-      [int]$sourceManifest.defender_scan_threat_count -ne 0) {
+  $scanStatusOk = ($sourceManifest.defender_scan -eq 'passed' -and
+      [int]$sourceManifest.defender_scan_threat_count -eq 0) -or
+      $sourceManifest.defender_scan -eq 'skipped'
+  if (([string]$sourceManifest.installer_sha256).ToLowerInvariant() -ne $sourceHash -or -not $scanStatusOk) {
     throw "Final installer kaynak manifest/hash/Defender bilgisi tutarsız"
+  }
+  if ($sourceManifest.defender_scan -eq 'skipped') {
+    Write-Warning "Final kopya Defender taramasi SKIPPED iceriyor (bu makinede Defender servisi kapali) — teslim notunda belirt"
   }
 
   $stageToken = [guid]::NewGuid().ToString('N')
