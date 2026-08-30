@@ -1468,7 +1468,7 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
         opmc_belirsiz = opmc_orders.summary.unknown_risk_count
         opmc_manuel = opmc_orders.summary.manual_review_count
     except Exception:
-        pass
+        logger.exception("OPMC dashboard özeti alınamadı — risk sayaçları 0 gösteriliyor")
 
     invoice_rows = (
         await db.execute(

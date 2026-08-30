@@ -161,6 +161,11 @@ def _configure_app_logging() -> None:
     if root.level == logging.NOTSET or root.level > logging.INFO:
         root.setLevel(logging.INFO)
 
+    # httpx/httpcore her istekte INFO basar (URL + account parametreleri düşer);
+    # app.log'a yalnızca uyarılar yazsın.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
 
 async def ensure_initial_admin() -> None:
     if not settings.should_auto_seed_initial_admin():

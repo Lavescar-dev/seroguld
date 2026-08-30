@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import sys
 from decimal import Decimal
@@ -323,7 +324,9 @@ class Settings(BaseSettings):
             if len(raw) == 32:
                 return raw
         except Exception:
-            pass
+            logging.getLogger(__name__).warning(
+                "FIELD_ENCRYPTION_KEY base64/32B çözülemiyor — SHA256 türevi kullanılıyor"
+            )
         return hashlib.sha256(self.field_encryption_key.encode("utf-8")).digest()
 
     def cors_origins_list(self) -> list[str]:
