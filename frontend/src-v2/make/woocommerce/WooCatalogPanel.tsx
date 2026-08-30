@@ -232,12 +232,12 @@ function WooCatalogDetailDrawer({ state, classic, buttonClass }: { state: WooMak
   const unlinkedProducts = state.urunler.filter((item) => item.id);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/30" role="dialog" aria-modal="true" aria-label="Katalog ürün detayı" onClick={close}>
+    <div className="fixed inset-0 z-drawer flex justify-end bg-black/30" role="dialog" aria-modal="true" aria-label="Katalog ürün detayı" onClick={close}>
       <div
         className={`flex h-full w-full max-w-[560px] flex-col overflow-y-auto shadow-2xl ${classic ? 'bg-white text-brand-900' : 'border-l border-sg-border bg-sg-surface text-sg-text'}`}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className={`sticky top-0 z-10 flex items-start justify-between gap-3 border-b px-5 py-4 ${classic ? 'border-brand-200 bg-white' : 'border-sg-border bg-sg-surface'}`}>
+        <div className={`sticky top-0 z-sticky flex items-start justify-between gap-3 border-b px-5 py-4 ${classic ? 'border-brand-200 bg-white' : 'border-sg-border bg-sg-surface'}`}>
           <div className="min-w-0">
             <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${classic ? 'text-brand-500' : 'text-sg-accent'}`}>Woo katalog ürünü</p>
             <h3 className="mt-1 truncate text-base font-semibold">{detail?.name || 'Yükleniyor…'}</h3>

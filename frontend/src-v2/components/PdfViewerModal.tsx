@@ -32,7 +32,7 @@ export function PdfViewerModal({ open, pdfUrl, filename, title, onClose }: PdfVi
   if (!open || !pdfUrl) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 print:hidden">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/70 p-4 print:hidden">
       <div className="relative flex h-full w-full max-w-6xl flex-col border border-brand-200 bg-white shadow-2xl">
         <div className="flex shrink-0 items-center justify-between border-b border-brand-200 bg-brand-50 px-4 py-2.5">
           <div className="flex min-w-0 flex-col">

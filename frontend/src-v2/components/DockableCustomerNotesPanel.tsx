@@ -20,7 +20,7 @@ export function DockableCustomerNotesPanel({ customerId, customerName, manage = 
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-[70] inline-flex items-center gap-2 rounded-full border border-amber-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-[0_14px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:border-amber-400 hover:bg-amber-50"
+        className="fixed bottom-5 right-5 z-dropdown inline-flex items-center gap-2 rounded-full border border-amber-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-[0_14px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:border-amber-400 hover:bg-amber-50"
         aria-label={`${customerName} için müşteri notlarını aç`}
       >
         <StickyNote className="h-4 w-4 text-amber-600" />
@@ -30,7 +30,7 @@ export function DockableCustomerNotesPanel({ customerId, customerName, manage = 
   }
 
   return (
-    <aside className="fixed bottom-5 right-5 z-[70] w-[min(430px,calc(100vw-2rem))]" aria-label={`${customerName} müşteri notları`}>
+    <aside className="fixed bottom-5 right-5 z-dropdown w-[min(430px,calc(100vw-2rem))]" aria-label={`${customerName} müşteri notları`}>
       <div className="mb-1 flex items-center justify-end gap-1 rounded-t-xl border border-b-0 border-amber-300 bg-amber-50/95 px-2 py-1.5 shadow-sm backdrop-blur">
         <button
           type="button"

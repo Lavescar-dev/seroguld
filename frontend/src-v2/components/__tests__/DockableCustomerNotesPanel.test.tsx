@@ -11,7 +11,7 @@ describe('DockableCustomerNotesPanel — roadmap madde 1 overlay izolasyonu', ()
   it('varsayılan KAPALI başlar: yalnız yuvarlak buton görünür, sheet editörlerini kapatmaz', () => {
     render(<DockableCustomerNotesPanel customerId="c1" customerName="Test Müşteri" />);
     const pill = screen.getByRole('button', { name: /müşteri notlarını aç/i });
-    expect(pill).toHaveClass('z-[70]');
+    expect(pill).toHaveClass('z-dropdown');
     expect(screen.queryByTestId('notes-panel-body')).not.toBeInTheDocument();
   });
 

@@ -63,6 +63,19 @@ export default {
       fontFamily: {
         sg: ['Inter', 'ui-sans-serif', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
       },
+      // Merkezi z-index ölçeği — md19. Değerler 1:1 katman eşlemesi; yeni aritmetik yok.
+      zIndex: {
+        base: '0',
+        sticky: '10',
+        header: '30',
+        dropdown: '40',
+        drawer: '60',
+        modal: '70',
+        'overlay-top': '80',
+        toast: '90',
+        critical: '100',
+        'critical-top': '110',
+      },
     },
   },
   plugins: [],

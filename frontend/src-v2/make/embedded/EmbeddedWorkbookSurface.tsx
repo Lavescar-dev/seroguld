@@ -295,16 +295,16 @@ export function EmbeddedWorkbookSurface({
                   <table className="min-w-full border-collapse">
                     <thead>
                       <tr>
-                        <th className={modern ? 'sticky left-0 top-0 z-30 border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-semibold text-sg-text-soft' : 'sticky left-0 top-0 z-30 border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-brand-700'}>#</th>
+                        <th className={modern ? 'sticky left-0 top-0 z-header border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-semibold text-sg-text-soft' : 'sticky left-0 top-0 z-header border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-brand-700'}>#</th>
                         {activeSheet.columns.map((column) => (
-                          <th key={column} className={modern ? 'sticky top-0 z-20 border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-semibold text-sg-text-soft' : 'sticky top-0 z-20 border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-brand-700'}>{column}</th>
+                          <th key={column} className={modern ? 'sticky top-0 z-sticky border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-semibold text-sg-text-soft' : 'sticky top-0 z-sticky border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[10px] font-black uppercase tracking-widest text-brand-700'}>{column}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {activeSheet.rows.map((row, rowIndex) => (
                         <tr key={`${activeSheet.name}-${rowIndex}`} className={modern ? (rowIndex % 2 === 0 ? 'bg-sg-surface' : 'bg-sg-surface-soft/60') : (rowIndex % 2 === 0 ? 'bg-white' : 'bg-stone-50')}>
-                          <th className={modern ? 'sticky left-0 z-10 border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-medium text-sg-text-soft' : 'sticky left-0 z-10 border-b border-r border-brand-300 bg-stone-100 px-3 py-2 text-center text-[10px] font-black text-brand-600'}>{row[0]?.rowNumber ?? rowIndex + 1}</th>
+                          <th className={modern ? 'sticky left-0 z-sticky border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-medium text-sg-text-soft' : 'sticky left-0 z-sticky border-b border-r border-brand-300 bg-stone-100 px-3 py-2 text-center text-[10px] font-black text-brand-600'}>{row[0]?.rowNumber ?? rowIndex + 1}</th>
                           {row.map((cell, columnIndex) => {
                             if (!cell) return null;
                             const key = cellKey(activeSheet.name, cell.cellRef);

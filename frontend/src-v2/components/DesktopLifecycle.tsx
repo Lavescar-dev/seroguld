@@ -291,7 +291,7 @@ function DesktopCloseGuard({ children }: DesktopLifecycleProps) {
     <>
       {children}
       {closing || failure ? (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-sg-text/25 px-4 py-6 backdrop-blur-[2px] sm:px-6 sm:py-8">
+        <div className="fixed inset-0 z-critical flex items-center justify-center bg-sg-text/25 px-4 py-6 backdrop-blur-[2px] sm:px-6 sm:py-8">
           <section
             role="dialog"
             aria-modal="true"

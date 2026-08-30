@@ -348,8 +348,8 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
   const { draft } = controller;
   const dark = variant === 'classic';
   const panelClass = dark
-    ? 'fixed inset-y-0 right-0 z-[100] flex w-full max-w-[680px] flex-col border-l-2 border-brand-300 bg-[#f8f3eb] text-brand-900 shadow-2xl'
-    : 'fixed inset-y-0 right-0 z-[100] flex w-full max-w-[680px] flex-col border-l border-sg-border bg-sg-surface text-sg-text shadow-2xl';
+    ? 'fixed inset-y-0 right-0 z-overlay-top flex w-full max-w-[680px] flex-col border-l-2 border-brand-300 bg-[#f8f3eb] text-brand-900 shadow-2xl'
+    : 'fixed inset-y-0 right-0 z-overlay-top flex w-full max-w-[680px] flex-col border-l border-sg-border bg-sg-surface text-sg-text shadow-2xl';
   const titleClass = dark ? 'text-lg font-black uppercase tracking-wider text-brand-900' : 'text-xl font-semibold text-sg-text';
   const sectionClass = dark ? 'border border-brand-200 bg-white p-4' : 'rounded-sg-md border border-sg-border bg-sg-surface-soft p-4';
   const metaClass = dark ? 'text-xs text-brand-600' : 'text-sm text-sg-text-soft';
@@ -363,7 +363,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
   const rateMeta = draft.rate_meta || {};
 
   return (
-    <div className="fixed inset-0 z-[99] bg-black/30" onClick={controller.close}>
+    <div className="fixed inset-0 z-overlay-top bg-black/30" onClick={controller.close}>
       <aside className={panelClass} role="dialog" aria-modal="true" aria-labelledby="global-market-rates-title" onClick={(event) => event.stopPropagation()}>
         <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
           <div>

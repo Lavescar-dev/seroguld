@@ -174,7 +174,7 @@ export function InventoryWorkbookImport({ variant }: InventoryWorkbookImportProp
       </button>
 
       {status ? (
-        <div className={`fixed bottom-4 right-4 z-[95] flex max-w-md items-start gap-2 rounded-sg-md border px-4 py-3 text-sm shadow-lg ${status.tone === 'error' ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`} role={status.tone === 'error' ? 'alert' : 'status'}>
+        <div className={`fixed bottom-4 right-4 z-toast flex max-w-md items-start gap-2 rounded-sg-md border px-4 py-3 text-sm shadow-lg ${status.tone === 'error' ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`} role={status.tone === 'error' ? 'alert' : 'status'}>
           {status.tone === 'error' ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
           <span>{status.message}</span>
           <button type="button" onClick={() => setStatus(null)} className="ml-2 shrink-0" aria-label="Bildirimi kapat"><X className="h-4 w-4" /></button>
@@ -182,7 +182,7 @@ export function InventoryWorkbookImport({ variant }: InventoryWorkbookImportProp
       ) : null}
 
       {preview ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="inventory-import-title">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/45 px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="inventory-import-title">
           <div className="flex max-h-[min(84vh,54rem)] w-full max-w-3xl flex-col overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-sg-border-soft px-5 py-4">
               <div>

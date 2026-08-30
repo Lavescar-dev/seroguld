@@ -23,6 +23,7 @@ import {
 
 import { closeOfficeDock } from '@/lib/officeDock';
 import { formatRuntimeDateTime, formatRuntimeLabel } from '@/lib/runtimeInfo';
+import { ALIS_SHORTCUT_HINT } from '@/lib/shortcutHints';
 import { OfficeDockPanel } from '@/make/office/OfficeDockPanel';
 import { GlobalMarketRatesDrawer, toTopbarValue, useGlobalMarketRates } from '@/components/GlobalMarketRatesDrawer';
 import { LanguageSelector } from '@/i18n';
@@ -218,7 +219,7 @@ export function MakeRoot({
         </Link>
         {hoverData.length > 0 ? (
           <div
-            className="pointer-events-none absolute left-full top-0 z-[60] ml-1 hidden w-52 border border-brand-200 bg-white opacity-0 shadow-xl transition-all duration-200 group-hover/nav:pointer-events-auto group-hover/nav:opacity-100 lg:block"
+            className="pointer-events-none absolute left-full top-0 z-dropdown ml-1 hidden w-52 border border-brand-200 bg-white opacity-0 shadow-xl transition-all duration-200 group-hover/nav:pointer-events-auto group-hover/nav:opacity-100 lg:block"
             style={monoStyle}
           >
             <div className="flex items-center gap-2 border-b border-brand-200 bg-amber-50 px-3 py-1.5">
@@ -436,7 +437,7 @@ export function MakeRoot({
           <span
             className="hidden border border-brand-200 bg-brand-50 px-1 py-0.5 text-[9px] text-brand-600 lg:inline"
             style={monoStyle}
-            title="Ctrl+N: Yeni Alış | Ctrl+S: Kaydet"
+            title={ALIS_SHORTCUT_HINT}
           >
             <Keyboard className="mr-0.5 inline h-2.5 w-2.5" />
             KB
@@ -451,11 +452,11 @@ export function MakeRoot({
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[#f4efe7]">
-      {sidebarOpen ? <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={onCloseSidebar} /> : null}
+      {sidebarOpen ? <div className="fixed inset-0 z-drawer bg-black/60 lg:hidden" onClick={onCloseSidebar} /> : null}
 
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 w-[260px] flex-shrink-0 transform overflow-hidden border-r-2 border-brand-200 bg-[#f8f3eb] text-brand-900 transition-transform duration-200 ease-in-out lg:static
+          fixed inset-y-0 left-0 z-drawer w-[260px] flex-shrink-0 transform overflow-hidden border-r-2 border-brand-200 bg-[#f8f3eb] text-brand-900 transition-transform duration-200 ease-in-out lg:static
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
         style={{ minHeight: '100vh' }}
@@ -464,7 +465,7 @@ export function MakeRoot({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="sticky top-0 z-30 flex items-center justify-between border-b-2 border-brand-200 bg-white px-3 py-2 lg:hidden">
+        <div className="sticky top-0 z-header flex items-center justify-between border-b-2 border-brand-200 bg-white px-3 py-2 lg:hidden">
           <button onClick={onOpenSidebar} className="p-1 text-brand-600 hover:text-brand-950">
             <Menu className="h-5 w-5" />
           </button>
@@ -488,7 +489,7 @@ export function MakeRoot({
             <Outlet />
             {location.pathname === '/depolama' || location.pathname === '/log' ? (
               <>
-                <button type="button" onClick={() => setMigrationOpen(true)} className="fixed bottom-5 right-5 z-40 flex items-center gap-2 border border-amber-700 bg-brand-950 px-4 py-3 text-xs font-black uppercase tracking-wider text-white shadow-xl hover:bg-brand-800">
+                <button type="button" onClick={() => setMigrationOpen(true)} className="fixed bottom-5 right-5 z-dropdown flex items-center gap-2 border border-amber-700 bg-brand-950 px-4 py-3 text-xs font-black uppercase tracking-wider text-white shadow-xl hover:bg-brand-800">
                   <DatabaseZap className="h-4 w-4" /> Eski sistemi taşı
                 </button>
                 <LegacyMigrationCenter open={migrationOpen} onClose={() => setMigrationOpen(false)} initialPhase={location.pathname === '/log' ? 'log' : 'inventory'} />
@@ -508,7 +509,7 @@ export function MakeRoot({
                   document.body.style.cursor = 'col-resize';
                   document.body.style.userSelect = 'none';
                 }}
-                className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1/2 cursor-col-resize bg-transparent"
+                className="absolute left-0 top-0 z-sticky h-full w-2 -translate-x-1/2 cursor-col-resize bg-transparent"
               />
               <OfficeDockPanel document={officeDock.document} onClose={onCloseOfficeDock} />
             </aside>
@@ -518,7 +519,7 @@ export function MakeRoot({
     </div>
 
       {hasOfficeDock && officeDock.document ? (
-        <div className="fixed inset-0 z-[70] bg-black/45 lg:hidden">
+        <div className="fixed inset-0 z-drawer bg-black/45 lg:hidden">
           <button
             type="button"
             aria-label="Office dock kapat"
@@ -528,7 +529,7 @@ export function MakeRoot({
               onCloseOfficeDock();
             }}
           />
-          <div className="absolute inset-y-0 right-0 z-10 w-full max-w-[92vw] overflow-hidden border-l-2 border-brand-300 bg-stone-100 shadow-2xl">
+          <div className="absolute inset-y-0 right-0 z-sticky w-full max-w-[92vw] overflow-hidden border-l-2 border-brand-300 bg-stone-100 shadow-2xl">
             <OfficeDockPanel document={officeDock.document} onClose={onCloseOfficeDock} />
           </div>
         </div>

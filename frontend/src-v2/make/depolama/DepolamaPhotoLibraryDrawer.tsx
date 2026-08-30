@@ -77,7 +77,7 @@ export function DepolamaPhotoLibraryDrawer({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div
         className="flex max-h-[85vh] w-full max-w-4xl flex-col border border-brand-300 bg-white shadow-xl"
         onClick={(event) => event.stopPropagation()}

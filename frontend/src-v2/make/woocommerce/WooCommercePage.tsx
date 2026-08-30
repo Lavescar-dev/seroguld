@@ -493,7 +493,7 @@ export function YeniUrunPanel({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex" style={sansStyle}>
+    <div className="fixed inset-0 z-drawer flex" style={sansStyle}>
       <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onKapat} />
 
       <div className="flex h-full w-[680px] max-w-[95vw] flex-col overflow-hidden border-l-4 border-amber-500 bg-white shadow-2xl">
@@ -1643,7 +1643,7 @@ export function MakeWooCommercePage({
       ) : null}
 
       {publishPreview ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setPublishPreview(null)}>
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 p-6" onClick={() => setPublishPreview(null)}>
           <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto border border-brand-300 bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-brand-200 bg-brand-50 px-5 py-3">
               <p className="text-xs font-black uppercase tracking-wider text-brand-700">Yayın önizlemesi — sitede böyle görünecek</p>

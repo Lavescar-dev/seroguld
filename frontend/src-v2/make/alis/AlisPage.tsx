@@ -1675,7 +1675,7 @@ function SavedPurchaseTable({
                   <span className="mono ml-2 text-xs text-brand-400">{document.customer_cpr || document.customer_cpr_masked}</span>
                 ) : null}
                 {document.customer_name ? (
-                  <div className="absolute left-0 top-full z-50 mt-1 hidden group-hover/cust:block">
+                  <div className="absolute left-0 top-full z-dropdown mt-1 hidden group-hover/cust:block">
                     <SavedPurchaseCustomerPreview document={document} />
                   </div>
                 ) : null}
@@ -2191,7 +2191,7 @@ function SavedPurchaseExcelPreview({ document }: { document: PosSavedPurchaseLis
   const allItems = [...document.gold_preview_items, ...document.silver_preview_items];
 
   return (
-    <div className="pointer-events-none absolute left-full top-0 z-50 ml-2 w-60 border border-brand-400 bg-white shadow-xl">
+    <div className="pointer-events-none absolute left-full top-0 z-dropdown ml-2 w-60 border border-brand-400 bg-white shadow-xl">
       <div className="flex items-center gap-2 bg-emerald-800 px-3 py-2">
         <FileSpreadsheet className="h-3.5 w-3.5 flex-shrink-0 text-emerald-300" />
         <span className="text-xs font-black uppercase tracking-widest text-emerald-100">Excel Önizleme</span>
@@ -2278,7 +2278,7 @@ function SavedPurchaseMetalPreview({
   const hoverClass = tone === 'gold' ? 'group-hover/gold:block' : 'group-hover/silver:block';
 
   return (
-    <div className={`absolute left-0 top-full z-50 mt-0.5 hidden w-44 border-2 bg-white p-2 shadow-lg ${hoverClass} ${borderClass}`}>
+    <div className={`absolute left-0 top-full z-dropdown mt-0.5 hidden w-44 border-2 bg-white p-2 shadow-lg ${hoverClass} ${borderClass}`}>
       <p className={`mb-1.5 border-b pb-1 text-xs font-black uppercase tracking-wider ${titleClass}`}>{title}</p>
       <div className="space-y-0.5">
         {rows.map((row) => (
@@ -2364,13 +2364,13 @@ function SavedPurchaseDetailModal({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
         className="max-h-[90vh] w-full max-w-3xl overflow-auto border-2 border-brand-400 bg-white shadow-2xl"
         style={sansStyle}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b-4 border-amber-600 bg-brand-900 px-5 py-3">
+        <div className="sticky top-0 z-sticky flex items-center justify-between border-b-4 border-amber-600 bg-brand-900 px-5 py-3">
           <div className="flex items-end gap-4">
             <div>
               <span className="text-xs uppercase tracking-widest text-brand-500">Afregningsbilag</span>

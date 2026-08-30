@@ -658,7 +658,7 @@ export function SettingsWorkspace({
           </main>
         </div>
 
-        <div className={`sticky bottom-3 z-20 mt-5 flex flex-col gap-3 border px-4 py-3 shadow-[0_14px_40px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between ${classic ? 'border-brand-300 bg-white' : 'rounded-2xl border-slate-200 bg-white/95 backdrop-blur'}`}>
+        <div className={`sticky bottom-3 z-sticky mt-5 flex flex-col gap-3 border px-4 py-3 shadow-[0_14px_40px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between ${classic ? 'border-brand-300 bg-white' : 'rounded-2xl border-slate-200 bg-white/95 backdrop-blur'}`}>
           <div className="flex items-center gap-2 text-sm">
             {isSaving ? <RefreshCw className="h-4 w-4 animate-spin text-amber-600" /> : saved ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="h-2 w-2 rounded-full bg-slate-300" />}
             <span className={saved ? 'font-semibold text-emerald-700' : 'text-slate-500'}>{isSaving ? 'Değişiklikler kaydediliyor' : saved ? 'Değişiklikler kaydedildi' : 'Ayarlar kaydedilmeye hazır'}</span>

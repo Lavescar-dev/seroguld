@@ -26,5 +26,5 @@ export function LoginPage() {
       }}
     />
   ) : <MakeLoginPage {...state} />;
-  return <><div className="fixed right-4 top-4 z-[90] rounded border border-brand-200 bg-white/95 p-1 shadow-sm"><LanguageSelector className="text-brand-700" /></div>{page}</>;
+  return <><div className="fixed right-4 top-4 z-toast rounded border border-brand-200 bg-white/95 p-1 shadow-sm"><LanguageSelector className="text-brand-700" /></div>{page}</>;
 }

@@ -263,7 +263,7 @@ export function MakeOpmcPage({
         <div className="flex flex-1 flex-col overflow-hidden border-r-2 border-brand-300 bg-white">
           <div className="flex-1 overflow-auto">
             <table className="w-full border-collapse whitespace-nowrap text-left">
-              <thead className="sticky top-0 z-10 bg-brand-800 text-brand-100 shadow-[0_1px_0_0_#453323]">
+              <thead className="sticky top-0 z-sticky bg-brand-800 text-brand-100 shadow-[0_1px_0_0_#453323]">
                 <tr>
                   {['Sipariş', 'Tarih', 'Durum', 'Toplam', 'Risk & Skor', 'Müşteri', 'Nedeni', ''].map((header) => (
                     <th key={header} className={`px-4 py-3 text-[10px] font-black uppercase tracking-widest ${header === 'Toplam' ? 'text-right' : ''}`}>

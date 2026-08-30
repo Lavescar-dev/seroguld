@@ -48,7 +48,7 @@ export function RelinkCustomerModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/45 px-4" role="dialog" aria-modal="true" aria-label="Belgeyi müşteriye bağla">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/45 px-4" role="dialog" aria-modal="true" aria-label="Belgeyi müşteriye bağla">
       <div className="w-full max-w-md border border-brand-300 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-brand-200 bg-brand-50 px-4 py-3">
           <p className="text-xs font-black uppercase tracking-widest text-brand-700">

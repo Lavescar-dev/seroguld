@@ -25,6 +25,8 @@ import {
 
 import { formatMoney, formatNumber, formatRelativeTime, labelProductType, labelMetalType } from '@/lib/format';
 import { validateCpr } from '@/lib/cpr';
+import { ALIS_SHORTCUT_HINT } from '@/lib/shortcutHints';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
 import { RelinkCustomerModal } from '@/make/alis/RelinkCustomerModal';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
@@ -39,6 +41,7 @@ import type { UnsupportedControlDescriptor } from '@/modern/adapters/types';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, shellButtonClass } from './shared';
+import { ModernDialog } from '@/modern/design-system';
 import { HistoricalAfgImportDrawer } from './alis/HistoricalAfgImportDrawer';
 import { useAlisLayoutMode, type AlisLayoutMode } from './alis/useAlisLayoutMode';
 
@@ -96,6 +99,7 @@ export function ModernAlisModule({
   const hasSelectedCustomer = Boolean(workspace?.customer.customer_id);
   const layoutRef = useRef<HTMLDivElement>(null);
   const layoutMode = useAlisLayoutMode(layoutRef);
+  const confirm = useConfirm();
   const [pane, setPane] = useState<ModernAlisPane>('workspace');
   const [tool, setTool] = useState<ModernAlisTool>(null);
   const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
@@ -174,6 +178,24 @@ export function ModernAlisModule({
     state.onCancelWorkspace();
   }
 
+  // Düzenleme kipinde (çalışma alanında kaydedilmemiş değişiklik varken) detay
+  // kapama yolu arka plan tıklamasıyla sessizce iptal edemez; onay ister.
+  function closeDetail() {
+    if (!viewModel.blocker?.when) {
+      state.onCloseDetail();
+      return;
+    }
+    void confirm({
+      title: 'Kaydedilmemiş değişiklikler',
+      message: 'Alış çalışma alanında kaydedilmemiş değişiklikler var. Detay ekranı yine de kapatılsın mı?',
+      confirmText: 'Kapat',
+      cancelText: 'Vazgeç',
+      variant: 'warning',
+    }).then((approved) => {
+      if (approved === true) state.onCloseDetail();
+    });
+  }
+
   function updateListFilters(next: Partial<ModernAlisListFilters>) {
     setListFilters((current) => ({ ...current, ...next }));
   }
@@ -196,6 +218,7 @@ export function ModernAlisModule({
           <DataPill label="Yüzey" value={state.activeWorkspaceView === 'excel' ? 'Excel' : 'Sistem'} tone={state.activeWorkspaceView === 'excel' ? 'warning' : 'neutral'} />
           <DataPill label="Taslak" value={state.draftWorkspace ? state.draftWorkspace.session.session_code : 'Yok'} tone={state.draftWorkspace ? 'warning' : 'neutral'} />
           <DataPill label="Müşteri" value={hasWorkspace ? (hasSelectedCustomer ? 'Seçili' : 'Bekliyor') : '—'} tone={hasSelectedCustomer ? 'success' : 'warning'} />
+          <DataPill label="Kısayol" value={ALIS_SHORTCUT_HINT} tone="neutral" />
         </>
       }
       actions={
@@ -286,7 +309,7 @@ export function ModernAlisModule({
                 detail={state.detail}
                 loading={state.detailLoading}
                 error={state.detailError}
-                onClose={state.onCloseDetail}
+                onClose={closeDetail}
                 onEdit={state.onEditDetail}
                 onDelete={state.onDeleteDetail}
                 onPreview={state.onOpenDetailExcelPreview}
@@ -466,9 +489,9 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
             </div>
           </div>
 
-          <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-sg-border bg-sg-surface/95 px-4 py-3 backdrop-blur">
+          <div className="sticky bottom-0 z-sticky flex flex-wrap items-center justify-between gap-3 border-t border-sg-border bg-sg-surface/95 px-4 py-3 backdrop-blur">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm"><span><span className="text-sg-text-soft">Gram </span><strong className="text-sg-text">{formatNumber(totalGram, ' g')}</strong></span><span><span className="text-sg-text-soft">Net </span><strong className="text-sg-text">{formatMoney(String(totalOffer))}</strong></span>{state.purchaseVatEnabled ? <span><span className="text-sg-text-soft">KDV (tarihsel) </span><strong className="text-sg-text">{formatMoney(String(vatAmount))}</strong></span> : null}<span><span className="text-sg-text-soft">Ödenecek </span><strong className="text-sg-accent">{formatMoney(String(grossOffer))}</strong></span></div>
-            <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Kesinleştirmek için önce müşteri seçin veya oluşturun' : undefined} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
+            <div className="flex gap-2"><button type="button" onClick={onCancel} disabled={state.cancelPending} title={ALIS_SHORTCUT_HINT} className={shellButtonClass('danger')}>İptal</button><button type="button" onClick={() => void state.onFinalizeWorkspace()} disabled={state.finalizePending || !hasSelectedCustomer} title={!hasSelectedCustomer ? 'Kesinleştirmek için önce müşteri seçin veya oluşturun' : ALIS_SHORTCUT_HINT} className={shellButtonClass('primary')}>{state.finalizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}Alışı tamamla</button></div>
           </div>
         </main>
 
@@ -527,7 +550,7 @@ function AlisToolSheet({ tool, state, hasSelectedCustomer, filters, onFilterChan
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, [tool]);
   const title = tool === 'customer' ? 'Müşteri' : tool === 'rates' ? 'Piyasa oranları' : tool === 'calculator' ? 'Kniv beregner' : tool === 'filters' ? 'Geçmiş filtreleri' : 'Hazır olmayan entegrasyonlar';
-  return <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /></> : null}{tool === 'rates' ? <WorkspaceControls state={state} /> : null}{tool === 'calculator' ? <KnivCalculators state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
+  return <div className="fixed inset-0 z-drawer flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-sticky flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /></> : null}{tool === 'rates' ? <WorkspaceControls state={state} /> : null}{tool === 'calculator' ? <KnivCalculators state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
 }
 
 function KnivCalculators({ state }: { state: ModernAlisState }) {
@@ -1077,7 +1100,7 @@ function PreviewPopover({ label, children }: { label: string; children: ReactNod
   return (
     <span className="relative inline-block" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onFocus={() => setOpen(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }}>
       <button type="button" aria-expanded={open} className="rounded-sg-sm text-left underline decoration-dotted underline-offset-2 transition hover:text-sg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sg-accent/40">{label}</button>
-      {open ? <span role="dialog" className="absolute left-0 top-full z-30 mt-2 min-w-56 max-w-80 rounded-sg-md border border-sg-border bg-sg-surface p-3 text-xs text-sg-text shadow-xl">{children}</span> : null}
+      {open ? <span role="dialog" className="absolute left-0 top-full z-dropdown mt-2 min-w-56 max-w-80 rounded-sg-md border border-sg-border bg-sg-surface p-3 text-xs text-sg-text shadow-xl">{children}</span> : null}
     </span>
   );
 }
@@ -1102,7 +1125,7 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
       <button type="button" onClick={() => state.onOpenDocumentExcelPreview(document)} className={shellButtonClass('ghost')}><FileSpreadsheet className="h-3.5 w-3.5" />Office</button>
       <details className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open'); }}>
         <summary className={`${shellButtonClass('ghost')} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}><Ellipsis className="h-4 w-4" />İşlemler</summary>
-        <div className="absolute right-0 top-full z-40 mt-2 w-52 rounded-sg-md border border-sg-border bg-sg-surface p-1.5 shadow-xl">
+        <div className="absolute right-0 top-full z-dropdown mt-2 w-52 rounded-sg-md border border-sg-border bg-sg-surface p-1.5 shadow-xl">
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onExportDocument(document); }} disabled={busy} className={menuButton}><Download className="h-4 w-4" />Dışa aktar</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onPrintDocument(document); }} disabled={busy} className={menuButton}><Printer className="h-4 w-4" />Yazdır</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); if (document.customer_id) state.onOpenCustomer(document); else setRelinkOpen(true); }} disabled={busy} title={document.customer_id ? undefined : 'Müşteri bağlantısı yok — önce belgeyi müşteriye bağlayın'} className={menuButton}><Users className="h-4 w-4" />Müşteriyi aç</button>
@@ -1137,27 +1160,36 @@ function ModernDetailModal({ source, detail, loading, error, onClose, onEdit, on
   const cprBirthPart = (value?: string | null) => (value || '').replace(/\D/g, '').slice(0, 6);
   const cpr = cprBirthPart(detail?.customer_cpr || source?.customer_cpr) || detail?.customer_cpr_masked || source?.customer_cpr_masked || '—';
   const identity = detail?.customer_identity_doc_number || source?.customer_identity_doc_number || detail?.customer_identity_doc_number_masked || '—';
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-sg-text/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-sg-xl border border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4">
-          <div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Afregningsbilag</p><h2 className="mt-1 text-xl font-bold text-sg-text">{detail?.document_number || source?.document_number || 'Belge detayı'}</h2></div>
-          <button type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Detayı kapat"><X className="h-5 w-5" /></button>
-        </div>
-        {error ? (
-          <div className="px-5 py-12 text-center"><p className="text-sm font-semibold text-sg-red">Belge detayı yüklenemedi.</p><p className="mt-2 text-xs text-sg-text-soft">{error}</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={onRetry} className={shellButtonClass('secondary')}><RefreshCcw className="h-4 w-4" />Tekrar dene</button><button type="button" onClick={onClose} className={shellButtonClass('ghost')}>Kapat</button></div></div>
-        ) : loading || !detail ? <div className="px-5 py-12 text-center text-sm text-sg-text-soft">Belge detayları yükleniyor...</div> : (
-          <div className="space-y-5 p-5">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Ad" value={detail.customer_name || '—'} /><MobileRow label="CPR" value={cpr} /><MobileRow label="Telefon" value={detail.customer_phone || '—'} /><MobileRow label="E-posta" value={detail.customer_email || '—'} /><MobileRow label="Kimlik" value={identity} /><MobileRow label="Adres" value={address || '—'} /></dl></div>
-              <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Ödeme ve işlem</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Net alış" value={formatMoney(detail.net_amount_dkk)} /><MobileRow label={`KDV (%${detail.vat_rate_percent})`} value={formatMoney(detail.vat_amount_dkk)} /><MobileRow label="Ödenecek toplam" value={formatMoney(detail.gross_amount_dkk)} /><MobileRow label="Ödeme" value={detail.payment_method || 'bank'} /><MobileRow label="Reg.nr." value={detail.bank_reg_number || '—'} /><MobileRow label="Kontonr." value={detail.bank_account_number || '—'} /><MobileRow label="Tarih" value={new Date(detail.issued_at).toLocaleString(document.documentElement.lang)} /></dl></div>
-            </div>
-            <div className="overflow-x-auto rounded-sg-lg border border-sg-border"><table className="min-w-full text-sm"><thead className="bg-sg-surface-soft"><tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft"><th className="px-3 py-2">Tür</th><th className="px-3 py-2">Saflık</th><th className="px-3 py-2">Avance</th><th className="px-3 py-2">Gram</th><th className="px-3 py-2">Tutar</th></tr></thead><tbody>{detail.lines.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-sg-text-soft">Ürün satırı yok.</td></tr> : detail.lines.map((line) => <tr key={line.id} className="border-t border-sg-border-soft"><td className="px-3 py-3 font-semibold text-sg-text">{line.metal_type ? labelMetalType(line.metal_type) : line.product_type || '—'}</td><td className="px-3 py-3 text-sg-text-soft">{line.purity_karat || line.purity_percentage || '—'}</td><td className="px-3 py-3 text-sg-text-soft">{line.margin_percent || '0'}%</td><td className="px-3 py-3 text-sg-text-soft">{formatNumber(line.weight_grams, ' g')}</td><td className="px-3 py-3 text-sg-text-soft">{formatMoney(line.line_total_dkk)}</td></tr>)}</tbody></table></div>
-            <div className="flex flex-wrap justify-end gap-2 border-t border-sg-border-soft pt-4"><button type="button" onClick={onPreview} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button><button type="button" onClick={onExport} className={shellButtonClass('secondary')}><Download className="h-4 w-4" />Dışa aktar</button><button type="button" onClick={onPrint} className={shellButtonClass('secondary')}><Printer className="h-4 w-4" />Yazdır</button><button type="button" onClick={onDelete} disabled={!detail.can_delete || actionPending} className={shellButtonClass('danger')}><Trash2 className="h-4 w-4" />Sil</button><button type="button" onClick={onEdit} disabled={!detail.can_edit || actionPending} className={shellButtonClass('primary')}><Pencil className="h-4 w-4" />Düzenle</button></div>
-          </div>
-        )}
-      </div>
+  const title = detail?.document_number || source?.document_number || 'Belge detayı';
+  const footer = error || loading || !detail ? undefined : (
+    <div className="flex flex-wrap justify-end gap-2">
+      <button type="button" onClick={onPreview} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button>
+      <button type="button" onClick={onExport} className={shellButtonClass('secondary')}><Download className="h-4 w-4" />Dışa aktar</button>
+      <button type="button" onClick={onPrint} className={shellButtonClass('secondary')}><Printer className="h-4 w-4" />Yazdır</button>
+      <button type="button" onClick={onDelete} disabled={!detail.can_delete || actionPending} className={shellButtonClass('danger')}><Trash2 className="h-4 w-4" />Sil</button>
+      <button type="button" onClick={onEdit} disabled={!detail.can_edit || actionPending} className={shellButtonClass('primary')}><Pencil className="h-4 w-4" />Düzenle</button>
     </div>
+  );
+  return (
+    <ModernDialog
+      open={Boolean(source)}
+      onClose={onClose}
+      title={title}
+      description="Afregningsbilag"
+      footer={footer}
+    >
+      {error ? (
+        <div className="py-12 text-center"><p className="text-sm font-semibold text-sg-red">Belge detayı yüklenemedi.</p><p className="mt-2 text-xs text-sg-text-soft">{error}</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={onRetry} className={shellButtonClass('secondary')}><RefreshCcw className="h-4 w-4" />Tekrar dene</button><button type="button" onClick={onClose} className={shellButtonClass('ghost')}>Kapat</button></div></div>
+      ) : loading || !detail ? <div className="py-12 text-center text-sm text-sg-text-soft">Belge detayları yükleniyor...</div> : (
+        <div className="space-y-5">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Ad" value={detail.customer_name || '—'} /><MobileRow label="CPR" value={cpr} /><MobileRow label="Telefon" value={detail.customer_phone || '—'} /><MobileRow label="E-posta" value={detail.customer_email || '—'} /><MobileRow label="Kimlik" value={identity} /><MobileRow label="Adres" value={address || '—'} /></dl></div>
+            <div className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Ödeme ve işlem</p><dl className="mt-3 grid gap-2 text-sm"><MobileRow label="Net alış" value={formatMoney(detail.net_amount_dkk)} /><MobileRow label={`KDV (%${detail.vat_rate_percent})`} value={formatMoney(detail.vat_amount_dkk)} /><MobileRow label="Ödenecek toplam" value={formatMoney(detail.gross_amount_dkk)} /><MobileRow label="Ödeme" value={detail.payment_method || 'bank'} /><MobileRow label="Reg.nr." value={detail.bank_reg_number || '—'} /><MobileRow label="Kontonr." value={detail.bank_account_number || '—'} /><MobileRow label="Tarih" value={new Date(detail.issued_at).toLocaleString(document.documentElement.lang)} /></dl></div>
+          </div>
+          <div className="overflow-x-auto rounded-sg-lg border border-sg-border"><table className="min-w-full text-sm"><thead className="bg-sg-surface-soft"><tr className="text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft"><th className="px-3 py-2">Tür</th><th className="px-3 py-2">Saflık</th><th className="px-3 py-2">Avance</th><th className="px-3 py-2">Gram</th><th className="px-3 py-2">Tutar</th></tr></thead><tbody>{detail.lines.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-sg-text-soft">Ürün satırı yok.</td></tr> : detail.lines.map((line) => <tr key={line.id} className="border-t border-sg-border-soft"><td className="px-3 py-3 font-semibold text-sg-text">{line.metal_type ? labelMetalType(line.metal_type) : line.product_type || '—'}</td><td className="px-3 py-3 text-sg-text-soft">{line.purity_karat || line.purity_percentage || '—'}</td><td className="px-3 py-3 text-sg-text-soft">{line.margin_percent || '0'}%</td><td className="px-3 py-3 text-sg-text-soft">{formatNumber(line.weight_grams, ' g')}</td><td className="px-3 py-3 text-sg-text-soft">{formatMoney(line.line_total_dkk)}</td></tr>)}</tbody></table></div>
+        </div>
+      )}
+    </ModernDialog>
   );
 }
 

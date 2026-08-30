@@ -96,7 +96,7 @@ function OverlayFrame({
 
   return (
     <OverlayPortal>
-      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-sg-text/35 p-4 backdrop-blur-sm">
+      <div className="fixed inset-0 z-modal flex items-center justify-center bg-sg-text/35 p-4 backdrop-blur-sm">
         <div
           className="absolute inset-0"
           onClick={() => onClose?.()}
@@ -110,7 +110,7 @@ function OverlayFrame({
           aria-describedby={description ? descriptionId : undefined}
           tabIndex={-1}
           className={cn(
-            'relative z-[81] max-h-[calc(100vh-2rem)] w-full overflow-hidden rounded-sg-xl border border-sg-border bg-sg-surface shadow-sg-lg',
+            'relative z-modal max-h-[calc(100vh-2rem)] w-full overflow-hidden rounded-sg-xl border border-sg-border bg-sg-surface shadow-sg-lg',
             panelClassName,
           )}
         >
@@ -169,7 +169,7 @@ export function ModernDrawer({
 
   return (
     <OverlayPortal>
-      <div className="fixed inset-0 z-[80]">
+      <div className="fixed inset-0 z-drawer">
         <div className="absolute inset-0 bg-sg-text/35 backdrop-blur-sm" aria-hidden="true" onClick={() => onClose?.()} />
         <aside
           ref={panelRef}
@@ -178,7 +178,7 @@ export function ModernDrawer({
           aria-labelledby={titleId}
           aria-describedby={description ? descriptionId : undefined}
           tabIndex={-1}
-          className="absolute inset-y-0 right-0 z-[81] flex w-full max-w-[720px] flex-col overflow-hidden border-l border-sg-border bg-sg-surface shadow-sg-lg"
+          className="absolute inset-y-0 right-0 z-drawer flex w-full max-w-[720px] flex-col overflow-hidden border-l border-sg-border bg-sg-surface shadow-sg-lg"
         >
           <div className="flex items-start justify-between gap-4 border-b border-sg-border-soft px-5 py-4">
             <div>

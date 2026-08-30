@@ -169,7 +169,7 @@ function AfgPreviewModal({
     .reduce((sum, line) => sum + Number(line.weight_grams || 0), 0) ?? 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/55 p-6" onClick={onClose}>
       <div className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center justify-between border-b-4 border-amber-600 bg-brand-900 px-5 py-3">
           <div className="flex items-center gap-3">
@@ -655,7 +655,7 @@ export function CustomersPage({
 
           <div className="min-h-0 flex-1 overflow-auto">
             <table className="min-w-max w-full border-collapse text-sm">
-              <thead className="sticky top-0 z-10">
+              <thead className="sticky top-0 z-sticky">
                 <tr>
                   <LabelCell>#</LabelCell>
                   <LabelCell>Ad Soyad / Navn</LabelCell>
@@ -833,7 +833,7 @@ export function CustomersPage({
             </div>
 
             <div className="max-h-[320px] flex-shrink-0 overflow-y-auto border-b-2 border-brand-200">
-              <div className="sticky top-0 z-10 border-b border-brand-200 bg-brand-50 px-4 py-2">
+              <div className="sticky top-0 z-sticky border-b border-brand-200 bg-brand-50 px-4 py-2">
                 <p className="text-xs font-black uppercase tracking-widest text-brand-600">Kimlik Bilgileri</p>
               </div>
               <table className="w-full border-collapse">
@@ -869,7 +869,7 @@ export function CustomersPage({
               ) : (
                 <div className="flex-1 overflow-auto">
                   <table className="w-full border-collapse text-sm">
-                    <thead className="sticky top-0 z-10">
+                    <thead className="sticky top-0 z-sticky">
                       <tr>
                         <th className="w-4 border border-brand-200 bg-brand-100 px-3 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600"></th>
                         <th className="border border-brand-200 bg-brand-100 px-3 py-2.5 text-left text-xs font-black uppercase tracking-wider text-brand-600">Afg. Nr.</th>

@@ -14,7 +14,7 @@ export function AppShell() {
 
   return (
     <>
-      <div className="fixed right-4 top-4 z-[80] w-[min(720px,calc(100vw-2rem))] shadow-xl">
+      <div className="fixed right-4 top-4 z-overlay-top w-[min(720px,calc(100vw-2rem))] shadow-xl">
         <ClassicDiscoveryBanner />
       </div>
       <MakeRoot {...state} />

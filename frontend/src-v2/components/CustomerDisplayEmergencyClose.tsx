@@ -27,7 +27,7 @@ export function CustomerDisplayEmergencyClose() {
   if (!isTauriRuntime()) return null;
 
   return (
-    <div className="group fixed right-0 top-0 z-[100] p-4">
+    <div className="group fixed right-0 top-0 z-critical p-4">
       <button
         type="button"
         onClick={() => void close()}

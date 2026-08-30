@@ -142,7 +142,7 @@ export function LegacyMigrationCenter({ open, onClose, initialPhase = 'afg' }: {
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[250] flex justify-end bg-slate-950/35 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Eski sistem taşıma merkezi">
+    <div className="fixed inset-0 z-critical-top flex justify-end bg-slate-950/35 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Eski sistem taşıma merkezi">
       <section className="flex h-full w-full max-w-4xl flex-col bg-white shadow-2xl">
         <header className="flex items-start justify-between border-b border-slate-200 px-6 py-5">
           <div><p className="text-xs font-black uppercase tracking-[0.22em] text-blue-600">Veri taşıma merkezi</p><h2 className="mt-1 text-2xl font-black text-slate-950">Eski Excel sistemini taşı</h2><p className="mt-1 text-sm text-slate-500">Sıra zorunludur: AFG, Depolama, Log. Dış entegrasyonlar kapalıdır.</p></div>

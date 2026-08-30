@@ -177,7 +177,7 @@ export function ModernRootShell({
 
         <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col">
           {/* Üst bar: rota kimliği, operasyon durumu ve oturum araçları */}
-          <header className="sticky top-0 z-30 flex h-[76px] shrink-0 items-center gap-3 border-b border-sg-border bg-sg-surface/95 px-4 shadow-[0_1px_0_rgba(15,23,42,0.02)] backdrop-blur sm:px-5">
+          <header className="sticky top-0 z-header flex h-[76px] shrink-0 items-center gap-3 border-b border-sg-border bg-sg-surface/95 px-4 shadow-[0_1px_0_rgba(15,23,42,0.02)] backdrop-blur sm:px-5">
             <button
               type="button"
               onClick={() => setNavOpen(true)}

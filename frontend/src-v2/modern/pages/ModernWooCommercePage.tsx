@@ -457,7 +457,7 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
       </div>
 
       {publishPreview ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setPublishPreview(null)}>
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 p-6" onClick={() => setPublishPreview(null)}>
           <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-sg-lg border border-sg-border bg-sg-surface shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-sg-border px-5 py-3">
               <p className="text-sm font-semibold text-sg-text">Yayın önizlemesi — sitede böyle görünecek</p>

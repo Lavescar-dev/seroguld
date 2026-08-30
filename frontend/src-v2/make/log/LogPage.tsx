@@ -524,7 +524,7 @@ function LotHistoryDrawer({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-brand-950/20">
+    <div className="fixed inset-0 z-drawer flex justify-end bg-brand-950/20">
       <button type="button" className="flex-1 cursor-default" aria-label="Geçmiş katmanı" onClick={onClose} />
       <aside className="relative h-full w-full max-w-[28rem] overflow-y-auto border-l-2 border-brand-300 bg-white shadow-2xl">
         <div className="sticky top-0 border-b border-brand-200 bg-white px-4 py-3">
@@ -582,7 +582,7 @@ function LotLinesDrawer({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-brand-950/20">
+    <div className="fixed inset-0 z-drawer flex justify-end bg-brand-950/20">
       <button type="button" className="flex-1 cursor-default" aria-label="Lines overlay" onClick={onClose} />
       <aside className="relative h-full w-full max-w-[36rem] overflow-y-auto border-l-2 border-brand-300 bg-white shadow-2xl">
         <div className="sticky top-0 border-b border-brand-200 bg-white px-4 py-3">

@@ -351,13 +351,13 @@ export function MakeExcelPreviewPage({
                   <table className="min-w-full border-collapse">
                     <thead>
                       <tr>
-                        <th className="sticky left-0 top-0 z-20 border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[11px] font-black uppercase tracking-widest text-brand-700">
+                        <th className="sticky left-0 top-0 z-header border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[11px] font-black uppercase tracking-widest text-brand-700">
                           #
                         </th>
                         {activeSheet.columns.map((column) => (
                           <th
                             key={column}
-                            className="sticky top-0 z-10 border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[11px] font-black uppercase tracking-widest text-brand-700 last:border-r-0"
+                            className="sticky top-0 z-sticky border-b border-r border-brand-300 bg-stone-200 px-3 py-2 text-center text-[11px] font-black uppercase tracking-widest text-brand-700 last:border-r-0"
                           >
                             {column}
                           </th>
@@ -367,7 +367,7 @@ export function MakeExcelPreviewPage({
                     <tbody>
                       {activeSheet.rows.map((row, rowIndex) => (
                         <tr key={`${activeSheet.name}-${rowIndex}`} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-stone-50'}>
-                          <th className="sticky left-0 z-10 border-b border-r border-brand-300 bg-stone-100 px-3 py-2 text-center text-[11px] font-black text-brand-600">
+                          <th className="sticky left-0 z-sticky border-b border-r border-brand-300 bg-stone-100 px-3 py-2 text-center text-[11px] font-black text-brand-600">
                             {rowIndex + 1}
                           </th>
                           {row.map((cell, columnIndex) => {

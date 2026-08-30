@@ -85,7 +85,7 @@ export function SessionLogoutControl({ variant }: SessionLogoutControlProps) {
         {busy ? t('auth.logout.pending', locale) : t('auth.logout', locale)}
       </button>
       {failure ? (
-        <div className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-950/25 px-4 py-6 backdrop-blur-[2px]">
+        <div className="fixed inset-0 z-critical flex items-center justify-center bg-slate-950/25 px-4 py-6 backdrop-blur-[2px]">
           <section role="dialog" aria-modal="true" className="w-full max-w-md rounded-sg-lg border border-sg-border bg-sg-surface p-5 shadow-sg-md">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
