@@ -1,8 +1,8 @@
 # Docker'sız Windows Installer Üretim Kılavuzu
 
-> Son güncelleme: 2026-08-13
+> Son güncelleme: 2026-08-30
 >
-> Güncel örnek sürüm: `0.3.4`
+> Güncel örnek sürüm: `0.3.25`
 >
 > Kanonik script: `scripts/release-windows-native.ps1`
 
@@ -100,8 +100,23 @@ Repo kökünden çalıştır:
 ```powershell
 powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
   -File scripts\release-windows-native.ps1 `
+  -Finalize
+```
+
+Defender taraması artık **varsayılan olarak koşar**; eski `-RunDefenderScan`
+bayrağı kabul edilir ama davranışı değiştirmez (geriye dönük uyumluluk).
+Müşteri teslimatı (`-Finalize`) bu taramayı atlayamaz — `-Finalize` ile
+`-SkipDefenderScan` birlikte verilemez, script hata verir.
+`-SkipDefenderScan` yalnız kontrollü geliştirme/teşhis build'lerindir.
+
+Code signing sertifikası varsa thumbprint'i geç (yoksa boş bırak; manifestte
+`code_signed=false` olur ve installer "unknown publisher" uyarısı verir):
+
+```powershell
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File scripts\release-windows-native.ps1 `
   -Finalize `
-  -RunDefenderScan
+  -SignCertificateThumbprint '<SERTIFIKA-THUMBPRINT>'
 ```
 
 Daha önce doğrulanmış bir Windows runtime build cache'i varsa C: disk alanını ve
@@ -111,7 +126,6 @@ süreyi azaltmak için:
 powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
   -File scripts\release-windows-native.ps1 `
   -Finalize `
-  -RunDefenderScan `
   -RuntimeBuildDirectory '\\wsl.localhost\archlinux\home\lavescar\seroguld-build-cache\windows-runtime-build-YYYYMMDD-NNN'
 ```
 
@@ -124,15 +138,21 @@ dosyası kopyalanmaz.
 `release-windows-native.ps1` sırasıyla:
 
 1. Doğru repo, sürüm, NSIS/zlib, per-machine ve offline WebView2 ayarlarını doğrular.
+   Sürüm otomasyonu: tek kaynak `desktop/package.json` `version` alanıdır; script
+   bunu 8 ayrı yerde (tauri.conf.json, frontend/package.json, release manifesti vb.)
+   çapraz doğrular ve uyuşmazlıkta build'i durdurur.
 2. Kaynak dosya fingerprint'ini ve runtime build manifestini karşılaştırır.
 3. PyInstaller `onedir` runtime'ını üretir veya doğrulanmış cache'i kullanır.
 4. Packaged runtime üzerinde migrate, health, bootstrap ve temiz admin login smoke'u çalıştırır.
 5. Embedded frontend'i yalnız `http://127.0.0.1:8100` hedefiyle build eder.
-6. Tauri/NSIS installer'ı üretir.
+6. Tauri/NSIS installer'ı üretir; updater için `.sig` imzası ve `latest.json`
+   üretir (`TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` gerekir).
 7. Payload içinde yasaklı Docker/WSL/OnlyOffice/Python CLI/debug/env kalıntısı arar.
 8. SG ikon frame'lerini installer ve desktop EXE içinde doğrular.
 9. UPX kullanılmadığını ve NSIS'in yalnız Deflate/zlib içerdiğini doğrular.
-10. NanaZip ile installer bütünlük testi ve Microsoft Defender özel taraması yapar.
+10. NanaZip ile installer bütünlük testi ve Microsoft Defender özel taraması yapar
+    (tarama varsayılan açıktır; `-SkipDefenderScan` yalnız `-Finalize` dışında
+    kabul edilir).
 11. Mevcut Downloads installer'ını hash/manifest sidecar'larıyla arşivler.
 12. Yeni installer, SHA-256 sidecar ve manifesti Downloads'a atomik yayınlar.
 
@@ -155,9 +175,16 @@ Ara kopyalar:
 ```text
 .run\windows-native-release\SERO-GULD-CRM-FULL-SETUP.exe
 .run\windows-native-release\SERO-GULD-CRM-FULL-SETUP.exe.sha256
+.run\windows-native-release\SERO-GULD-CRM-FULL-SETUP.exe.sig
+.run\windows-native-release\latest.json
 .run\windows-native-release\release-manifest.json
 desktop\src-tauri\target\release\bundle\nsis\...
 ```
+
+`.sig` (minisign imzası) ve `latest.json` Tauri updater v2 içindir: updater
+`https://github.com/Lavescar-dev/seroguld/releases/latest/download/latest.json`
+uçuna bakar; bu yüzden `.sig` + `latest.json` + installer birlikte, aynı
+sürüme ait olacak şekilde GitHub Releases'a yüklenir.
 
 `.run`, Cargo target ve `desktop/src-tauri/runtime/seroguld-runtime` generated
 çıktıdır; commit edilmez.
@@ -201,7 +228,30 @@ logları ve yedekleri korur. Installer eski Sero Guld scheduled task/process ve
 Sero Guld'a özel OnlyOffice container kalıntılarını temizler; Docker Desktop'ı
 bilgisayardan kaldırmaz.
 
-## 10. Sorun giderme
+## 10. Updater akışı (0.3.26+)
+
+Kurulu uygulama kendini güncelleyebilir (Tauri updater v2, Rust-side):
+
+1. Müşteri makinesinde uygulama açıldıktan **~20 sn sonra** sessiz kontrol
+   yapılır; hiçbir şey yoksa kullanıcı bir şey görmez.
+2. Yeni sürüm varsa kurulum **passive mod**'da başlar (ilerleme çubuğu) ve UAC
+   istemi çıkar; kullanıcı `Evet` derse installer kendisi kapanıp yeniden kurulur.
+3. Uç: GitHub Releases `latest/download/latest.json`; imza doğrulaması
+   `tauri.conf.json` içine gömülü `plugins.updater.pubkey` ile yapılır.
+
+Operasyon notları:
+
+- **Excel bridge / canlı Office dock açıkken kurulum önerilmez.** Güncelleme
+  diyaloğu çıkmadan önce açık çalışma kitaplarını kaydedip kapatın; yoksa
+  kurulum sonrası oturum yeniden açılır.
+- Açılışta uygulama, sidecar backend'in `127.0.0.1:8100` üzerinde hazır
+  olmasını **30 sn'ye kadar** bekler; süre aşılırsa hata yüzeyi çıkar ve
+  başlatma tekrar denenebilir (`retry_desktop_startup`).
+- Güncelleme yayınlandıktan sonra müşteri makinesinin görmesi için
+  `latest.json` + installer + `.sig` üçlüsünün aynı release'e yüklenmiş olması
+  gerekir (bkz. §7).
+
+## 11. Sorun giderme
 
 Başlangıç logları:
 

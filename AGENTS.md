@@ -1,8 +1,8 @@
 # Sero Guld Repo AGENTS.md
 
-> **Son güncellenme:** 2026-08-13
-> **Migration head:** `0035_product_dims_inventory`
-> **Versiyon:** v0.3.4
+> **Son güncellenme:** 2026-08-30
+> **Migration head:** `0039_purity_normalization` (saflık normalizasyonu)
+> **Versiyon:** v0.3.25
 
 Bu dosya `seroguld-crm` için proje-özel çalışma kurallarını kilitler.
 
@@ -15,8 +15,11 @@ Bu dosya `seroguld-crm` için proje-özel çalışma kurallarını kilitler.
 - `vite`, `cargo build`, `./target/debug/seroguld_crm_desktop` gibi komutlar ancak açıkça release-benzeri doğrulama istenirse kullanılır.
 - Detaylı runtime protokolü: `docs/DEV_RUNTIME_PROTOCOL.md`
 - Docker'sız müşteri installer'ı yalnız
-  `scripts/release-windows-native.ps1 -Finalize -RunDefenderScan` ile üretilir;
-  ayrıntılar `docs/WINDOWS_RELEASE_RUNBOOK_TR.md` içindedir.
+  `scripts/release-windows-native.ps1 -Finalize` ile üretilir; Defender taraması
+  artık varsayılan koşar (`-RunDefenderScan` bayrağı kalktı). Taramayı atlamak
+  için `-SkipDefenderScan` vardır; bu bayrak `-Finalize` ile birlikte
+  kullanılamaz (müşteri teslimatında tarama zorunludur).
+  Ayrıntılar `docs/WINDOWS_RELEASE_RUNBOOK_TR.md` içindedir.
 
 ## Repo Bağlamı
 
@@ -28,9 +31,11 @@ Bu dosya `seroguld-crm` için proje-özel çalışma kurallarını kilitler.
 ## Doğrulama (minimum gate)
 
 - **Frontend değişikliği:** `cd frontend && npm run typecheck` (0 hata)
-- **Frontend test:** `cd frontend && npm test` (Vitest 15/15)
+- **Frontend test:** `cd frontend && npm test` (Vitest 305/305)
+- **Frontend lint + i18n gate:** `cd frontend && npm.cmd run lint` +
+  `npm.cmd run i18n:check` (CI push/PR gate'leri)
 - **Backend değişikliği:** ilgili `python3 -m py_compile app/...`
-- **Backend test:** `make backend-test` (pytest 32 dosya)
+- **Backend test:** `make backend-test` (82 test dosyası / 299+ test)
 - **Desktop/Tauri değişikliği:** `cargo check --manifest-path desktop/src-tauri/Cargo.toml`
 - **Migration eklendiyse:** `.venv/bin/alembic upgrade head` (head doğru mu kontrol)
 
@@ -83,7 +88,10 @@ Her madde otonom uygulandı; tüm `tsc --noEmit` + `vitest run` + `py_compile` d
 
 ## Güvenlik notu
 
-Bu repo'da `.env` committed olduğu için credential'ları gördüğünde sızıntı uyarısı verme — bu **bilinçli geçici durum**, müşteri devir öncesi rotation planlandı. Detay için `docs/PROJECT_HEALTH_AUDIT.md` §2.1.A.
+`.env` ve tüm `*.env.example` şablonları git dışıdır (2026-08-30 temizliği); git
+geçmişi `git-filter-repo` ile temizlendi, sızan sırlar (JWT, field encryption,
+entegrasyon credential'ları) dönüştürüldü. Credential'ları gördüğünde normal
+sızıntı uyarısı ver.
 
 ## Bağlı dökümanlar
 

@@ -2,8 +2,8 @@
 
 > **Amaç:** Sıfır bilgiyle gelen yeni bir geliştiricinin/teknisyenin projeyi *kendi başına* devralabilmesi için tasarlanmış kapsamlı kaynak. Mevcut `docs/PROJECT_SYSTEM_GUIDE_TR.md` "ne yaptığını" anlatır; bu dosya **"nasıl çalıştığını, nereye bakılacağını, neyin eksik olduğunu"** anlatır.
 >
-> **Son güncelleme:** 2026-05-18 · **Versiyon:** v1.0 (kapsamlı revizyon)
-> **Repo kökü:** `/mnt/SSD/Clients/Recai_Demir/seroguld-crm`
+> **Son güncelleme:** 2026-08-30 · **Versiyon:** v0.3.25
+> **Repo kökü:** `C:\Users\Lavescar\Clients\Recai_Demir\seroguld-crm-latest-windows`
 
 ---
 
@@ -94,7 +94,7 @@
 | | lucide-react | 0.511 | İkonlar |
 | **Backend** | FastAPI | latest | async REST |
 | | SQLAlchemy | 2.0 (async) | ORM |
-| | Alembic | latest | migration (19 sürüm) |
+| | Alembic | latest | migration (39 sürüm, head `0039_purity_normalization`) |
 | | Pydantic | v2 | schema |
 | | Uvicorn | latest | ASGI |
 | | httpx | latest | WC, Uniconta, OpenAI istemcileri |
@@ -105,8 +105,8 @@
 | **Desktop** | Tauri | 2.x | Rust shell + WebView |
 | | webkit2gtk-4.1 | Linux WebView | X11 fallback (dev.js otomatik) |
 | | WebView2 | Windows WebView | henüz test edilmedi |
-| **Test** | pytest | latest | backend (32 dosya, 31 testler) |
-| | Vitest | 4.1 | frontend (3 dosya, 15 test) |
+| **Test** | pytest | latest | backend (82 dosya, 299+ test) |
+| | Vitest | 4.1 | frontend (57 dosya, 305 test) |
 | | Playwright | 1.54 | E2E smoke (1 test) |
 | | @testing-library/react | 16.3 | RTL |
 | **External** | WooCommerce REST API | v3 | sero guld site |
@@ -310,7 +310,7 @@ seroguld-crm/                         # Repo kökü
 ### 6.2 İlk kurulum (one-shot)
 
 ```bash
-cd /mnt/SSD/Clients/Recai_Demir/seroguld-crm
+cd /mnt/c/Users/Lavescar/Clients/Recai_Demir/seroguld-crm-latest-windows
 make setup
 ```
 
@@ -324,7 +324,10 @@ Bu komut:
 ```bash
 cp .env.example .env
 # .env'i editle: WC, Uniconta, OpenAI credential'ları
-# (Üretim repo'sunda .env hâlâ committed olduğundan dikkat — H17.1 bkz.)
+# Not: .env git dışıdır; *.env.example şablonları da 2026-08-30 temizliğiyle
+# wildcard ignore ile git dışına alındı. Local şablon kopyan yoksa önceki
+# oturumdan yedekten al — repoya tekrar commit edilmez. JWT sırları
+# 2026-08-30'da dönüştürüldü, git geçmişi git-filter-repo ile temizlendi.
 ```
 
 Minimum çalıştırma için zorunlu değerler:
@@ -362,9 +365,11 @@ make demo-ready         # demo-start + demo-seed + demo-check zinciri
 ### 7.2 Test
 
 ```bash
-make backend-test                 # pytest (32 dosya)
+make backend-test                 # pytest (82 dosya / 299+ test)
 cd frontend && npm run typecheck  # tsc --noEmit (TypeScript)
-cd frontend && npm test           # Vitest 15 test
+cd frontend && npm test           # Vitest 305 test (57 dosya)
+cd frontend && npm run lint       # ESLint 9 (--max-warnings 0)
+cd frontend && npm run i18n:check # i18n kataloğu tutarlılık gate'i
 cd frontend && npm run smoke      # Playwright E2E (1 test)
 make integration-smoke            # AI + WC publish E2E
 make check                        # tüm test+typecheck+lint zinciri
@@ -435,7 +440,7 @@ make readiness-smoke         # /readyz canlı kontrol
 | **`v2_office_runtime.py`** | `/api/v2/office-runtime/*` | OnlyOffice/Collabora WOPI bridge |
 | `v2_support.py` | — | İçeride paylaşılan artifact helper'ları |
 
-### 8.2 `app/services/` — İş mantığı (36 dosya)
+### 8.2 `app/services/` — İş mantığı (50+ dosya)
 
 #### Pos / Alış servisleri
 - `pos_service.py` — Ana POS engine (workspace build, customer select, session lifecycle, line management). Bu dosya **çok büyük (~2200 sat)**, refactor için aday.
@@ -482,10 +487,23 @@ make readiness-smoke         # /readyz canlı kontrol
 - `realtime.py` — WebSocket hub (display + clerk).
 - `sequence_service.py` — Reference number üretimi (POS_REFERENCE_START + scan window).
 - `dashboard_helpers.py` — Analytics aggregate'leri.
+- `dashboard_overview.py` — Dashboard v2 overview agregasyonu.
 - `runtime_readiness.py` — `/readyz` endpoint logic.
 - `thermal_label.py` — ESC/POS 62mm ürün etiketi.
 - `thermal_receipt.py` — ESC/POS 80mm makbuz.
 - `customer_service.py` — Customer CRUD service layer + activity tracking.
+
+#### 2026 sonrası eklenen servisler
+- `wp_priser_service.py` — WordPress "Priser" (fiyat listesi) köprüsü.
+- `email_service.py` — Toplu e-posta gönderimi + alıcı ad/telefon eşleştirme.
+- `historical_afg_import.py` — Geçmiş AFG kayıtlarının toplu içe alınması.
+- `excel_session_service.py` — Excel oturum/sanal dosya yönetimi.
+- `kds_address_service.py` — KDS (postnummer) adres çözümleme.
+- `seed_inventory.py` — Envanter seed üretimi (ETL pipeline).
+- `desktop_backup_service.py`, `legacy_migration_service.py`, `market_rate_profile.py`,
+  `ecb_fx.py`, `postcode_service.py`, `customer_statement_renderer.py`,
+  `woocommerce_catalog_service.py`, `woocommerce_profiles.py`, `metals_dev.py` —
+  destek servisleri (ayrıntı için dosya başlıklarına bak).
 
 ### 8.3 `app/models/` — SQLAlchemy modelleri (26 dosya)
 
@@ -528,7 +546,7 @@ __init__.py                        → Tüm modellerin re-export'u
 
 `product.py`, `pos.py`, `customer.py`, `afg.py`, `gdpr.py`, `desktop_views.py`, `bootstrap.py`, `antifraud.py`, `inventory.py`, `document_artifact.py`, `base.py` (AppBaseModel + PaginatedResponse).
 
-### 8.5 Alembic migration tarihçesi (19 sürüm)
+### 8.5 Alembic migration tarihçesi (39 sürüm, head `0039_purity_normalization`)
 
 | Rev | Açıklama |
 |---|---|
@@ -551,8 +569,28 @@ __init__.py                        → Tüm modellerin re-export'u
 | 0017 | PosSession.customer_id ondelete=RESTRICT |
 | 0018 | PosDocumentAudit |
 | 0019 | AfgMeltLot.status + AfgMeltLotHistory + TransactionLine.melt_lot_id |
+| 0020 | PosDocument cancellation |
+| 0021 | Office artifact revision |
+| 0022 | GDPR copy tasks |
+| 0023 | PosDocument customer snapshot |
+| 0024 | Customer address/identity guards |
+| 0025 | Historical AFG import |
+| 0026 | Customer notes + audit |
+| 0027 | Legacy migration center |
+| 0028 | User password security |
+| 0029 | Document artifact revision |
+| 0030 | PosSession document date |
+| 0031 | Legacy missing tables reconciliation |
+| 0032 | Ağustos şema reconciliation |
+| 0033 | WooCommerce catalog |
+| 0034 | Dashboard market rate confirmation |
+| 0035 | Product dimensions + inventory backfill |
+| 0036 | Product Woo kategori override |
+| 0037 | Product reference unique |
+| 0038 | Product publish profile |
+| 0039 | Saflık normalizasyonu (**head**) |
 
-### 8.6 Test dosyaları (32 dosya, ~150+ test case)
+### 8.6 Test dosyaları (82 dosya, 299+ test case)
 
 Bkz. `backend/tests/`. Anahtar dosyalar:
 - `test_afg_roundtrip.py` — AFG belgesi finalize + Uniconta sync e2e.
@@ -581,6 +619,7 @@ Bkz. `backend/tests/`. Anahtar dosyalar:
 | `/opmc/:id` | `OpmcDetailPage` | Auth |
 | `/uniconta` | `UnicontaPage` | Auth |
 | `/woocommerce` | `WooCommercePage` | Auth |
+| `/reports` | `ReportsPage` (lazy) | Auth |
 | `/gdpr` | `GdprPage` | Auth (admin) |
 | `/settings` | `SettingsPage` | Auth |
 | `/musteri-ekran` | `DisplayPreviewPage` | Auth |
@@ -595,7 +634,10 @@ Bkz. `backend/tests/`. Anahtar dosyalar:
 | `/login` | `LoginPage` | Public |
 | `/desktop-smoke` | `DesktopSmokePage` | Dev-only |
 
-Redirect'ler: `/pos→/`, `/afg→/log`, `/inventory→/depolama`, `/antifraud→/opmc`.
+Redirect'ler: `/pos→/`, `/afg→/log`, `/inventory→/depolama`, `/customers→/musteriler`, `/antifraud→/opmc`, `/display-control→/musteri-ekran`.
+
+`/reports` her iki shell'in nav'ında bağlıdır (`ModernAppShell` + legacy `Root`
+nav). Eski `/ai` route'u ve `AiPage` kaldırıldı; AI yalnız backend servis katmanında.
 
 ### 9.2 Modül pattern (her `make/<modul>/` için ortak yapı)
 
@@ -814,7 +856,7 @@ Her modülün listener'ı `signalMatches(signal, 'kind')` ile hem direkt sinyali
 | GET | `/api/v2/alis/workspace/open-draft` | Açık draft session |
 | POST | `/api/v2/alis/workspace` | Yeni workspace başlat |
 | GET | `/api/v2/alis/workspace/{id}` | Workspace state |
-| PUT | `/api/v2/alis/workspace/{id}/sections` | Satır/customer/bank update |
+| PUT | `/api/v2/alis/workspace/{id}/sections` | Satır/customer/bank update — extra satır ekleme dahil (`extra_rows`): 22K-2 (ikinci 22K seviyesi, karat `22b`) çeyrek altın satırı buradan açılır |
 | POST | `/api/v2/alis/workspace/{id}/customer/select` | Mevcut müşteri seç |
 | POST | `/api/v2/alis/workspace/{id}/finalize` | Belgeyi kaydet (audit) |
 | POST | `/api/v2/alis/workspace/{id}/cancel` | Draft iptal (audit) |
@@ -875,7 +917,8 @@ Her modülün listener'ı `signalMatches(signal, 'kind')` ile hem direkt sinyali
 |---|---|---|
 | GET | `/api/v2/opmc/recent-orders?days=N&per_page=M` | WC siparişleri + risk skoru |
 | GET | `/api/v2/opmc/orders/{id}` | Tek sipariş detayı + history + override |
-| POST | `/api/v2/opmc/orders/{id}/override` | Manuel risk level (low/medium/high) |
+| POST | `/api/v2/opmc/orders/{id}/override` | Manuel risk level (low/medium/high) — **v2 override ucu** (`api/v2_woocommerce.py`) |
+| POST | `/api/antifraud/orders/{id}/override` | Legacy override ucu, aynı servisi çağırır (`set_antifraud_manual_override`) |
 
 ### 11.7 Müşteriler
 | Method | Path | Sorumluluk |
@@ -887,6 +930,7 @@ Her modülün listener'ı `signalMatches(signal, 'kind')` ile hem direkt sinyali
 | DELETE | `/api/v2/musteriler/{id}` | Soft delete |
 | GET | `/api/v2/musteriler/{id}/history` | Sipariş geçmişi |
 | GET | `/api/v2/musteriler/{id}/alis-summary` | Toplam alış raporu (P10) |
+| POST | `/api/v2/musteriler/import/woocommerce-live` | Toplu WC müşteri içe alma — e-posta eşleşmesi, bulunamazsa ad+telefon eşleşmesi; yoksa yeni kayıt |
 
 ### 11.8 WooCommerce
 | Method | Path | Sorumluluk |
@@ -962,6 +1006,29 @@ Her modülün listener'ı `signalMatches(signal, 'kind')` ile hem direkt sinyali
 - `setCustomerDisplayIdle()` — idle moda dön
 - `getDesktopMonitorSetup()` — ekran listesi
 - `pickDocumentFile()` — native file picker
+
+### 12.5 Release runtime loglaması + monitör tercihi (WIN-02 / WIN-05)
+
+- **`desktop.log`:** release exe açılışında, pencere/state/dialog olayları
+  `C:\ProgramData\SeroGuldCRM\logs\desktop.log` altına yazılır
+  (`main.rs` — `DesktopPaths::desktop_log`, mizanpaj: timestamp + level + olay).
+  Sessiz beyaz ekran teşhisi için ilk bakılacak yer.
+- **Monitör tercihi:** `MonitorInfo` + `preferred_monitor_id`
+  (`main.rs:1653-1693`) ile müşteri ekranının hangi monitöre açılacağı
+  hatırlanır; monitör çıkıp takıldığında mevcut ekranlara geri düşer.
+
+### 12.6 Updater v2 (Tauri updater, 0.3.26)
+
+- `tauri-plugin-updater` 2.10.1, Rust-side komutlar: `check_desktop_update` /
+  `install_desktop_update` (frontend'e JS API açılmaz).
+- Uç: GitHub Releases `latest/download/latest.json`; imza `.sig` dosyası
+  installer yanında yayınlanır.
+- Kurulum `installMode: "passive"` (ilerleme çubuğu + UAC).
+- Uygulama açılışından ~20 sn sonra sessiz kontrol; güncelleme varsa kullanıcı
+  pasif kurulum diyaloğuyla yönlendirilir.
+- İmzalama anahtarı repo dışındadır: `C:\Users\Lavescar\.tauri\seroguld-crm.key`
+  (+ `.password`). `plugins.updater.pubkey` config'e gömülüdür; CI secret'ları
+  `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
 ---
 
@@ -1063,8 +1130,12 @@ Her modülün listener'ı `signalMatches(signal, 'kind')` ile hem direkt sinyali
 
 ### 13.2 .env.example vs .env farkı
 
-- `.env.example` — git'te commit edilen şablon, secret içermez.
-- `.env` — local-only, gerçek credential'lar. **Repo'da committed olmamalı** ama şu anda öyle (bkz. §17 — güvenlik).
+- `.env` — local-only, gerçek credential'lar; **git dışıdır**.
+- `.env.example` — şablon, secret içermez; `*.env.example` wildcard ignore ile
+  2026-08-30 temizliğinde git dışına alındı (reposta artık hiçbir env dosyası
+  yok). Yeni şablon gerekirse local yedekten al, repoya commit etme.
+- 2026-08-30 güvenlik revizyonu: JWT sırları dönüştürüldü, git geçmişi
+  `git-filter-repo` ile temizlendi, `backend/.venv` yeniden kuruldu.
 
 ---
 
@@ -1074,10 +1145,11 @@ Her modülün listener'ı `signalMatches(signal, 'kind')` ile hem direkt sinyali
 
 | Seviye | Mevcut | Hedef |
 |---|---|---|
-| Backend unit (pytest) | 32 dosya, ~150 test | ≥70% coverage |
+| Backend unit (pytest) | 82 dosya, 299+ test | ≥70% coverage |
 | Backend integration | ~5 test (afg_roundtrip, log_ark1_roundtrip, pos_confirm_multiline) | E2E mock'lu Uniconta + WC |
-| Frontend unit (vitest) | 3 dosya, 15 test (cpr, format, toast) | ≥50% lib + critical hook |
-| Frontend component (RTL) | toast.test.tsx | Modal'lar, formlar |
+| Frontend unit (vitest) | 305 test / 57 dosya (cpr, format, toast + modül testleri) | ≥50% lib + critical hook |
+| Frontend coverage | v8 provider, eşikler: lines 23 / branches 14 / functions 17 / statements 22 | Kademeli artırım |
+| Frontend component (RTL) | toast.test.tsx ve bileşen testleri | Modal'lar, formlar |
 | Frontend E2E (Playwright) | 1 test (`smoke.spec.ts`) | Login → POS → Finalize → Log → Melt zinciri |
 | Desktop smoke | `make desktop-smoke` shell | Multi-platform (Linux/Win/Mac) |
 | Integration | `make integration-smoke` (AI + WC publish) | Daily CI |
@@ -1105,9 +1177,15 @@ docker-compose -f docker-compose.yml up -d backend
 
 ### 14.3 CI/CD (`.github/workflows/`)
 
-Mevcut workflow'lar (varsa):
-- `make check` (typecheck + test) PR'larda otomatik.
-- Release tag'lerinde desktop build artifact (henüz aktif değil mi kontrol et).
+- `ci.yml` — `frontend/**`, `backend/**`, `desktop/**`, `scripts/**`
+  değişimlerinde **push (main) ve PR**'de otomatik koşar:
+  `npm run typecheck` → `npm run lint` (ESLint 9, `--max-warnings 0`) →
+  `npm run i18n:check` → `npm run test` (Vitest 305) →
+  `npm run test:coverage` (coverage v8 eşikleri) + backend pytest.
+- `desktop-feedback-windows.yml` — Windows feedback smoke.
+- `windows-desktop-release.yml` — Windows release build.
+- Frontend tooling: ESLint 9 (flat config `eslint.config.js`) + Prettier
+  (`npm run format` / `format:check`) kuruldu.
 
 ---
 
@@ -1226,16 +1304,20 @@ A: `desktop/src-tauri/icons/` doluyor mu? Henüz icon'lar tanımlanmamış olabi
 | **Audit trail** | ✅ Eksiksiz | PosDocumentAudit, AfgMeltLotHistory, ProductHistory |
 | **GFS backup** | ✅ Yapılandırıldı | Hourly/daily/weekly rotasyon + rclone offsite |
 | **Cross-module sync** | ✅ Çalışıyor | BroadcastChannel + signalMatches + DEFAULT_CROSS_TRIGGERS |
-| **Frontend testing temel** | ✅ Çalışıyor | Vitest 15 test + Playwright smoke + tsc strict |
+| **Frontend testing temel** | ✅ Çalışıyor | Vitest 305 test (57 dosya) + Playwright smoke + tsc strict |
+| **Windows release loglaması** | ✅ KAPANDI (WIN-02) | `desktop.log` + state/dialog loglama (`main.rs`) |
+| **Monitör tercihi** | ✅ KAPANDI (WIN-05) | `MonitorInfo`/`preferred_monitor_id` (`main.rs:1653-1693`) |
+| **Tauri updater v2** | ✅ Kuruldu | Rust-side check/install, GitHub Releases endpoint, passive mod (0.3.26) |
+| **2026-08-30 güvenlik revizyonu** | ✅ Tamamlandı | JWT rotasyonu + geçmiş purge + xlsx CVE yaması + `backend/.venv` yeniden kurulumu |
 
 ### 17.2 ⚠️ Kısmi / eksik
 
 | Alan | Durum | Notlar |
 |---|---|---|
-| **Testing kapsamı** | ⚠️ Düşük | Backend pytest 32 dosya OK; frontend sadece 3 dosya (cpr, format, toast). E2E 1 test. |
-| **CI/CD pipeline** | ⚠️ Basit | `.github/workflows` minimal. Release artifact yok. |
+| **Testing kapsamı** | ⚠️ Orta | Backend pytest 82 dosya; frontend 57 dosya / 305 test. E2E 1 test. |
+| **CI/CD pipeline** | ✅ Gate'li | `ci.yml` push(main)/PR'de typecheck + lint + i18n + vitest + coverage eşiği + pytest. |
 | **Multi-worker güvenliği** | ⚠️ Riskli | Uniconta singleton token + cache, DebtorClient cache, OPMC orders cache hep in-memory. |
-| **Tauri Windows/Mac** | ⚠️ Test edilmedi | WebView2 ve WKWebView'da koşulmadı. Sign + auto-update yok. |
+| **Tauri Windows/Mac** | ⚠️ Kısmi | Windows'ta koşuyor; Mac yok. Auto-update kuruldu (updater v2), code signing hook'u sertifika bekliyor. |
 | **i18n** | ⚠️ Karışık | Türkçe + Danimarkaca + İngilizce karışık (operatörler iki dil biliyor, kabul edilebilir). |
 | **A11y** | ⚠️ Eksik | sr-only, ARIA label, focus-trap minimal. WCAG 2.1 audit yapılmadı. |
 | **Performance** | ⚠️ Belirsiz | N+1 query audit yok. Reports/dashboard büyük dataset davranışı bilinmiyor. |
@@ -1246,8 +1328,8 @@ A: `desktop/src-tauri/icons/` doluyor mu? Henüz icon'lar tanımlanmamış olabi
 
 | Alan | Risk | Aksiyon |
 |---|---|---|
-| **`.env` credential'ları repo'da açık** | 🔴 KRİTİK | OpenAI key, WC keys, WP password, Uniconta password commit edilmiş. `git history rewrite` + secrets rotation gerek. |
-| **JWT secret default** | 🔴 KRİTİK | `.env.example`'da `change-me-access-secret`. Prod'da değişti mi kontrol et. |
+| **`.env` credential'ları** | ✅ ÇÖZÜLDÜ (2026-08-30) | `.env` + `*.env.example` git dışına alındı, geçmiş `git-filter-repo` ile temizlendi, sırlar dönüştürüldü. |
+| **JWT secret default** | ✅ ÇÖZÜLDÜ (2026-08-30) | Secret'lar dönüştürüldü; `change-me-*` değerleri artık kullanılmıyor. |
 | **Field encryption key default** | 🔴 KRİTİK | `change-me-32-byte-base64-key`. Üretim verisi yanlış key ile şifrelenmiş olabilir. |
 | **CSP gevşek** | 🔴 ORTA | Tauri CSP `unsafe-eval` izinli. XSS surface artmış. |
 | **Nginx HTTPS yok** | 🔴 ORTA | Web stack nginx plain HTTP. TLS + HSTS gerek. |
@@ -1255,7 +1337,7 @@ A: `desktop/src-tauri/icons/` doluyor mu? Henüz icon'lar tanımlanmamış olabi
 | **Auto admin seed default ON** | 🔴 ORTA | `INITIAL_ADMIN_AUTO_SEED=true` + parola `Admin123!`. Prod'da değiştirilmediyse açık kapı. |
 | **Backup encryption yok** | 🔴 ORTA | Yedek dosyalar plaintext. Müşteri kimlik bilgileri (CPR) yedekte açık. |
 | **Sentry/error tracking yok** | 🔴 DÜŞÜK | Üretim hatası logging stdout. Müşteri etkilense de görmek zor. |
-| **Tauri code signing yok** | 🔴 ORTA | Windows installer "unknown publisher" uyarısı verecek. |
+| **Tauri code signing yok** | ⚠️ HOOK HAZIR | `signtool` hook'u (-SignCertificateThumbprint) kurulu; sertifika beklemede. Gelmezse installer "unknown publisher" uyarısı verir. |
 
 ### 17.4 🟡 Eksik kullanıcı özellikleri
 
@@ -1269,36 +1351,51 @@ A: `desktop/src-tauri/icons/` doluyor mu? Henüz icon'lar tanımlanmamış olabi
 | Müşteri data export (GDPR SAR) | ⚠️ Endpoint var, UI yok |
 | API key management (3rd party integration için) | ❌ |
 | Logout all devices | ❌ |
-| Tauri auto-update | ❌ |
+| Tauri auto-update | ✅ (updater v2, 0.3.26 — Rust-side, GitHub Releases, passive mod) |
 
 ### 17.5 Aciliyet matrisi
 
 **SHIPSTOPPER (üretime çıkmadan):**
-1. `.env` credential'ları repo'dan temizle, history rewrite.
-2. JWT + field encryption key prod'da değiştirilmiş olduğunu doğrula.
+1. ~~`.env` credential'ları repo'dan temizle, history rewrite~~ — **2026-08-30'da tamamlandı** (git dışı + `git-filter-repo` purge + sırlar dönüştürüldü).
+2. ~~JWT secret prod'da değiştirilsin~~ — **2026-08-30'da dönüştürüldü** (field encryption key ayrı doğrulanmalı).
 3. Nginx HTTPS + HSTS aktive et.
 4. `INITIAL_ADMIN_AUTO_SEED=false` prod'da.
 5. Backup encryption (gpg/age) ekle.
+6. Code signing sertifikası al, `-SignCertificateThumbprint` ile bağla (hook hazır).
 
 **KISA VADELI (1-2 ay):**
-6. Frontend E2E coverage: 1 → 15 test.
-7. Tauri Windows test + code signing setup.
-8. Multi-worker safety: token cache → Redis (eğer multi-worker olacaksa).
-9. Sentry / error tracking entegrasyonu.
-10. Password reset akışı + admin user CRUD UI.
+7. Frontend E2E coverage: 1 → 15 test.
+8. Tauri Windows test + code signing setup (sertifika beklemede).
+9. Multi-worker safety: token cache → Redis (eğer multi-worker olacaksa).
+10. Sentry / error tracking entegrasyonu.
+11. Password reset akışı + admin user CRUD UI.
 
 **ORTA VADELI (3-6 ay):**
-11. Performance audit (N+1 + slow query log).
-12. Tauri auto-update altyapısı.
-13. WCAG 2.1 AA compliance audit.
-14. i18n catalog (tek dil çıkarma).
-15. Job queue (Celery/Bull) async heavy işler için.
+12. Performance audit (N+1 + slow query log).
+13. ~~Tauri auto-update altyapısı~~ — **kuruldu** (updater v2, 0.3.26).
+14. WCAG 2.1 AA compliance audit.
+15. i18n catalog (tek dil çıkarma).
+16. Job queue (Celery/Bull) async heavy işler için.
 
 ---
 
 ## 18. Bilinen eksikler ve önerilen roadmap
 
 Detay için §17. Özet öncelik:
+
+### 2026-08-30 güvenlik revizyonu (tamamlandı)
+
+- **JWT secret rotasyonu:** `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`
+  dönüştürüldü; tüm oturumlar geçersiz (tek seferlik yeniden login).
+- **Git geçmişi purge:** `.env` ve `*.env.example` şablonları git dışına
+  alındı, geçmiş `git-filter-repo` ile yeniden yazıldı → **tüm klonlar
+  yeniden klonlanmalı**, eski remote/fork'lar güvenilmez.
+- **xlsx CVE yaması:** `openpyxl`/xlsx parse zinciri güvenlik sürümüne
+  yükseltildi (çalışma kitabı açılış yolu).
+- **`backend/.venv` yeniden kurulumu:** enfeksiyon dönemi (13-20.08.2026)
+  sonrası sanal ortam temiz kuruldu; yüklü paket lock dosyalarından gelir.
+- Updater v2 kuruldu; WIN-02 (startup loglaması) ve WIN-05 (monitör tercihi)
+  büyük ölçüde kapandı; WIN-06 yalnız sertifikayı bekliyor.
 
 ### Q1 2026 (1-3 ay)
 - [ ] Security hardening (#1-5 yukarıdaki SHIPSTOPPER)

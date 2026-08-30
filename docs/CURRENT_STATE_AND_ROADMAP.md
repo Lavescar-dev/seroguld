@@ -1,6 +1,6 @@
 # CURRENT STATE AND ROADMAP — Sero Guld CRM
 
-> **Son doğrulama:** 2026-08-09 · **Repo:** `seroguld-crm` · **Branch:** `build/seroguld-feedback-20260610-140000` · **Doğrulama seviyesi:** VERIFIED
+> **Son doğrulama:** 2026-08-30 · **Repo:** `seroguld-crm` · **Branch:** `main` · **Doğrulama seviyesi:** VERIFIED
 
 ## 1. Tamamlananlar (IMPLEMENTED)
 
@@ -43,11 +43,16 @@
 | SEC-02 | Rate-limit/CSRF yok; auth yüzeyi korumasız | MISSING | M | AUDIT §2.1 |
 | SEC-03 | Prod CSP `unsafe-eval` + nginx TLS yok | MISSING | S-M | `tauri.conf.json`, `nginx/nginx.conf` |
 
+> 2026-08-30 doğrulaması: SEC-01/02/03 açık kalmaya devam ediyor — yedek ZIP
+> hâlâ şifresiz, rate-limit/CSRF middleware'i yok, prod CSP `unsafe-eval`
+> durumunda. (JWT secret rotasyonu + git geçmişi temizliği bu kapsamın dışında
+> tamamlandı; bkz. `docs/HANDOVER.md` §17.)
+
 **P1 — ana akış / Windows güvenilirliği**
 | ID | Başlık | Durum | Efor | Kanıt |
 |---|---|---|---|---|
 | WIN-01 | Release workflow'a Windows display smoke + ana pencere smoke ekle | MISSING | S | `windows-desktop-release.yml` |
-| WIN-02 | Release exe startup loglaması + hata ekranı (sessiz beyaz ekran önleme) | MISSING | M | `main.rs:1,146` |
+| WIN-02 | Release exe startup loglaması + hata ekranı (sessiz beyaz ekran önleme) | BÜYÜK ÖLÇÜDE KAPANDI — `desktop.log` + state/dialog loglama (`main.rs`) | M | `main.rs:113,149-150` |
 | WIN-03 | Backend adresi runtime yapılandırılabilir olsun (build-time gömülü 105 IP) | MISSING | M | `lib/api.ts:44-50` |
 | WIN-04 | Gerçek Windows + çift monitör kabul testi (checklist PLATFORM_COMPATIBILITY §4) | MISSING | S | `main.rs:248-295` |
 | OPS-01 | `.env` secret rotation + `INITIAL_ADMIN_AUTO_SEED` prod kapatma | PARTIAL | S | `config.py:136-185` |
@@ -56,10 +61,11 @@
 | ID | Başlık | Durum | Efor |
 |---|---|---|---|
 | THEME-01 | Açık tema dönüşümü (token'lar + 120 koyu blok) | PLANNED | L |
-| UI-01 | Raporlar + AI sayfalarını route'a bağla veya ölü kodu kaldır | PARTIAL | S |
+| UI-01 | Raporlar + AI sayfalarını route'a bağla veya ölü kodu kaldır | PARTIAL — `/reports` nav'a bağlandı (iki shell); `/ai` route'u ve sayfası kaldırıldı/yok | S |
 | DOC-01 | `package-wordpress-bridge.sh` ↔ eksik PHP plugin çelişkisini çöz | BROKEN | S |
-| WIN-05 | Müşteri ekranı monitör seçimi ayarı + çıkar/tak dayanıklılığı | MISSING | M |
-| WIN-06 | Code signing | MISSING | M |
+| WIN-05 | Müşteri ekranı monitör seçimi ayarı + çıkar/tak dayanıklılığı | BÜYÜK ÖLÇÜDE KAPANDI — `MonitorInfo`/`preferred_monitor_id` (`main.rs:1653-1693`) | M |
+| WIN-06 | Code signing | KISMEN — `signtool` hook hazır (`-SignCertificateThumbprint`), sertifika beklemede | M |
+| UPDATER-01 | Tauri updater v2 | KAPANDI — 0.3.26'da kuruldu (Rust-side, GitHub Releases endpoint, passive mod) | M |
 
 **P3 — iyileştirme**
 | ID | Başlık | Efor |
