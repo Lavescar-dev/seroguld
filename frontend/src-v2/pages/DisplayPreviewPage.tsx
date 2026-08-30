@@ -62,6 +62,8 @@ export function DisplayPreviewPage() {
         previewAvailability={{ state: state.token ? 'available' : 'readonly', title: state.token ? undefined : 'Aktif display token bekleniyor' }}
         onOpenWindow={openCustomerDisplay}
         onPreview={refreshDesktopDisplayState}
+        onRevoke={state.onRevoke}
+        revokingToken={state.revokingToken}
       />
     );
   }

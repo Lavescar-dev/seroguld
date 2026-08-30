@@ -141,6 +141,12 @@ class UnicontaConfigOut(AppBaseModel):
     sendXmlOnFinalize: bool = False
 
 
+class DisplayRevokeIn(AppBaseModel):
+    """Müşteri ekranı token'ı geri alma isteği (boş/null -> en güncel taslak)."""
+
+    token: str | None = None
+
+
 class UnicontaConnectIn(AppBaseModel):
     companyId: str
     username: str
@@ -150,6 +156,9 @@ class UnicontaConnectIn(AppBaseModel):
     apiKey: str | None = None
     sendEmailOnFinalize: bool = False
     sendXmlOnFinalize: bool = False
+    # False -> "yalnızca test et": bağlantı doğrulanır, .env ve token cache
+    # olduğu gibi bırakılır (persist split).
+    persist: bool = True
 
 
 class UnicontaConnectOut(AppBaseModel):

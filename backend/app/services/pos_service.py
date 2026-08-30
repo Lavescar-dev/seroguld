@@ -857,6 +857,54 @@ async def find_latest_draft_pos_session(
     return None
 
 
+async def revoke_display_token(
+    session: AsyncSession,
+    *,
+    clerk_user_id,
+    display_token: str | None = None,
+    trade_side: PosTradeSideEnum = PosTradeSideEnum.BUY_FROM_CUSTOMER,
+) -> PosSession | None:
+    """Müşteri ekranı token'ını yeniden üretir.
+
+    İstemci, açtığı müşteri ekranı penceresini kapatmak istediğinde token'ı
+    "geri alır": eski token'ın önizleme kopyası atılır, oturuma yeni bir token
+    yazılır. Eski değer artık display/preview ya da ws çağrılarında çözülemez;
+    pencere bir sonraki anlık görüntü/oylama denemesinde çevrimdışına düşer.
+
+    ``display_token`` verilirse ve çözümlenebilirse o oturum hedeflenir; aksi
+    halde kasiyerin en güncel DRAFT alış oturumu kullanılır. Döndürülen oturum
+    yeni token'ı taşır; iptal edilecek oturum yoksa ``None`` döner.
+    """
+    pos_session: PosSession | None = None
+    requested_token = (display_token or "").strip()
+    if requested_token:
+        candidate = await session.scalar(
+            select(PosSession)
+            .where(PosSession.display_token == requested_token)
+            .options(selectinload(PosSession.customer), selectinload(PosSession.clerk_user))
+        )
+        # Yalnızca kendi oturumunun token'ı geri alınabilir; başkasının oturumuna
+        # işaret eden bir token yok sayılıp kasiyerin kendi taslağına düşülür.
+        if candidate is not None and candidate.clerk_user_id == clerk_user_id:
+            if candidate.status == PosSessionStatusEnum.DRAFT:
+                pos_session = candidate
+    if pos_session is None:
+        pos_session = await find_latest_draft_pos_session(
+            session,
+            clerk_user_id=clerk_user_id,
+            trade_side=trade_side,
+        )
+    if pos_session is None:
+        return None
+
+    previous_token = pos_session.display_token
+    realtime_hub.clear_display_preview(previous_token)
+    pos_session.display_token = _random_display_token()
+    await session.commit()
+    await session.refresh(pos_session)
+    return pos_session
+
+
 async def create_pos_session(
     session: AsyncSession,
     payload: PosSessionCreate,

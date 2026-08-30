@@ -13,6 +13,9 @@ type MakeDisplayPreviewPageProps = {
   expectedDisplayRoute?: string | null;
   routeMatches?: boolean;
   onOpenCustomerDisplay?: () => void | Promise<void>;
+  /** POST /api/v2/display/revoke — eski token geçersiz kalır, yenisi verilir. */
+  onRevoke?: () => void;
+  revokingToken?: boolean;
 };
 
 export function MakeDisplayPreviewPage({
@@ -23,6 +26,8 @@ export function MakeDisplayPreviewPage({
   expectedDisplayRoute,
   routeMatches = false,
   onOpenCustomerDisplay,
+  onRevoke,
+  revokingToken = false,
 }: MakeDisplayPreviewPageProps) {
   const actualRoute = desktopDisplayState?.active_route ? normalizeDesktopDisplayRoute(desktopDisplayState.active_route) : '—';
 
@@ -70,6 +75,21 @@ export function MakeDisplayPreviewPage({
               Gerçek ekranı aç / öne getir
             </button>
           ) : null}
+          {onRevoke ? (
+            <button
+              type="button"
+              onClick={onRevoke}
+              disabled={!token || revokingToken}
+              title={
+                token
+                  ? 'Açık müşteri ekranı bağlantısını keser ve yeni bir token üretir.'
+                  : 'Geri alınacak aktif token yok.'
+              }
+              className="border border-rose-400 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {revokingToken ? 'Token geri alınıyor…' : 'Tokenı geri al'}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -103,7 +123,7 @@ export function MakeDisplayPreviewPage({
       </div>
 
       <div className="relative overflow-hidden border-2 border-brand-300 bg-white shadow-[0_18px_45px_rgba(20,13,8,0.12)]">
-        <div className="pointer-events-none absolute left-4 top-4 z-10 border-2 border-amber-500 bg-amber-100 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-amber-900">
+        <div className="pointer-events-none absolute left-4 top-4 z-sticky border-2 border-amber-500 bg-amber-100 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-amber-900">
           Admin Preview
         </div>
         {snapshot ? <CustomerDisplayLiveView snapshot={snapshot} connection={connection} embedded /> : <CustomerDisplayIdleView embedded />}

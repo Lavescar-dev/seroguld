@@ -15,6 +15,7 @@ export function useDisplayLiveMakeState() {
     let socket: WebSocket | null = null;
     let mounted = true;
     let syncTimer: number | null = null;
+    let probeTimer: number | null = null;
 
     async function loadSnapshot() {
       if (!token) return;
@@ -44,6 +45,29 @@ export function useDisplayLiveMakeState() {
       }
     };
 
+    // Token geri alındığında sunucu eski ws'ye artık frame göndermez ama bağlantı
+    // da kapatılmaz; kiosk "canlı" görünüp son teklifte donuk kalırdı. Bu yüzden
+    // bağlıyken token'ın hâlâ çözülebildiğini doğrularız (yanıt uygulanmaz, yalnız
+    // 404'e bakılır) — 404 -> offline + reconnect denemesi (4404) + polling.
+    const startTokenProbe = () => {
+      if (probeTimer) return;
+      probeTimer = window.setInterval(() => {
+        if (!token) return;
+        void apiRequest<PosDisplaySnapshot>(`/api/v2/display/${token}`, { auth: false }).catch(() => {
+          if (!mounted) return;
+          setConnection('offline');
+          socket?.close();
+        });
+      }, 5_000);
+    };
+
+    const stopTokenProbe = () => {
+      if (probeTimer) {
+        window.clearInterval(probeTimer);
+        probeTimer = null;
+      }
+    };
+
     const connect = () => {
       if (!token) return;
       setConnection('connecting');
@@ -51,6 +75,7 @@ export function useDisplayLiveMakeState() {
       socket.onopen = () => {
         setConnection('live');
         stopSyncPolling();
+        startTokenProbe();
       };
       socket.onmessage = (event) => {
         try {
@@ -70,6 +95,7 @@ export function useDisplayLiveMakeState() {
       socket.onclose = () => {
         if (!mounted) return;
         setConnection('offline');
+        stopTokenProbe();
         startSyncPolling();
         reconnectRef.current = window.setTimeout(connect, 1500);
       };
@@ -83,6 +109,9 @@ export function useDisplayLiveMakeState() {
       mounted = false;
       if (syncTimer) {
         window.clearInterval(syncTimer);
+      }
+      if (probeTimer) {
+        window.clearInterval(probeTimer);
       }
       if (reconnectRef.current) {
         window.clearTimeout(reconnectRef.current);

@@ -167,15 +167,17 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   });
 
   const connectMutation = useMutation({
-    mutationFn: (payload: UnicontaConnectionDraft) =>
+    mutationFn: ({ draft, persist }: { draft: UnicontaConnectionDraft; persist: boolean }) =>
       apiRequest<UnicontaConnectResponse>('/api/v2/uniconta/connect', {
         method: 'POST',
         body: JSON.stringify({
-          companyId: payload.companyId,
-          username: payload.username,
-          password: payload.password.trim() || null,
-          sendEmailOnFinalize: payload.sendEmailOnFinalize,
-          sendXmlOnFinalize: payload.sendXmlOnFinalize,
+          companyId: draft.companyId,
+          username: draft.username,
+          password: draft.password.trim() || null,
+          sendEmailOnFinalize: draft.sendEmailOnFinalize,
+          sendXmlOnFinalize: draft.sendXmlOnFinalize,
+          // false -> "yalnızca test et": bağlantı doğrulanır, .env güncellenmez.
+          persist,
         }),
       }),
     onError: (error) => {
@@ -298,11 +300,14 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
   const yukleniyor = connectMutation.isPending || configQuery.isFetching;
   const sonYenileme = invoicesQuery.data?.generatedAt ? new Date(invoicesQuery.data.generatedAt) : null;
 
-  const baglan = (draft: UnicontaConnectionDraft = kimlik) => {
+  const baglan = (draft: UnicontaConnectionDraft = kimlik, opts?: { persist?: boolean }) => {
+    // persist:false -> "yalnızca test et": kayıtlı kimlik bilgileri ve gönderim
+    // tercihleri olduğu gibi kalır, panel de açık kalmaya devam eder.
+    const persist = opts?.persist ?? true;
     if (connectInFlightRef.current || connectMutation.isPending) return;
     connectInFlightRef.current = true;
     connectMutation.mutate(
-      draft,
+      { draft, persist },
       {
         onSuccess: (result) => {
           setApiConfig({
@@ -311,18 +316,25 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
             connectionStatus: normalizeBaglantiDurumu(result.config.connectionStatus),
           });
           if (result.connectionStatus === 'bagli') {
-            setKimlik({
-              companyId: result.config.companyId,
-              username: result.config.username,
-              password: '',
-              env: normalizeEnv(result.config.env),
-              sendEmailOnFinalize: result.config.sendEmailOnFinalize,
-              sendXmlOnFinalize: result.config.sendXmlOnFinalize,
-            });
-            setAyarlarAcik(false);
-            void queryClient.invalidateQueries({ queryKey: ['uniconta-config-v2'] });
+            if (persist) {
+              setKimlik({
+                companyId: result.config.companyId,
+                username: result.config.username,
+                password: '',
+                env: normalizeEnv(result.config.env),
+                sendEmailOnFinalize: result.config.sendEmailOnFinalize,
+                sendXmlOnFinalize: result.config.sendXmlOnFinalize,
+              });
+              setAyarlarAcik(false);
+              void queryClient.invalidateQueries({ queryKey: ['uniconta-config-v2'] });
+            } else {
+              setKimlik((current) => ({ ...current, password: '' }));
+            }
             void queryClient.invalidateQueries({ queryKey: ['uniconta'] });
-            toast.success('Uniconta bağlandı', result.message || undefined);
+            toast.success(
+              persist ? 'Uniconta bağlandı' : 'Bağlantı testi başarılı',
+              result.message || undefined,
+            );
           } else if (result.connectionStatus === 'hata') {
             toast.error('Uniconta bağlantı hatası', result.message || undefined);
           } else {

@@ -100,7 +100,7 @@ function BaglantiPanel({
   kimlik: UnicontaKimlik;
   onChange: (kimlik: UnicontaKimlik) => void;
   onKapat: () => void;
-  onBaglan: (kimlik: UnicontaKimlik) => void;
+  onBaglan: (kimlik: UnicontaKimlik, opts?: { persist?: boolean }) => void;
   baglantiDurumu: BaglantiDurumu;
 }) {
   const [lokal, setLokal] = useState<UnicontaKimlik>(kimlik);
@@ -128,7 +128,7 @@ const res = await fetch("https://api.uniconta.com/Query/Get/DebtorInvoiceClient"
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end" style={sansStyle}>
+    <div className="fixed inset-0 z-drawer flex items-start justify-end" style={sansStyle}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onKapat} />
       <div className="relative flex h-full w-[560px] max-w-[96vw] flex-col overflow-hidden border-l-4 border-blue-500 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b-2 border-slate-700 bg-slate-900 px-5 py-4">
@@ -305,6 +305,18 @@ const res = await fetch("https://api.uniconta.com/Query/Get/DebtorInvoiceClient"
           <button
             onClick={() => {
               onChange(lokal);
+              onBaglan(lokal, { persist: false });
+            }}
+            disabled={!lokal.companyId || !lokal.username || baglantiDurumu === 'yukleniyor'}
+            title="Bağlantıyı doğrular; kimlik bilgileri ve gönderim tercihleri kaydedilmez."
+            className="flex items-center justify-center gap-2 border border-slate-400 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {baglantiDurumu === 'yukleniyor' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Settings className="h-4 w-4" />}
+            Yalnızca test et
+          </button>
+          <button
+            onClick={() => {
+              onChange(lokal);
               onBaglan(lokal);
             }}
             disabled={!lokal.companyId || !lokal.username || baglantiDurumu === 'yukleniyor'}
@@ -333,7 +345,7 @@ function FaturaDetay({
   const ts = TIP_STYLE[fatura.type];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end" style={sansStyle}>
+    <div className="fixed inset-0 z-drawer flex items-start justify-end" style={sansStyle}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onKapat} />
       <div className="relative flex h-full w-[640px] max-w-[96vw] flex-col overflow-hidden border-l-4 border-brand-500 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b-2 border-brand-700 bg-brand-900 px-5 py-4">
@@ -981,7 +993,7 @@ export function UnicontaPageView({
       <div className="flex-1 overflow-auto">
         <table className="w-full border-collapse" style={{ minWidth: '860px' }}>
           <thead>
-            <tr className="sticky top-0 z-10 border-b-2 border-brand-300 bg-brand-100">
+            <tr className="sticky top-0 z-sticky border-b-2 border-brand-300 bg-brand-100">
               <th className={thCls} onClick={() => sort('konto')}>Konto {sortIcon('konto')}</th>
               <th className={thCls} onClick={() => sort('kunde')}>Kontonavn {sortIcon('kunde')}</th>
               <th className={thCls} onClick={() => sort('fakturadato')}>Dato {sortIcon('fakturadato')}</th>
@@ -1079,7 +1091,7 @@ export function UnicontaPageView({
         onClose={handlePdfClose}
       />
       {pdfState.error ? (
-        <div className="fixed bottom-4 right-4 z-[60] max-w-md border border-rose-300 bg-rose-50 px-4 py-3 text-xs text-rose-700 shadow-lg">
+        <div className="fixed bottom-4 right-4 z-toast max-w-md border border-rose-300 bg-rose-50 px-4 py-3 text-xs text-rose-700 shadow-lg">
           <div className="flex items-start gap-2">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
             <div className="flex-1">

@@ -68,6 +68,34 @@ describe('ModernUnicontaPage', () => {
     expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ companyId: '55606', password: 'new-secret' }));
   });
 
+  it('sends persist:false when the header test-only action is used', () => {
+    const onConnect = vi.fn();
+    render(<ModernUnicontaPage {...baseProps} onConnect={onConnect} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /bağlantıyı test et/i }));
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    const [draft, options] = onConnect.mock.calls[0];
+    expect(draft).toMatchObject({ companyId: '55606', username: 'demo' });
+    expect(options).toEqual({ persist: false });
+  });
+
+  it('keeps the test-only attempt inside the sheet and hides the finalize toggles', () => {
+    const onConnect = vi.fn();
+    render(<ModernUnicontaPage {...baseProps} onConnect={onConnect} onOpenConnectionSettings={() => undefined} connectionSettingsOpen />);
+
+    expect(screen.getByLabelText(/kesinleştirme sonrası e-posta/i)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: /yalnızca test et/i }));
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    const [draft, options] = onConnect.mock.calls[0];
+    expect(draft).toMatchObject({ companyId: '55606' });
+    expect(options).toEqual({ persist: false });
+    expect(screen.getByText(/gönderim tercihleri kaydedilmez/i)).toBeVisible();
+    expect(screen.queryByLabelText(/kesinleştirme sonrası e-posta/i)).not.toBeInTheDocument();
+  });
+
   it('emits modern list filter changes', () => {
     const onSearchChange = vi.fn();
     const onTypeFilterChange = vi.fn();

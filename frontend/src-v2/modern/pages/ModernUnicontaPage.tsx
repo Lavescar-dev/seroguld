@@ -252,6 +252,9 @@ export function ModernUnicontaPage({
   const [invoicePage, setInvoicePage] = useState(0);
   const [detailInvoice, setDetailInvoice] = useState<Fatura | null>(null);
   const [connectionDraftLocal, setConnectionDraftLocal] = useState(connectionDraft);
+  // "Yalnızca test et" kipinde gönderim tercihleri kaydedilmediği için ilgili
+  // checkbox'lar dürüstlük gereği gizlenir.
+  const [connectionTestOnly, setConnectionTestOnly] = useState(false);
   const [pdfState, setPdfState] = useState<{ url: string | null; filename: string; loading: boolean; error: string | null }>({
     url: null,
     filename: '',
@@ -259,8 +262,15 @@ export function ModernUnicontaPage({
     error: null,
   });
   useEffect(() => {
+    setConnectionTestOnly(false);
+  }, [connectionSettingsOpen]);
+  // "Yalnızca test et" sonrası üst bileşen yalnızca parolayı temizler; bu yeni bir
+  // connectionDraft kimliği üretir. Test kipinde panelde yazılan kaydedilmemiş
+  // companyId/username korunur, kayıtlı taslak yalnız panel kapandığında alınır.
+  useEffect(() => {
+    if (connectionTestOnly) return;
     if (connectionDraft) setConnectionDraftLocal(connectionDraft);
-  }, [connectionDraft, connectionSettingsOpen]);
+  }, [connectionDraft, connectionTestOnly]);
 
   const updateConnectionDraft = (
     key: 'companyId' | 'username' | 'password' | 'sendEmailOnFinalize' | 'sendXmlOnFinalize',
@@ -334,10 +344,11 @@ export function ModernUnicontaPage({
               <ModernButton tone="ghost" icon={Settings} onClick={onOpenConnectionSettings} disabled={!onOpenConnectionSettings || loading}>Ayarlar</ModernButton>
               <ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || loading || invoicesLoading}>Yenile</ModernButton>
               <ModernButton
-                tone="primary"
+                tone="ghost"
                 icon={Building2}
-                onClick={() => connectionDraftLocal && onConnect?.(connectionDraftLocal)}
+                onClick={() => connectionDraftLocal && onConnect?.(connectionDraftLocal, { persist: false })}
                 disabled={!onConnect || !connectionDraftLocal || loading || connectAvailability?.state === 'unavailable'}
+                title="Bağlantıyı doğrular; kimlik bilgileri kaydedilmez."
               >
                 Bağlantıyı test et
               </ModernButton>
@@ -628,7 +639,7 @@ export function ModernUnicontaPage({
       {activeTab !== 'connection' ? <div className="flex items-center gap-2 text-xs text-sg-text-soft"><Activity className="h-3.5 w-3.5" /> Mutabakat ve teslim aksiyonları gerçek API durumuna göre sınırlıdır.</div> : null}
 
       {connectionSettingsOpen && connectionDraftLocal ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" role="dialog" aria-modal="true" aria-label="Uniconta bağlantı ayarları">
+        <div className="fixed inset-0 z-drawer flex justify-end bg-black/40" role="dialog" aria-modal="true" aria-label="Uniconta bağlantı ayarları">
           <button type="button" className="absolute inset-0 cursor-default" aria-label="Ayarları kapat" onClick={onCloseConnectionSettings} />
           <aside className="relative flex h-full w-full max-w-xl flex-col border-l border-sg-border bg-sg-surface shadow-sg-lg">
             <div className="flex items-center justify-between border-b border-sg-border px-6 py-5">
@@ -664,19 +675,45 @@ export function ModernUnicontaPage({
                 <div className="rounded-sg-md border border-sg-border bg-sg-surface-soft p-4 text-sm text-sg-text-soft">
                   Kayıtlı parola: {config?.passwordConfigured ? <span className="font-semibold text-sg-green">Mevcut</span> : <span className="font-semibold text-sg-amber">Eksik</span>}
                 </div>
-                <label className="flex items-start gap-3 text-sm text-sg-text">
-                  <input type="checkbox" checked={Boolean(connectionDraftLocal.sendEmailOnFinalize)} onChange={(event) => updateConnectionDraft('sendEmailOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
-                  <span><strong>Kesinleştirme sonrası e-posta</strong><span className="mt-1 block text-xs text-sg-text-soft">Kesinleştirme sonrasında Uniconta PDF'sini müşteriye gönder.</span></span>
-                </label>
-                <label className="flex items-start gap-3 text-sm text-sg-text">
-                  <input type="checkbox" checked={Boolean(connectionDraftLocal.sendXmlOnFinalize)} onChange={(event) => updateConnectionDraft('sendXmlOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
-                  <span><strong>Kesinleştirme sonrası OIOUBL/XML</strong><span className="mt-1 block text-xs text-sg-text-soft">Kesinleştirme sonrasında e-fatura XML akışını kullan.</span></span>
-                </label>
+                {connectionTestOnly ? (
+                  <p className="rounded-sg-md border border-sg-border bg-sg-surface-soft p-4 text-xs text-sg-text-soft">
+                    Yalnızca test kipinde gönderim tercihleri kaydedilmez. Kalıcı olması için "Test et ve kaydet" adımını kullanın.
+                  </p>
+                ) : (
+                  <>
+                    <label className="flex items-start gap-3 text-sm text-sg-text">
+                      <input type="checkbox" checked={Boolean(connectionDraftLocal.sendEmailOnFinalize)} onChange={(event) => updateConnectionDraft('sendEmailOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
+                      <span><strong>Kesinleştirme sonrası e-posta</strong><span className="mt-1 block text-xs text-sg-text-soft">Kesinleştirme sonrasında Uniconta PDF'sini müşteriye gönder.</span></span>
+                    </label>
+                    <label className="flex items-start gap-3 text-sm text-sg-text">
+                      <input type="checkbox" checked={Boolean(connectionDraftLocal.sendXmlOnFinalize)} onChange={(event) => updateConnectionDraft('sendXmlOnFinalize', event.target.checked)} className="mt-0.5 h-4 w-4" />
+                      <span><strong>Kesinleştirme sonrası OIOUBL/XML</strong><span className="mt-1 block text-xs text-sg-text-soft">Kesinleştirme sonrasında e-fatura XML akışını kullan.</span></span>
+                    </label>
+                  </>
+                )}
                 {config?.message ? <p className={connectionStatus === 'hata' ? 'text-sm text-red-600' : 'text-sm text-sg-text-soft'}>{config.message}</p> : null}
               </div>
-              <div className="flex gap-3 border-t border-sg-border bg-sg-surface-soft px-6 py-4">
+              <div className="flex flex-wrap gap-3 border-t border-sg-border bg-sg-surface-soft px-6 py-4">
                 <ModernButton type="button" tone="ghost" onClick={onCloseConnectionSettings}>İptal</ModernButton>
-                <ModernButton type="submit" tone="primary" icon={loading ? Loader2 : Building2} disabled={Boolean(loading) || !connectionDraftLocal.companyId || !connectionDraftLocal.username}>
+                <ModernButton
+                  type="button"
+                  tone="ghost"
+                  icon={loading ? Loader2 : Building2}
+                  disabled={Boolean(loading) || !connectionDraftLocal.companyId || !connectionDraftLocal.username}
+                  onClick={() => {
+                    setConnectionTestOnly(true);
+                    onConnect?.(connectionDraftLocal, { persist: false });
+                  }}
+                >
+                  Yalnızca test et
+                </ModernButton>
+                <ModernButton
+                  type="submit"
+                  tone="primary"
+                  icon={loading ? Loader2 : Building2}
+                  disabled={Boolean(loading) || !connectionDraftLocal.companyId || !connectionDraftLocal.username}
+                  onClick={() => setConnectionTestOnly(false)}
+                >
                   {loading ? 'Bağlanıyor…' : 'Test et ve kaydet'}
                 </ModernButton>
               </div>

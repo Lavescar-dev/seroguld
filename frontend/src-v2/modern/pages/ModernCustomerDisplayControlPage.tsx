@@ -13,7 +13,11 @@ export function ModernCustomerDisplayControlPage({
   onOpenWindow,
   onPreview,
   onRevoke,
+  revokingToken,
 }: ModernCustomerDisplayControlPageProps) {
+  // Revoke yalnızca canlı token varken anlamlı; AvailabilityBanner ise tam tersine
+  // token yokken render edildiği için aksiyon başlık satırında tutulur.
+  const revokeAvailable = Boolean(status.token) && Boolean(onRevoke);
   return (
     <ModernPage>
       <ModernSection>
@@ -29,6 +33,21 @@ export function ModernCustomerDisplayControlPage({
               <ModernButton tone="primary" icon={Monitor} onClick={onOpenWindow}>
                 Pencereyi aç
               </ModernButton>
+              {onRevoke ? (
+                <ModernButton
+                  tone="danger"
+                  icon={MonitorOff}
+                  onClick={onRevoke}
+                  disabled={!revokeAvailable || revokingToken}
+                  title={
+                    revokeAvailable
+                      ? 'Açık müşteri ekranı bağlantısını keser ve yeni bir token üretir.'
+                      : 'Geri alınacak aktif token yok.'
+                  }
+                >
+                  {revokingToken ? 'Geri alınıyor…' : 'Tokenı geri al'}
+                </ModernButton>
+              ) : null}
             </div>
           }
         />
@@ -39,7 +58,7 @@ export function ModernCustomerDisplayControlPage({
           <ModernStat label="Snapshot" value={snapshot ? snapshot.session_code : 'Bekleniyor'} icon={Monitor} />
         </div>
         <div className="mt-4">
-          <AvailabilityBanner availability={previewAvailability} action={onRevoke ? <ModernButton tone="danger" onClick={onRevoke}>Tokenı geri al</ModernButton> : undefined} />
+          <AvailabilityBanner availability={previewAvailability} />
         </div>
       </ModernSection>
 

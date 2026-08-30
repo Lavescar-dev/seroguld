@@ -230,6 +230,11 @@ export interface ModernGdprPublicStatusPageProps {
   status: GdprPublicRequestStatus | null;
 }
 
+export interface ModernUnicontaConnectOptions {
+  /** false -> "yalnızca test et": bağlantı doğrulanır, kimlik bilgileri kaydedilmez. */
+  persist?: boolean;
+}
+
 export interface ModernUnicontaPageProps {
   connectionStatus: BaglantiDurumu;
   config: UnicontaConfigResponse | null;
@@ -258,7 +263,7 @@ export interface ModernUnicontaPageProps {
   };
   connectAvailability?: ModernAvailability;
   retryAvailability?: ModernAvailability;
-  onConnect?: (draft: UnicontaConnectionDraft) => void;
+  onConnect?: (draft: UnicontaConnectionDraft, opts?: ModernUnicontaConnectOptions) => void;
   onOpenConnectionSettings?: () => void;
   onCloseConnectionSettings?: () => void;
   onSearchChange?: (value: string) => void;
@@ -295,4 +300,6 @@ export interface ModernCustomerDisplayControlPageProps {
   onOpenWindow?: () => void;
   onPreview?: () => void;
   onRevoke?: () => void;
+  /** Revoke isteği sürüyor — buton çift tetiklemeye karşı kilitlenir. */
+  revokingToken?: boolean;
 }

@@ -99,6 +99,7 @@ from app.schemas.desktop_views import (
     DashboardRecentCustomerOut,
     DashboardRecentPurchaseOut,
     DashboardScreenOut,
+    DisplayRevokeIn,
     SettingsScreenOut,
     SettingsScreenUpdateIn,
     UnicontaBulkRetryOut,
@@ -167,6 +168,7 @@ from app.services.pos_service import (
     get_pos_session_or_404,
     open_purchase_document_for_edit,
     replace_purchase_workspace_sections,
+    revoke_display_token,
     select_purchase_workspace_customer,
     store_purchase_workspace_preferences,
     update_purchase_workspace_draft_customer,
@@ -1651,6 +1653,22 @@ async def post_uniconta_connect_v2(
             config=config,
         )
 
+    # "Yalnızca test et" — doğrulama tamamlandı; kayıtlı kimlik bilgileri,
+    # gönderim tercihleri ve token cache'i olduğu gibi bırakılır.
+    if not payload.persist:
+        message = "Test başarılı (kaydedilmedi)"
+        config = _build_uniconta_config_out(
+            message=message,
+            connection_status="bagli",
+            last_refreshed_at=last_refreshed_at,
+        )
+        return UnicontaConnectOut(
+            connectionStatus="bagli",
+            configured=True,
+            message=message,
+            config=config,
+        )
+
     existing_api_key = current.uniconta_api_key.strip()
     supplied_api_key = (payload.apiKey or "").strip()
     upsert_env_values(
@@ -2288,6 +2306,30 @@ async def get_display_preview_v2(
         display_token=draft.display_token,
         snapshot=await display_snapshot(db, draft),
     )
+
+
+@router.post("/display/revoke")
+async def post_display_revoke_v2(
+    payload: DisplayRevokeIn,
+    db: AsyncSession = Depends(get_db),
+    clerk_user: User = Depends(require_admin),
+) -> dict[str, str]:
+    """Açık müşteri ekranı token'ını geri al ve yenisini ver.
+
+    Eski token geçersiz kalır: preview/resolve çağrılarında bulunamaz, ws
+    bağlantıları bir sonraki denemede çevrimdışı düşer.
+    """
+    revoked = await revoke_display_token(
+        db,
+        clerk_user_id=clerk_user.id,
+        display_token=payload.token,
+    )
+    if revoked is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Görüntüleme oturumu bulunamadı",
+        )
+    return {"token": revoked.display_token, "display_token": revoked.display_token}
 
 
 @router.get("/runtime/status", response_model=RuntimeStatusOut)

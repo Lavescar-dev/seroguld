@@ -174,7 +174,8 @@ export interface UseUnicontaMakeStateResult {
     eFakturaGonderildi: number;
   };
   activeFilters: number;
-  baglan: (draft?: UnicontaConnectionDraft) => void;
+  /** persist:false -> "yalnızca test et"; kimlik bilgileri kaydedilmez. */
+  baglan: (draft?: UnicontaConnectionDraft, opts?: { persist?: boolean }) => void;
   yenile: () => void;
   sort: (key: SortKey) => void;
   // Yeni (U7-U11)
