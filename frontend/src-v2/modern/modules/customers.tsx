@@ -7,7 +7,8 @@ import type { CustomerDraft } from '@/make/customers/types';
 import type { PosDocumentDetail } from '@/types';
 import { CustomerWorkspacePanel } from '@/components/CustomerWorkspacePanel';
 
-import { EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { ModernDrawer } from '@/modern/design-system';
 
 const customerInputClass = 'mt-1 w-full rounded-sg-md border border-sg-amber/20 bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
 const customerIconActionClass = 'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sg-md border border-sg-border bg-sg-surface text-sg-text-soft transition hover:border-sg-accent/35 hover:bg-sg-surface-accent hover:text-sg-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sg-accent/30';
@@ -330,8 +331,9 @@ function ModernAfgPreviewDrawer({
 }) {
   return (
     <ModernDrawer
+      open={Boolean(detail)}
       title={detail?.document_number || 'Belge önizleme'}
-      subtitle={detail ? `${formatDate(detail.issued_at)} · ${detail.customer_name || '—'}` : undefined}
+      description={detail ? `${formatDate(detail.issued_at)} · ${detail.customer_name || '—'}` : undefined}
       onClose={onClose}
     >
       {loading || !detail ? (

@@ -20,32 +20,55 @@ export function shellButtonClass(kind: 'primary' | 'secondary' | 'ghost' | 'dang
   return 'inline-flex items-center justify-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-4 py-2 text-sm font-medium text-sg-text transition hover:bg-sg-surface-soft disabled:cursor-not-allowed disabled:opacity-50';
 }
 
-export function ModernDrawer({
-  title,
-  subtitle,
-  onClose,
-  children,
+// Ortak drawer/overlay bileşenleri design-system'e taşındı (@/modern/design-system):
+// ModernDrawer artık burada yaşmıyor; çağrı noktaları `open` + `description`
+// sözleşmeli design-system sürümünü kullanmak zorunda.
+
+export interface ModernReviewSummary {
+  count: number;
+  weight: number;
+  amount: number;
+  pure: number;
+}
+
+// Classic LogPage ReviewBar paritesi (LogPage.tsx:1143-1196) — bekleyen rota
+// taslakları Modern yüzeyde de uygulanabilir / geri alınabilir olmalı; aksi hâlde
+// sekme ve görünüm değişimi kilitlenir.
+export function ModernReviewBar({
+  summary,
+  busy,
+  onApply,
+  onDiscard,
 }: {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  children: ReactNode;
+  summary: ModernReviewSummary;
+  busy: boolean;
+  onApply: () => void;
+  onDiscard: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-sg-text/25">
-      <button type="button" className="flex-1 cursor-default" aria-label="Paneli kapat" onClick={onClose} />
-      <aside className="relative h-full w-full max-w-[32rem] overflow-y-auto border-l border-sg-border bg-sg-surface shadow-sg-md">
-        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4">
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-sg-text">{title}</p>
-            {subtitle ? <p className="mt-1 text-xs text-sg-text-soft">{subtitle}</p> : null}
-          </div>
-          <button type="button" onClick={onClose} className={shellButtonClass('secondary')} aria-label="Kapat">
-            Kapat
-          </button>
-        </div>
-        <div className="px-5 py-4">{children}</div>
-      </aside>
+    <div
+      data-testid="modern-review-bar"
+      className="sticky bottom-0 z-sticky flex flex-col gap-3 rounded-sg-lg border border-sg-amber/40 bg-sg-amber-soft px-4 py-3 shadow-sg-md backdrop-blur sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <span className="rounded-full border border-sg-amber/40 bg-sg-surface px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-sg-amber">
+          İnceleme
+        </span>
+        <span className="font-semibold text-sg-text" data-testid="modern-review-count">
+          {summary.count} bekleyen değişiklik
+        </span>
+        <span className="text-xs text-sg-text-soft">
+          {summary.weight.toFixed(2)} g · {summary.amount.toFixed(0)} kr · <span className="font-semibold text-sg-amber">{summary.pure.toFixed(3)} has</span>
+        </span>
+      </div>
+      <div className="flex gap-2">
+        <button type="button" onClick={onDiscard} disabled={busy} data-testid="modern-review-discard" className={shellButtonClass('secondary')}>
+          Vazgeç
+        </button>
+        <button type="button" onClick={onApply} disabled={busy} data-testid="modern-review-apply" className={shellButtonClass('primary')}>
+          Uygula
+        </button>
+      </div>
     </div>
   );
 }

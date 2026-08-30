@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { createAlisTransitionBlocker, createLogTransitionBlocker, createOfficeTransitionBlocker } from '@/modern/adapters';
+import { buildLogStats, buildSelectedDocumentModel, createModernLogViewModel, pureSuffixLabel, pureUnitLabel } from '@/modern/adapters/log';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
 import type { LogPageProps } from '@/make/log/LogPage';
 import type { OfficeDocumentPageProps } from '@/make/office/OfficeDocumentPage';
+import { buildLogBucket, buildLogDocument, buildLogLine, buildLogState as buildLogStateFixture, buildLogWorkspace } from './logFixtures';
 
 function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
   return {
@@ -128,53 +130,7 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
 }
 
 function buildLogState(partial: Partial<LogPageProps>): LogPageProps {
-  return {
-    isLoading: false,
-    isError: false,
-    onRetryWorkspace: () => undefined,
-    activeView: 'system',
-    onActiveViewChange: () => undefined,
-    activeTab: 'gold',
-    onActiveTabChange: () => undefined,
-    query: '',
-    onQueryChange: () => undefined,
-    expandedDocument: null,
-    onToggleDocument: () => undefined,
-    showMeltSection: false,
-    onToggleMeltSection: () => undefined,
-    lineDrafts: {},
-    onDraftChange: () => undefined,
-    lotDrafts: {},
-    onLotDraftChange: () => undefined,
-    routeBusy: false,
-    meltBusy: false,
-    createMeltBusy: false,
-    finalizeBusy: false,
-    deleteBusy: false,
-    pendingRouteCount: 0,
-    pendingRouteSummary: { count: 0, weight: 0, amount: 0, pure: 0 },
-    onDiscardRouteReview: () => undefined,
-    onApplyRouteReview: () => undefined,
-    onRoute: () => undefined,
-    onSaveLot: () => undefined,
-    onCreateMeltLot: () => undefined,
-    onFinalizeLot: () => undefined,
-    onDeleteLot: () => undefined,
-    onDownloadLotPdf: () => undefined,
-    onOpenLotHistory: () => undefined,
-    onCloseLotHistory: () => undefined,
-    historyLotId: null,
-    lotHistory: [],
-    lotHistoryLoading: false,
-    onOpenLotLines: () => undefined,
-    onCloseLotLines: () => undefined,
-    linesLotId: null,
-    lotLines: [],
-    lotLinesLoading: false,
-    selectedYear: 2026,
-    onSelectedYearChange: () => undefined,
-    ...partial,
-  };
+  return buildLogStateFixture(partial);
 }
 
 function buildOfficeState(partial: Partial<OfficeDocumentPageProps>): OfficeDocumentPageProps {
@@ -239,5 +195,109 @@ describe('modern transition blockers', () => {
     const blocker = createOfficeTransitionBlocker(buildOfficeState({ isLivePreviewDirty: true, isLivePreviewSyncing: true, hasExternalUpdate: true }), { isDirty: true });
     expect(blocker?.when).toBe(true);
     expect(blocker?.reasons.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('modern log view model', () => {
+  const inventoryLine = buildLogLine({ id: 'line-inventory', line_no: 1, operation_classification: 'jewelry_cleaning', operation_destination: 'inventory' });
+  const whiteGoldLine = buildLogLine({ id: 'line-white', line_no: 2, weight_grams: '4', pure_gold_grams: '2.4', line_total_dkk: '1600', metal_type: 'white_gold', operation_destination: null });
+  const meltLine = buildLogLine({ id: 'line-melt', line_no: 3, weight_grams: '3', pure_gold_grams: '1.8', line_total_dkk: '1200', operation_destination: 'melt', product_status: 'melted' });
+  const document = buildLogDocument({
+    lines: [inventoryLine, whiteGoldLine, meltLine],
+    line_count: 3,
+    total_weight_grams: '17',
+    total_pure_gold_grams: '10.05',
+  });
+
+  it('derives pending lines, split groups and remaining pure from staging drafts', () => {
+    const selected = buildSelectedDocumentModel(document, {
+      'line-white': { classification: 'white_gold', note: '', destination: 'inventory' },
+    });
+    expect(selected).not.toBeNull();
+    // melt rotalı satır hiçbir ayrım grubuna düşmez → bekleyen kalır
+    expect(selected?.pending.map((line) => line.id)).toEqual(['line-melt']);
+    expect(selected?.groups.white_gold.map((line) => line.id)).toEqual(['line-white']);
+    expect(selected?.groups.jewelry_cleaning.map((line) => line.id)).toEqual(['line-inventory']);
+    expect(selected?.groupedCount).toBe(2);
+    expect(selected?.routedWeight).toBeCloseTo(14, 5);
+    expect(selected?.routedAmount).toBeCloseTo(5600, 5);
+    expect(selected?.routedPure).toBeCloseTo(8.25, 5);
+    expect(selected?.remainingPure).toBeCloseTo(1.8, 5);
+  });
+
+  it('clamps remaining pure at zero when staging routes more than the document total', () => {
+    const smallDocument = buildLogDocument({
+      sequence_no: 9,
+      lines: [inventoryLine, whiteGoldLine, meltLine],
+      total_pure_gold_grams: '6',
+    });
+    const selected = buildSelectedDocumentModel(smallDocument, {
+      'line-inventory': { classification: 'separate_storage', note: '', destination: 'inventory' },
+      'line-white': { classification: 'white_gold', note: '', destination: 'inventory' },
+    });
+    expect(selected?.routedPure).toBeGreaterThan(6);
+    expect(selected?.remainingPure).toBe(0);
+  });
+
+  it('returns null for a missing document', () => {
+    expect(buildSelectedDocumentModel(null, {})).toBeNull();
+  });
+
+  it('builds classic-parity KPI set from split_groups and melt_queue', () => {
+    const bucket = buildLogBucket({
+      summary: {
+        total_documents: 2,
+        total_lines: 3,
+        awaiting_lines: 1,
+        routed_lines: 2,
+        split_line_count: 2,
+        melt_line_count: 1,
+        melt_lot_count: 1,
+        total_weight_grams: '17',
+        total_pure_gold_grams: '10.05',
+        total_amount_dkk: '6800',
+      },
+      split_groups: [
+        { key: 'jewelry_cleaning', label: 'Smykker Lager', line_count: 1, total_weight_grams: '6', total_pure_gold_grams: '3.5', total_amount_dkk: '2400', document_numbers: ['AFG-1'] },
+        { key: 'white_gold', label: 'Hvidguld', line_count: 1, total_weight_grams: '4', total_pure_gold_grams: '2.4', total_amount_dkk: '1600', document_numbers: ['AFG-1'] },
+        { key: 'separate_storage', label: 'Spandlager', line_count: 0, total_weight_grams: '0', total_pure_gold_grams: '0', total_amount_dkk: '0', document_numbers: [] },
+      ],
+      melt_queue: {
+        line_count: 1,
+        total_weight_grams: '3',
+        total_pure_gold_grams: '1.8',
+        total_amount_dkk: '1200',
+        earliest_purchase_date: null,
+        latest_purchase_date: null,
+        document_numbers: ['AFG-1'],
+      },
+      melt_lots: [],
+    });
+
+    const stats = buildLogStats(bucket, ' g has');
+    expect(stats.map((stat) => stat.label)).toEqual(['Toplam Alış Havuzu', 'Toplam Ayrılan', 'Eritmeye Giden (net)', 'Eritme Lotları']);
+    expect(stats[1].value).toBe('10,00 g');
+    expect(stats[1].hint).toContain('Takı + Beyaz Altın + Depo');
+    expect(stats[2].value).toBe('3,00 g');
+    expect(stats[2].hint).toContain('1 satır');
+    expect(stats[3].value).toBe('0 lot');
+  });
+
+  it('exposes pure unit, bucket model and selected document on the view model', () => {
+    const viewModel = createModernLogViewModel(
+      buildLogState({
+        workspace: buildLogWorkspace({ gold: { documents: [document] } }),
+        activeTab: 'gold',
+        expandedDocument: 1,
+      }),
+    );
+    expect(viewModel.bucket).not.toBeNull();
+    expect(viewModel.pureUnit).toBe('has');
+    expect(pureUnitLabel('silver')).toBe('saf');
+    expect(pureSuffixLabel('silver')).toBe(' g saf');
+    expect(viewModel.selectedDocument?.document.sequence_no).toBe(1);
+    expect(viewModel.bucketModel?.counts.jewelry_cleaning).toBe(1);
+    expect(viewModel.bucketModel?.totals.white_gold.pure).toBe(0);
+    expect(viewModel.phase).toBe('ready');
   });
 });
