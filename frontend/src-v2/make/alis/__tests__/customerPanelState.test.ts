@@ -27,4 +27,13 @@ describe('resolveCustomerPanelView — roadmap madde 1 MUTUALLY_EXCLUSIVE kurall
     ];
     expect(new Set(views).size).toBe(views.length);
   });
+
+  it('R2-takip: "Başka müşteri seç" istisnası — replacing iken arama görünümü geri gelir', () => {
+    // Varsayılan (üçüncü parametre yok): eski davranış korunur.
+    expect(resolveCustomerPanelView('existing', true)).toBe('attached');
+    // replacingCustomer=true: müşteri bağlı olsa da arama görünümü açılır.
+    expect(resolveCustomerPanelView('existing', true, true)).toBe('search-existing');
+    // replacing iken mode null'a düşerse aksiyon kartları sunar (mevcut/yeni).
+    expect(resolveCustomerPanelView(null, true, true)).toBe('pick-action');
+  });
 });

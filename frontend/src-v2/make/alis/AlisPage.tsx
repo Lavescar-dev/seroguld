@@ -50,6 +50,7 @@ import {
 } from './marketRates';
 import { CustomerAlisSummaryStrip } from './CustomerAlisSummaryStrip';
 import { CustomerEditorTable, CustomerInfoTable } from './customerEditors';
+import { SelectedCustomerBar } from './SelectedCustomerBar';
 import { resolveCustomerPanelView } from './customerPanelState';
 import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor } from './sheetEditors';
 import { RelinkCustomerModal } from './RelinkCustomerModal';
@@ -721,8 +722,11 @@ function ActiveWorkspaceView(props: {
     onCloseCustomerDisplay,
   } = props;
   const hasSelectedCustomer = Boolean(workspace.customer.customer_id);
+  // R2-takip: seçili müşteri kompakt barda özetlenir; tam tablo istenince açılır.
+  const [customerDetailsOpen, setCustomerDetailsOpen] = useState(false);
+  const [replacingCustomer, setReplacingCustomer] = useState(false);
   // Roadmap madde 1: tek tri-state + müşteri bağlı mı — dört dış görünüm.
-  const customerPanelView = resolveCustomerPanelView(customerMode, hasSelectedCustomer);
+  const customerPanelView = resolveCustomerPanelView(customerMode, hasSelectedCustomer, replacingCustomer);
   const liveTotalWeight = useMemo(
     () => [...goldRows, ...silverRows, ...barRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0),
     [goldRows, silverRows, barRows, ptpdRows],
@@ -980,14 +984,29 @@ function ActiveWorkspaceView(props: {
             <div className="bg-white xl:self-start">
               {customerPanelView === 'attached' ? (
                 <>
-                  <CustomerAlisSummaryStrip customerId={workspace.customer.customer_id} />
-                  <CustomerInfoTable
-                    customer={customerForm}
-                    setCustomer={setCustomerForm}
-                    onBlur={onCustomerBlur}
-                    bankInfo={bankInfo}
-                    setBankInfo={setBankInfo}
+                  <SelectedCustomerBar
+                    name={workspace.customer.name || 'İsimsiz müşteri'}
+                    phone={customerForm.phone}
+                    detailsOpen={customerDetailsOpen}
+                    onToggleDetails={() => setCustomerDetailsOpen((current) => !current)}
+                    onReplace={() => {
+                      setCustomerDetailsOpen(false);
+                      setReplacingCustomer(true);
+                      setCustomerMode('existing');
+                    }}
                   />
+                  {customerDetailsOpen ? (
+                    <>
+                      <CustomerAlisSummaryStrip customerId={workspace.customer.customer_id} />
+                      <CustomerInfoTable
+                        customer={customerForm}
+                        setCustomer={setCustomerForm}
+                        onBlur={onCustomerBlur}
+                        bankInfo={bankInfo}
+                        setBankInfo={setBankInfo}
+                      />
+                    </>
+                  ) : null}
                 </>
               ) : (
                 <div className="print:hidden">
@@ -1040,7 +1059,10 @@ function ActiveWorkspaceView(props: {
                         />
                         <button
                           type="button"
-                          onClick={() => setCustomerMode(null)}
+                          onClick={() => {
+                            setCustomerMode(null);
+                            setReplacingCustomer(false);
+                          }}
                           className="text-xs font-semibold text-brand-500 hover:text-brand-800"
                         >
                           ← Geri
@@ -1055,7 +1077,10 @@ function ActiveWorkspaceView(props: {
                               {candidateCustomers.map((customer, index) => (
                                 <tr
                                   key={customer.id}
-                                  onClick={() => onSelectExistingCustomer(customer.id)}
+                                  onClick={() => {
+                                    setReplacingCustomer(false);
+                                    onSelectExistingCustomer(customer.id);
+                                  }}
                                   className={`cursor-pointer border-b border-brand-100 transition-colors hover:bg-brand-50 ${index % 2 === 0 ? 'bg-white' : 'bg-brand-50/40'}`}
                                 >
                                   <td className="px-3 py-2.5 text-xs font-bold text-brand-900">{customer.name}</td>
@@ -1069,11 +1094,19 @@ function ActiveWorkspaceView(props: {
                       </div>
                     </div>
                   ) : customerPanelView === 'create-new' ? (
-                    <form onSubmit={onCreateNewCustomer}>
+                    <form
+                      onSubmit={(event) => {
+                        setReplacingCustomer(false);
+                        onCreateNewCustomer(event);
+                      }}
+                    >
                       <div className="flex justify-end border-b border-brand-200 px-4 py-1.5">
                         <button
                           type="button"
-                          onClick={() => setCustomerMode(null)}
+                          onClick={() => {
+                            setCustomerMode(null);
+                            setReplacingCustomer(false);
+                          }}
                           className="text-xs font-semibold text-brand-500 hover:text-brand-800"
                         >
                           ← Geri
