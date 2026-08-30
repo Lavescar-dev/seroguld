@@ -20,10 +20,6 @@ import type { ModernOpmcDetailPageProps, ModernOpmcListPageProps } from './types
 
 type OpmcTab = 'queue' | 'history' | 'rules';
 
-function riskLabel(value?: string | null): string {
-  return value ? value.toLocaleUpperCase('tr-TR') : 'UNKNOWN';
-}
-
 function riskAverage(items: ModernOpmcListPageProps['items']): number | string {
   const scores = items.map((item) => item.risk_score).filter((score): score is number => typeof score === 'number');
   return scores.length > 0 ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : '—';

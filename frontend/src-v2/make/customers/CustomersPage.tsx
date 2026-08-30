@@ -27,7 +27,7 @@ import {
   labelProductType,
 } from '@/lib/format';
 import { useToast } from '@/lib/toast';
-import type { CustomerOut, PosDocumentDetail, PosDocumentListItem } from '@/types';
+import type { PosDocumentDetail, PosDocumentListItem } from '@/types';
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import type { CustomerDraft, CustomerHistoryLogMeta, CustomersPageProps } from './types';

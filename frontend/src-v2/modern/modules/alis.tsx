@@ -29,7 +29,7 @@ import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalV
 import { RelinkCustomerModal } from '@/make/alis/RelinkCustomerModal';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
-import { normalizePostalCode, useAddressAutocomplete } from '@/make/alis/addressAutocomplete';
+import { useAddressAutocomplete } from '@/make/alis/addressAutocomplete';
 import { useCustomerMatch } from '@/make/alis/customerMatch';
 import { type IdentityFieldName, useIdentityScan } from '@/make/alis/identityScan';
 import type { PosDocumentDetail, PosSavedPurchaseListItem } from '@/types';
@@ -39,7 +39,6 @@ import type { UnsupportedControlDescriptor } from '@/modern/adapters/types';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, shellButtonClass } from './shared';
-import { ModernOfficeSurface } from './ModernOfficeSurface';
 import { HistoricalAfgImportDrawer } from './alis/HistoricalAfgImportDrawer';
 import { useAlisLayoutMode, type AlisLayoutMode } from './alis/useAlisLayoutMode';
 
@@ -144,7 +143,6 @@ export function ModernAlisModule({
         : displayBridge.desktopDisplayState?.window_open
           ? 'Route bekliyor'
           : 'Kapalı';
-  const displayTone = displayLabel === 'Hazır' ? 'success' : displayLabel === 'Otomatik' ? 'neutral' : 'warning';
   const unavailableControls = state.activeWorkspaceView === 'excel' ? [] : viewModel.unsupportedControls;
 
   useEffect(() => {
@@ -1129,27 +1127,6 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
       </div>
       {relinkOpen ? <RelinkCustomerModal document={document} onClose={() => setRelinkOpen(false)} /> : null}
     </>
-  );
-}
-
-function EditableRowsCard({ title, rows, onGramChange, onAvanceChange }: { title: string; rows: Array<{ key: string; name: string; type: string; purity: string; karat: string; lodighed: string; rate: string; unitPrice: string; gram: string; avance: string; total: string }>; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void }) {
-  return (
-    <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">{title}</p>
-      <div className="mt-3 grid gap-3">
-        {rows.length === 0 ? <p className="text-sm text-sg-text-soft">Satır yok.</p> : rows.map((row) => (
-          <div key={row.key} className="rounded-sg-lg border border-sg-border bg-sg-surface p-3">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold text-sg-text">{row.name}</p><p className="text-xs text-sg-text-soft">Tip {row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><p className="text-sm font-semibold text-sg-text-soft">{formatMoney(row.total)}</p></div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-[11px] font-semibold text-sg-text-soft">Gram<CommittedNumericInput value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
-              <label className="text-[11px] font-semibold text-sg-text-soft">Mer pris<CommittedNumericInput value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className="mt-1 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-normal text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/10" /></label>
-              <div className="text-[11px] font-semibold text-sg-text-soft">Birim fiyat<span className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2 text-sm text-sg-text">{formatMoney(row.unitPrice)}</span></div>
-              <div className="text-[11px] font-semibold text-sg-text-soft">Toplam<span className="mt-1 block rounded-sg-md border border-sg-border bg-sg-surface-soft px-3 py-2 text-sm text-sg-text">{formatMoney(row.total)}</span></div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 

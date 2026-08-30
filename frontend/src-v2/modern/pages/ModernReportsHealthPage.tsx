@@ -1,4 +1,4 @@
-import { Activity, Download, HeartPulse, SearchCode } from 'lucide-react';
+import { Activity, Download, SearchCode } from 'lucide-react';
 
 import { ModernBadge, ModernButton, ModernCard, ModernDataTable, ModernPage, ModernSection, ModernSectionHeader, ModernStat } from '@/modern/design-system';
 

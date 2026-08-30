@@ -1,4 +1,3 @@
-import { buildMediaUrl } from '@/lib/media';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/api';
 import { labelMetalType, labelProductType } from '@/lib/format';

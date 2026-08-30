@@ -1,9 +1,25 @@
 name: ci
 
-# Actions dakika bütçesi için yalnız elle tetiklenir (gate'ler Windows'ta
-# lokal koşuyor: backend pytest + frontend typecheck/vitest — bkz. AGENTS.md).
+# Repo public: standart runner dakikası sınırsız — push/PR'de otomatik koşar.
+# (Eski "Actions dakika bütçesi" notu private-repo varsayımıydı; gate'ler
+# yine de Windows'ta lokal de koşulabilir — bkz. AGENTS.md.)
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "desktop/**"
+      - "scripts/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "desktop/**"
+      - "scripts/**"
+      - ".github/workflows/ci.yml"
 
 jobs:
   backend-frontend-checks:
@@ -31,6 +47,17 @@ jobs:
 
       - name: Frontend typecheck and Vitest
         run: bash scripts/test.sh --frontend-only
+
+      - name: Frontend lint and i18n gate
+        run: |
+          cd frontend
+          npm run lint
+          npm run i18n:check
+
+      - name: Frontend coverage thresholds
+        run: |
+          cd frontend
+          npm run test:coverage
 
       - name: Frontend truth guard
         run: bash scripts/check-frontend-truth.sh

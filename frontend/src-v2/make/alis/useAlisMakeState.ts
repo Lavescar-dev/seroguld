@@ -30,7 +30,6 @@ import type {
   PosSavedPurchaseListItem,
   PosWorkspace,
   PosWorkspaceBankInfo,
-  PosWorkspaceCalculatorRow,
   PosWorkspaceCalculators,
   PosWorkspaceFinalizeResponse,
   PosWorkspaceBarRow,
@@ -48,7 +47,6 @@ import type { AlisPageProps } from './AlisPage';
 import type {
   CompanionMode,
   EditableCustomer,
-  EditableCalculatorRow,
   EditableBarRow,
   EditablePtPdRow,
   EditableExtraRow,
@@ -161,16 +159,6 @@ function normalizeMarketRatesInput(marketRates: PosWorkspaceMarketRates): PosWor
     ),
     ...marketRates,
   };
-}
-
-function toEditableCalculatorRows(rows: PosWorkspaceCalculatorRow[]): EditableCalculatorRow[] {
-  return rows.map((row) => ({
-    row_key: row.row_key,
-    unit_weight: row.unit_weight,
-    count: row.count,
-    total_weight: row.total_weight,
-    target_row_key: row.target_row_key || '',
-  }));
 }
 
 function normalizeRateKey(value: string | number | null | undefined) {
@@ -1808,7 +1796,6 @@ export function useAlisMakeState(): AlisPageProps {
     calculators,
     // updateSectionsMutation referansı her render'da yeni — dep'ten çıkarıldı,
     // queueSectionsSave closure üzerinden günceli okur.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
   useEffect(() => {

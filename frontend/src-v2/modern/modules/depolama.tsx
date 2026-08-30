@@ -12,7 +12,6 @@ import { DepolamaPhotoLibraryDrawer } from '@/make/depolama/DepolamaPhotoLibrary
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 
 import { DataPill, EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
-import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 const MODERN_STATUS_TONE_CLASS: Record<string, string> = {
   success: 'bg-sg-green-soft text-sg-green-strong border border-sg-green/30',
@@ -586,11 +585,3 @@ function ModernDepolamaOfficeSurface({ onClose }: { onClose: () => void | Promis
   );
 }
 
-function MobileRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="font-semibold text-sg-text-soft">{label}</dt>
-      <dd className="text-right text-sg-text">{value}</dd>
-    </div>
-  );
-}

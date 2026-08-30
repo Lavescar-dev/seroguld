@@ -338,7 +338,7 @@ function mergeIdentityResults(previous: IdentityParseResult | null, next: Identi
 }
 
 export function useIdentityScan({
-  customer,
+  customer: _customer,
   setCustomer,
   onApplied,
 }: {

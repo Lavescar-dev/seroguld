@@ -53,12 +53,6 @@ const DOCUMENT_TYPE_MAP = {
   sundhedskort: 'health_card',
 } as const;
 
-function fixtureByFile(name: string) {
-  const fixture = groundTruth.fixtures.find((item) => item.file === `images/${name}`);
-  if (!fixture) throw new Error(`ground truth eksik: ${name}`);
-  return fixture;
-}
-
 function ocrLines(name: string): string[] {
   const lines = rawOcr.results[name];
   if (!lines) throw new Error(`raw OCR kaydı eksik: ${name} (scripts/ocr-fixture-harness.ps1 ile üretin)`);

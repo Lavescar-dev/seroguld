@@ -552,7 +552,6 @@ export function UnicontaPageView({
   yenile,
   sort,
   syncSummary,
-  syncSummaryLoading,
   failedSyncs,
   failedSyncsLoading,
   pendingSyncCount,

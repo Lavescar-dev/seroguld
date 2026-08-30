@@ -10,7 +10,6 @@ import { buildBucketGroups, resolveLineDraft, sumLines } from '@/make/log/lineHe
 import { classificationOptions, type LineDraft, type MeltLotDraft, type SplitGroupKey } from '@/make/log/types';
 
 import { DataPill, EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
-import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 const LOT_STATUS_LABEL: Record<string, string> = {
   draft: 'Taslak',

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, LockKeyhole } from 'lucide-react';
 
 import {
   ModernButton,

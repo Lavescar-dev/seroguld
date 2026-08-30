@@ -625,7 +625,6 @@ export function InvoiceGoldSheetEditor({
   rows,
   footerLines,
   mode,
-  onResetToAuto,
   onUpdateRow,
   onUpdateFooterLine,
 }: {

@@ -50,8 +50,6 @@ import { EmbeddedWorkbookPanel } from '../embedded/EmbeddedWorkbookPanel';
 
 import {
   classificationOptions,
-  defaultClassification,
-  defaultDestination,
   toLotDraft,
   type LineDraft,
   type LogActiveTab,

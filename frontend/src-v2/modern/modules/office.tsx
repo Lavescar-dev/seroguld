@@ -1,10 +1,10 @@
-import { ChevronDown, ChevronUp, ExternalLink, Maximize2, Minimize2, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Maximize2, Minimize2, X } from 'lucide-react';
 
 import type { OfficeDockDescriptor } from '@/lib/officeDock';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import type { ModernOfficeViewModel } from '@/modern/adapters/office';
 
-import { DataPill, ModernModuleShell, ModernSection, shellButtonClass, toneBadgeClass } from './shared';
+import { ModernModuleShell, ModernSection, shellButtonClass, toneBadgeClass } from './shared';
 import { ModernOfficeSurface } from './ModernOfficeSurface';
 
 export function ModernOfficeModule({ viewModel }: { viewModel: ModernOfficeViewModel }) {

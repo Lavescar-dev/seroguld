@@ -10,7 +10,6 @@ import {
   Ban,
   Calendar,
   CheckCircle2,
-  ChevronDown,
   Download,
   Eye,
   FileSpreadsheet,
@@ -21,12 +20,10 @@ import {
   Printer,
   RefreshCcw,
   Save,
-  ScanLine,
   Search,
   Trash2,
   UserPlus,
   X,
-  Zap,
   Link2,
 } from 'lucide-react';
 
@@ -54,7 +51,7 @@ import { CustomerAlisSummaryStrip } from './CustomerAlisSummaryStrip';
 import { CustomerEditorTable, CustomerInfoTable } from './customerEditors';
 import { SelectedCustomerBar } from './SelectedCustomerBar';
 import { resolveCustomerPanelView } from './customerPanelState';
-import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor } from './sheetEditors';
+import { AfregningsSheetEditor } from './sheetEditors';
 import { RelinkCustomerModal } from './RelinkCustomerModal';
 import type {
   CompanionMode,
@@ -686,16 +683,6 @@ function ActiveWorkspaceView(props: {
     setActiveWorkspaceView,
     numbering,
     onUpdateNumbering,
-    invoiceGoldMode,
-    invoiceGoldRows,
-    invoiceGoldFooterLines,
-    onUpdateInvoiceGoldRow,
-    onUpdateInvoiceGoldFooterLine,
-    onResetInvoiceGoldToAuto,
-    invoiceMiscMode,
-    invoiceMiscRows,
-    onUpdateInvoiceMiscRow,
-    onResetInvoiceMiscToAuto,
     bankInfo,
     setBankInfo,
     marketRates,
@@ -703,7 +690,6 @@ function ActiveWorkspaceView(props: {
     afgNote,
     setAfgNote,
     purchaseVatEnabled,
-    setPurchaseVatEnabled,
     calculators,
     setCalculators,
     paymentMethod,
