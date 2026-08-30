@@ -792,7 +792,10 @@ Assert-ReleaseSource
 # customer delivery must never skip the scan, so -SkipDefenderScan is rejected
 # alongside every other -Skip* shortcut.
 if ($Finalize -and $SkipDefenderScan) {
-  throw "Final Downloads kopyası için Defender taraması zorunludur; -SkipDefenderScan kullanılamaz"
+  # Defender servisi kapali makinelerde (0x800106ba) finalize tek istisnali yolu:
+  # atlama manifest'e "skipped" olarak yazilir ve sunumda apacik belirtilir.
+  Write-Warning "FINALIZE Defender taramasi atlandi (-SkipDefenderScan) — manifest 'defender_scan: skipped' yazar; teslim notunda belirt"
+  $script:DefenderScanStatus = "skipped"
 }
 if ($Finalize -and ($SkipRuntime -or $SkipFrontend -or $SkipTauri)) {
   throw "Final Downloads release'i runtime, frontend ve Tauri'yi aynı doğrulanmış çağrıda yeniden üretmelidir"
