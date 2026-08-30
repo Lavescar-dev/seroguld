@@ -329,6 +329,23 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "İşaretlediklerin oluşturulur; işareti kaldırılan müşterinin AFG'si atlanır (içe aktarılmaz).": { en: "Ticked customers will be created; the AFG of an unticked customer is skipped (not imported).", da: "De markerede kunder oprettes; AFG for en kunde uden markering springes over (importeres ikke)." },
   "Şu an:": { en: "Now:", da: "Lige nu:" },
   "→ müşteriye bağla": { en: "→ link to customer", da: "→ knyt til kunde" },
+  // 0.3.25 — Ayarlar > Güncelleme kartı ve masaüstü güncelleme duyurusu
+  "Güncelleme": { en: "Updates", da: "Opdatering" },
+  "Mevcut sürüm": { en: "Current version", da: "Nuværende version" },
+  "Kontrol et": { en: "Check for updates", da: "Søg efter opdateringer" },
+  "Kontrol ediliyor…": { en: "Checking…", da: "Søger…" },
+  "Güncel sürümü kullanıyorsunuz.": { en: "You are on the latest version.", da: "Du bruger den nyeste version." },
+  "Yeni sürüm:": { en: "New version:", da: "Ny version:" },
+  "Yeni sürüm var": { en: "New version available", da: "Ny version tilgængelig" },
+  "Ayarlar > Güncelleme bölümünden kurun": { en: "Install it from Settings > Updates", da: "Installér den under Indstillinger > Opdatering" },
+  "Güncelle ve yeniden başlat": { en: "Update and restart", da: "Opdatér og genstart" },
+  "Güncellemeler yükleniyor…": { en: "Installing updates…", da: "Installerer opdateringer…" },
+  "Güncelleme kurulamadı": { en: "The update could not be installed", da: "Opdateringen kunne ikke installeres" },
+  "Güncelleme kurulsun mu?": { en: "Install the update?", da: "Skal opdateringen installeres?" },
+  "Uygulama sürümünü denetler. Yeni sürüm indirilir ve kurulur; kurulumdan sonra uygulama kapanıp yeniden başlar.": { en: "Checks the application version. The new version is downloaded and installed; afterwards the app closes and restarts.", da: "Tjekker programversionen. Den nye version hentes og installeres; bagefter lukkes og genstartes programmet." },
+  "Kurulum başlayınca uygulama kapanır ve yeniden başlar. Bekleyen kayıtlar önce tamamlanır.": { en: "When the installation starts, the app closes and restarts. Pending saves are completed first.", da: "Når installationen starter, lukkes og genstartes programmet. Ventende ændringer gemmes først." },
+  "Kurulum sırasında uygulama kapanır ve yeniden başlar; Excel oturumlarınız kapatılır. Bekleyen kayıtlar önce tamamlanır.": { en: "During installation the app closes and restarts; your Excel sessions are closed. Pending saves are completed first.", da: "Under installationen lukkes og genstartes programmet; dine Excel-sessioner lukkes. Ventende ændringer gemmes først." },
+  "Excel oturumu açık. Güncelleme kurulamıyor; önce açık Excel oturumunu kapatın.": { en: "An Excel session is open. The update cannot be installed; close the open Excel session first.", da: "En Excel-session er åben. Opdateringen kan ikke installeres; luk den åbne Excel-session først." },
 
 };
 

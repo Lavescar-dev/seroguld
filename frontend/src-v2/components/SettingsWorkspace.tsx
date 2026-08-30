@@ -21,8 +21,18 @@ import {
 import type { ApiConfig } from '@/make/settings/types';
 import { PasswordChangeForm } from '@/components/PasswordChangeForm';
 import { BackupSettingsPanel } from '@/components/BackupSettingsPanel';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { WooMappingSettingsPanel } from '@/components/WooMappingSettingsPanel';
-import { deleteStoredLoginPassword } from '@/lib/desktop';
+import {
+  checkDesktopUpdate,
+  deleteStoredLoginPassword,
+  getDesktopStartupState,
+  installDesktopUpdate,
+  isTauriRuntime,
+  type DesktopUpdateInfo,
+} from '@/lib/desktop';
+import { flushPendingSaves } from '@/lib/saveCoordinator';
+import { useToast } from '@/lib/toast';
 import { getCurrentUser } from '@/lib/auth';
 import { getLocale, t } from '@/lib/locale';
 
@@ -233,6 +243,132 @@ function LocalStorageManager({ classic }: { classic: boolean }) {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Masaüstü güncelleme kartı (yalnız Tauri çalışma zamanında görünür). Kurulum
+ * yalnız kullanıcının bu karttan başlatmasıyla çalışır; otomatik kurulum yok.
+ */
+function DesktopUpdateSection({ classic }: { classic: boolean }) {
+  const [native] = useState(() => isTauriRuntime());
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
+  const [excelBridgeRunning, setExcelBridgeRunning] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [update, setUpdate] = useState<DesktopUpdateInfo | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [percent, setPercent] = useState<number | null>(null);
+  const toast = useToast();
+  const confirm = useConfirm();
+
+  useEffect(() => {
+    if (!native) return undefined;
+    let active = true;
+    // R3: Excel bridge çalışırken kurulum kilitlenir; sürüm bilgisi de buradan gelir.
+    const readRuntime = () => getDesktopStartupState().then((state) => {
+      if (!active || !state) return;
+      if (state.app_version) setCurrentVersion(state.app_version);
+      setExcelBridgeRunning(Boolean(state.excel_bridge_running));
+    });
+    void readRuntime();
+    const timer = window.setInterval(() => void readRuntime(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [native]);
+
+  if (!native) return null;
+
+  const versionText = currentVersion || '—';
+  const check = async () => {
+    setChecking(true);
+    try {
+      const info = await checkDesktopUpdate();
+      setUpdate(info);
+      setChecked(true);
+      if (info?.current_version) setCurrentVersion(info.current_version);
+      if (!info) toast.info('Güncel sürümü kullanıyorsunuz.');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const install = async () => {
+    if (!update || installing) return;
+    const confirmed = await confirm({
+      title: 'Güncelleme kurulsun mu?',
+      message: 'Kurulum sırasında uygulama kapanır ve yeniden başlar; Excel oturumlarınız kapatılır. Bekleyen kayıtlar önce tamamlanır.',
+      confirmText: 'Güncelle ve yeniden başlat',
+      cancelText: 'Vazgeç',
+      variant: 'warning',
+    });
+    if (!confirmed) return;
+    setInstalling(true);
+    setPercent(null);
+    try {
+      await flushPendingSaves({ timeoutMs: 10_000 });
+      await installDesktopUpdate((progress) => setPercent(progress.percent ?? null));
+      // Kurulum başarılıysa uygulama kapanır; bu satıra normalde gelinmez.
+    } catch (error) {
+      setInstalling(false);
+      setPercent(null);
+      toast.error('Güncelleme kurulamadı', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const button = `inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${classic ? 'border border-brand-300 bg-white text-brand-800 hover:bg-brand-50' : 'rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`;
+
+  return (
+    <section className={`border-t pt-7 ${classic ? 'border-brand-200' : 'border-slate-200'}`}>
+      <div className="flex items-start gap-3">
+        <RefreshCw className={`mt-0.5 h-5 w-5 ${classic ? 'text-brand-700' : 'text-blue-600'}`} />
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold">Güncelleme</h3>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
+            Uygulama sürümünü denetler. Yeni sürüm indirilir ve kurulur; kurulumdan sonra uygulama kapanıp yeniden başlar.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <span className="text-sm text-slate-500">Mevcut sürüm</span>
+            <span className="font-mono text-sm font-semibold">v{versionText}</span>
+            <button type="button" onClick={() => void check()} disabled={checking || installing} className={button}>
+              <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} /> {checking ? 'Kontrol ediliyor…' : 'Kontrol et'}
+            </button>
+          </div>
+          {checked && !update ? <p role="status" className="mt-3 text-sm text-emerald-700">Güncel sürümü kullanıyorsunuz.</p> : null}
+          {excelBridgeRunning ? (
+            <p role="note" className="mt-3 text-sm leading-6 text-amber-700">
+              Excel oturumu açık. Güncelleme kurulamıyor; önce açık Excel oturumunu kapatın.
+            </p>
+          ) : null}
+          {update ? (
+            <div className={`mt-4 p-4 ${classic ? 'border border-brand-200 bg-brand-50/50' : 'rounded-xl border border-slate-200 bg-slate-50'}`}>
+              <p className="text-sm font-semibold">
+                Yeni sürüm:
+                {' '}
+                <span className="font-mono">v{update.version}</span>
+              </p>
+              {update.notes ? <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">{update.notes}</p> : null}
+              <div className="mt-4">
+                <button type="button" onClick={() => void install()} disabled={excelBridgeRunning || installing} className={`inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${classic ? 'bg-brand-800 hover:bg-brand-900' : 'rounded-lg bg-blue-600 hover:bg-blue-700'}`}>
+                  <Download className="h-4 w-4" />
+                  {installing ? (
+                    <>
+                      Güncellemeler yükleniyor…
+                      {percent !== null ? ` (%${percent})` : null}
+                    </>
+                  ) : 'Güncelle ve yeniden başlat'}
+                </button>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                Kurulum başlayınca uygulama kapanır ve yeniden başlar. Bekleyen kayıtlar önce tamamlanır.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -481,6 +617,7 @@ export function SettingsWorkspace({
                 <div className="max-w-5xl space-y-8">
                   <section className="max-w-3xl"><PasswordChangeForm variant={variant} /></section>
                   <BackupSettingsPanel variant={variant} />
+                  <DesktopUpdateSection classic={classic} />
                   <section>
                     <h3 className="text-sm font-semibold">Ayar yedeği</h3>
                     <p className="mt-1 text-sm leading-6 text-slate-500">Bu cihazın yapılandırmasını dosya olarak dışa aktarabilir veya daha önce alınmış bir ayar dosyasını geri yükleyebilirsiniz.</p>

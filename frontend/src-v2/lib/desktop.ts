@@ -162,6 +162,29 @@ export type ExcelBridgeStatus = {
   message?: string | null;
 };
 
+/** `check_desktop_update` ve `desktop-update-available` olayının paylaşılan yükü. */
+export type DesktopUpdateInfo = {
+  version: string;
+  current_version: string;
+  notes?: string | null;
+};
+
+/**
+ * `install_desktop_update` ilerleme kanalı yükü. Rust tarafı ham updater
+ * olayını (chunk/content) veya hazır yüzdeyi gönderebilir; ikisi de desteklenir.
+ */
+export type DesktopUpdateProgress = {
+  chunk_length?: number | null;
+  content_length?: number | null;
+  downloaded?: number | null;
+  total?: number | null;
+  percent?: number | null;
+  /** Rust tarafı updater olayını camelCase anahtarlarla da gönderebilir. */
+  chunkLength?: number | null;
+  contentLength?: number | null;
+  event?: string | null;
+};
+
 /** Stable Credential Manager target prefix shared by the frontend and Tauri. */
 export const LOGIN_CREDENTIAL_TARGET_PREFIX = 'dk.seroguld.crm/login/';
 export const LOGIN_CREDENTIAL_SERVICE = 'dk.seroguld.crm/login';
@@ -702,6 +725,70 @@ export async function listenDesktopCloseRequest(listener: (state: DesktopStartup
   try {
     const module = await import('@tauri-apps/api/event');
     const unlisten = await module.listen<DesktopStartupState>('desktop-close-confirmation', (event) => listener(event.payload));
+    return unlisten;
+  } catch {
+    return () => undefined;
+  }
+}
+
+/**
+ * Yayınlanmış masaüstü güncellemesini denetler. Güncelleme yoksa, tarayıcı
+ * ortamındaysa ya da IPC hatası varsa null döner (çağıran sessiz kalabilir).
+ */
+export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
+  if (!isTauriRuntime()) return null;
+  try {
+    const result = await invokeDesktop<DesktopUpdateInfo | null>('check_desktop_update');
+    return result && typeof result === 'object' && typeof result.version === 'string' && result.version ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Güncellemeyi indirip kurar. Kurulum uygulamanın kapanmasıyla biter; bu
+ * yüzden hata yutulmaz — çağıran kullanıcıya gösterebilsin diye fırlatılır.
+ * `onProgress` opsiyoneldir; Rust tarafındaki `on_progress` kanalına bağlanır.
+ */
+export async function installDesktopUpdate(onProgress?: (progress: DesktopUpdateProgress) => void): Promise<void> {
+  if (!isTauriRuntime()) {
+    throw new Error('Güncelleme yalnızca masaüstü uygulamasında kurulabilir.');
+  }
+  const { Channel } = await import('@tauri-apps/api/core');
+  // Updater ham chunk uzunluğu gönderir; yüzdeyi burada biriktirerek hesaplarız.
+  let downloaded = 0;
+  let total: number | null = null;
+  const channel = new Channel<DesktopUpdateProgress>((message) => {
+    if (!onProgress || !message || typeof message !== 'object') return;
+    const nextTotal = positiveNumber(message.content_length ?? message.contentLength ?? message.total);
+    if (nextTotal) total = nextTotal;
+    const chunk = positiveNumber(message.chunk_length ?? message.chunkLength);
+    if (chunk) downloaded += chunk;
+    const reached = positiveNumber(message.downloaded) ?? (downloaded || null);
+    const percent =
+      positiveNumber(message.percent) ??
+      (total && reached !== null ? Math.min(100, (reached / total) * 100) : null);
+    const finished = message.event === 'finished';
+    onProgress({
+      downloaded: reached,
+      total,
+      percent: finished ? 100 : percent === null ? null : Math.round(percent),
+    });
+  });
+  // Tauri komut argümanları JS tarafında camelCase: Rust `on_progress` paramı.
+  await invokeDesktop<void>('install_desktop_update', { onProgress: channel });
+}
+
+function positiveNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Açılışta ana pencereye emit edilen `desktop-update-available` olayını dinler. */
+export async function onDesktopUpdateAvailable(callback: (info: DesktopUpdateInfo) => void): Promise<() => void> {
+  if (!isTauriRuntime()) return () => undefined;
+  try {
+    const module = await import('@tauri-apps/api/event');
+    const unlisten = await module.listen<DesktopUpdateInfo>('desktop-update-available', (event) => callback(event.payload));
     return unlisten;
   } catch {
     return () => undefined;

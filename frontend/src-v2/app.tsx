@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useEffect, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useState, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import {
   Navigate,
   Outlet,
@@ -10,8 +10,11 @@ import {
 import { AppShell } from '@/components/AppShell';
 import { DesktopBackupLifecycle } from '@/components/DesktopBackupLifecycle';
 import { AuthenticatedRouteErrorElement } from '@/components/AuthenticatedRouteErrorElement';
+import { translateVisibleCopy } from '@/i18n/copy';
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
-import { writeUiDiagnostic } from '@/lib/desktop';
+import { isTauriRuntime, onDesktopUpdateAvailable, writeUiDiagnostic } from '@/lib/desktop';
+import { getLocale } from '@/lib/locale';
+import { useToast } from '@/lib/toast';
 import {
   UiVariantBoundary,
   UiVariantSwitchDialog,
@@ -135,6 +138,38 @@ const ReportsPage = lazyPage(() => import('@/pages/ReportsPage'), 'ReportsPage')
 const DesktopSmokePage = desktopSmokeEnabled
   ? lazyPage(() => import('@/pages/DesktopSmokePage'), 'DesktopSmokePage')
   : null;
+
+/**
+ * Açılıştaki masaüstü güncelleme duyurusu. Yalnız bilgi verir; kurulumu
+ * otomatik başlatmaz — kurulum Ayarlar > Güncelleme kartından yapılır.
+ */
+function DesktopUpdateAnnouncer() {
+  const [native] = useState(() => isTauriRuntime());
+  const toast = useToast();
+
+  useEffect(() => {
+    if (!native) return undefined;
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    const locale = getLocale();
+    void onDesktopUpdateAvailable((info) => {
+      if (!active || !info?.version || info.version === info.current_version) return;
+      toast.info(
+        translateVisibleCopy('Yeni sürüm var', locale),
+        `v${info.version} — ${translateVisibleCopy('Ayarlar > Güncelleme bölümünden kurun', locale)}`,
+      );
+    }).then((cleanup) => {
+      if (!active) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [native, toast]);
+
+  return null;
+}
 
 function RequireAuth() {
   const location = useLocation();
@@ -338,6 +373,7 @@ export function App() {
       <UiVariantSwitchDialog />
       <UiVariantToastBridge />
       <DesktopBackupLifecycle />
+      <DesktopUpdateAnnouncer />
       <RouterProvider router={router} />
     </UiVariantBoundary>
   );
