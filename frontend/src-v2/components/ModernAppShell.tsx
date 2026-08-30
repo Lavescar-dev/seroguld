@@ -6,6 +6,7 @@ import {
   Database,
   FileText,
   LayoutDashboard,
+  Monitor,
   Package,
   Settings,
   ShieldAlert,
@@ -32,6 +33,7 @@ const routeMeta: Record<string, { eyebrow: string; title: string; description: s
   '/depolama': { eyebrow: 'Lager', title: 'Depolama', description: 'Stok, ürün ilişkileri ve workbook işlemleri.' },
   '/log': { eyebrow: 'AFG Defteri', title: 'Log ve melt akışı', description: 'AFG satırlarını Depolama, Kararsız ve Eritme hedeflerine yönetin.' },
   '/musteriler': { eyebrow: 'Kundedatabase', title: 'Müşteriler', description: 'Müşteri kayıtları, belge geçmişi ve hassas veri kontrolleri.' },
+  '/musteri-ekran': { eyebrow: 'Müşteri ekranı', title: 'Müşteri ekran kontrolü', description: 'Kiosk müşteri ekranını aç, bağlantı durumunu izle ve önizlemeyi yenile.' },
   '/gdpr': { eyebrow: 'Privacy', title: 'GDPR Merkezi', description: 'Talepler, retention, processor ve audit görünümü.' },
   '/opmc': { eyebrow: 'Risk', title: 'OPMC / Risk', description: 'İncelemeye açık risk çalışma alanı; kurallar ve karar akışları geliştirilmektedir.' },
   '/woocommerce': { eyebrow: 'Commerce', title: 'WooCommerce', description: 'Ürün, sipariş ve webhook operasyonları.' },
@@ -78,7 +80,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
   }, [state.officeDock.document]);
 
   const navGroups = useMemo<ModernShellNavGroup[]>(() => {
-    const item = (path: string, label: string, caption: string, Icon: typeof Package, badge?: number, activeOverride?: boolean) => ({
+    const item = (path: string, label: string, caption: string, Icon: typeof Package, badge?: string | number, activeOverride?: boolean) => ({
       key: path,
       label,
       caption,
@@ -109,6 +111,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
           item('/musteriler', t('navigation.customers'), 'Kundedatabase', Users, state.stats.customerCount),
           item('/depolama', t('navigation.inventory'), 'Lager / ürün', Database, state.stats.depoCount),
           item('/log', 'Log / AFG Defteri', 'AFG → melt', FileText, state.stats.logCount),
+          item('/musteri-ekran', 'Müşteri ekranı', 'Kiosk kontrol', Monitor),
         ],
       },
       {
@@ -116,7 +119,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         items: [
           item('/uniconta', 'Uniconta', 'ERP mutabakatı', Building2),
           item('/woocommerce', 'WooCommerce', 'Web operasyonları', ShoppingCart),
-          item('/opmc', 'OPMC / Risk', 'Yapım aşamasında', ShieldAlert),
+          item('/opmc', 'OPMC / Risk', 'Yapım aşamasında', ShieldAlert, 'YAPIM'),
         ],
       },
       {

@@ -1999,6 +1999,14 @@ export function useAlisMakeState(): AlisPageProps {
       if (target.isContentEditable) return true;
       return false;
     };
+    // Açık bir overlay (onay diyaloğu, modal, yan panel) varken global Esc
+    // kısayolu devreye girmez. Aksi halde diyaloğun kendi Esc davranışının
+    // üzerine yeni bir taslak iptal onayı açılır ve diyalog Esc ile kapatılamaz.
+    // Seçici bilinçli olarak dar: yalnız koşullu mount edilen katmanlar
+    // (aria-modal + z-modal/z-critical-top token'ları). Her zaman DOM'da duran
+    // sarmalayıcılar (AppShell banner'ı, acil kapatma butonu) eşleşmez.
+    const hasOpenOverlay = (): boolean =>
+      Boolean(document.querySelector('[aria-modal="true"], .z-modal, .z-critical-top'));
     const handler = (event: KeyboardEvent) => {
       const meta = event.ctrlKey || event.metaKey;
       const hasWorkspace = Boolean(workspace);
@@ -2023,8 +2031,8 @@ export function useAlisMakeState(): AlisPageProps {
         }
         return;
       }
-      // Esc — taslak iptal (workspace varsa, input içinde değilse)
-      if (event.key === 'Escape' && hasWorkspace && !editable && !cancelMutation.isPending) {
+      // Esc — taslak iptal (workspace varsa, input içinde değilse, overlay yoksa)
+      if (event.key === 'Escape' && hasWorkspace && !editable && !cancelMutation.isPending && !hasOpenOverlay()) {
         void confirm({
           title: 'Taslak iptal edilsin mi?',
           message: 'Girilen veriler kaydedilmeyecek.',

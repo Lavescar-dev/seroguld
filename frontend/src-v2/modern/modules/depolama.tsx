@@ -1,4 +1,4 @@
-import { Camera, Check, Edit3, Eye, FileSpreadsheet, Flame, ImageOff, Images, Link2, Loader2, Printer, Search, Tag, Trash2, X } from 'lucide-react';
+import { Camera, Check, Edit3, Eye, FileSpreadsheet, Flame, ImageOff, Images, Link2, Loader2, Printer, RefreshCcw, Search, Tag, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { ModernDepolamaViewModel } from '@/modern/adapters/depolama';
@@ -10,8 +10,9 @@ import { ALLOWED_STATUS_TRANSITIONS, PRODUCT_STATUS_LABEL, PRODUCT_STATUS_TONE, 
 import { InventoryWorkbookImport } from '@/make/depolama/InventoryWorkbookImport';
 import { DepolamaPhotoLibraryDrawer } from '@/make/depolama/DepolamaPhotoLibraryDrawer';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
+import { ModernDrawer } from '@/modern/design-system';
 
-import { DataPill, EmptyState, LoadingState, ModernDrawer, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
+import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 
 const MODERN_STATUS_TONE_CLASS: Record<string, string> = {
   success: 'bg-sg-green-soft text-sg-green-strong border border-sg-green/30',
@@ -327,16 +328,24 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
 
       </div>
 
-      {state.selectedProductId || state.loadingSelectedProduct ? (
-        <ModernDrawer
-          title={selected ? (selected.display_name || selected.product_number) : 'Ürün detayı'}
-          subtitle={selected ? `${selected.product_number} · ${selected.reference_number || 'Ref yok'}` : undefined}
-          onClose={state.onCloseDetail}
-        >
+      <ModernDrawer
+        open={Boolean(state.selectedProductId || state.loadingSelectedProduct)}
+        title={selected ? (selected.display_name || selected.product_number) : 'Ürün detayı'}
+        description={selected ? `${selected.product_number} · ${selected.reference_number || 'Ref yok'}` : undefined}
+        onClose={state.onCloseDetail}
+      >
           {state.loadingSelectedProduct ? (
             <LoadingState label="Ürün detayı yükleniyor" />
           ) : state.detailError || !selected ? (
-            <EmptyState title="Ürün açılamadı" message="Ürün silinmiş olabilir veya bağlantı kesildi. Listeyi yenileyip tekrar deneyin." />
+            <EmptyState
+              title="Ürün açılamadı"
+              message="Ürün silinmiş olabilir veya bağlantı kesildi. Tekrar deneyebilir ya da listeyi yenileyebilirsiniz."
+              action={
+                <button type="button" onClick={state.onRetryDetail} className={shellButtonClass('primary')}>
+                  <RefreshCcw className="h-4 w-4" />Tekrar dene
+                </button>
+              }
+            />
           ) : (
             <div className="space-y-4">
               <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
@@ -387,7 +396,6 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
             </div>
           )}
         </ModernDrawer>
-      ) : null}
         </>
       )}
     </ModernModuleShell>

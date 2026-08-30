@@ -60,7 +60,7 @@
 **P2 — önemli, workaround var**
 | ID | Başlık | Durum | Efor |
 |---|---|---|---|
-| THEME-01 | Açık tema dönüşümü (token'lar + 120 koyu blok) | PLANNED | L |
+| THEME-01 | Açık tema dönüşümü (token'lar + 120 koyu blok) | ERTELENDİ (bilinçli) — mevcut koyu tema toggle'ı görsel no-op; ayrıntı WP-THEME-01 notasında | L |
 | UI-01 | Raporlar + AI sayfalarını route'a bağla veya ölü kodu kaldır | PARTIAL — `/reports` nav'a bağlandı (iki shell); `/ai` route'u ve sayfası kaldırıldı/yok | S |
 | DOC-01 | `package-wordpress-bridge.sh` ↔ eksik PHP plugin çelişkisini çöz | BROKEN | S |
 | WIN-05 | Müşteri ekranı monitör seçimi ayarı + çıkar/tak dayanıklılığı | BÜYÜK ÖLÇÜDE KAPANDI — `MonitorInfo`/`preferred_monitor_id` (`main.rs:1653-1693`) | M |
@@ -94,7 +94,7 @@
 7. **WIN-03** — Runtime backend adresi.
 8. **SEC-03** — CSP sıkılaştırma + TLS.
 9. **OPS-01** — Secret rotation.
-10. **THEME-01** — Açık tema dönüşümü (iş paketi hazır: rapor `ui-theme-audit.md`).
+10. **THEME-01** — Açık tema dönüşümü (iş paketi hazır: rapor `ui-theme-audit.md`). **Erteleme kararı:** WP-THEME-01'deki nota bakın.
 
 ## 6. Bağımlılıklar
 
@@ -132,6 +132,8 @@ Her paket tek oturumda tamamlanabilir. Canlı veri kısıtı: tüm paketlerde ge
 - **Okunacak:** `tailwind.config.js`, `src-v2/styles.css`, `Root.tsx`, en yoğun 7 dosya (AlisPage, marketRates, Depolama, WooCommerce, Customers, OpmcDetail, Log).
 - **Kapsam dışı:** müşteri ekranı `--display-*` token'ları (zaten açık); davranışsal değişiklik.
 - **Kabul:** `npm run typecheck` + vitest temiz; görsel kontrol listesi; kontrast AA.
+- **Durum (0.3.26 sonrası): ERTELENDİ — bilinçli karar.** Koyu tema geçişi bugün görsel no-op: `useRootMakeState` yalnızca `html`'e `dark` class'ı ekliyor (`sero_dark_mode` localStorage), ama `styles/tokens.css`'te buna karşılık gelen bir `.dark` token bloğu yok ve codebase'de `dark:` utility kullanımı da yok (`tailwind.config.js`'te `darkMode` anahtarı tanımsız). Yani kullanıcı toggle'a bassa da hiçbir renk değişmiyor; tema işi gerçek bir token + utility dönüşümü olarak, UI temizliği (UI-01) ve `sg-*` token yoğunlaştırması tamamlandıktan sonra ele alınacak.
+- **Classic UI güncellenecekler (kalan):** tema yüzeyi yok (yukarıdaki erteleme); klavye kısayol ipucu artık tek kaynaktan okunuyor (`src-v2/lib/shortcutHints.ts` → `ALIS_SHORTCUT_HINT`, `make/root/Root.tsx` KB rozeti) — ipucu metni değiştirilecekse yalnız orası düzenlenir; GlobalMarketRatesDrawer ve acil kapatma gibi her zaman DOM'da duran sarmalayıcılar global Esc guard'ının seçicisi dışında bırakıldı (yalnız `[aria-modal="true"]`, `.z-modal`, `.z-critical-top` eşleşir).
 
 ### Paket WP-SALES-00: Satış discovery
 - **Amaç:** kod yazmadan satış gereksinim dokümanı: mevcut legacy akış envanteri + kullanıcı sorularının yanıtları + TO-BE tasarım.

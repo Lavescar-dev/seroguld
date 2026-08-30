@@ -799,6 +799,9 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     onOpenWorkbookPreview: () => setActiveView('excel'),
     onOpenDetail: openDetail,
     onCloseDetail: closeDetail,
+    onRetryDetail: () => {
+      void detailQuery.refetch();
+    },
     onOpenWooProduct: openWooProduct,
     onUpdateProductStatus: updateProductStatus,
     savePrices: () => savePricesMutation.mutate(prices),

@@ -3,7 +3,6 @@ import { AlertTriangle, CheckCircle2, Clock3, Info, ShieldAlert } from 'lucide-r
 import { formatDate, formatMoney, formatNumber, formatRelativeTime, labelDocumentKind, labelMetalType, labelProductType, labelStatus } from '@/lib/format';
 import {
   ModernBadge,
-  ModernButton,
   ModernCard,
   ModernKeyValueList,
   ModernNotice,
@@ -132,16 +131,3 @@ export function DetailGrid({
   );
 }
 
-export function ReadonlyAction({
-  label,
-  reason,
-}: {
-  label: string;
-  reason: string;
-}) {
-  return (
-    <ModernButton tone="ghost" disabled title={reason}>
-      {label}
-    </ModernButton>
-  );
-}

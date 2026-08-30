@@ -18,7 +18,8 @@ import {
 import { AvailabilityBanner, DetailGrid, formatDate, formatMoney, toneForRisk } from './shared';
 import type { ModernOpmcDetailPageProps, ModernOpmcListPageProps } from './types';
 
-type OpmcTab = 'queue' | 'history' | 'rules';
+// 'history' (karar geçmişi) sekmesi backend endpoint'i hazır olana kadar gizli.
+type OpmcTab = 'queue' | 'rules';
 
 function riskAverage(items: ModernOpmcListPageProps['items']): number | string {
   const scores = items.map((item) => item.risk_score).filter((score): score is number => typeof score === 'number');
@@ -102,7 +103,6 @@ export function ModernOpmcListPage({
       <div className="flex flex-wrap gap-1 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-1">
         {[
           { id: 'queue' as const, label: 'İnceleme kuyruğu' },
-          { id: 'history' as const, label: 'Karar geçmişi' },
           { id: 'rules' as const, label: 'Kural görünümü' },
         ].map((tab) => (
           <button
@@ -215,13 +215,11 @@ export function ModernOpmcListPage({
         </div>
       ) : null}
 
-      {activeTab === 'history' ? <ModernUnavailableState title="Karar geçmişi ayrı endpoint bekliyor" description="OPMC list hook'u mevcut case state'ini sağlar; karar/event geçmişi expose edilmeden timeline uydurulmaz." detail="BACKEND CONTRACT DISCOVERY" /> : null}
-
       {activeTab === 'rules' ? (
         <ModernSection>
           <ModernSectionHeader title="Kural görünümü" description="Known customer, mismatch, chargeback, guest ve whitelist sinyalleri gerçek case metadata'sından okunur." />
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {['Bilinen müşteri', 'Adres uyuşmazlığı', 'Ters ibraz', 'Misafir alıcı', 'İzin listesi', 'Manuel geçersiz kılma'].map((rule) => <ModernCard key={rule} className="bg-sg-surface-soft"><p className="text-sm font-semibold text-sg-text">{rule}</p><p className="mt-2 text-xs text-sg-text-soft">Kural bilgisiyle eşleşen sinyal varsa etkinleşir. ile eşleşen sinyal varsa aktifleşir.</p><ModernBadge className="mt-3" tone="info">İnceleme</ModernBadge></ModernCard>)}
+            {['Bilinen müşteri', 'Adres uyuşmazlığı', 'Ters ibraz', 'Misafir alıcı', 'İzin listesi', 'Manuel geçersiz kılma'].map((rule) => <ModernCard key={rule} className="bg-sg-surface-soft"><p className="text-sm font-semibold text-sg-text">{rule}</p><p className="mt-2 text-xs text-sg-text-soft">Kural bilgisiyle eşleşen sinyal varsa etkinleşir.</p><ModernBadge className="mt-3" tone="info">İnceleme</ModernBadge></ModernCard>)}
           </div>
         </ModernSection>
       ) : null}

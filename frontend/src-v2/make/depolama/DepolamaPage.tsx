@@ -18,6 +18,7 @@ import {
   PackageCheck,
   Plus,
   Printer,
+  RefreshCcw,
   Save,
   ShoppingBag,
   Trash2,
@@ -548,7 +549,7 @@ function MeltConfirmDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4">
       <form onSubmit={submit} className="w-full max-w-md border-2 border-rose-300 bg-white p-6 shadow-2xl">
         <div className="flex items-start gap-3">
           <Flame className="h-5 w-5 flex-shrink-0 text-rose-700" />
@@ -875,6 +876,7 @@ function InventoryDetailDrawer({
   sourceAfg,
   sourceAfgLoading,
   onClose,
+  onRetry,
   onEdit,
   onOpenWooProduct,
   onUpdateStatus,
@@ -895,6 +897,7 @@ function InventoryDetailDrawer({
   sourceAfg: ProductSourceAfg | null;
   sourceAfgLoading: boolean;
   onClose: () => void;
+  onRetry: () => void;
   onEdit: () => void;
   onOpenWooProduct: () => void;
   onUpdateStatus: (status: InventoryLifecycleStatus, meltReason?: string | null, salePriceDkk?: number | null) => void;
@@ -919,10 +922,10 @@ function InventoryDetailDrawer({
   const isLocked = product?.is_gdpr_locked;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-brand-950/20">
+    <div className="fixed inset-0 z-drawer flex justify-end bg-brand-950/20">
       <button type="button" className="flex-1 cursor-default" aria-label="Detay drawer overlay" onClick={onClose} />
       <aside className="relative h-full w-full max-w-[32rem] overflow-y-auto border-l-2 border-brand-300 bg-stone-100 shadow-2xl" style={sansStyle}>
-        <div className="sticky top-0 z-10 border-b border-brand-300 bg-white px-5 py-4 shadow-sm">
+        <div className="sticky top-0 z-sticky border-b border-brand-300 bg-white px-5 py-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -1088,7 +1091,17 @@ function InventoryDetailDrawer({
         {loading ? (
           <div className="px-5 py-10 text-sm text-brand-500">Ürün detayı yükleniyor...</div>
         ) : !product ? (
-          <div className="px-5 py-10 text-sm text-brand-500">Ürün detayı bulunamadı.</div>
+          <div className="flex flex-col items-start gap-3 px-5 py-10">
+            <p className="text-sm text-brand-500">Ürün detayı bulunamadı.</p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex items-center gap-1.5 border border-brand-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-brand-700 hover:bg-brand-50"
+            >
+              <RefreshCcw className="h-3.5 w-3.5" />
+              Tekrar dene
+            </button>
+          </div>
         ) : (
           <div className="space-y-5 px-5 py-5">
             <ProductSourceAfgPanel data={sourceAfg} loading={sourceAfgLoading} />
@@ -1190,6 +1203,7 @@ export interface DepolamaPageProps {
   onOpenWorkbookPreview: () => void;
   onOpenDetail: (productId: string) => void;
   onCloseDetail: () => void;
+  onRetryDetail: () => void;
   onOpenWooProduct: (productId: string) => void;
   onUpdateProductStatus: (
     productId: string,
@@ -1254,6 +1268,7 @@ export function DepolamaPage({
   onOpenWorkbookPreview,
   onOpenDetail,
   onCloseDetail,
+  onRetryDetail,
   onOpenWooProduct,
   onUpdateProductStatus,
   savingItem,
@@ -1665,7 +1680,7 @@ export function DepolamaPage({
               {priceOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
             {priceOpen ? (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-white border-2 border-brand-300 shadow-lg p-4 w-72">
+              <div className="absolute right-0 top-full mt-1 z-dropdown bg-white border-2 border-brand-300 shadow-lg p-4 w-72">
                 <p className="text-xs font-black text-brand-700 uppercase tracking-wider mb-3">Günlük Piyasa Fiyatları (DKK/g)</p>
                 <div className="space-y-2">
                   {(
@@ -1737,6 +1752,7 @@ export function DepolamaPage({
           sourceAfg={productSourceAfg}
           sourceAfgLoading={productSourceAfgLoading}
           onClose={onCloseDetail}
+          onRetry={onRetryDetail}
           onEdit={() => {
             if (selectedDraft) {
               setEditing(selectedDraft);
