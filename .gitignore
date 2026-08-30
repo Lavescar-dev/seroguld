@@ -132,4 +132,5 @@ tools/**/node_modules/
 .DS_Store
 Thumbs.db
 desktop.ini
+*.env.example
 .env.example
