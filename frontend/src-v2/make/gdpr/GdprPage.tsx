@@ -13,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 
-import { downloadAuthedDocument } from '@/lib/api';
+import { downloadAuthedDocument, localizeApiError } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { useToast } from '@/lib/toast';
 
@@ -219,6 +219,7 @@ export function MakeGdprPage({
   const [policyDrafts, setPolicyDrafts] = useState<Record<string, { retention_days: string; action: string; is_enabled: boolean }>>({});
   const [jobStatusFilter, setJobStatusFilter] = useState<'all' | 'queued' | 'running' | 'failed' | 'completed'>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const policyState = (policy: GdprRetentionPolicy) =>
     policyDrafts[policy.policy_key] || {
@@ -275,6 +276,17 @@ export function MakeGdprPage({
     } catch (error) {
       console.error('Copy failed', error);
       toast.error('Pano kopyalanamadı', 'Metin panoya yazılamadı; tarayıcı izinlerini kontrol edin.');
+    }
+  };
+
+  const runAction = async (key: string, action: () => Promise<unknown>) => {
+    setPendingAction(key);
+    try {
+      await action();
+    } catch (error) {
+      toast.error('İşlem başarısız', localizeApiError(error));
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -455,14 +467,17 @@ export function MakeGdprPage({
                                 <button
                                   key={candidate.id}
                                   type="button"
-                                  onClick={() => void onVerify(requestDetail.id, candidate.id)}
-                                  className="flex items-center justify-between border border-brand-300 bg-white px-3 py-2 text-left hover:border-brand-700 hover:bg-brand-100"
+                                  disabled={activeMutation || pendingAction !== null}
+                                  onClick={() => void runAction(`verify:${candidate.id}`, () => onVerify(requestDetail.id, candidate.id))}
+                                  className="flex items-center justify-between border border-brand-300 bg-white px-3 py-2 text-left hover:border-brand-700 hover:bg-brand-100 disabled:opacity-60"
                                 >
                                   <div>
                                     <p className="text-sm font-semibold text-brand-900">{candidate.name}</p>
                                     <p className="text-xs text-brand-500">{candidate.email || candidate.phone || candidate.cpr_number_masked || '-'}</p>
                                   </div>
-                                  <span className="text-xs font-black uppercase tracking-widest text-brand-500">Verify</span>
+                                  <span className="text-xs font-black uppercase tracking-widest text-brand-500">
+                                    {pendingAction === `verify:${candidate.id}` ? 'İşleniyor...' : 'Verify'}
+                                  </span>
                                 </button>
                               ))}
                             </div>
@@ -480,39 +495,39 @@ export function MakeGdprPage({
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
                               type="button"
-                              disabled={activeMutation}
-                              onClick={() => void onApprove(requestDetail.id, decisionReason)}
+                              disabled={activeMutation || pendingAction !== null}
+                              onClick={() => void runAction('approve', () => onApprove(requestDetail.id, decisionReason))}
                               className="inline-flex items-center gap-2 border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-sky-700 disabled:opacity-60"
                             >
                               <ShieldCheck className="h-3.5 w-3.5" />
-                              Approve
+                              {pendingAction === 'approve' ? 'İşleniyor...' : 'Approve'}
                             </button>
                             <button
                               type="button"
-                              disabled={activeMutation}
-                              onClick={() => void onReject(requestDetail.id, decisionReason)}
+                              disabled={activeMutation || pendingAction !== null}
+                              onClick={() => void runAction('reject', () => onReject(requestDetail.id, decisionReason))}
                               className="inline-flex items-center gap-2 border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-rose-700 disabled:opacity-60"
                             >
                               <ShieldX className="h-3.5 w-3.5" />
-                              Reject
+                              {pendingAction === 'reject' ? 'İşleniyor...' : 'Reject'}
                             </button>
                             <button
                               type="button"
-                              disabled={activeMutation}
-                              onClick={() => void onEnqueue(requestDetail.id)}
+                              disabled={activeMutation || pendingAction !== null}
+                              onClick={() => void runAction('enqueue', () => onEnqueue(requestDetail.id))}
                               className="inline-flex items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 disabled:opacity-60"
                             >
                               <Clock3 className="h-3.5 w-3.5" />
-                              Enqueue
+                              {pendingAction === 'enqueue' ? 'İşleniyor...' : 'Enqueue'}
                             </button>
                             <button
                               type="button"
-                              disabled={activeMutation}
-                              onClick={() => void onExecute(requestDetail.id)}
+                              disabled={activeMutation || pendingAction !== null}
+                              onClick={() => void runAction('execute', () => onExecute(requestDetail.id))}
                               className="inline-flex items-center gap-2 border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700 disabled:opacity-60"
                             >
                               <CheckCircle2 className="h-3.5 w-3.5" />
-                              Execute
+                              {pendingAction === 'execute' ? 'İşleniyor...' : 'Execute'}
                             </button>
                           </div>
                           {requestDetail.latest_job ? (
@@ -770,18 +785,21 @@ export function MakeGdprPage({
                       />
                       <button
                         type="button"
+                        disabled={activeMutation || pendingAction !== null}
                         onClick={() =>
-                          void onUpdatePolicy({
-                            policyKey: policy.policy_key,
-                            retention_days: Number.parseInt(draft.retention_days, 10) || policy.retention_days,
-                            action: draft.action,
-                            is_enabled: draft.is_enabled,
-                          })
+                          void runAction(`policy:${policy.policy_key}`, () =>
+                            onUpdatePolicy({
+                              policyKey: policy.policy_key,
+                              retention_days: Number.parseInt(draft.retention_days, 10) || policy.retention_days,
+                              action: draft.action,
+                              is_enabled: draft.is_enabled,
+                            }),
+                          )
                         }
-                        className="inline-flex items-center justify-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
+                        className="inline-flex items-center justify-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100 disabled:opacity-60"
                       >
                         <Clock3 className="h-3.5 w-3.5" />
-                        Kaydet
+                        {pendingAction === `policy:${policy.policy_key}` ? 'İşleniyor...' : 'Kaydet'}
                       </button>
                     </div>
                     <p className="mt-2 text-[11px] text-brand-500">Son güncelleme: {formatDate(policy.updated_at)}</p>

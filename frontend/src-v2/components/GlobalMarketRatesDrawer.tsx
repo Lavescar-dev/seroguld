@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, LockKeyhole, Save, X } from 'lucide-react';
 
-import { apiRequest } from '@/lib/api';
+import { apiRequest, localizeApiError } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
 import type { PosWorkspaceMarketRates } from '@/types';
 
@@ -340,6 +342,8 @@ function AutoFieldToggle({ on, meta, dark, onToggle }: { on: boolean; meta: Glob
 
 export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { controller: GlobalMarketRatesController; variant?: 'modern' | 'classic' }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const toast = useToast();
   if (!controller.isOpen) return null;
   const { draft } = controller;
   const dark = variant === 'classic';
@@ -447,7 +451,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             <p className={`mt-2 ${metaClass}`}>Rozete tıklayarak alanı manuel/otomatik yapın. Otomatikte değer metals.dev/ECB'den canlı gelir; canlı değer alınamazsa mevcut değer korunur (AFG fiyatları sıfırlanmaz).</p>
           </section>
 
-          {anyAutoDisabled ? <a href="/settings" className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark'}>Ayarları aç</a> : null}
+          {anyAutoDisabled ? <button type="button" onClick={() => { controller.close(); navigate('/settings'); }} className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark'}>Ayarları aç</button> : null}
         </div>
 
         <footer className={`flex items-center justify-end gap-2 border-t px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
@@ -465,9 +469,9 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
                   await controller.refreshDraftFromServer();
                   const goldCount = Object.keys(result.applied_gold || {}).length;
                   const silverCount = Object.keys(result.applied_silver || {}).length;
-                  window.alert(`WP Priser uygulandı: ${goldCount} karat + ${silverCount} gümüş güncellendi.`);
+                  toast.success('WP Priser uygulandı', `${goldCount} karat + ${silverCount} gümüş güncellendi`);
                 } catch (fetchError) {
-                  window.alert(fetchError instanceof Error ? fetchError.message : 'WP Priser çekilemedi.');
+                  toast.error('WP Priser çekilemedi', localizeApiError(fetchError));
                 }
               })();
             }}

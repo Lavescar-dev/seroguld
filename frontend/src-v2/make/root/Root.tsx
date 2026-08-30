@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
+  BarChart3,
   Building2,
   Database,
   DatabaseZap,
@@ -279,6 +280,7 @@ export function MakeRoot({
           </p>
         </div>
         {navItem('/dashboard', <LayoutDashboard className="h-4 w-4" />, 'Dashboard', 'Genel Bakis')}
+        {navItem('/reports', <BarChart3 className="h-4 w-4" />, 'Raporlar', 'Gunluk / XLSX export')}
         {navItem('/', <Package className="h-4 w-4" />, 'Alis', 'Afregningsbilag', stats.alisList, 'border-amber-200 bg-amber-100 text-amber-800')}
         {navItem('/depolama', <Database className="h-4 w-4" />, 'Depolama', 'Lager / Envanter', stats.depoCount)}
         {navItem('/log', <FileText className="h-4 w-4" />, 'Log Sistemi', 'AFG -> Eritme akisi', stats.logCount)}

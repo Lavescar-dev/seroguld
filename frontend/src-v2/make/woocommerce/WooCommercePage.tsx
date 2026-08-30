@@ -1,4 +1,4 @@
-import { apiRequest } from '@/lib/api';
+import { apiRequest, localizeApiError } from '@/lib/api';
 import { buildMediaUrl } from '@/lib/media';
 import { type ChangeEvent, type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -33,6 +33,7 @@ import {
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { openExternalUrl } from '@/lib/desktop';
+import { useToast } from '@/lib/toast';
 import { WooCatalogPanel } from './WooCatalogPanel';
 import { WooCategoryPicker } from './WooCategoryPicker';
 import { WooPhotoThumb } from './WooPhotoThumb';
@@ -913,6 +914,7 @@ export function MakeWooCommercePage({
   createProductFromDraft,
   ...catalogState
 }: WooMakeState) {
+  const toast = useToast();
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [yeniPanelAcik, setYeniPanelAcik] = useState(false);
   const [seoGoster, setSeoGoster] = useState(false);
@@ -1470,9 +1472,9 @@ export function MakeWooCommercePage({
                             try {
                               const suggestion = await apiRequest<{ suggested_price_dkk: string | null; reason: string | null }>(`/api/products/${secilenId}/price-suggestion`);
                               if (suggestion.suggested_price_dkk) setPublishPrice(suggestion.suggested_price_dkk);
-                              else if (suggestion.reason) window.alert(`Fiyat önerilemedi: ${suggestion.reason}`);
-                            } catch {
-                              window.alert('Fiyat önerisi alınamadı.');
+                              else if (suggestion.reason) toast.error('Fiyat önerilemedi', suggestion.reason);
+                            } catch (error) {
+                              toast.error('Fiyat önerisi alınamadı', localizeApiError(error));
                             }
                           })();
                         }}
@@ -1537,7 +1539,7 @@ export function MakeWooCommercePage({
                           void (async () => {
                             const preview = await catalogState.fetchPublishPreview();
                             if (preview) setPublishPreview(preview);
-                            else window.alert('Önizleme alınamadı.');
+                            else toast.error('Önizleme alınamadı');
                           })();
                         }}
                         disabled={!detail}

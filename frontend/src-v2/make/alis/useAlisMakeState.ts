@@ -10,6 +10,7 @@ import {
   apiRequest,
   buildWsUrl,
   downloadAuthedDocument,
+  localizeApiError,
   printAuthedDocument,
 } from '@/lib/api';
 import { useToast } from '@/lib/toast';
@@ -2290,7 +2291,9 @@ export function useAlisMakeState(): AlisPageProps {
     void downloadAuthedDocument(
       `/api/v2/alis/documents/${item.sequence_no}/export?format=xlsx`,
       `AFG-${item.document_number.replaceAll('/', '-')}.xlsx`,
-    );
+    ).catch((error: unknown) => {
+      toast.error('Belge indirilemedi', localizeApiError(error));
+    });
   }
 
   function closePdfModal() {
@@ -2303,7 +2306,11 @@ export function useAlisMakeState(): AlisPageProps {
   function handlePrintDocument(item: PosSavedPurchaseListItem) {
     // R2-13 — yazdırma doğrudan WebView2 native diyaloğuyla açılır
     // (eski openUnicontaPdfModal fallback'i Tauri'de sessizce yutuluyordu).
-    void printAuthedDocument(`/api/v2/alis/documents/${item.sequence_no}/print?format=html`);
+    void printAuthedDocument(`/api/v2/alis/documents/${item.sequence_no}/print?format=html`).catch(
+      (error: unknown) => {
+        toast.error('Belge yazdırılamadı', localizeApiError(error));
+      },
+    );
   }
 
   function handleOpenWorkspaceExcelPreview() {
@@ -2680,11 +2687,17 @@ export function useAlisMakeState(): AlisPageProps {
       void downloadAuthedDocument(
         `/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/export?format=xlsx`,
         `AFG-${detailDocumentQuery.data.document_number.replaceAll('/', '-')}.xlsx`,
-      );
+      ).catch((error: unknown) => {
+        toast.error('Belge indirilemedi', localizeApiError(error));
+      });
     },
     onPrintDetail: () => {
       if (!detailDocumentQuery.data) return;
-      void printAuthedDocument(`/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/print?format=html`);
+      void printAuthedDocument(`/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/print?format=html`).catch(
+        (error: unknown) => {
+          toast.error('Belge yazdırılamadı', localizeApiError(error));
+        },
+      );
     },
     onOpenDetailExcelPreview: () => {
       if (!detailDocumentQuery.data) return;
@@ -2780,7 +2793,11 @@ export function useAlisMakeState(): AlisPageProps {
     setPaymentMethod: setPaymentMethodFromUi,
     onPrintWorkspace: () => {
       if (!workspace) return;
-      void printAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html`);
+      void printAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html`).catch(
+        (error: unknown) => {
+          toast.error('Belge yazdırılamadı', localizeApiError(error));
+        },
+      );
     },
     onOpenWorkspaceExcelPreview: handleOpenWorkspaceExcelPreview,
     onCancelWorkspace: () => cancelMutation.mutate(),

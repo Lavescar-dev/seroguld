@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 
-import { apiRequest, downloadAuthedDocument } from '@/lib/api';
+import { apiRequest, downloadAuthedDocument, localizeApiError } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 import { exportDocumentBytes, isTauriRuntime, pickDocumentImportFile } from '@/lib/desktop';
 import type {
   DocumentArtifactEditableCell,
@@ -191,6 +192,7 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
   const kind = params.kind || '';
   const artifactKey = params.key || '';
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [cellEdits, setCellEdits] = useState<Record<string, string>>({});
   const [reconcilePreview, setReconcilePreview] = useState<DocumentArtifactReconcilePreview | null>(null);
   const [pendingWorkbookFile, setPendingWorkbookFile] = useState<File | null>(null);
@@ -242,6 +244,10 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
     onSuccess: (data) => {
       setReconcilePreview(data);
     },
+    onError: (error) => {
+      // Hata durumunda cellEdits korunur — kullanıcı düzenlemeleri kaybolmaz.
+      toast.error('Değişiklikler önizlenemedi', localizeApiError(error));
+    },
   });
 
   const applyMutation = useMutation({
@@ -262,6 +268,10 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
         queryClient.invalidateQueries({ queryKey: ['excel-preview-workbook', kind, artifactKey] }),
         queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] }),
       ]);
+    },
+    onError: (error) => {
+      // Hata durumunda cellEdits korunur — kullanıcı düzenlemeleri kaybolmaz.
+      toast.error('Değişiklikler uygulanamadı', localizeApiError(error));
     },
   });
 
@@ -306,12 +316,12 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
       const file = fileFromPickedImport(picked.file_name, picked.data_base64);
       setPendingWorkbookFile(file);
       setReconcilePreview(null);
-      await previewMutation.mutateAsync(file);
+      await previewMutation.mutateAsync(file).catch(() => undefined);
     },
     onImportFile: async (file: File) => {
       setPendingWorkbookFile(file);
       setReconcilePreview(null);
-      await previewMutation.mutateAsync(file);
+      await previewMutation.mutateAsync(file).catch(() => undefined);
     },
     onCellChange: (sheetName, cellRef, value) => {
       setPendingWorkbookFile(null);
@@ -324,12 +334,12 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
     onPreviewChanges: async () => {
       const file = await buildPendingFile();
       if (!file) return;
-      await previewMutation.mutateAsync(file);
+      await previewMutation.mutateAsync(file).catch(() => undefined);
     },
     onApplyChanges: async () => {
       const file = await buildPendingFile();
       if (!file) return;
-      await applyMutation.mutateAsync(file);
+      await applyMutation.mutateAsync(file).catch(() => undefined);
     },
   };
 }

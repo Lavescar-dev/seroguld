@@ -1,16 +1,21 @@
 import { useMemo, useState } from 'react';
-import { Archive, CheckCircle2, Clock3, Database, Download, FileClock, FileKey2, LockKeyhole, RefreshCw, ShieldCheck, ShieldEllipsis, ShieldX, UsersRound, Workflow } from 'lucide-react';
+import { Archive, CheckCircle2, Clock3, Database, Download, FileClock, FileKey2, LockKeyhole, Plus, RefreshCw, ShieldCheck, ShieldEllipsis, ShieldX, UsersRound, Workflow } from 'lucide-react';
 
-import { downloadAuthedDocument } from '@/lib/api';
+import { downloadAuthedDocument, localizeApiError } from '@/lib/api';
+import { useToast } from '@/lib/toast';
+
+import { useGdprCreateRequest } from '@/make/gdpr/useGdprCreateRequest';
 
 import {
   ModernBadge,
   ModernButton,
   ModernCard,
+  ModernDialog,
   ModernPage,
   ModernSection,
   ModernSectionHeader,
   ModernStat,
+  ModernTextInput,
   ModernUnavailableState,
 } from '@/modern/design-system';
 
@@ -49,10 +54,10 @@ function jobForScope(scope: (typeof copyScopes)[number], jobs: ModernGdprCockpit
   });
 }
 
-function completionState(jobs: ModernGdprCockpitPageProps['jobs']): { label: string; tone: 'success' | 'warning' | 'info' } {
-  if (jobs.length === 0) return { label: 'DISCOVERY', tone: 'info' };
+function completionState(jobs: ModernGdprCockpitPageProps['jobs']): { label: string; tone: 'success' | 'warning' | 'info'; allowed: boolean } {
+  if (jobs.length === 0) return { label: 'DISCOVERY', tone: 'info', allowed: false };
   const terminal = jobs.every((job) => ['completed', 'completed_with_warnings', 'skipped'].includes(job.status));
-  return terminal ? { label: 'PASS', tone: 'success' } : { label: 'LOCKED', tone: 'warning' };
+  return terminal ? { label: 'PASS', tone: 'success', allowed: true } : { label: 'LOCKED', tone: 'warning', allowed: false };
 }
 
 export function ModernGdprCockpitPage({
@@ -76,6 +81,12 @@ export function ModernGdprCockpitPage({
 }: ModernGdprCockpitPageProps) {
   const [activeTab, setActiveTab] = useState<GdprTab>('requests');
   const [decisionReason, setDecisionReason] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createType, setCreateType] = useState('access_export');
+  const [createSubjectName, setCreateSubjectName] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const toast = useToast();
+  const createRequestMutation = useGdprCreateRequest();
   const hasDecisionActions = Boolean(onApprove || onReject || onEnqueue || onExecute || onVerify);
   const relatedJobs = useMemo(() => {
     if (!selectedRequest) return [];
@@ -84,6 +95,25 @@ export function ModernGdprCockpitPage({
     return selectedRequest.latest_job ? [selectedRequest.latest_job] : [];
   }, [jobs, selectedRequest]);
   const gate = completionState(relatedJobs);
+
+  // md1: "Yeni talep" — backend'de admin POST /api/v2/gdpr/requests ucu yok;
+  // tek oluşturma yolu public request endpoint'idir (channel="public_page").
+  async function submitCreateRequest() {
+    const subjectName = createSubjectName.trim();
+    if (subjectName.length < 2) {
+      setCreateError('Konu adı en az 2 karakter olmalı.');
+      return;
+    }
+    setCreateError(null);
+    try {
+      const created = await createRequestMutation.mutateAsync({ request_type: createType, subject_name: subjectName });
+      toast.success('Talep oluşturuldu', `${created.reference_number} · durum: identity_pending`);
+      setCreateOpen(false);
+      setCreateSubjectName('');
+    } catch (error) {
+      toast.error('Talep oluşturulamadı', localizeApiError(error));
+    }
+  }
 
   if (isLoading && !overview) {
     return (
@@ -109,7 +139,7 @@ export function ModernGdprCockpitPage({
           eyebrow="Uyum ve veri hakları"
           title="GDPR Merkezi"
           description="Talep, kopya görevleri, saklama, veri işleyen ve denetim yükümlülüklerini tek gizlilik çalışma alanında yönetir."
-          action={<div className="flex flex-wrap gap-2"><ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || isRefreshing}>Yenile</ModernButton><ModernButton tone="primary" disabled title="Yeni talep mutation'ı bu modern route'a expose edilmedi">Yeni talep</ModernButton></div>}
+          action={<div className="flex flex-wrap gap-2"><ModernButton tone="ghost" icon={RefreshCw} onClick={onRefresh} disabled={!onRefresh || isRefreshing}>Yenile</ModernButton><ModernButton tone="primary" icon={Plus} onClick={() => setCreateOpen(true)}>Yeni talep</ModernButton></div>}
         />
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <ModernStat label="Açık talepler" value={overview.open_request_count} meta={`${overview.due_soon_count} süre yaklaşıyor`} icon={ShieldCheck} tone="primary" />
@@ -204,7 +234,7 @@ export function ModernGdprCockpitPage({
             ) : null}
             <ModernSection>
               <ModernSectionHeader title="Completion gate" description="Açık/manual/queued görev varken tamamla aksiyonu kapalı kalır." action={<ModernBadge tone={gate.tone}>{gate.label}</ModernBadge>} />
-              <div className="mt-4 flex items-center justify-between gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-sm font-semibold text-sg-text">B5 terminal gate</p><p className="mt-1 text-xs text-sg-text-soft">{relatedJobs.length > 0 ? `${relatedJobs.length} gerçek job satırı değerlendirildi.` : "Copy-task kapsamı bu DTO'da eksik."}</p></div><ModernButton tone="primary" disabled title="Açık veya expose edilmemiş copy-task varken tamamlanamaz">Talebi tamamla</ModernButton></div>
+              <div className="mt-4 flex items-center justify-between gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-sm font-semibold text-sg-text">B5 terminal gate</p><p className="mt-1 text-xs text-sg-text-soft">{relatedJobs.length > 0 ? `${relatedJobs.length} gerçek job satırı değerlendirildi.` : "Copy-task kapsamı bu DTO'da eksik."}</p></div><ModernButton tone="primary" disabled={!gate.allowed || activeMutation || !onExecute} title={gate.allowed ? undefined : relatedJobs.length === 0 ? "Copy-task kapsamı bu DTO'da eksik; tamamlama kilitli" : 'Açık veya sürmekte olan copy-task varken tamamlanamaz'} onClick={() => { if (selected && onExecute) void onExecute(selected.id); }}>Talebi tamamla</ModernButton></div>
             </ModernSection>
             <CopyTaskGrid jobs={relatedJobs} />
           </div>
@@ -236,6 +266,50 @@ export function ModernGdprCockpitPage({
       ) : null}
 
       {activeTab === 'audit' ? <AuditTrail selectedRequest={selected} jobs={jobs} /> : null}
+
+      <ModernDialog
+        open={createOpen}
+        onClose={() => { if (!createRequestMutation.isPending) setCreateOpen(false); }}
+        title="Yeni GDPR talebi"
+        description="Talep türü ve konu adı zorunlu; talep public request kanalından identity_pending olarak açılır."
+        footer={(
+          <div className="flex items-center justify-end gap-2">
+            <ModernButton tone="ghost" disabled={createRequestMutation.isPending} onClick={() => setCreateOpen(false)}>Vazgeç</ModernButton>
+            <ModernButton tone="primary" icon={CheckCircle2} disabled={createRequestMutation.isPending || createSubjectName.trim().length < 2} onClick={() => void submitCreateRequest()}>
+              {createRequestMutation.isPending ? 'Oluşturuluyor…' : 'Talebi oluştur'}
+            </ModernButton>
+          </div>
+        )}
+      >
+        <div className="space-y-4">
+          <label className="block text-xs font-semibold text-sg-text-soft">
+            Talep türü
+            <select
+              value={createType}
+              onChange={(event) => setCreateType(event.target.value)}
+              className="mt-1 min-h-10 w-full rounded-sg-md border border-sg-border bg-sg-surface px-3 text-sm text-sg-text outline-none focus:border-sg-accent focus:ring-2 focus:ring-sg-accent-soft"
+            >
+              <option value="access_export">Erişim / Export</option>
+              <option value="erasure_pseudonymize">Silme / Pseudonymize</option>
+              <option value="rectification">Düzeltme (rectification)</option>
+              <option value="objection_restriction">İtiraz / Kısıtlama</option>
+              <option value="marketing_opt_out">Pazarlama çıkışı</option>
+              <option value="cookie_privacy_contact">Çerez / gizlilik iletişimi</option>
+            </select>
+          </label>
+          <label className="block text-xs font-semibold text-sg-text-soft">
+            Konu adı (zorunlu)
+            <ModernTextInput
+              value={createSubjectName}
+              onChange={(event) => setCreateSubjectName(event.target.value)}
+              placeholder="Ad Soyad"
+              aria-label="Konu adı"
+            />
+          </label>
+          {createError ? <p className="text-xs font-semibold text-sg-red">{createError}</p> : null}
+          <p className="text-xs text-sg-text-soft">Talep public kanalından identity_pending olarak açılır; doğrulama ve karar adımları talep kuyruğundan yürütülür.</p>
+        </div>
+      </ModernDialog>
     </ModernPage>
   );
 }

@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { SectionCard } from '@/components/SectionCard';
-import { apiRequest, downloadAuthedDocument } from '@/lib/api';
+import { apiRequest, downloadAuthedDocument, localizeApiError } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { ModernReportsHealthPage } from '@/modern/pages';
+import { useToast } from '@/lib/toast';
 import { useUiVariant } from '@/ui-variants';
 import type { ReportSummary } from '@/types';
 
@@ -14,6 +15,7 @@ function ReportBlock({ title, queryKey, path }: { title: string; queryKey: strin
     queryKey: ['report', queryKey],
     queryFn: () => apiRequest<ReportSummary>(path),
   });
+  const toast = useToast();
 
   const data = query.data;
 
@@ -23,7 +25,7 @@ function ReportBlock({ title, queryKey, path }: { title: string; queryKey: strin
         <h3 className="text-lg font-semibold text-white">{title}</h3>
         <button
           type="button"
-          onClick={() => void downloadAuthedDocument(`/api/reports/export?period=${queryKey}&format=xlsx`, `seroguld-${queryKey}-report.xlsx`)}
+          onClick={() => void downloadAuthedDocument(`/api/reports/export?period=${queryKey}&format=xlsx`, `seroguld-${queryKey}-report.xlsx`).catch((error: unknown) => toast.error('Rapor indirilemedi', localizeApiError(error)))}
           className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-brand-100 transition hover:bg-white/10"
         >
           XLSX Al
@@ -52,6 +54,7 @@ function ReportBlock({ title, queryKey, path }: { title: string; queryKey: strin
 
 export function ReportsPage() {
   const { variant } = useUiVariant();
+  const toast = useToast();
   const daily = useQuery({ queryKey: ['report', 'daily'], queryFn: () => apiRequest<ReportSummary>('/api/reports/daily') });
   const weekly = useQuery({ queryKey: ['report', 'weekly'], queryFn: () => apiRequest<ReportSummary>('/api/reports/weekly') });
   const monthly = useQuery({ queryKey: ['report', 'monthly'], queryFn: () => apiRequest<ReportSummary>('/api/reports/monthly') });
@@ -62,7 +65,7 @@ export function ReportsPage() {
       label,
       summary: query.data || EMPTY_REPORT,
       availability: query.isError ? { state: 'unavailable' as const, title: 'Rapor alınamadı', description: query.error instanceof Error ? query.error.message : 'Transport error' } : { state: 'available' as const },
-      onExport: () => void downloadAuthedDocument(`/api/reports/export?period=${id}&format=xlsx`, `seroguld-${id}-report.xlsx`),
+      onExport: () => void downloadAuthedDocument(`/api/reports/export?period=${id}&format=xlsx`, `seroguld-${id}-report.xlsx`).catch((error: unknown) => toast.error('Rapor indirilemedi', localizeApiError(error))),
     });
     return (
       <ModernReportsHealthPage

@@ -27,6 +27,9 @@ import {
 } from 'lucide-react';
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { localizeApiError } from '@/lib/api';
+import { useToast } from '@/lib/toast';
+import { openExternalUrl } from '@/lib/desktop';
 import {
   ModernBadge,
   ModernButton,
@@ -300,7 +303,7 @@ export function PhotosTab({ state }: { state: WooMakeState }) {
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-sg-text">Ürün fotoğrafları</h3><p className="mt-1 text-sm text-sg-text-soft">Siteye AVIF olarak gönderilir (yedek format da hazır tutulur). JPG, PNG, WEBP, HEIC (iPhone) — en çok {PHOTO_MAX_SIZE_MB} MB. Tıklayarak seçin veya sürükleyip bırakın.</p></div><ModernButton tone="primary" icon={Upload} disabled={state.isUploadingPhotos} onClick={() => inputRef.current?.click()}>{state.isUploadingPhotos ? 'Yükleniyor…' : 'Fotoğraf yükle'}</ModernButton></div>
       <input ref={inputRef} type="file" multiple accept={PHOTO_ACCEPT_ATTR} className="hidden" onChange={handleFiles} />
-      {photos.length === 0 ? <ModernEmptyState title="Fotoğraf yok" description="Yayın için en az bir fotoğraf yükleyin." action={<ModernButton tone="primary" icon={Upload} onClick={() => inputRef.current?.click()}>İlk fotoğrafı yükle</ModernButton>} /> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{photos.map((photo, index) => <div key={`${photo.id || photo.original_url || photo.url || photo.filename || 'photo'}:${index}`} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><WooPhotoThumb photo={photo} alt={detail.display_name || 'Ürün fotoğrafı'} className="h-full w-full object-cover" />{photo.is_primary || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2">Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/35 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => window.open(buildMediaUrl(photo.original_url || photo.url), '_blank', 'noopener,noreferrer')}>Aç</ModernButton>{photo.id ? <ModernButton aria-label="Fotoğrafı sil" size="sm" tone="danger" icon={Trash2} disabled={state.isDeletingPhoto} onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.deletePhoto(photo.id!); }}>Sil</ModernButton> : null}</div></div><p className="truncate px-3 py-2 text-xs text-sg-text-soft">{photo.filename || 'Fotoğraf'}</p></div>)}</div>}
+      {photos.length === 0 ? <ModernEmptyState title="Fotoğraf yok" description="Yayın için en az bir fotoğraf yükleyin." action={<ModernButton tone="primary" icon={Upload} onClick={() => inputRef.current?.click()}>İlk fotoğrafı yükle</ModernButton>} /> : <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{photos.map((photo, index) => <div key={`${photo.id || photo.original_url || photo.url || photo.filename || 'photo'}:${index}`} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><WooPhotoThumb photo={photo} alt={detail.display_name || 'Ürün fotoğrafı'} className="h-full w-full object-cover" />{photo.is_primary || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2">Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/35 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => void openExternalUrl(buildMediaUrl(photo.original_url || photo.url))}>Aç</ModernButton>{photo.id ? <ModernButton aria-label="Fotoğrafı sil" size="sm" tone="danger" icon={Trash2} disabled={state.isDeletingPhoto} onClick={() => { if (window.confirm('Bu fotoğraf silinsin mi?')) state.deletePhoto(photo.id!); }}>Sil</ModernButton> : null}</div></div><p className="truncate px-3 py-2 text-xs text-sg-text-soft">{photo.filename || 'Fotoğraf'}</p></div>)}</div>}
     </div>
   );
 }
@@ -347,6 +350,7 @@ type PublishPreviewData = {
 
 function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
   // Hooks erken dönüşten ÖNCE gelmeli.
+  const toast = useToast();
   const [publishPreview, setPublishPreview] = useState<PublishPreviewData | null>(null);
   const detail = state.detail;
   if (!detail) return <ModernLoadingState title="Yayın alanı hazırlanıyor" />;
@@ -428,9 +432,13 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
             // R1-10: yayın öncesi şablon önizleme — panelin güncel (kaydedilmemiş
             // dahil) durumuyla; saf payload, Woo'ya istek atılmaz.
             void (async () => {
-              const preview = await state.fetchPublishPreview();
-              if (preview) setPublishPreview(preview);
-              else window.alert('Önizleme alınamadı.');
+              try {
+                const preview = await state.fetchPublishPreview();
+                if (preview) setPublishPreview(preview);
+                else toast.error('Önizleme alınamadı');
+              } catch (error) {
+                toast.error('Önizleme alınamadı', localizeApiError(error));
+              }
             })();
           }}
         >

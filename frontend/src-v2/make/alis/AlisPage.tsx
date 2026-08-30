@@ -1,7 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 
-import { apiRequest } from '@/lib/api';
+import { apiRequest, localizeApiError } from '@/lib/api';
 import { FIRMA } from '@/lib/firma';
+import { useToast } from '@/lib/toast';
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -1253,15 +1255,19 @@ function WorkspaceExcelSurface({ workspaceId }: { workspaceId: string }) {
 function StartWorkspaceView(props: StartWorkspaceViewProps) {
   // B5: toplu eslestirme sonrasi liste/musteri onbelleklerini tazelemek icin.
   const queryClient = useQueryClient();
+  const toast = useToast();
   // R2-14: sol menü "AFG Belgeleri" girişi ?view=belgeler ile gelir — belge
-  // listesi bölümüne kaydır.
+  // listesi bölümüne kaydır. Hash router altında search yalnızca router
+  // state'inden okunur; window.location.search her zaman boş kalır.
+  const [searchParams] = useSearchParams();
+  const belgelerView = searchParams.get('view') === 'belgeler';
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('view') === 'belgeler') {
-      window.setTimeout(() => {
-        document.getElementById('afg-belgeler-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 150);
-    }
-  }, []);
+    if (!belgelerView) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById('afg-belgeler-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [belgelerView]);
   const {
     draftWorkspace,
     onResumeDraft,
@@ -1497,14 +1503,15 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
                       '/api/v2/alis/documents/auto-link-customers',
                       { method: 'POST' },
                     );
-                    window.alert(
-                      `Toplu eşleştirme: ${result.scanned} bağlantısız tarihsel belge tarandı — ` +
+                    toast.success(
+                      'Toplu eşleştirme tamamlandı',
+                      `${result.scanned} bağlantısız tarihsel belge tarandı — ` +
                         `${result.linked} bağlandı, ${result.ambiguous} belirsiz (birden çok aday), ${result.unmatched} eşleşmedi.`,
                     );
                     await queryClient.invalidateQueries({ queryKey: ['pos'] });
                     await queryClient.invalidateQueries({ queryKey: ['customers'] });
-                  } catch {
-                    window.alert('Toplu eşleştirme çalıştırılamadı.');
+                  } catch (error) {
+                    toast.error('Toplu eşleştirme çalıştırılamadı.', localizeApiError(error));
                   }
                 })();
               }}

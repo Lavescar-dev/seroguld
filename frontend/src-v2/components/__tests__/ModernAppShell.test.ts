@@ -7,8 +7,12 @@ describe('ModernAppShell route metadata', () => {
     expect(resolveRouteMeta('/opmc/37866')).toMatchObject({ eyebrow: 'Risk', title: 'OPMC / Risk' });
   });
 
+  it('returns dedicated metadata for the reports route', () => {
+    expect(resolveRouteMeta('/reports')).toMatchObject({ eyebrow: 'Raporlama', title: 'Raporlar' });
+  });
+
   it('falls back safely for removed module routes', () => {
-    expect(resolveRouteMeta('/reports')).toMatchObject({ eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı' });
+    expect(resolveRouteMeta('/removed-module')).toMatchObject({ eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı' });
     expect(resolveRouteMeta('/unknown')).toMatchObject({ eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı' });
   });
 });

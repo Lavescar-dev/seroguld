@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
-import { apiRequest } from '@/lib/api';
+import { apiRequest, localizeApiError } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 import type { CustomerDetailOut, CustomerOut, LogWorkspace, PaginatedResponse, PosDocumentDetail, PosDocumentListItem } from '@/types';
 
 import { EMPTY_DRAFT, type CustomerDraft, type CustomerHistoryLogMeta, type CustomersPageProps } from './types';
@@ -23,6 +24,7 @@ function cleanDraft(draft: CustomerDraft) {
 
 export function useCustomersMakeState(): CustomersPageProps {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
@@ -103,6 +105,9 @@ export function useCustomersMakeState(): CustomersPageProps {
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
       await queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
     },
+    onError: (error) => {
+      toast.error('Müşteri oluşturulamadı', localizeApiError(error));
+    },
   });
 
   const updateMutation = useMutation({
@@ -115,6 +120,9 @@ export function useCustomersMakeState(): CustomersPageProps {
       setEditingId(null);
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
       await queryClient.invalidateQueries({ queryKey: ['customers', 'detail', customerId] });
+    },
+    onError: (error) => {
+      toast.error('Müşteri güncellenemedi', localizeApiError(error));
     },
   });
 
@@ -132,6 +140,9 @@ export function useCustomersMakeState(): CustomersPageProps {
       }
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
       await queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
+    },
+    onError: (error) => {
+      toast.error('Müşteri pasife alınamadı', localizeApiError(error));
     },
   });
 
@@ -250,9 +261,11 @@ export function useCustomersMakeState(): CustomersPageProps {
     newDraft,
     onNewDraftChange: (field, value) => setNewDraft((current) => ({ ...current, [field]: value })),
     onSaveNew: () => createMutation.mutate(),
+    isSavingNew: createMutation.isPending,
     editDraft,
     onEditDraftChange: (field, value) => setEditDraft((current) => ({ ...current, [field]: value })),
     onSaveEdit: (customerId) => updateMutation.mutate(customerId),
+    isUpdatingCustomer: updateMutation.isPending,
     onCancelEdit: () => setEditingId(null),
     onStartEdit: (customer) => {
       setEditingId(customer.id);
@@ -270,6 +283,7 @@ export function useCustomersMakeState(): CustomersPageProps {
       });
     },
     onDelete: (customer) => deleteMutation.mutate(customer.id),
+    isDeletingCustomer: deleteMutation.isPending,
     selectedCustomer,
     historyItems,
     historySummary,

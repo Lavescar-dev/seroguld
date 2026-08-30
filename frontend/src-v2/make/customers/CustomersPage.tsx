@@ -19,13 +19,14 @@ import {
   X,
 } from 'lucide-react';
 
-import { printAuthedDocument } from '@/lib/api';
+import { printAuthedDocument, localizeApiError } from '@/lib/api';
 import {
   formatDate,
   formatMoney,
   formatNumber,
   labelProductType,
 } from '@/lib/format';
+import { useToast } from '@/lib/toast';
 import type { CustomerOut, PosDocumentDetail, PosDocumentListItem } from '@/types';
 
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -86,12 +87,14 @@ function DraftRow({
   onSave,
   onCancel,
   saveLabel,
+  isSaving,
 }: {
   draft: CustomerDraft;
   onChange: (field: keyof CustomerDraft, value: string) => void;
   onSave: () => void;
   onCancel: () => void;
   saveLabel: string;
+  isSaving?: boolean;
 }) {
   return (
     <tr className="bg-amber-50">
@@ -134,7 +137,7 @@ function DraftRow({
       <td className="border border-brand-300 px-2 py-2 text-xs text-brand-500">{saveLabel}</td>
       <td className="border border-brand-300 px-2 py-2">
         <div className="flex items-center justify-center space-x-1">
-          <button type="button" aria-label={`${saveLabel} kaydet`} title={`${saveLabel} kaydet`} onClick={onSave} className="p-1 text-green-700 transition-colors hover:text-green-900">
+          <button type="button" aria-label={`${saveLabel} kaydet`} title={`${saveLabel} kaydet`} onClick={onSave} disabled={isSaving} className="p-1 text-green-700 transition-colors hover:text-green-900 disabled:cursor-not-allowed disabled:opacity-50">
             <Check className="h-4 w-4" />
           </button>
           <button type="button" aria-label="Düzenlemeyi iptal et" title="Düzenlemeyi iptal et" onClick={onCancel} className="p-1 text-brand-400 transition-colors hover:text-brand-700">
@@ -157,6 +160,7 @@ function AfgPreviewModal({
   isLoading: boolean;
   onClose: () => void;
 }) {
+  const toast = useToast();
   const totalGold = detail?.lines
     .filter((line) => line.metal_type !== 'silver')
     .reduce((sum, line) => sum + Number(line.weight_grams || 0), 0) ?? 0;
@@ -181,7 +185,13 @@ function AfgPreviewModal({
             {detail ? (
               <button
                 type="button"
-                onClick={() => void printAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=html`)}
+                onClick={async () => {
+                  try {
+                    await printAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=html`);
+                  } catch (error) {
+                    toast.error('Fiş yazdırılamadı', localizeApiError(error));
+                  }
+                }}
                 className="flex items-center gap-1.5 bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-amber-700"
               >
                 <Printer className="h-3.5 w-3.5" />
@@ -397,6 +407,7 @@ function FragmentRow({
   onToggle: () => void;
   onPreview: () => void;
 }) {
+  const toast = useToast();
   const goldLines = detail?.lines.filter((line) => line.metal_type !== 'silver') ?? [];
   const silverLines = detail?.lines.filter((line) => line.metal_type === 'silver') ?? [];
 
@@ -519,9 +530,13 @@ function FragmentRow({
                 {detail ? (
                   <button
                     type="button"
-                    onClick={(event) => {
+                    onClick={async (event) => {
                       event.stopPropagation();
-                      void printAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=html`);
+                      try {
+                        await printAuthedDocument(`/api/pos/sessions/${detail.session_id}/receipt?audience=admin&format=html`);
+                      } catch (error) {
+                        toast.error('Fiş yazdırılamadı', localizeApiError(error));
+                      }
                     }}
                     className="flex items-center gap-1.5 bg-amber-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-amber-700"
                   >
@@ -554,12 +569,15 @@ export function CustomersPage({
   newDraft,
   onNewDraftChange,
   onSaveNew,
+  isSavingNew,
   editDraft,
   onEditDraftChange,
   onSaveEdit,
+  isUpdatingCustomer,
   onCancelEdit,
   onStartEdit,
   onDelete,
+  isDeletingCustomer,
   selectedCustomer,
   historyItems,
   historySummary,
@@ -659,6 +677,7 @@ export function CustomersPage({
                     onSave={onSaveNew}
                     onCancel={onToggleNewRow}
                     saveLabel="Yeni"
+                    isSaving={isSavingNew}
                   />
                 ) : null}
 
@@ -688,6 +707,7 @@ export function CustomersPage({
                         onSave={() => onSaveEdit(customer.id)}
                         onCancel={onCancelEdit}
                         saveLabel={formatDate(customer.created_at)}
+                        isSaving={isUpdatingCustomer}
                       />
                     );
                   }
@@ -750,7 +770,8 @@ export function CustomersPage({
                               if (!ok) return;
                               onDelete(customer);
                             }}
-                            className={`p-1 transition-colors ${isSelected ? 'text-red-300 hover:text-red-100' : 'text-red-400 hover:text-red-700'}`}
+                            disabled={isDeletingCustomer}
+                            className={`p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${isSelected ? 'text-red-300 hover:text-red-100' : 'text-red-400 hover:text-red-700'}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>

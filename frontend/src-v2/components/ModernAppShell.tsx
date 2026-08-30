@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  BarChart3,
   Building2,
   Database,
   FileText,
@@ -27,6 +28,7 @@ import type { ReturnTypeOfRootMakeState } from './modernShellTypes';
 const routeMeta: Record<string, { eyebrow: string; title: string; description: string }> = {
   '/': { eyebrow: 'Alış / POS / AFG', title: 'Yeni alış çalışma alanı', description: 'Müşteri, metal satırları, teklif ve AFG belgesi tek ekranda.' },
   '/dashboard': { eyebrow: 'Operasyon Merkezi', title: 'Genel Bakış', description: 'Bugünün kayıtları, bekleyen işler ve entegrasyon sağlığı tek operasyon bağlamında.' },
+  '/reports': { eyebrow: 'Raporlama', title: 'Raporlar', description: 'Günlük, haftalık ve aylık özetler ile XLSX dışa aktarımı.' },
   '/depolama': { eyebrow: 'Lager', title: 'Depolama', description: 'Stok, ürün ilişkileri ve workbook işlemleri.' },
   '/log': { eyebrow: 'AFG Defteri', title: 'Log ve melt akışı', description: 'AFG satırlarını Depolama, Kararsız ve Eritme hedeflerine yönetin.' },
   '/musteriler': { eyebrow: 'Kundedatabase', title: 'Müşteriler', description: 'Müşteri kayıtları, belge geçmişi ve hassas veri kontrolleri.' },
@@ -76,22 +78,34 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
   }, [state.officeDock.document]);
 
   const navGroups = useMemo<ModernShellNavGroup[]>(() => {
-    const item = (path: string, label: string, caption: string, Icon: typeof Package, badge?: number) => ({
+    const item = (path: string, label: string, caption: string, Icon: typeof Package, badge?: number, activeOverride?: boolean) => ({
       key: path,
       label,
       caption,
       icon: <Icon className="h-4 w-4" />,
       badge: badge || undefined,
-      active: activePath(location.pathname, path),
+      active: activeOverride ?? activePath(location.pathname, path),
       onSelect: () => navigate(path),
     });
+    // R2-14: '/' ile '/?view=belgeler' aynı pathname'i paylaştığından iki öğe
+    // birden aktif kalmasın — belgeler görünümü aktif öğeyi tek başına belirler.
+    const isRootPath = location.pathname === '/';
+    const belgelerViewActive = isRootPath && new URLSearchParams(location.search).get('view') === 'belgeler';
     return [
       {
         label: t('navigation.operations'),
         items: [
           item('/dashboard', t('navigation.dashboard'), 'İş kutusu', LayoutDashboard),
-          item('/', t('navigation.purchase'), 'AFG workspace', Package, state.stats.alisList),
-          item('/?view=belgeler', 'AFG Belgeleri', 'Købsjournaler', FileText, state.stats.alisList),
+          item('/reports', 'Raporlar', 'Gunluk / XLSX', BarChart3),
+          item('/', t('navigation.purchase'), 'AFG workspace', Package, state.stats.alisList, isRootPath && !belgelerViewActive),
+          item(
+            '/?view=belgeler',
+            'AFG Belgeleri',
+            'Købsjournaler',
+            FileText,
+            state.stats.alisList,
+            belgelerViewActive,
+          ),
           item('/musteriler', t('navigation.customers'), 'Kundedatabase', Users, state.stats.customerCount),
           item('/depolama', t('navigation.inventory'), 'Lager / ürün', Database, state.stats.depoCount),
           item('/log', 'Log / AFG Defteri', 'AFG → melt', FileText, state.stats.logCount),
@@ -113,7 +127,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         ],
       },
     ];
-  }, [location.pathname, navigate, state.stats, t]);
+  }, [location.pathname, location.search, navigate, state.stats, t]);
 
   const runtimeRows = useMemo<ModernShellRuntimeRow[]>(() => {
     const rows: ModernShellRuntimeRow[] = [];

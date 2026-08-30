@@ -70,7 +70,7 @@ coverage/
 # =========================
 # Local audit/report output (never source-controlled)
 # =========================
-.ai/reports/seroguld-crm-*/
+.ai/reports/
 frontend/.seroguld-ui-check*
 
 # =========================

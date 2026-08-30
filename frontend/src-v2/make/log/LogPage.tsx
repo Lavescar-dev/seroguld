@@ -201,13 +201,13 @@ function summaryCards(bucket: LogBucketWorkspace | undefined, totalDocuments: nu
   ];
 }
 
-function bucketMeta(activeTab: LogActiveTab) {
+function bucketMeta(activeTab: LogActiveTab, selectedYear: number) {
   if (activeTab === 'silver') {
     return {
       badge: 'AG',
       label: 'Sølv — Gümüş',
-      subLabel: 'År 2026',
-      mainLabel: 'Ana Alış Logu — AG Sølv / År 2026',
+      subLabel: `År ${selectedYear}`,
+      mainLabel: `Ana Alış Logu — AG Sølv / År ${selectedYear}`,
       pureHeader: 'Has Gümüş (g)',
       emptyTitle: 'Henüz gümüş log kaydı yok',
       emptySubtitle: 'Gümüş alış kayıtları geldikçe burada belge havuzu oluşacak.',
@@ -217,8 +217,8 @@ function bucketMeta(activeTab: LogActiveTab) {
   return {
     badge: 'AU',
     label: 'Guld — Altın',
-    subLabel: 'År 2026',
-    mainLabel: 'Ana Alış Logu — AU Guld / År 2026',
+    subLabel: `År ${selectedYear}`,
+    mainLabel: `Ana Alış Logu — AU Guld / År ${selectedYear}`,
     pureHeader: 'Has Altın (g)',
     emptyTitle: 'Henüz altın log kaydı yok',
     emptySubtitle: 'Alış finalize edildiğinde burada belge havuzu oluşacak.',
@@ -381,6 +381,7 @@ export function LogPage({
         <BucketWorkspaceView
           activeTab={activeTab}
           bucket={activeBucket}
+          selectedYear={selectedYear}
           expandedDocument={expandedDocument}
           query={query}
           showMeltSection={showMeltSection}
@@ -722,6 +723,7 @@ function LogExcelSurface({ year }: { year: number }) {
 function BucketWorkspaceView({
   activeTab,
   bucket,
+  selectedYear,
   expandedDocument,
   query,
   showMeltSection,
@@ -752,6 +754,7 @@ function BucketWorkspaceView({
 }: {
   activeTab: LogActiveTab;
   bucket: LogBucketWorkspace;
+  selectedYear: number;
   expandedDocument: number | null;
   query: string;
   showMeltSection: boolean;
@@ -780,7 +783,7 @@ function BucketWorkspaceView({
   onOpenLotHistory: (lotId: string) => void;
   onOpenLotLines: (lotId: string) => void;
 }) {
-  const meta = bucketMeta(activeTab);
+  const meta = bucketMeta(activeTab, selectedYear);
   const documents = bucket.documents;
   const grandTotals = useMemo(
     () =>

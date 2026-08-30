@@ -26,6 +26,7 @@ import {
 import { formatMoney, formatNumber, formatRelativeTime, labelProductType, labelMetalType } from '@/lib/format';
 import { validateCpr } from '@/lib/cpr';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
+import { RelinkCustomerModal } from '@/make/alis/RelinkCustomerModal';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import { normalizePostalCode, useAddressAutocomplete } from '@/make/alis/addressAutocomplete';
@@ -1093,8 +1094,12 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
   const canRetry = document.uniconta_sync_status === 'failed' || document.uniconta_sync_status === 'skipped';
   const menuButton = 'flex w-full items-center gap-2 rounded-sg-sm px-3 py-2 text-left text-sm font-medium text-sg-text transition hover:bg-sg-surface-soft disabled:cursor-not-allowed disabled:opacity-40';
   const closeMenu = (element: HTMLElement) => element.closest('details')?.removeAttribute('open');
+  // md10/R2-17: müşteri bağlantısı olmayan (ör. tarihsel içe aktarılmış) belgede
+  // "Müşteriyi aç" / "Yeni alış başlat" yerine belgeyi müşteriye bağlama modalı açılır.
+  const [relinkOpen, setRelinkOpen] = useState(false);
   return (
-    <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+    <>
+      <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
       <button type="button" onClick={() => state.onViewDocument(document)} className={shellButtonClass('secondary')}>Detay</button>
       <button type="button" onClick={() => state.onOpenDocumentExcelPreview(document)} className={shellButtonClass('ghost')}><FileSpreadsheet className="h-3.5 w-3.5" />Office</button>
       <details className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.removeAttribute('open'); }}>
@@ -1102,8 +1107,8 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
         <div className="absolute right-0 top-full z-40 mt-2 w-52 rounded-sg-md border border-sg-border bg-sg-surface p-1.5 shadow-xl">
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onExportDocument(document); }} disabled={busy} className={menuButton}><Download className="h-4 w-4" />Dışa aktar</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onPrintDocument(document); }} disabled={busy} className={menuButton}><Printer className="h-4 w-4" />Yazdır</button>
-          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onOpenCustomer(document); }} disabled={busy || !document.customer_id} title={!document.customer_id ? 'Bu belgede müşteri bağlantısı yok' : undefined} className={menuButton}><Users className="h-4 w-4" />Müşteriyi aç</button>
-          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onStartFromCustomer(document); }} disabled={busy || !document.customer_id} title={!document.customer_id ? 'Yeni alış için müşteri bağlantısı gerekli' : undefined} className={menuButton}><Plus className="h-4 w-4" />Yeni alış başlat</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); if (document.customer_id) state.onOpenCustomer(document); else setRelinkOpen(true); }} disabled={busy} title={document.customer_id ? undefined : 'Müşteri bağlantısı yok — önce belgeyi müşteriye bağlayın'} className={menuButton}><Users className="h-4 w-4" />Müşteriyi aç</button>
+          <button type="button" onClick={(event) => { closeMenu(event.currentTarget); if (document.customer_id) state.onStartFromCustomer(document); else setRelinkOpen(true); }} disabled={busy} title={document.customer_id ? undefined : 'Yeni alış için önce belgeyi müşteriye bağlayın'} className={menuButton}><Plus className="h-4 w-4" />Yeni alış başlat</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onEditDocument(document); }} disabled={busy || !document.can_edit} title={!document.can_edit ? 'Bu belge düzenlenebilir değil' : undefined} className={menuButton}><Pencil className="h-4 w-4" />Düzenle</button>
           <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onDeleteDocument(document); }} disabled={busy || !document.can_delete} title={!document.can_delete ? 'Bu belge silinebilir değil' : undefined} className={`${menuButton} text-sg-red`}><Trash2 className="h-4 w-4" />Sil</button>
           {canRetry ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); state.onRetryUnicontaSync(document); }} disabled={state.retryPendingSequenceNo === document.sequence_no} className={menuButton}><RefreshCcw className="h-4 w-4" />Uniconta tekrar</button> : null}
@@ -1121,7 +1126,9 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
           ) : null}
         </div>
       </details>
-    </div>
+      </div>
+      {relinkOpen ? <RelinkCustomerModal document={document} onClose={() => setRelinkOpen(false)} /> : null}
+    </>
   );
 }
 

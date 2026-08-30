@@ -52,12 +52,15 @@ export interface CustomersPageProps {
   newDraft: CustomerDraft;
   onNewDraftChange: (field: keyof CustomerDraft, value: string) => void;
   onSaveNew: () => void;
+  isSavingNew: boolean;
   editDraft: CustomerDraft;
   onEditDraftChange: (field: keyof CustomerDraft, value: string) => void;
   onSaveEdit: (customerId: string) => void;
+  isUpdatingCustomer: boolean;
   onCancelEdit: () => void;
   onStartEdit: (customer: CustomerOut) => void;
   onDelete: (customer: CustomerOut) => void;
+  isDeletingCustomer: boolean;
   selectedCustomer: CustomerDetailOut | CustomerOut | null;
   historyItems: PosDocumentListItem[];
   historySummary: {
