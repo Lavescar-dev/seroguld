@@ -120,6 +120,10 @@ export interface NewWooProductDraft {
   wooYayin: WooYayinDurum;
   notlar: string;
   kategoriIds: number[];
+  // Woo otomatik metal fiyatı: markup YÜZDE olarak (35 = %35, backend
+  // fraksiyona çevirir), min fiyat opsiyonel taban.
+  wooMarkupRate: string;
+  wooMinPrice: string;
 }
 
 export interface WooCatalogStatus {
@@ -365,6 +369,8 @@ export function defaultNewWooProductDraft(): NewWooProductDraft {
     wooYayin: 'Taslak',
     notlar: '',
     kategoriIds: [],
+    wooMarkupRate: '',
+    wooMinPrice: '',
   };
 }
 
@@ -579,6 +585,9 @@ function toCreatePayload(draft: NewWooProductDraft) {
     seller_new: draft.satici.trim() ? { name: draft.satici.trim() } : null,
     notes: notes || null,
     shop_price_dkk: numeric(draft.satisHasJiyati) || null,
+    // Woo otomatik fiyat: yüzde girilir, backend ondalık fraksiyon saklar.
+    woo_markup_rate: numeric(draft.wooMarkupRate) > 0 ? numeric(draft.wooMarkupRate) / 100 : null,
+    woo_min_price_dkk: numeric(draft.wooMinPrice) || null,
     producer: draft.uretici.trim() || null,
     inventory_category: spec.inventory_category,
     inventory_subcategory: spec.inventory_subcategory,

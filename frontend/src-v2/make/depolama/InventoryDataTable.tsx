@@ -296,6 +296,25 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
       </span>
     ),
   });
+  baseColumns.push({
+    key: 'woo_fiyat',
+    label: 'Woo fiyatı (DKK)',
+    sortKey: 'woo_satis_fiyati',
+    className: `${TH} border-sky-300 bg-sky-50 text-right text-sky-800`,
+    align: 'right',
+    render: (item) =>
+      item.wooFiyati != null ? (
+        <span className="font-semibold text-sky-800" style={monoStyle}>
+          {item.wooFiyati.toFixed(0)}
+        </span>
+      ) : item.wooEksikAlanlar && item.wooEksikAlanlar.length ? (
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-700/70" title={`Eksik: ${item.wooEksikAlanlar.join(', ')}`}>
+          Eksik: {item.wooEksikAlanlar.join(', ')}
+        </span>
+      ) : (
+        <span className="text-brand-300">—</span>
+      ),
+  });
 
   if (kat === 'taki') {
     baseColumns.push({

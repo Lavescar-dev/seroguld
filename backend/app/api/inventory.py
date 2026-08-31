@@ -57,6 +57,29 @@ def _product_rate(product: Product, prices: InventoryMarketPricesOut) -> Decimal
     return quantize_2(prices.gold)
 
 
+def _woo_missing_fields(product: Product) -> list[str]:
+    """Woo otomatik fiyatı için eksik alanlar; tamamlanınca fiyat görünür."""
+    missing: list[str] = []
+    if product.metal_type is None:
+        missing.append("metal")
+    if product.weight_grams is None or to_decimal(product.weight_grams) <= 0:
+        missing.append("gram")
+    if product.purity_percentage is None or to_decimal(product.purity_percentage) <= 0:
+        missing.append("saflık")
+    if getattr(product, "woo_markup_rate", None) is None:
+        missing.append("markup")
+    return missing
+
+
+def _woo_satis_fiyati(product: Product, prices: InventoryMarketPricesOut) -> Decimal | None:
+    """spot × gram × saflık × (1 + markup) — WP eklentisiyle aynı formül."""
+    if _woo_missing_fields(product):
+        return None
+    purity = to_decimal(product.purity_percentage or 0) / Decimal("100")
+    markup = to_decimal(getattr(product, "woo_markup_rate") or 0)
+    return quantize_2(_product_rate(product, prices) * to_decimal(product.weight_grams) * purity * (Decimal("1") + markup))
+
+
 def _primary_photo_url(product: Product) -> str | None:
     photos = list(product.photos or [])
     if not photos:
@@ -128,6 +151,8 @@ def _inventory_row(product: Product, prices: InventoryMarketPricesOut, linked_id
         spot_degeri_dkk=spot_deger,
         shop_fiyati_dkk=(quantize_2(product.shop_price_dkk) if product.shop_price_dkk is not None else None),
         shop_sync_status=product.shop_sync_status,
+        woo_satis_fiyati_dkk=_woo_satis_fiyati(product, prices),
+        woo_eksik_alanlar=_woo_missing_fields(product),
         is_published_to_site=bool(product.is_published_to_site),
         is_woo_linked=(product.id in linked_ids) if linked_ids else False,
         length_cm=product.length_cm,

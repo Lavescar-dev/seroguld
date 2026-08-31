@@ -67,6 +67,9 @@ export interface StokItem {
   alisFiyati: number;
   shopFiyati?: number;
   shopDurumu?: ShopDurumu;
+  /** Woo otomatik fiyatı (spot × gram × saflık × (1+markup)) — backend hesaplar */
+  wooFiyati?: number;
+  wooEksikAlanlar?: string[];
   olcuUzunluk?: string;
   olcuGenislik?: number;
   olcuKalinlik?: number;
@@ -108,6 +111,7 @@ export type InventorySortKey =
   | 'toplam_gram'
   | 'alis_fiyati'
   | 'spot_degeri'
+  | 'woo_satis_fiyati'
   | 'shop_fiyati'
   | 'storage_location';
 

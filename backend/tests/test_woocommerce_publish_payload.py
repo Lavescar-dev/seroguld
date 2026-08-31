@@ -400,3 +400,56 @@ def test_spec_strip_wrapped_in_green_box() -> None:
     assert 'class="sg-spec-box"' in short
     assert short.count("sg-spec-box") == 1
     assert "Vare nr. : 1201" in short
+
+
+def test_metal_pricing_meta_emitted_with_product_markup() -> None:
+    """Woo otomatik fiyat: ürün bazlı markup + taban fiyat → WP meta sözleşmesi."""
+    product = _product(woo_markup_rate=Decimal("0.37"), woo_min_price_dkk=Decimal("15000"))
+    payload, _ = build_publish_payload(
+        product=product,
+        regular_price_dkk=Decimal("15543.00"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    meta = _meta_map(payload)
+    assert meta["_metal_type"] == "gold"
+    assert meta["_metal_weight"] == "19.65"
+    assert meta["_metal_weight_unit"] == "g"
+    assert meta["_metal_purity"] == "g.916"
+    assert meta["_markup_rate"] == "0.37"
+    assert meta["_markup_rate_2"] == "0"
+    assert meta["_metal_min_price"] == "15000.00"
+
+
+def test_metal_pricing_meta_settings_fallback_and_zero_skip() -> None:
+    # Ürün bazlı markup yok + settings 0 → anlamsız meta basılmaz.
+    payload, _ = build_publish_payload(
+        product=_product(),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(woocommerce_metal_markup_percent="0"),
+    )
+    assert "_markup_rate" not in _meta_map(payload)
+
+    # Settings default doluysa yüzde ondalık fraksiyona çevrilir (35 → 0.35).
+    payload2, _ = build_publish_payload(
+        product=_product(),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(woocommerce_metal_markup_percent="35"),
+    )
+    assert _meta_map(payload2)["_markup_rate"] == "0.35"
+
+
+def test_metal_pricing_meta_skipped_without_weight_or_purity() -> None:
+    payload, _ = build_publish_payload(
+        product=_product(woo_markup_rate=Decimal("0.37"), weight_grams=None, purity_percentage=None),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    assert "_metal_type" not in _meta_map(payload)

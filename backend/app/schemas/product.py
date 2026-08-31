@@ -67,6 +67,9 @@ class ProductCreate(AppBaseModel):
     needs_cleaning: bool = False
     shop_price_dkk: Decimal | None = Field(default=None, ge=0)
     shop_sync_status: str | None = Field(default=None, max_length=30)
+    # Woo otomatik metal fiyatı: markup ondalık fraksiyon (0.37 = %37).
+    woo_markup_rate: Decimal | None = Field(default=None, ge=0)
+    woo_min_price_dkk: Decimal | None = Field(default=None, ge=0)
     length_cm: str | None = Field(default=None, max_length=30)
     width_mm: Decimal | None = Field(default=None, ge=0)
     thickness_mm: Decimal | None = Field(default=None, ge=0)
@@ -99,6 +102,9 @@ class ProductUpdate(AppBaseModel):
     needs_cleaning: bool | None = None
     shop_price_dkk: Decimal | None = Field(default=None, ge=0)
     shop_sync_status: str | None = Field(default=None, max_length=30)
+    # Woo otomatik metal fiyatı: markup ondalık fraksiyon (0.37 = %37).
+    woo_markup_rate: Decimal | None = Field(default=None, ge=0)
+    woo_min_price_dkk: Decimal | None = Field(default=None, ge=0)
     length_cm: str | None = Field(default=None, max_length=30)
     width_mm: Decimal | None = Field(default=None, ge=0)
     thickness_mm: Decimal | None = Field(default=None, ge=0)
@@ -212,6 +218,8 @@ class ProductOut(AppBaseModel):
     needs_cleaning: bool
     shop_price_dkk: Decimal | None = None
     shop_sync_status: str | None = None
+    woo_markup_rate: Decimal | None = None
+    woo_min_price_dkk: Decimal | None = None
     length_cm: str | None = None
     width_mm: Decimal | None = None
     thickness_mm: Decimal | None = None

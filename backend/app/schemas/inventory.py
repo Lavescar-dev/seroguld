@@ -54,6 +54,10 @@ class InventoryGridRowOut(AppBaseModel):
     spot_degeri_dkk: Decimal
     shop_fiyati_dkk: Decimal | None = None
     shop_sync_status: str | None = None
+    # Woo otomatik fiyatı: metal/gram/saflık/markup doluysa hesaplanır;
+    # yoksa woo_eksik_alanlar listelenir (["metal","gram","saflık","markup"]).
+    woo_satis_fiyati_dkk: Decimal | None = None
+    woo_eksik_alanlar: list[str] = []
     is_published_to_site: bool = False
     # Woo katalog kaydına bağlı mı (linked_product_id == bu ürün)
     is_woo_linked: bool = False

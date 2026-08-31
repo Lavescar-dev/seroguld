@@ -94,6 +94,8 @@ function rowToStokItem(row: InventoryGridRow): StokItem {
     hasMetalGrams: row.has_metal_grams ? numeric(row.has_metal_grams) : undefined,
     toplamGram: numeric(row.toplam_gram),
     shopFark: row.shop_fiyati_dkk ? numeric(row.shop_fiyati_dkk) - spotDegeri : undefined,
+    wooFiyati: row.woo_satis_fiyati_dkk ? numeric(row.woo_satis_fiyati_dkk) : undefined,
+    wooEksikAlanlar: row.woo_eksik_alanlar || undefined,
     storageLocation: row.storage_location || undefined,
     isGdprLocked: row.is_gdpr_locked,
     productStatus: row.status,
@@ -290,6 +292,7 @@ const SORT_KEY_TO_FIELD: Record<InventorySortKey, (item: StokItem) => number | s
   toplam_gram: (item) => item.toplamGram ?? item.birimGram * item.adet,
   alis_fiyati: (item) => item.alisFiyati,
   spot_degeri: (item) => item.spotDegeri ?? 0,
+  woo_satis_fiyati: (item) => item.wooFiyati ?? 0,
   shop_fiyati: (item) => item.shopFiyati ?? 0,
   storage_location: (item) => (item.storageLocation || '').toLocaleLowerCase('tr'),
 };

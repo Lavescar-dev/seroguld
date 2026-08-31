@@ -6,6 +6,7 @@
 
 - i18n kataloğu tamamlandı: 248 eksik anahtar tr/en/da için dolduruldu, i18n doğrulama adımı yeşile döndü.
 - Alış çalışma alanında müşteri detach: `POST /alis/workspace/{id}/customer/detach` ile taslaktan müşteri bağlantısı sökülebiliyor (modern ve klasik UI'da "Seçimi kaldır"; onay diyaloglu). Metal satırları, oranlar ve notlar korunur.
+- Woo otomatik metal fiyatı: ürün sihirbazına Markup (%) + Min fiyat alanları ve canlı spotla **yayın öncesi fiyat önizlemesi** eklendi; yayında WP "Live Gold Price" eklentisinin meta sözleşmesi (`_metal_type/_metal_weight/_metal_purity/_markup_rate/...`) basılıp fiyatın WP tarafında da otomatik güncellenmesi sağlandı. Depo listesinde "Woo fiyatı" sütunu + eksik bilgi rozeti (`woo_markup_rate`/`woo_min_price_dkk` kolonları, 0040 migration).
 
 ### Düzeltildi
 

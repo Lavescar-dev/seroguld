@@ -623,6 +623,8 @@ export interface InventoryGridRow {
   spot_degeri_dkk: string;
   shop_fiyati_dkk?: string | null;
   shop_sync_status?: string | null;
+  woo_satis_fiyati_dkk?: string | null;
+  woo_eksik_alanlar?: string[] | null;
   is_published_to_site: boolean;
   length_cm?: string | null;
   width_mm?: string | null;

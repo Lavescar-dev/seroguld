@@ -90,6 +90,10 @@ class Product(Base):
     needs_cleaning: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     shop_price_dkk: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     shop_sync_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Woo otomatik metal fiyatı (WP "Live Gold Price" meta sözleşmesi):
+    # markup ondalık fraksiyon (0.37 = %37); NULL = settings default'u.
+    woo_markup_rate: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
+    woo_min_price_dkk: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     length_cm: Mapped[str | None] = mapped_column(String(30), nullable=True)
     width_mm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     thickness_mm: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)

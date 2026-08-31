@@ -748,6 +748,58 @@ def compute_suggested_shop_price(product: Product) -> tuple[Decimal | None, str 
     return price, None
 
 
+# WP "Live Gold Price" eklentisinin beklediği _metal_* meta sözleşmesi:
+# CRM metal enum'ları → eklenti metal adları.
+_WOO_METAL_TYPE_KEYS = {
+    "yellow_gold": "gold",
+    "white_gold": "gold",
+    "silver": "silver",
+    "platinum": "platinum",
+    "palladium": "palladium",
+}
+
+
+def _build_metal_pricing_meta(product: Product, settings) -> list[dict[str, str]]:
+    """Woo otomatik metal fiyatı meta grubu.
+
+    Operatör wp-admin'de bu alanları doldurunca eklenti canlı spotla ürün
+    fiyatını otomatik güncelliyor; CRM'den yayın yapılırken aynı alanları
+    basıyoruz ki fiyat WP tarafında da otomatik kalsın. Markup ondalık
+    fraksiyondur (0.37 = %37); ürün bazlı değeri yoksa settings
+    (woocommerce_metal_markup_percent) default'u kullanılır.
+    """
+    metal = getattr(product.metal_type, "value", str(product.metal_type or ""))
+    woo_metal = _WOO_METAL_TYPE_KEYS.get(metal)
+    weight = to_decimal(product.weight_grams) if product.weight_grams is not None else None
+    purity = to_decimal(product.purity_percentage) if product.purity_percentage is not None else None
+    markup = getattr(product, "woo_markup_rate", None)
+    if markup is None:
+        try:
+            markup = Decimal(str(getattr(settings, "woocommerce_metal_markup_percent", "0") or "0")) / Decimal("100")
+        except Exception:
+            markup = None
+    if not woo_metal or weight is None or weight <= 0 or purity is None or purity <= 0:
+        return []
+    # Markup 0/null ve taban fiyat yoksa meta seti boş kalır: eklentiye
+    # anlamsız "_markup_rate: 0" basılmaz, mevcut golden testler bozulmaz.
+    min_price = getattr(product, "woo_min_price_dkk", None)
+    if (markup is None or markup <= 0) and min_price is None:
+        return []
+
+    promille = int((purity * Decimal("10")).quantize(Decimal("1")))
+    meta: list[dict[str, str]] = [
+        {"key": "_metal_type", "value": woo_metal},
+        {"key": "_metal_weight", "value": str(weight)},
+        {"key": "_metal_weight_unit", "value": "g"},
+        {"key": "_metal_purity", "value": f"g.{promille:03d}"},
+        {"key": "_markup_rate", "value": str(markup)},
+        {"key": "_markup_rate_2", "value": "0"},
+    ]
+    if min_price is not None:
+        meta.append({"key": "_metal_min_price", "value": str(quantize_2(to_decimal(min_price)))})
+    return meta
+
+
 def build_publish_payload(
     *,
     product: Product,
@@ -877,6 +929,10 @@ def build_publish_payload(
     badge_meta, badge_warnings = _build_badge_meta(badge_config)
     payload["meta_data"].extend(badge_meta)
     warnings.extend(badge_warnings)
+
+    # Woo otomatik metal fiyatı: WP eklentisi bu meta'larla canlı spotla
+    # fiyatı güncellemeye devam eder.
+    payload["meta_data"].extend(_build_metal_pricing_meta(product, settings))
 
     # R1-21: "Nyhed" rozeti — checkbox işaretliyse _sg_nyhed=1 + bitiş tarihi
     # (yayın + woocommerce_new_badge_days gün); değilse republish rozetini

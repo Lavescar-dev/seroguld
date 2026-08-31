@@ -14,10 +14,12 @@ import {
   Search,
   Star,
   Trash2,
+  TrendingUp,
 } from 'lucide-react';
 
 import { formatMoney, formatNumber } from '@/lib/format';
 import { useToast } from '@/lib/toast';
+import { apiRequest } from '@/lib/api';
 import { openExternalUrl } from '@/lib/desktop';
 import {
   ModernBadge,
@@ -86,6 +88,55 @@ function validationError(draft: NewWooProductDraft, target: WizardStep) {
   return null;
 }
 
+type WooSpotRates = { gold_24k_dkk?: string; silver_dkk?: string; platinum_dkk?: string; palladium_dkk?: string };
+
+/** Canlı WP priser kaynağı (tek kaynak). */
+function useWooSpotRates() {
+  const [rates, setRates] = useState<WooSpotRates | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<WooSpotRates>('/api/v2/market-rates/defaults')
+      .then((data) => {
+        if (!cancelled) setRates(data);
+      })
+      .catch(() => {
+        // Sessiz: önizleme "oran yok" durumuna düşer, uydurma fiyat yok.
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return { rates, loading };
+}
+
+export function computeWooPricePreview(input: {
+  metal: string;
+  ayar: string;
+  agirlik: string;
+  wooMarkupRate: string;
+  rates: WooSpotRates | null;
+}): number | null {
+  const rates = input.rates;
+  if (!rates) return null;
+  const rate =
+    input.metal === 'Gümüş'
+      ? Number(rates.silver_dkk || '0')
+      : input.metal === 'Platin'
+        ? Number(rates.platinum_dkk || '0')
+        : input.metal === 'Palladyum'
+          ? Number(rates.palladium_dkk || '0')
+          : Number(rates.gold_24k_dkk || '0');
+  const weight = Number(input.agirlik || '0');
+  const purity = (Number(input.ayar || '0') || 0) / 1000;
+  const markup = (Number(input.wooMarkupRate || '0') || 0) / 100;
+  if (!rate || weight <= 0 || purity <= 0) return null;
+  return rate * weight * purity * (1 + markup);
+}
+
 export function ModernWooProductWizard({
   open,
   stokList,
@@ -133,6 +184,11 @@ export function ModernWooProductWizard({
     return stokList.filter((item) => !linkedStockIds.has(item.id) && (!query || [item.urun, item.stokNo || '', item.uretici || '', stockCategoryLabel(item)].join(' ').toLocaleLowerCase('tr-TR').includes(query)));
   }, [linkedStockIds, stockSearch, stokList]);
   const missingSeo = useMemo(() => missingSeoFields(form.seo as SeoBundle), [form.seo]);
+  const { rates: spotRates, loading: spotLoading } = useWooSpotRates();
+  const pricePreview = useMemo(
+    () => computeWooPricePreview({ metal: form.metal, ayar: form.ayar, agirlik: form.agirlik, wooMarkupRate: form.wooMarkupRate, rates: spotRates }),
+    [form.agirlik, form.ayar, form.metal, form.wooMarkupRate, spotRates],
+  );
 
   function patch(values: Partial<NewWooProductDraft>) {
     setForm((current) => ({ ...current, ...values }));
@@ -219,11 +275,30 @@ export function ModernWooProductWizard({
         <ModernField label="Ağırlık (g)"><ModernTextInput inputMode="decimal" value={form.agirlik} onChange={(event) => patch({ agirlik: event.target.value })} /></ModernField><ModernField label="Ayar / ‰"><ModernTextInput inputMode="numeric" value={form.ayar} onChange={(event) => patch({ ayar: event.target.value })} /></ModernField>
         <ModernField label="Alım fiyatı (DKK)"><ModernTextInput inputMode="decimal" value={form.alimFiyati} onChange={(event) => patch({ alimFiyati: event.target.value })} /></ModernField><ModernField label="Shop fiyatı (DKK)"><ModernTextInput inputMode="decimal" value={form.satisHasJiyati} onChange={(event) => patch({ satisHasJiyati: event.target.value })} /></ModernField>
         <ModernField label="Satıcı"><ModernTextInput value={form.satici} onChange={(event) => patch({ satici: event.target.value })} /></ModernField><ModernField label="Ref / stok no"><ModernTextInput value={form.stokNo} onChange={(event) => patch({ stokNo: event.target.value })} /></ModernField>
-      </div><ModernField label="Notlar"><ModernTextarea rows={4} value={form.notlar} onChange={(event) => patch({ notlar: event.target.value })} /></ModernField></div> : null}
+      </div>
+      <ModernCard className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><p className="text-sm font-semibold text-sg-text">Woo otomatik fiyat</p><p className="mt-1 text-xs text-sg-text-soft">Markup girilince fiyat hesaplanır; yayında WP canlı altın fiyatıyla güncellemeye devam eder.</p></div>
+          {pricePreview != null ? <ModernBadge tone="success"><TrendingUp className="h-3 w-3" />{formatMoney(pricePreview)}</ModernBadge> : null}
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <ModernField label="Markup (%)" hint="Örn. 4.63 bar, 35 takı için tipik."><ModernTextInput inputMode="decimal" value={form.wooMarkupRate} onChange={(event) => patch({ wooMarkupRate: event.target.value })} /></ModernField>
+          <ModernField label="Min fiyat (DKK, opsiyonel)"><ModernTextInput inputMode="decimal" value={form.wooMinPrice} onChange={(event) => patch({ wooMinPrice: event.target.value })} /></ModernField>
+        </div>
+        {pricePreview != null ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-sg-md border border-sg-green/25 bg-sg-green-soft px-3 py-2.5">
+            <div><p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sg-green-strong">Yayın öncesi fiyat önizlemesi</p><p className="mt-0.5 text-sm font-semibold text-sg-text">{formatMoney(pricePreview)} <span className="text-xs font-normal text-sg-text-soft">= canlı spot × ağırlık × saflık × (1 + markup)</span></p></div>
+            <ModernButton size="sm" tone="info" onClick={() => patch({ satisHasJiyati: pricePreview.toFixed(2) })}>Shop fiyatı olarak kullan</ModernButton>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-sg-text-soft">{spotLoading ? 'Canlı oran yükleniyor…' : form.metal === 'Gümüş' || form.metal === 'Altın' ? 'Fiyat önizlemesi için ağırlık, ayar ve markup girin.' : 'Platin/Pd için canlı oran tanımlı değil — fiyatı elle girin.'}</p>
+        )}
+      </ModernCard>
+      <ModernField label="Notlar"><ModernTextarea rows={4} value={form.notlar} onChange={(event) => patch({ notlar: event.target.value })} /></ModernField></div> : null}
 
       {step === 3 ? <div className="space-y-5"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Adım 3</p><h4 className="mt-1 text-lg font-semibold text-sg-text">AI & SEO</h4><p className="mt-1 text-sm text-sg-text-soft">Danca ürün açıklamasını oluşturun, kontrol edin ve onaylayın.</p></div><div className="flex flex-wrap gap-2"><ModernButton tone="info" icon={Bot} onClick={() => { const text = buildAiPreview(form); patch({ aiAciklama: text, seo: buildSeoPreview(form, text) }); }}>AI açıklama üret</ModernButton></div><ModernCheckboxField label="Oluştururken AI açıklamasını onayla" description="Doğrudan yayın için AI açıklamasının onaylı olması gerekir." checked={form.aiOnaylandi} onChange={(checked) => patch({ aiOnaylandi: checked })} /><ModernField label="AI açıklaması"><ModernTextarea rows={7} value={form.aiAciklama} onChange={(event) => patch({ aiAciklama: event.target.value })} /></ModernField><ModernCard className="p-0"><button type="button" onClick={() => setSeoOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-sg-surface"><div><p className="text-sm font-semibold text-sg-text">SEO paket kontrolü</p><p className="mt-1 text-xs text-sg-text-soft">Yayın için tüm SEO alanlarını doldurun.</p></div><div className="flex items-center gap-2"><ModernBadge tone={missingSeo.length ? 'warning' : 'success'}>{missingSeo.length ? `${missingSeo.length} eksik` : 'Tam'}</ModernBadge><ChevronDown className={`h-4 w-4 text-sg-text-soft transition ${seoOpen ? 'rotate-180' : ''}`} /></div></button>{seoOpen ? <div className="grid gap-4 border-t border-sg-border-soft p-4"><ModernField label="SEO title"><ModernTextInput value={form.seo.title} onChange={(event) => patch({ seo: { ...form.seo, title: event.target.value } })} /></ModernField><ModernField label="URL slug"><ModernTextInput value={form.seo.slug} onChange={(event) => patch({ seo: { ...form.seo, slug: event.target.value } })} /></ModernField><ModernField label="Kısa açıklama"><ModernTextarea rows={2} value={form.seo.kisaAciklama} onChange={(event) => patch({ seo: { ...form.seo, kisaAciklama: event.target.value } })} /></ModernField><ModernField label="Meta description"><ModernTextarea rows={2} value={form.seo.meta} onChange={(event) => patch({ seo: { ...form.seo, meta: event.target.value } })} /></ModernField><ModernField label="Uzun açıklama"><ModernTextarea rows={4} value={form.seo.uzunAciklama} onChange={(event) => patch({ seo: { ...form.seo, uzunAciklama: event.target.value } })} /></ModernField></div> : null}</ModernCard></div> : null}
 
-      {step === 4 ? <div className="space-y-5"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Adım 4</p><h4 className="mt-1 text-lg font-semibold text-sg-text">Fotoğraf & yayın</h4><p className="mt-1 text-sm text-sg-text-soft">Ürünü taslak olarak oluşturun veya yayın koşullarını tamamlayıp doğrudan yayınlayın.</p></div><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => patch({ wooYayin: 'Taslak' })} className={`rounded-sg-md border p-4 text-left ${form.wooYayin === 'Taslak' ? 'border-sg-accent bg-sg-accent-soft' : 'border-sg-border bg-sg-surface'}`}><p className="text-sm font-semibold text-sg-text">Taslak oluştur</p><p className="mt-1 text-xs text-sg-text-soft">Ürünü kaydet, yayın kararını daha sonra ver.</p></button><button type="button" onClick={() => patch({ wooYayin: 'Yayında' })} className={`rounded-sg-md border p-4 text-left ${form.wooYayin === 'Yayında' ? 'border-sg-green bg-sg-green-soft' : 'border-sg-border bg-sg-surface'}`}><p className="text-sm font-semibold text-sg-text">Oluşturunca yayınla</p><p className="mt-1 text-xs text-sg-text-soft">AI onayı, fotoğraf ve shop fiyatı gerekir.</p></button></div>{form.wooYayin === 'Yayında' ? <WooCategoryPicker categories={categories} selectedIds={form.kategoriIds} onToggle={(id) => patch({ kategoriIds: form.kategoriIds.includes(id) ? form.kategoriIds.filter((value) => value !== id) : [...form.kategoriIds, id] })} onRefresh={() => onRefreshCategories?.()} loading={categoriesLoading} error={categoriesError} variant="modern" /> : null}<div data-testid="wizard-photo-dropzone" onDragOver={(event) => { event.preventDefault(); setPhotoDragActive(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setPhotoDragActive(false); }} onDrop={(event) => { event.preventDefault(); setPhotoDragActive(false); addPhotoFiles(filesFromDataTransfer(event.dataTransfer)); }} className={`rounded-sg-md border-2 border-dashed p-3 transition ${photoDragActive ? 'border-sg-accent bg-sg-accent-soft' : 'border-sg-border'}`}><div className="flex flex-wrap items-center gap-3"><ModernButton tone="primary" icon={ImagePlus} onClick={() => fileInputRef.current?.click()}>Fotoğraf yükle</ModernButton><input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={addPhotos} /><span className="text-sm text-sg-text-soft">{photoDragActive ? 'Fotoğrafları buraya bırakın' : form.fotograflar.length ? `${form.fotograflar.length} fotoğraf eklendi` : 'Henüz fotoğraf eklenmedi · sürükleyip bırakabilirsiniz'}</span></div></div>{form.fotograflar.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{form.fotograflar.map((photo, index) => <div key={photo.id} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><img src={photo.url} alt={photo.name} className="h-full w-full object-cover" />{photo.birincil || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2"><Star className="h-3 w-3" />Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/45 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => {
+      {step === 4 ? <div className="space-y-5"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Adım 4</p><h4 className="mt-1 text-lg font-semibold text-sg-text">Fotoğraf & yayın</h4><p className="mt-1 text-sm text-sg-text-soft">Ürünü taslak olarak oluşturun veya yayın koşullarını tamamlayıp doğrudan yayınlayın.</p></div><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => patch({ wooYayin: 'Taslak' })} className={`rounded-sg-md border p-4 text-left ${form.wooYayin === 'Taslak' ? 'border-sg-accent bg-sg-accent-soft' : 'border-sg-border bg-sg-surface'}`}><p className="text-sm font-semibold text-sg-text">Taslak oluştur</p><p className="mt-1 text-xs text-sg-text-soft">Ürünü kaydet, yayın kararını daha sonra ver.</p></button><button type="button" onClick={() => patch({ wooYayin: 'Yayında' })} className={`rounded-sg-md border p-4 text-left ${form.wooYayin === 'Yayında' ? 'border-sg-green bg-sg-green-soft' : 'border-sg-border bg-sg-surface'}`}><p className="text-sm font-semibold text-sg-text">Oluşturunca yayınla</p><p className="mt-1 text-xs text-sg-text-soft">AI onayı, fotoğraf ve shop fiyatı gerekir.</p></button></div><WooCategoryPicker categories={categories} selectedIds={form.kategoriIds} onToggle={(id) => patch({ kategoriIds: form.kategoriIds.includes(id) ? form.kategoriIds.filter((value) => value !== id) : [...form.kategoriIds, id] })} onRefresh={() => onRefreshCategories?.()} loading={categoriesLoading} error={categoriesError} variant="modern" /><div data-testid="wizard-photo-dropzone" onDragOver={(event) => { event.preventDefault(); setPhotoDragActive(true); }} onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setPhotoDragActive(false); }} onDrop={(event) => { event.preventDefault(); setPhotoDragActive(false); addPhotoFiles(filesFromDataTransfer(event.dataTransfer)); }} className={`rounded-sg-md border-2 border-dashed p-3 transition ${photoDragActive ? 'border-sg-accent bg-sg-accent-soft' : 'border-sg-border'}`}><div className="flex flex-wrap items-center gap-3"><ModernButton tone="primary" icon={ImagePlus} onClick={() => fileInputRef.current?.click()}>Fotoğraf yükle</ModernButton><input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={addPhotos} /><span className="text-sm text-sg-text-soft">{photoDragActive ? 'Fotoğrafları buraya bırakın' : form.fotograflar.length ? `${form.fotograflar.length} fotoğraf eklendi` : 'Henüz fotoğraf eklenmedi · sürükleyip bırakabilirsiniz'}</span></div></div>{form.fotograflar.length ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{form.fotograflar.map((photo, index) => <div key={photo.id} className="group overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface"><div className="relative aspect-square bg-sg-surface-soft"><img src={photo.url} alt={photo.name} className="h-full w-full object-cover" />{photo.birincil || index === 0 ? <ModernBadge tone="warning" className="absolute left-2 top-2"><Star className="h-3 w-3" />Birincil</ModernBadge> : null}<div className="absolute inset-0 flex items-center justify-center gap-2 bg-sg-text/45 opacity-0 transition group-hover:opacity-100"><ModernButton aria-label="Fotoğrafı aç" size="sm" tone="ghost" icon={Eye} onClick={() => {
   // md3b: taslak fotoğrafı blob: (createObjectURL) olabilir — Rust
   // open_external_url yalnız http/https kabul eder; blob ise kullanıcıya söyle.
   try {

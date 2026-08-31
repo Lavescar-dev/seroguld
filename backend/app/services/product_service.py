@@ -292,6 +292,8 @@ def to_product_out(product: Product) -> ProductOut:
         needs_cleaning=product.needs_cleaning,
         shop_price_dkk=product.shop_price_dkk,
         shop_sync_status=product.shop_sync_status,
+        woo_markup_rate=getattr(product, "woo_markup_rate", None),
+        woo_min_price_dkk=getattr(product, "woo_min_price_dkk", None),
         length_cm=product.length_cm,
         width_mm=product.width_mm,
         thickness_mm=product.thickness_mm,
@@ -377,6 +379,8 @@ async def create_product(session: AsyncSession, payload: ProductCreate, actor_id
                 needs_cleaning=payload.needs_cleaning,
                 shop_price_dkk=(quantize_2(payload.shop_price_dkk) if payload.shop_price_dkk is not None else None),
                 shop_sync_status=payload.shop_sync_status,
+                woo_markup_rate=(payload.woo_markup_rate if payload.woo_markup_rate is not None else None),
+                woo_min_price_dkk=(quantize_2(payload.woo_min_price_dkk) if payload.woo_min_price_dkk is not None else None),
                 length_cm=payload.length_cm,
                 width_mm=(quantize_2(payload.width_mm) if payload.width_mm is not None else None),
                 thickness_mm=(quantize_2(payload.thickness_mm) if payload.thickness_mm is not None else None),
@@ -584,6 +588,10 @@ async def update_product(
         product.shop_price_dkk = quantize_2(payload.shop_price_dkk)
     if payload.shop_sync_status is not None:
         product.shop_sync_status = payload.shop_sync_status
+    if payload.woo_markup_rate is not None:
+        product.woo_markup_rate = payload.woo_markup_rate
+    if payload.woo_min_price_dkk is not None:
+        product.woo_min_price_dkk = quantize_2(payload.woo_min_price_dkk)
     if payload.clear_length_cm:
         product.length_cm = None
     elif payload.length_cm is not None:
