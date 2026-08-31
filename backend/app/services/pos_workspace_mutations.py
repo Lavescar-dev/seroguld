@@ -16,6 +16,7 @@ from app.models.pos_session_line import PosSessionLine
 from app.schemas.customer import CustomerUpdate
 from app.schemas.pos import (
     PosSessionCreate,
+    PosWorkspaceCustomerDetachRequest,
     PosWorkspaceCustomerSelectRequest,
     PosWorkspaceCustomerUpdate,
     PosWorkspaceFinalizeRequest,
@@ -280,6 +281,48 @@ async def select_purchase_workspace_customer(
     await session.commit()
     await session.refresh(pos_session)
     await core._emit_session_state(pos_session)
+    return await core.build_purchase_workspace(session, pos_session=pos_session)
+
+
+async def detach_purchase_workspace_customer(
+    session: AsyncSession,
+    *,
+    pos_session: PosSession,
+    payload: PosWorkspaceCustomerDetachRequest,
+    commit: bool = True,
+    emit: bool = True,
+) -> PosWorkspaceOut:
+    core = _core()
+    pos_session = await _lock_workspace_session(session, pos_session)
+    if pos_session.status != PosSessionStatusEnum.DRAFT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Yalnızca taslak alış çalışma alanı güncellenebilir.")
+
+    note_payload_now = core._parse_workspace_note_payload(pos_session.notes)
+    has_snapshot = core._workspace_draft_customer_from_note(note_payload_now) is not None
+    if pos_session.customer_id is None and not has_snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Çalışma alanına bağlı müşteri yok.",
+        )
+
+    pos_session.customer_id = None
+    pos_session.customer = None
+    note_payload = await _claim_workspace_revision(session, core, pos_session, payload.base_revision)
+    # Detach is a full unhook: the presence-aware snapshot key must be dropped
+    # (the serializer omits non-dict values) and the draft shadow cleared,
+    # exactly mirroring the reseed performed by select.
+    note_payload["workspace_customer"] = None
+    note_payload["draft_customer"] = {}
+    note_payload["workspace_customer_city"] = None
+    pos_session.notes = core._serialize_workspace_note_payload(note_payload)
+    pos_session.visible_snapshot = jsonable_encoder(core._to_display_out(pos_session))
+    if commit:
+        await session.commit()
+        await session.refresh(pos_session)
+        if emit:
+            await core._emit_session_state(pos_session)
+    else:
+        await session.flush()
     return await core.build_purchase_workspace(session, pos_session=pos_session)
 
 

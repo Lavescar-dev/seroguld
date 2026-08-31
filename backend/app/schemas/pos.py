@@ -358,6 +358,10 @@ class PosWorkspaceCustomerSelectRequest(AppBaseModel):
         return self
 
 
+class PosWorkspaceCustomerDetachRequest(AppBaseModel):
+    base_revision: int | None = Field(default=None, ge=1)
+
+
 class PosPostalLookupOut(AppBaseModel):
     postal_code: str
     found: bool = False

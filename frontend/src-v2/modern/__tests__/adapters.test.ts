@@ -70,6 +70,8 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     setNewCustomer: () => undefined,
     onSelectExistingCustomer: () => undefined,
     onCreateNewCustomer: () => undefined,
+    onDetachCustomer: () => undefined,
+    detachCustomerPending: false,
     customerForm: { name: '', email: '', phone: '', address: '', postal_code: '', city: '', cpr_number: '', identity_doc_type: '', identity_doc_number: '', identity_doc_country: '' },
     setCustomerForm: () => undefined,
     onCustomerBlur: () => undefined,

@@ -265,6 +265,8 @@ export type AlisPageProps = {
   setNewCustomer: Dispatch<SetStateAction<EditableCustomer>>;
   onSelectExistingCustomer: (customerId: string) => void;
   onCreateNewCustomer: (event: FormEvent) => void;
+  onDetachCustomer: () => void;
+  detachCustomerPending: boolean;
   customerForm: EditableCustomer;
   setCustomerForm: Dispatch<SetStateAction<EditableCustomer>>;
   onCustomerBlur: () => void;
@@ -376,6 +378,8 @@ export function AlisPage(props: AlisPageProps) {
     setNewCustomer,
     onSelectExistingCustomer,
     onCreateNewCustomer,
+    onDetachCustomer,
+    detachCustomerPending,
     customerForm,
     setCustomerForm,
     onCustomerBlur,
@@ -494,6 +498,8 @@ export function AlisPage(props: AlisPageProps) {
           setNewCustomer={setNewCustomer}
           onSelectExistingCustomer={onSelectExistingCustomer}
           onCreateNewCustomer={onCreateNewCustomer}
+          onDetachCustomer={onDetachCustomer}
+          detachCustomerPending={detachCustomerPending}
           customerForm={customerForm}
           setCustomerForm={setCustomerForm}
           onCustomerBlur={onCustomerBlur}
@@ -593,6 +599,8 @@ function ActiveWorkspaceView(props: {
   setNewCustomer: Dispatch<SetStateAction<EditableCustomer>>;
   onSelectExistingCustomer: (customerId: string) => void;
   onCreateNewCustomer: (event: FormEvent) => void;
+  onDetachCustomer: () => void;
+  detachCustomerPending: boolean;
   customerForm: EditableCustomer;
   setCustomerForm: Dispatch<SetStateAction<EditableCustomer>>;
   onCustomerBlur: () => void;
@@ -663,6 +671,8 @@ function ActiveWorkspaceView(props: {
     setNewCustomer,
     onSelectExistingCustomer,
     onCreateNewCustomer,
+    onDetachCustomer,
+    detachCustomerPending,
     customerForm,
     setCustomerForm,
     onCustomerBlur,
@@ -982,6 +992,12 @@ function ActiveWorkspaceView(props: {
                       setReplacingCustomer(true);
                       setCustomerMode('existing');
                     }}
+                    onDetach={() => {
+                      if (window.confirm('Müşteri seçimi kaldırılsın mı? Bu taslak çalışma alanından müşteri bağlantısı koparılır; yalnızca taslak alanına girilmiş müşteri bilgileri silinir, metal satırları ve notlar korunur.')) {
+                        onDetachCustomer();
+                      }
+                    }}
+                    detachPending={detachCustomerPending}
                   />
                   {customerDetailsOpen ? (
                     <>

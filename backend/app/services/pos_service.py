@@ -57,6 +57,7 @@ from app.schemas.pos import (
     PosRealtimePreviewLine,
     PosWorkspaceBankInfo,
     PosWorkspaceCustomerOut,
+    PosWorkspaceCustomerDetachRequest,
     PosWorkspaceCustomerSelectRequest,
     PosWorkspaceCustomerUpdate,
     PosWorkspaceFinalizeRequest,
@@ -1735,6 +1736,19 @@ async def select_purchase_workspace_customer(
     payload: PosWorkspaceCustomerSelectRequest,
 ) -> PosWorkspaceOut:
     return await pos_workspace_mutations.select_purchase_workspace_customer(
+        session,
+        pos_session=pos_session,
+        payload=payload,
+    )
+
+
+async def detach_purchase_workspace_customer(
+    session: AsyncSession,
+    *,
+    pos_session: PosSession,
+    payload: PosWorkspaceCustomerDetachRequest,
+) -> PosWorkspaceOut:
+    return await pos_workspace_mutations.detach_purchase_workspace_customer(
         session,
         pos_session=pos_session,
         payload=payload,

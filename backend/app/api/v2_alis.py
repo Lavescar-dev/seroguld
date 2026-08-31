@@ -70,6 +70,7 @@ from app.schemas.pos import (
     PosPostalLookupOut,
     PosSavedPurchaseListItemOut,
     PosSessionOutClerk,
+    PosWorkspaceCustomerDetachRequest,
     PosWorkspaceCustomerSelectRequest,
     PosWorkspaceCustomerUpdate,
     PosWorkspaceFinalizeRequest,
@@ -97,6 +98,7 @@ from app.services.pos_service import (
     find_latest_draft_pos_session,
     finalize_purchase_workspace,
     get_next_reference_number_preview,
+    detach_purchase_workspace_customer,
     get_pos_session_or_404,
     open_purchase_document_for_edit,
     replace_purchase_workspace_sections,
@@ -390,6 +392,19 @@ async def post_alis_workspace_customer_select_v2(
 ) -> PosWorkspaceOut:
     pos_session = await get_pos_session_or_404(db, session_id)
     workspace = await select_purchase_workspace_customer(db, pos_session=pos_session, payload=payload)
+    await _ensure_alis_workspace_artifact(db, workspace, force_sync=True)
+    return workspace
+
+
+@router.post("/alis/workspace/{session_id}/customer/detach", response_model=PosWorkspaceOut)
+async def post_alis_workspace_customer_detach_v2(
+    session_id: UUID,
+    payload: PosWorkspaceCustomerDetachRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> PosWorkspaceOut:
+    pos_session = await get_pos_session_or_404(db, session_id)
+    workspace = await detach_purchase_workspace_customer(db, pos_session=pos_session, payload=payload)
     await _ensure_alis_workspace_artifact(db, workspace, force_sync=True)
     return workspace
 

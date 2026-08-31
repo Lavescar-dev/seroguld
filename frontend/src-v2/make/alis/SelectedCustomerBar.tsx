@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Repeat2, UsersRound } from 'lucide-react';
+import { ChevronDown, ChevronUp, Repeat2, UserMinus, UsersRound } from 'lucide-react';
 
 // R2-takip: seçili müşteri artık sağ kolonda dev bir blok (özet şeridi + tam
 // tablo) olarak alt alta açılmaz. Kompakt bar + "Başka müşteri seç" aksiyonu;
@@ -9,12 +9,16 @@ export function SelectedCustomerBar({
   detailsOpen,
   onToggleDetails,
   onReplace,
+  onDetach,
+  detachPending = false,
 }: {
   name: string;
   phone?: string;
   detailsOpen: boolean;
   onToggleDetails: () => void;
   onReplace: () => void;
+  onDetach?: () => void;
+  detachPending?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-brand-200 bg-emerald-50 px-4 py-2.5">
@@ -44,6 +48,17 @@ export function SelectedCustomerBar({
           <Repeat2 className="h-3.5 w-3.5" />
           Başka müşteri seç
         </button>
+        {onDetach ? (
+          <button
+            type="button"
+            onClick={onDetach}
+            disabled={detachPending}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap border border-brand-300 bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
+          >
+            <UserMinus className="h-3.5 w-3.5" />
+            {detachPending ? 'Kaldırılıyor...' : 'Seçimi kaldır'}
+          </button>
+        ) : null}
       </div>
     </div>
   );

@@ -15,12 +15,13 @@ import {
   Plus,
   Printer,
   RefreshCcw,
+  Repeat2,
   Search,
   SlidersHorizontal,
   Trash2,
+  UserMinus,
   UserPlus,
   Users,
-  X,
 } from 'lucide-react';
 
 import { formatMoney, formatNumber, formatRelativeTime, labelProductType, labelMetalType } from '@/lib/format';
@@ -29,6 +30,7 @@ import { ALIS_SHORTCUT_HINT } from '@/lib/shortcutHints';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
 import { RelinkCustomerModal } from '@/make/alis/RelinkCustomerModal';
+import { resolveCustomerPanelView } from '@/make/alis/customerPanelState';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import { useAddressAutocomplete } from '@/make/alis/addressAutocomplete';
@@ -41,7 +43,7 @@ import type { UnsupportedControlDescriptor } from '@/modern/adapters/types';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, shellButtonClass } from './shared';
-import { ModernDialog } from '@/modern/design-system';
+import { ModernDialog, ModernDrawer } from '@/modern/design-system';
 import { HistoricalAfgImportDrawer } from './alis/HistoricalAfgImportDrawer';
 import { useAlisLayoutMode, type AlisLayoutMode } from './alis/useAlisLayoutMode';
 
@@ -278,7 +280,7 @@ export function ModernAlisModule({
                       layoutMode={layoutMode}
                       expandedGroups={expandedGroups}
                       onToggleGroup={(group) => setExpandedGroups((current) => { const next = new Set(current); if (next.has(group)) next.delete(group); else next.add(group); return next; })}
-                      onOpenTool={(nextTool) => { if (nextTool === 'customer') state.setCustomerMode(null); setTool(nextTool); }}
+                      onOpenTool={(nextTool) => { if (nextTool === 'customer' && !state.customerMode) state.setCustomerMode('existing'); setTool(nextTool); }}
                       onCancel={cancelWorkspace}
                     />
                   ) : (
@@ -291,7 +293,7 @@ export function ModernAlisModule({
             ) : null}
 
             {tool ? (
-              <AlisToolSheet
+              <AlisToolDrawer
                 tool={tool}
                 state={state}
                 hasSelectedCustomer={hasSelectedCustomer}
@@ -546,11 +548,93 @@ function AlisHistory({ state, documents, filters, onChange, onReset }: { state: 
   return <section className="border-y border-sg-border py-4"><div className="flex flex-wrap items-center justify-between gap-4 rounded-sg-lg border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Belge geçmişi</p><h2 className="mt-1 text-xl font-bold text-sg-text">Alış kayıtları</h2></div><dl className="flex overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface shadow-sm"><div className="min-w-24 px-4 py-2"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Kayıt</dt><dd className="mt-1 text-sm font-bold text-sg-text">{documents.length} belge</dd></div><div className="min-w-36 border-l border-sg-border px-4 py-2 text-right"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Toplam</dt><dd className="mt-1 whitespace-nowrap text-sm font-bold text-sg-text">{formatMoney(String(total))}</dd></div></dl></div><div className="mt-4"><PurchaseFilters state={state} filters={filters} onChange={onChange} onReset={onReset} /></div><DocumentList state={state} documents={documents} /></section>;
 }
 
-function AlisToolSheet({ tool, state, hasSelectedCustomer, filters, onFilterChange, onFilterReset, unsupportedControls, onClose }: { tool: Exclude<ModernAlisTool, null>; state: ModernAlisState; hasSelectedCustomer: boolean; filters: ModernAlisListFilters; onFilterChange: (next: Partial<ModernAlisListFilters>) => void; onFilterReset: () => void; unsupportedControls: UnsupportedControlDescriptor[]; onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { closeRef.current?.focus(); }, [tool]);
+function AlisToolDrawer({ tool, state, hasSelectedCustomer, filters, onFilterChange, onFilterReset, unsupportedControls, onClose }: { tool: Exclude<ModernAlisTool, null>; state: ModernAlisState; hasSelectedCustomer: boolean; filters: ModernAlisListFilters; onFilterChange: (next: Partial<ModernAlisListFilters>) => void; onFilterReset: () => void; unsupportedControls: UnsupportedControlDescriptor[]; onClose: () => void }) {
   const title = tool === 'customer' ? 'Müşteri' : tool === 'rates' ? 'Piyasa oranları' : tool === 'calculator' ? 'Kniv beregner' : tool === 'filters' ? 'Geçmiş filtreleri' : 'Hazır olmayan entegrasyonlar';
-  return <div className="fixed inset-0 z-drawer flex justify-end bg-sg-text/30" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }} onClick={onClose}><div className="flex h-full w-full max-w-[620px] flex-col overflow-y-auto border-l border-sg-border bg-sg-surface shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-sticky flex items-center justify-between gap-3 border-b border-sg-border bg-sg-surface px-5 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Alış araçları</p><h2 className="mt-1 text-xl font-bold text-sg-text">{title}</h2></div><button ref={closeRef} type="button" onClick={onClose} className={shellButtonClass('ghost')} aria-label="Kapat"><X className="h-5 w-5" /></button></div><div className="p-5">{tool === 'customer' ? <>{hasSelectedCustomer ? <div className="grid gap-3 sm:grid-cols-2"><EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact /></div> : null}<CustomerPicker state={state} hasSelectedCustomer={hasSelectedCustomer} /></> : null}{tool === 'rates' ? <WorkspaceControls state={state} /> : null}{tool === 'calculator' ? <KnivCalculators state={state} /> : null}{tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}{tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}</div></div></div>;
+  return (
+    <ModernDrawer open onClose={onClose} title={title} description="Alış araçları">
+      {tool === 'customer' ? <ModernCustomerDrawerBody state={state} hasSelectedCustomer={hasSelectedCustomer} /> : null}
+      {tool === 'rates' ? <WorkspaceControls state={state} /> : null}
+      {tool === 'calculator' ? <KnivCalculators state={state} /> : null}
+      {tool === 'filters' ? <PurchaseFilters state={state} filters={filters} onChange={onFilterChange} onReset={onFilterReset} /> : null}
+      {tool === 'roadmap' ? <div className="space-y-3">{unsupportedControls.length ? unsupportedControls.map((item) => <div key={item.id} className="border-b border-sg-border-soft pb-3 last:border-b-0"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-sg-text">{item.label}</p><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-amber">Hazır değil</span></div><p className="mt-1 text-xs text-sg-text-soft">{item.reason}</p></div>) : <p className="text-sm text-sg-text-soft">Bu görünümde hazır olmayan kontrol bulunmuyor.</p>}</div> : null}
+    </ModernDrawer>
+  );
+}
+
+// Müşteri drawer gövdesi: resolveCustomerPanelView'in dört karşılıklı dışlanan
+// görünümü — kart + form + OCR üst üste ASLA render edilmez (klasik AlisPage
+// sağ paneliyle aynı sözleşme; bkz. customerPanelState.ts başlığı).
+export function ModernCustomerDrawerBody({ state, hasSelectedCustomer }: { state: ModernAlisState; hasSelectedCustomer: boolean }) {
+  const confirm = useConfirm();
+  const [replacingCustomer, setReplacingCustomer] = useState(false);
+  useEffect(() => { setReplacingCustomer(false); }, [hasSelectedCustomer]);
+
+  const view = resolveCustomerPanelView(state.customerMode, hasSelectedCustomer, replacingCustomer);
+  const customer = state.workspace?.customer;
+
+  if (view === 'attached') {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-3 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Seçili müşteri</p>
+            <p className="mt-1 truncate text-base font-semibold text-sg-text">{customer?.name || '—'}</p>
+            <p className="mt-1 text-xs text-sg-text-soft">{state.customerForm.phone || 'Telefon yok'}</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              className={shellButtonClass('secondary')}
+              onClick={() => { setReplacingCustomer(true); state.setCustomerSearchTerm(''); state.setCustomerMode('existing'); }}
+            >
+              <Repeat2 className="h-4 w-4" />
+              Değiştir
+            </button>
+            <button
+              type="button"
+              className={shellButtonClass('danger')}
+              disabled={state.detachCustomerPending}
+              onClick={() => {
+                void confirm({
+                  title: 'Müşteri seçimi kaldırılsın mı?',
+                  message: 'Bu taslak çalışma alanından müşteri bağlantısı koparılır. Yalnızca taslak alanına girilmiş müşteri bilgileri silinir; metal satırları ve notlar korunur.',
+                  confirmText: 'Bağlantıyı kaldır',
+                  cancelText: 'Vazgeç',
+                  variant: 'danger',
+                }).then((approved) => {
+                  if (approved === true) state.onDetachCustomer();
+                });
+              }}
+            >
+              <UserMinus className="h-4 w-4" />
+              {state.detachCustomerPending ? 'Kaldırılıyor...' : 'Seçimi kaldır'}
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <EditableCustomerFields customer={state.customerForm} setCustomer={state.setCustomerForm} onBlur={state.onCustomerBlur} compact />
+        </div>
+      </div>
+    );
+  }
+
+  const segment = (
+    <div className="flex gap-1 border-b border-sg-border" role="tablist" aria-label="Müşteri seçim yöntemi">
+      <button type="button" role="tab" aria-selected={view === 'search-existing' || view === 'pick-action'} onClick={() => state.setCustomerMode('existing')} className={`border-b-2 px-3 py-3 text-sm font-semibold transition ${view === 'search-existing' || view === 'pick-action' ? 'border-sg-accent text-sg-accent' : 'border-transparent text-sg-text-soft hover:text-sg-text'}`}>
+        Mevcut müşteri
+      </button>
+      <button type="button" role="tab" aria-selected={view === 'create-new'} onClick={() => state.setCustomerMode('new')} className={`border-b-2 px-3 py-3 text-sm font-semibold transition ${view === 'create-new' ? 'border-sg-accent text-sg-accent' : 'border-transparent text-sg-text-soft hover:text-sg-text'}`}>
+        Yeni müşteri
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {segment}
+      {view === 'create-new' ? <NewCustomerForm state={state} /> : <SearchExistingPanel state={state} />}
+    </div>
+  );
 }
 
 function KnivCalculators({ state }: { state: ModernAlisState }) {
@@ -578,8 +662,34 @@ function KnivCalculators({ state }: { state: ModernAlisState }) {
   );
 }
 
-function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewModel['state']; hasSelectedCustomer: boolean }) {
-  const mode = state.customerMode;
+function SearchExistingPanel({ state }: { state: ModernAlisState }) {
+  return (
+    <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+      <p className="text-sm text-sg-text">Gerçek müşteri kaydını seçin.</p>
+      <div className="mt-4 flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
+        <Search className="h-4 w-4 text-sg-text-soft" />
+        <input autoFocus value={state.customerSearchTerm} onChange={(event) => state.setCustomerSearchTerm(event.target.value)} placeholder="İsim, CPR, telefon..." className="w-full bg-transparent text-sm text-sg-text outline-none" />
+      </div>
+      <div className="mt-3 max-h-64 overflow-y-auto rounded-sg-md border border-sg-border bg-sg-surface">
+        {state.candidateCustomers.length === 0 ? (
+          <p className="px-4 py-8 text-center text-sm text-sg-text-soft">Kayıtlı müşteri bulunamadı.</p>
+        ) : (
+          state.candidateCustomers.map((customer) => (
+            <button key={customer.id} type="button" disabled={state.customerSelecting} onClick={() => state.onSelectExistingCustomer(customer.id)} className="flex w-full items-center justify-between gap-3 border-b border-sg-border-soft px-4 py-3 text-left transition last:border-b-0 hover:bg-sg-accent-soft disabled:cursor-wait disabled:opacity-60">
+              <span>
+                <span className="block text-sm font-semibold text-sg-text">{customer.name}</span>
+                <span className="mt-1 block text-xs text-sg-text-soft">{customer.phone || 'Telefon yok'} · {customer.cpr_number_masked || 'CPR gizli'}</span>
+              </span>
+              <span className="text-xs font-semibold text-sg-accent">{state.customerSelecting ? 'Seçiliyor...' : 'Seç'}</span>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NewCustomerForm({ state }: { state: ModernAlisState }) {
   const hasValidNewCustomer =
     state.newCustomer.name.trim().length >= 2 &&
     state.newCustomer.phone.trim().length >= 7 &&
@@ -588,73 +698,11 @@ function CustomerPicker({ state, hasSelectedCustomer }: { state: ModernAlisViewM
   const newPostal = state.newCustomer.postal_code.replace(/\D/g, '');
   const hasValidPostal = newPostal.length === 0 || newPostal.length === 4;
 
-  if (!mode) {
-    return (
-      <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Müşteri bağlantısı</p>
-            <p className="mt-1 text-sm text-sg-text">Kesinleştirmeden önce gerçek bir müşteri seçin veya oluşturun.</p>
-          </div>
-          {hasSelectedCustomer ? <DataPill label="Durum" value="Seçili" tone="success" /> : <DataPill label="Durum" value="Gerekli" tone="warning" />}
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <button type="button" onClick={() => state.setCustomerMode('existing')} className="rounded-sg-lg border border-sg-border bg-sg-surface p-4 text-left transition hover:border-sg-accent hover:bg-sg-accent-soft">
-            <Search className="h-5 w-5 text-sg-accent" />
-            <p className="mt-3 text-sm font-semibold text-sg-text">Mevcut müşteri seç</p>
-            <p className="mt-1 text-xs text-sg-text-soft">İsim, CPR veya telefon ile ara.</p>
-          </button>
-          <button type="button" onClick={() => state.setCustomerMode('new')} className="rounded-sg-lg border border-sg-border bg-sg-surface p-4 text-left transition hover:border-sg-accent hover:bg-sg-accent-soft">
-            <UserPlus className="h-5 w-5 text-sg-accent" />
-            <p className="mt-3 text-sm font-semibold text-sg-text">Yeni müşteri oluştur</p>
-            <p className="mt-1 text-xs text-sg-text-soft">Kimlik fotoğrafı veya tarayıcı ile alanlar otomatik dolar; elle de girilebilir.</p>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === 'existing') {
-    return (
-      <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Mevcut müşteri</p>
-            <p className="mt-1 text-sm text-sg-text">Gerçek müşteri kaydını seçin.</p>
-          </div>
-          <button type="button" onClick={() => state.setCustomerMode(null)} className={shellButtonClass('ghost')}>Kapat</button>
-        </div>
-        <div className="mt-4 flex items-center gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2">
-          <Search className="h-4 w-4 text-sg-text-soft" />
-          <input autoFocus value={state.customerSearchTerm} onChange={(event) => state.setCustomerSearchTerm(event.target.value)} placeholder="İsim, CPR, telefon..." className="w-full bg-transparent text-sm text-sg-text outline-none" />
-        </div>
-        <div className="mt-3 max-h-64 overflow-y-auto rounded-sg-md border border-sg-border bg-sg-surface">
-          {state.candidateCustomers.length === 0 ? (
-            <p className="px-4 py-8 text-center text-sm text-sg-text-soft">Kayıtlı müşteri bulunamadı.</p>
-          ) : (
-            state.candidateCustomers.map((customer) => (
-              <button key={customer.id} type="button" disabled={state.customerSelecting} onClick={() => state.onSelectExistingCustomer(customer.id)} className="flex w-full items-center justify-between gap-3 border-b border-sg-border-soft px-4 py-3 text-left transition last:border-b-0 hover:bg-sg-accent-soft disabled:cursor-wait disabled:opacity-60">
-                <span>
-                  <span className="block text-sm font-semibold text-sg-text">{customer.name}</span>
-                  <span className="mt-1 block text-xs text-sg-text-soft">{customer.phone || 'Telefon yok'} · {customer.cpr_number_masked || 'CPR gizli'}</span>
-                </span>
-                <span className="text-xs font-semibold text-sg-accent">{state.customerSelecting ? 'Seçiliyor...' : 'Seç'}</span>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <form onSubmit={(event: FormEvent) => state.onCreateNewCustomer(event)} className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">Yeni müşteri</p>
-          <p className="mt-1 text-sm text-sg-text">Zorunlu kimlik alanlarını tamamlayın.</p>
-        </div>
-        <button type="button" onClick={() => state.setCustomerMode(null)} className={shellButtonClass('ghost')}>Kapat</button>
+        <p className="text-sm text-sg-text">Zorunlu kimlik alanlarını tamamlayın.</p>
+        <button type="button" onClick={() => state.setCustomerMode('existing')} className={shellButtonClass('ghost')}>Kapat</button>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <ModernIdentityScanner customer={state.newCustomer} setCustomer={state.setNewCustomer} />

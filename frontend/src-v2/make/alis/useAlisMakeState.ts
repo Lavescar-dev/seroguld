@@ -726,6 +726,15 @@ export function useAlisMakeState(): AlisPageProps {
   const [purchaseSearchTerm, setPurchaseSearchTerm] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
   const [customerMode, setCustomerMode] = useState<'existing' | 'new' | null>(null);
+  // applyWorkspace her workspace yanıtında (autosave ack dahil) çalışır;
+  // operatörün açıkça seçtiği panel görünümünü ('existing' araması / 'new'
+  // formu) arka plan ack'lerinin ezmemesi için state'in ref aynası tutulur.
+  const customerModeRef = useRef<'existing' | 'new' | null>(null);
+  const setCustomerModeTracked: typeof setCustomerMode = (next) => {
+    const resolved = typeof next === 'function' ? next(customerModeRef.current) : next;
+    customerModeRef.current = resolved;
+    setCustomerMode(resolved);
+  };
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [newCustomer, setNewCustomer] = useState<EditableCustomer>(EMPTY_CUSTOMER);
   const [customerForm, setCustomerForm] = useState<EditableCustomer>(EMPTY_CUSTOMER);
@@ -924,7 +933,13 @@ export function useAlisMakeState(): AlisPageProps {
     const editableCustomer = toEditableCustomer(data);
     const hasDraftCustomerShadow = !data.customer.customer_id && hasEditableCustomerData(editableCustomer);
     setCustomerForm(editableCustomer);
-    setNewCustomer(hasDraftCustomerShadow ? editableCustomer : EMPTY_CUSTOMER);
+    // Operatör bir alt görünümdeyken ('existing' araması / 'new' formu) arka
+    // plan ack'leri form verisini silmez; yalnız pasif yanıtta senkronlanır.
+    const activeCustomerMode = customerModeRef.current;
+    const operatorDrivenView = activeCustomerMode === 'existing' || activeCustomerMode === 'new';
+    if (!operatorDrivenView) {
+      setNewCustomer(hasDraftCustomerShadow ? editableCustomer : EMPTY_CUSTOMER);
+    }
     setGoldRows(toEditableGoldRows(data.gold_rows));
     setBarRows(toEditableBarRows(data.bar_rows));
     setPtpdRows(toEditablePtPdRows(data.ptpd_rows));
@@ -947,7 +962,11 @@ export function useAlisMakeState(): AlisPageProps {
     setCalculators(data.calculators);
     const resolvedPaymentMethod: PaymentMethod = 'bank';
     setPaymentMethod(resolvedPaymentMethod);
-    setCustomerMode(hasDraftCustomerShadow ? 'new' : null);
+    // Müşteri bağlı değilken OCR/draft verisi varsa 'new' paneli açılır —
+    // yalnız operatör bir alt görünümde değilse.
+    setCustomerModeTracked(
+      operatorDrivenView ? activeCustomerMode : hasDraftCustomerShadow ? 'new' : null,
+    );
     const sectionsPayload = workspaceRowsPayload(
       toEditableGoldRows(data.gold_rows),
       toEditableSilverRows(data.silver_rows),
@@ -987,6 +1006,9 @@ export function useAlisMakeState(): AlisPageProps {
     }
     queuedSectionsPayloadRef.current = null;
     queuedCustomerPayloadRef.current = null;
+    // Yeni oturum açılışı/resume bir yaşam-döngüsü geçişidir: önceki oturumun
+    // operatör panel seçimi taşınmaz; applyWorkspace shadow kararını sıfırdan verir.
+    customerModeRef.current = null;
     if (!applyWorkspace(data, {
       paymentMethodOverride: options?.paymentMethodOverride ?? 'bank',
     })) return;
@@ -1181,10 +1203,32 @@ export function useAlisMakeState(): AlisPageProps {
       emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
       setCustomerSearchTerm('');
       setNewCustomer(EMPTY_CUSTOMER);
-      setCustomerMode(null);
+      setCustomerModeTracked(null);
     },
     onError: (error) => {
       toast.warning('Müşteri seçilemedi', error instanceof Error ? error.message : 'Workspace başka bir yüzeyde değişti.');
+    },
+  });
+
+  const detachCustomerMutation = useMutation({
+    mutationFn: () =>
+      apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/customer/detach`, {
+        method: 'POST',
+        body: JSON.stringify({ base_revision: workspaceRevisionRef.current }),
+      }),
+    onSuccess: (data) => {
+      if (!applyWorkspace(data)) return;
+      setWorkspace(data);
+      emitWorkspaceArtifactSync(data.session.id, 'alis-ui', data.artifact_sync_state);
+      setCustomerSearchTerm('');
+      setNewCustomer(EMPTY_CUSTOMER);
+      setCustomerForm(EMPTY_CUSTOMER);
+      // Boş formun blur'u yeniden taslak müşteri yazmasın.
+      customerAutosaveKeyRef.current = '';
+      setCustomerModeTracked('existing');
+    },
+    onError: (error) => {
+      toast.warning('Müşteri seçimi kaldırılamadı', error instanceof Error ? error.message : 'Workspace başka bir yüzeyde değişti.');
     },
   });
 
@@ -2075,6 +2119,19 @@ export function useAlisMakeState(): AlisPageProps {
     });
   }
 
+  async function handleDetachCustomer() {
+    if (!workspace?.session.id || detachCustomerMutation.isPending) return;
+    // Kuyruktaki bekleen draft-customer yazısı detach'ten sonra bağlantıyı
+    // geri yazmasın; finalize akışındaki flush deseniyle aynı koruma.
+    queuedCustomerPayloadRef.current = null;
+    try {
+      await flushPendingWorkspaceSync();
+    } catch {
+      // Flush hataları autosave uyarı mekanizmasında raporlanıyor.
+    }
+    detachCustomerMutation.mutate();
+  }
+
   // Satır bölümü kayıt defteri: state + ref + set + preview anahtarı TEK yerde.
   // 0.3.6/0.3.7'de bar/ptpd için update fonksiyonları kopyalanırken preview
   // çağrısı unutulmuştu; registry ile yeni bölüm eklemek tek girdi demek ve
@@ -2589,7 +2646,7 @@ export function useAlisMakeState(): AlisPageProps {
       setCustomerForm(record.customer);
       if (!workspace?.customer.customer_id) {
         setNewCustomer(record.customer);
-        setCustomerMode('new');
+        setCustomerModeTracked('new');
       }
     }
   }
@@ -2735,7 +2792,7 @@ export function useAlisMakeState(): AlisPageProps {
     },
     actionPendingSequenceNo: actionSequenceNo,
     customerMode,
-    setCustomerMode,
+    setCustomerMode: setCustomerModeTracked,
     customerSearchTerm,
     setCustomerSearchTerm,
     candidateCustomers,
@@ -2743,6 +2800,8 @@ export function useAlisMakeState(): AlisPageProps {
     setNewCustomer: setNewCustomerFromUi,
     onSelectExistingCustomer: handleSelectExistingCustomer,
     onCreateNewCustomer: handleCreateNewCustomer,
+    onDetachCustomer: handleDetachCustomer,
+    detachCustomerPending: detachCustomerMutation.isPending,
     customerForm,
     setCustomerForm: setCustomerFormFromUi,
     onCustomerBlur: handleCustomerBlur,
