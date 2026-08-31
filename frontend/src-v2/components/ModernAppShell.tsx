@@ -130,13 +130,12 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         ],
       },
     ];
-    // Menü sadeleştirmesi (kullanıcı kararı, 2026-08-31): yalnız 3 modül menüde
-    // görünür — Raporlar, AFG Belgeleri, Müşteri ekranı. Route'lar ve sayfalar
-    // yerinde durur (menüden gizleme; tamamen kaldırma değil). Seti genişletmek
-    // gizlenen öğeyi geri getirir.
-    const menuVisibleKeys = new Set(['/reports', '/?view=belgeler', '/musteri-ekran']);
+    // Menü sadeleştirmesi (kullanıcı kararı, 2026-09-01): bu 3 modül menüden
+    // GİZLENİR — Raporlar, AFG Belgeleri, Müşteri ekranı. Diğer her şey kalır.
+    // Route'lar ve sayfalar yerinde durur; setten çıkararak geri getirilir.
+    const menuHiddenKeys = new Set(['/reports', '/?view=belgeler', '/musteri-ekran']);
     return groups
-      .map((group) => ({ ...group, items: group.items.filter((entry) => menuVisibleKeys.has(entry.key)) }))
+      .map((group) => ({ ...group, items: group.items.filter((entry) => !menuHiddenKeys.has(entry.key)) }))
       .filter((group) => group.items.length > 0);
   }, [location.pathname, location.search, navigate, state.stats, t]);
 
