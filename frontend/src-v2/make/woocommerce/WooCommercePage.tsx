@@ -888,6 +888,10 @@ export function MakeWooCommercePage({
   setRawOpen,
   publishPrice,
   setPublishPrice,
+  publishMarkupRate,
+  setPublishMarkupRate,
+  publishMinPrice,
+  setPublishMinPrice,
   aiDraft,
   setAiDraft,
   stokList,
@@ -922,6 +926,31 @@ export function MakeWooCommercePage({
   const [surface, setSurface] = useState<'catalog' | 'local'>('catalog');
   // R1-10: yayın öncesi şablon önizleme (saf payload; Woo'ya istek atılmaz).
   const [publishPreview, setPublishPreview] = useState<PublishPreview | null>(null);
+  // Woo otomatik fiyat önizlemesi: canlı WP priser kaynağı (tek kaynak).
+  const [wooSpotRates, setWooSpotRates] = useState<{ gold_24k_dkk?: string; silver_dkk?: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ gold_24k_dkk?: string; silver_dkk?: string }>('/api/v2/market-rates/defaults')
+      .then((data) => {
+        if (!cancelled) setWooSpotRates(data);
+      })
+      .catch(() => {
+        // Sessiz: önizleme "oran yok" durumuna düşer, uydurma fiyat yok.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const wooPricePreview = useMemo(() => {
+    if (!wooSpotRates) return null;
+    const metal = detail?.metal_type || '';
+    const rate = metal === 'silver' ? Number(wooSpotRates.silver_dkk || '0') : Number(wooSpotRates.gold_24k_dkk || '0');
+    const weight = Number(detail?.weight_grams || '0');
+    const purity = (Number(detail?.purity_percentage || '0') || 0) / 100;
+    const markup = (Number(publishMarkupRate || '0') || 0) / 100;
+    if (!rate || weight <= 0 || purity <= 0) return null;
+    return rate * weight * purity * (1 + markup);
+  }, [detail?.metal_type, detail?.weight_grams, detail?.purity_percentage, publishMarkupRate, wooSpotRates]);
 
   const fullState = {
     filter,
@@ -938,6 +967,10 @@ export function MakeWooCommercePage({
     setRawOpen,
     publishPrice,
     setPublishPrice,
+    publishMarkupRate,
+    setPublishMarkupRate,
+    publishMinPrice,
+    setPublishMinPrice,
     aiDraft,
     setAiDraft,
     stokList,
@@ -1483,6 +1516,51 @@ export function MakeWooCommercePage({
                       >
                         Öner
                       </button>
+                    </div>
+
+                    <div className="space-y-2 border border-sky-200 bg-sky-50 px-3 py-2.5">
+                      <p className="text-xs font-black uppercase tracking-wider text-sky-800">Woo otomatik fiyat</p>
+                      <p className="text-[11px] text-sky-700">Markup girilince fiyat hesaplanır; yayında WP canlı altın fiyatıyla güncellemeye devam eder.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-[11px] font-bold text-sky-900">
+                          Markup (%)
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={publishMarkupRate}
+                            onChange={(event) => setPublishMarkupRate(event.target.value)}
+                            className="mt-1 w-full border border-sky-300 bg-white px-2 py-1.5 text-sm font-black text-sky-900"
+                            style={monoStyle}
+                          />
+                        </label>
+                        <label className="block text-[11px] font-bold text-sky-900">
+                          Min fiyat (DKK, opsiyonel)
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={publishMinPrice}
+                            onChange={(event) => setPublishMinPrice(event.target.value)}
+                            className="mt-1 w-full border border-sky-300 bg-white px-2 py-1.5 text-sm font-black text-sky-900"
+                            style={monoStyle}
+                          />
+                        </label>
+                      </div>
+                      {wooPricePreview != null ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2 border border-emerald-300 bg-emerald-50 px-2 py-1.5">
+                          <p className="text-xs font-bold text-emerald-800">
+                            Önizleme: {formatMoney(wooPricePreview)} <span className="font-normal">= canlı spot × ağırlık × saflık × (1 + markup)</span>
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setPublishPrice(wooPricePreview.toFixed(2))}
+                            className="border border-emerald-500 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700 hover:bg-emerald-100"
+                          >
+                            Fiyata uygula
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-sky-700">Fiyat önizlemesi için markup girin (saflık/ağırlık ürün girdilerinden gelir).</p>
+                      )}
                     </div>
 
                     <label className="flex items-center gap-2 text-xs font-bold text-brand-700">

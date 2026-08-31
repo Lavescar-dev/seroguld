@@ -237,6 +237,10 @@ export interface WooMakeState {
   setRawOpen: (value: boolean | ((current: boolean) => boolean)) => void;
   publishPrice: string;
   setPublishPrice: (value: string) => void;
+  publishMarkupRate: string;
+  setPublishMarkupRate: (value: string) => void;
+  publishMinPrice: string;
+  setPublishMinPrice: (value: string) => void;
   aiDraft: string;
   setAiDraft: (value: string) => void;
   stokList: StokItem[];
@@ -602,6 +606,9 @@ export function useWooMakeState(): WooMakeState {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<WooFilter>('all');
   const [publishPrice, setPublishPrice] = useState('');
+  // Woo otomatik metal fiyatı: markup YÜZDE (35 = %35), min fiyat opsiyonel.
+  const [publishMarkupRate, setPublishMarkupRate] = useState('');
+  const [publishMinPrice, setPublishMinPrice] = useState('');
   const [aiDraft, setAiDraft] = useState('');
   const [rawOpen, setRawOpen] = useState(false);
   const [catalogSearch, setCatalogSearchState] = useState('');
@@ -744,6 +751,8 @@ export function useWooMakeState(): WooMakeState {
     const product = detailQuery.data;
     if (!product) return;
     setPublishPrice(String(product.shop_price_dkk || product.sale_price_dkk || product.purchase_price_dkk || ''));
+    setPublishMarkupRate(product.woo_markup_rate != null ? String(Number(product.woo_markup_rate) * 100) : '');
+    setPublishMinPrice(product.woo_min_price_dkk != null ? String(product.woo_min_price_dkk) : '');
     setAiDraft(product.ai_description || '');
     setPublishCategoryIds((product.woocommerce_category_ids ?? []).map(Number));
     // Override varsa onu, yoksa türetilen profili göster; yıl varsa doldur.
@@ -814,6 +823,10 @@ export function useWooMakeState(): WooMakeState {
         method: 'POST',
         body: JSON.stringify({
           regular_price_dkk: Number(publishPrice || '0'),
+          // Woo otomatik metal fiyatı: yüzde girilir, backend fraksiyon saklar
+          // ve _metal_* meta sözleşmesi bununla kurulur.
+          woo_markup_rate: Number(publishMarkupRate || '0') > 0 ? Number(publishMarkupRate) / 100 : undefined,
+          woo_min_price_dkk: Number(publishMinPrice || '0') > 0 ? Number(publishMinPrice) : undefined,
           name: name || undefined,
           // Seçici durumu yayınla birlikte kalıcılaşır; [] = harita davranışına dön.
           category_ids: publishCategoryIds,
@@ -1083,6 +1096,10 @@ export function useWooMakeState(): WooMakeState {
     setRawOpen,
     publishPrice,
     setPublishPrice,
+    publishMarkupRate,
+    setPublishMarkupRate,
+    publishMinPrice,
+    setPublishMinPrice,
     aiDraft,
     setAiDraft,
     stokList,

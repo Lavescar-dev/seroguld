@@ -156,6 +156,10 @@ class ProductPublishRequest(AppBaseModel):
     # False: republish'te AÇIKÇA temizlenir; None: mevcut rozete dokunulmaz
     # (alanı göndermeyen çağrılar rozeti bozamaz).
     mark_as_new: bool | None = None
+    # Woo otomatik metal fiyatı: yayında ürüne kalıcı yazılır ve _metal_* meta
+    # sözleşmesi bunlarla kurulur. None = mevcut değere dokunulmaz.
+    woo_markup_rate: Decimal | None = Field(default=None, ge=0)
+    woo_min_price_dkk: Decimal | None = Field(default=None, ge=0)
 
 
 class ProductWooImportRequest(AppBaseModel):

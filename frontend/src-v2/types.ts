@@ -205,6 +205,8 @@ export interface ProductOut {
   needs_cleaning: boolean;
   shop_price_dkk?: string | null;
   shop_sync_status?: string | null;
+  woo_markup_rate?: string | null;
+  woo_min_price_dkk?: string | null;
   length_cm?: string | null;
   width_mm?: string | null;
   thickness_mm?: string | null;

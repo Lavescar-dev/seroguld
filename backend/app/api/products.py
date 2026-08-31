@@ -871,6 +871,12 @@ async def publish(
         product.woocommerce_publish_profile = candidate or None
     if payload.production_year is not None:
         product.production_year = payload.production_year if payload.production_year > 0 else None
+    # Woo otomatik metal fiyatı: yayında operatörün girdiği markup/taban fiyat
+    # ürüne kalıcı yazılır ve _metal_* meta sözleşmesi bununla kurulur.
+    if payload.woo_markup_rate is not None:
+        product.woo_markup_rate = payload.woo_markup_rate
+    if payload.woo_min_price_dkk is not None:
+        product.woo_min_price_dkk = payload.woo_min_price_dkk
 
     wc_service = WooCommerceService()
     request_payload = {
