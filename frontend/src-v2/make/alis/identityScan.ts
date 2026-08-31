@@ -145,6 +145,21 @@ function valueAfterLabelLine(
 ): string {
   const start = lines.findIndex((line) => label.test(line));
   if (start < 0) return '';
+  // Gerçek kartlarda değer etiketle AYNI satırda basılır ("1. Demir",
+  // "5. 30499959") — önce etiketin satır içi kaldığı denenir; sentetik
+  // fixture'lardaki ayrı-satır düzeni için ardından alttaki satırlara bakılır.
+  const labelLine = lines[start];
+  const labelMatch = labelLine.match(label);
+  // Yalnız etiket SATIR BAŞINDA olduğunda satır içi değere bakılır ("1. Demir");
+  // OCR gürültüsünde etiket kelimesi satır ortasında geçebilir ("I GIVEN NAMES
+  // …") — oradan değer almak soyadı ada çeker.
+  if (labelMatch && labelMatch.index === 0) {
+    const rest = labelLine
+      .slice(labelMatch[0].length)
+      .replace(/^[\s.:·•\-]+/, '')
+      .trim();
+    if (rest && accept(rest)) return rest;
+  }
   for (let index = start + 1; index <= start + window && index < lines.length; index += 1) {
     const line = lines[index];
     if (labels.some((candidate) => candidate.test(line))) return '';
@@ -156,8 +171,17 @@ function valueAfterLabelLine(
 
 const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔÛ '’-]{1,39}$/;
 
+// Bilinen etiket kelimeleri asla ad değeri değildir (case-tolerant kontrolde
+// "Fornavn" gibi satırlar ad sanılmasın). OCR başlıkları bozabilir
+// (Fornavn→PORNAVN) — "navn" sonu (Danca: isim) ek bazında dışlanır.
+const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b/;
+
 function isPrintedNamePart(line: string): boolean {
-  return PRINTED_NAME_PART.test(line.trim()) && !/DANSK|DANISH|DNK\b/.test(line);
+  const trimmed = line.trim();
+  if (!trimmed || /DANSK|DANISH|DNK\b/.test(trimmed) || IDENTITY_LABEL_WORDS.test(trimmed.toUpperCase())) return false;
+  // Gerçek kartlarda ad karışık durumda basılır ("Recai Demtr"); sentetik
+  // fixture'larda tamamen büyüktür — iki biçim de kabul edilir.
+  return PRINTED_NAME_PART.test(trimmed) || PRINTED_NAME_PART.test(trimmed.toUpperCase());
 }
 
 function cprFirstSix(value: string): string {
@@ -170,7 +194,11 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
 
   // Sundhedskort kimlik belgesi DEĞİLDİR ("Kortet er ikke et identitetsbevis"):
   // belge türü/numarası doldurulmaz; ad, CPR ilk-6 ve adres alınır.
-  if (/SUNDHEDSKORT/.test(upper)) {
+  // Yeni kartlarda başlık kelimesi dikey basılı olduğu için OCR okumayabilir;
+  // KOMMUNE + CPR kombinasyonu da kartı tanır (diğer kartlarda Kommune yok).
+  const bareCpr = raw.match(/\b\d{6}[-\s]?\d{4}\b/)?.[0] ?? '';
+  const isSundhedskort = /SUNDHEDSKORT/.test(upper) || (/KOMMUNE/.test(upper) && Boolean(bareCpr));
+  if (isSundhedskort) {
     const labels = [/^Navn$/i, /CPR[-\s.]?n/i, /^Ad?resse$/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
     const name = valueAfterLabelLine(lines, /^Navn$/i, labels, isPrintedNamePart);
     const cprLine = valueAfterLabelLine(lines, /CPR[-\s.]?n/i, labels, (line) => /\d{6}/.test(line));
@@ -185,22 +213,58 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
       ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
     ]);
-    return Object.keys(fields).length ? { documentType: 'health_card', rawLines: lines, fields } : null;
+    if (Object.keys(fields).length) return { documentType: 'health_card', rawLines: lines, fields };
+    // Etiketsiz yeni düzen: ad/sokak/posta bloğu alt alta basılır, etiket yok.
+    // Posta satırı (9999 By) çıpaydır; bir üstü sokak, iki üstü addır.
+    const postalIndex = lines.findIndex((line) => /^\d{4}\s+\S/.test(line.trim()));
+    if (postalIndex >= 2) {
+      const streetLine = lines[postalIndex - 1]?.trim() ?? '';
+      const nameLine = lines[postalIndex - 2]?.trim() ?? '';
+      const blockPostal = lines[postalIndex].trim().match(/^(\d{4})\s+(.+)$/);
+      const blockFields = definedFields([
+        ['name', isPrintedNamePart(nameLine) ? parsedField(nameLine, 'needs_review') : undefined],
+        ['address', /\d/.test(streetLine) ? parsedField(streetLine, 'needs_review') : undefined],
+        ['postal_code', parsedField(blockPostal?.[1] || '', 'needs_review')],
+        ['city', parsedField(blockPostal?.[2] || '', 'needs_review')],
+        ['cpr_number', parsedField(cprFirstSix(bareCpr), 'needs_review')],
+      ]);
+      if (Object.keys(blockFields).length) return { documentType: 'health_card', rawLines: lines, fields: blockFields };
+    }
+    // Blok sezgisi de başarısızsa kartta CPR varsa yalnız CPR ile dön.
+    if (bareCpr) {
+      return {
+        documentType: 'health_card',
+        rawLines: lines,
+        fields: definedFields([['cpr_number', parsedField(cprFirstSix(bareCpr), 'needs_review')]]),
+      };
+    }
+    return null;
   }
 
-  // Dansk kørekort: numaralı etiketler ayrı satırda, değer bir sonraki satırda.
-  if (/K[OØ0]REKORT/.test(upper)) {
+  // Dansk kørekort: numaralı etiketler ve değerler aynı satırda ("1. Demir");
+  // tr-paketi başlığı bozabilir (MOREKORT) — [KMG] toleransı. 4d = personnummer.
+  if (/[KMG][OØ0]REKORT/.test(upper)) {
     const labels = [/^1[.:]/, /^2[.:]/, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
     const surname = valueAfterLabelLine(lines, /^1[.:]/, labels, isPrintedNamePart);
     const givenName = valueAfterLabelLine(lines, /^2[.:]/, labels, isPrintedNamePart);
-    const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()));
+    const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()))
+      || (lines.find((line) => /^\d{8,9}$/.test(line.trim()))?.trim() ?? '');
+    // Kørekort CPR'si 4d alanındadır ("4d. 010190-1234"); tarihlerden ayrışır
+    // (tarihler 4+2+2 hanedir, CPR 6+4).
+    const cprRaw = raw.match(/4d\s*[.:]?\s*(\d{6}[-\s]?\d{4})/i)?.[1] ?? '';
+    // Eski kart düzeninde 8. alan bopælsadresse (kayıtlı adres) taşır.
+    const addressLine = valueAfterLabelLine(lines, /^8[.:]/, labels, (line) => /\d/.test(line) || line.length > 4);
+    const addressPostal = addressLine.match(/\b(\d{4})\s+([^,\n]+)$/);
     const name = [givenName, surname].filter(Boolean).join(' ');
     const fields = definedFields([
       ['name', parsedField(name, 'needs_review')],
       ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
       ['identity_doc_type', name || documentNumber ? { value: 'driver_license', review: 'validated' as const } : undefined],
-      ['identity_doc_country', parsedField(/DANMARK|\bDNK\b/.test(upper) ? 'DNK' : '', 'needs_review')],
-      // Dansk kørekort adres TAŞIMAZ; adres alanları bilinçli olarak boş kalır.
+      ['identity_doc_country', parsedField(/DANMARK|\bDNK\b|\bDK\b/.test(upper) ? 'DNK' : '', 'needs_review')],
+      ['cpr_number', parsedField(cprFirstSix(cprRaw), 'needs_review')],
+      ['address', parsedField(addressLine.replace(/\b\d{4}\s+.*$/, '').replace(/[,-]\s*$/, ''), 'needs_review')],
+      ['postal_code', parsedField(addressPostal?.[1] || '', 'needs_review')],
+      ['city', parsedField(addressPostal?.[2]?.trim() || '', 'needs_review')],
     ]);
     return Object.keys(fields).length ? { documentType: 'driver_license', rawLines: lines, fields } : null;
   }
@@ -240,7 +304,7 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
 
 function parseDriverLicense(raw: string, lines: string[]): IdentityParseResult | null {
   const upper = raw.toUpperCase();
-  const looksLikeLicense = /K[ØO]REKORT|DRIVING\s+LICEN[CS]E|PERMIS\s+DE\s+CONDUIRE|F[ÜU]HRERSCHEIN/.test(upper);
+  const looksLikeLicense = /[KMG][ØO]REKORT|DRIVING\s+LICEN[CS]E|PERMIS\s+DE\s+CONDUIRE|F[ÜU]HRERSCHEIN/.test(upper);
   if (!looksLikeLicense) return null;
 
   const surname = valueAfterLabel(raw, '1');

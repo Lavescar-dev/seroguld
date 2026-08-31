@@ -245,6 +245,75 @@ describe('OCR fixture sözleşmesi — MRZ normalizasyonu (« ve boşluk onarım
   });
 });
 
+describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + etiketsiz)', () => {
+  it('kørekort: değer etiketle aynı satırda (gerçek kart düzeni)', () => {
+    const raw = [
+      'KØREKORT DANMARK',
+      '1. Hansen',
+      '2. Lars',
+      '3. 1990-01-01, Danmark',
+      '4a. 2010-01-01 4c. Rigspolitichefen',
+      '4b. 2050-01-01 4d. 010190-1234',
+      '5. 30998877',
+      '9. B·C·D',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Lars Hansen');
+    expect(result.fields.identity_doc_number?.value).toBe('30998877');
+    // Kørekort 4d = personnummer; kalıcı yüzeye yalnız ilk 6 hane taşınır.
+    expect(result.fields.cpr_number?.value).toBe('010190');
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+  });
+
+  it('kørekort: tr-motor bozukluğunda (MOREKORT, etiketsiz numara) yine tanınır', () => {
+    // Gerçek OCR: başlık "MOREKORT" okundu, 1./2. satırları kayboldu,
+    // kørekort numarası etiketsiz tek başına düştü.
+    const raw = ['MOREKORT DANMARK', '4d.010190-1234', '-5.', '30998877'].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.identity_doc_number?.value).toBe('30998877');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+    expect(result.fields.name).toBeUndefined();
+  });
+
+  it('sundhedskort: etiketsiz yeni düzen — başlık okunmasa da blok sezgisiyle okunur', () => {
+    // Gerçek kart: Navn/Adresse etiketi yok; ad/sokak/posta alt alta.
+    const raw = [
+      'Hvidovre Kommune',
+      'Tlf. 00 00 00 00',
+      '010190-1234',
+      'Test Person',
+      'Testgade 1',
+      '9999 Testby',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.address?.value).toBe('Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('9999');
+    expect(result.fields.city?.value).toBe('Testby');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('kombine kart fotoğrafı: sundhedskort bloğu kazanır, alanlar doldurulur', () => {
+    // Tek fotoğrafta üstte kørekort altta sundhedskort (gerçek kullanım).
+    const raw = [
+      'MOREKORT DANMARK',
+      '4d.010190-1234',
+      'Test Person',
+      'Testgade 1',
+      '9999 Testby',
+      'Hvidovre Kommune',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+});
+
 describe('OCR fixture sözleşmesi — düşük kalite davranışı', () => {
   const degraded = groundTruth.fixtures.filter((item) => !(RELIABLE as readonly string[]).includes(item.capture_condition));
 
