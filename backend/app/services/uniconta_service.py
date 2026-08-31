@@ -24,6 +24,7 @@ import asyncio
 import base64
 import json as _json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -749,10 +750,25 @@ def _debtor_cache_invalidate(account: str | None = None) -> None:
 
 
 def _build_uniconta_account_for_customer(customer_id: str | int | None) -> str:
-    """CRM customer_id'sinden Uniconta-friendly Account kodu üret."""
+    """CRM customer_id'sinden Uniconta-friendly Account kodu üret.
+
+    Uniconta Debtor Account alanı en fazla 20 karakter tutar ve fazlasını
+    SESSİZCE KIRPAR — 2026-09-01 teşhisi: kod 34 karakterlik anahtarla sorgu
+    atıp kırpılmış kaydı bulamıyor, insert yine kırpılıp aynı anahtara
+    düşüyor ve 400 "A key with the name already exists" dönüyordu. Kod
+    tarafında da 20 karaktere kırpınca sorgu mevcut kaydı bulur.
+    32-hex (tiresiz) UUID'ler tireli kanonik temsile çevrilir — Uniconta'daki
+    mevcut tüm CRM- hesapları tireli temsilin kırpmasıyla yaratıldı.
+    """
     if customer_id is None:
         return ""
-    return f"CRM-{str(customer_id)[:30]}"
+    text = str(customer_id).strip()
+    if len(text) == 32 and "-" not in text:
+        try:
+            text = str(uuid.UUID(text))
+        except ValueError:
+            pass
+    return f"CRM-{text[:16]}"
 
 
 async def ensure_debtor_for_customer(
@@ -812,9 +828,44 @@ async def ensure_debtor_for_customer(
         payload["ZipCode"] = postal_code[:20]
     if city:
         payload["City"] = city[:100]
-    await client._request(
-        "POST", "/Crud/Insert/DebtorClient", json_body=payload
-    )
+    try:
+        await client._request(
+            "POST", "/Crud/Insert/DebtorClient", json_body=payload
+        )
+    except UnicontaError as exc:
+        # Güvenlik ağı: "A key with the name already exists" → kayıt bir
+        # biçimde zaten var (farklı temsil/el girişi). Kırpılmış hesapla ve
+        # tam isimle tekrar ara; bulursanız mevcut kayıtla idempotent devam.
+        message = str(exc)
+        if "already exists" not in message.lower():
+            raise
+        rows = []
+        try:
+            rows = await client.query(
+                "DebtorClient",
+                filters=[{"PropertyName": "Account", "FilterValue": account}],
+                top=1,
+            )
+        except UnicontaError:
+            rows = []
+        if not rows:
+            try:
+                rows = await client.query(
+                    "DebtorClient",
+                    filters=[{"PropertyName": "Name", "FilterValue": name[:200]}],
+                    top=1,
+                )
+            except UnicontaError:
+                rows = []
+        if not rows:
+            raise
+        existing = str(rows[0].get("Account") or account)
+        LOGGER.warning(
+            "Uniconta debtor insert cakismasi (%s) — mevcut kayitla devam: %s",
+            message[:120], existing,
+        )
+        _debtor_cache_set(existing)
+        return existing
     _debtor_cache_set(account)
     return account
 
