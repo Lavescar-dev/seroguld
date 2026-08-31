@@ -912,6 +912,19 @@ function Invoke-DefenderCustomScan {
     }
     $script:DefenderScanStatus = "passed"
   } catch {
+    # Defender servisi kapali makinelerde (Start-MpScan HRESULT 0x800106ba)
+    # tarama imkânsizdir; bu durum 'failed' degil 'skipped' olarak isaretlenir
+    # ve finalize devam eder. Gerçek tarama hatalari 'failed' olarak throw eder.
+    $winDefend = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
+    if ($null -eq $winDefend -or $winDefend.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Running) {
+      $script:DefenderScanStatus = "skipped"
+      Write-Warning "Defender servisi erisilebilir degil — tarama SKIPPED isaretlendi (manifest 'defender_scan: skipped'); teslim notunda belirt"
+      if ([string]::IsNullOrWhiteSpace($script:DefenderScanFinishedAt)) {
+        $script:DefenderScanFinishedAt = (Get-Date).ToUniversalTime().ToString("o")
+      }
+      Write-DefenderManifest
+      return
+    }
     $script:DefenderScanStatus = "failed"
     if ([string]::IsNullOrWhiteSpace($script:DefenderScanFinishedAt)) {
       $script:DefenderScanFinishedAt = (Get-Date).ToUniversalTime().ToString("o")
