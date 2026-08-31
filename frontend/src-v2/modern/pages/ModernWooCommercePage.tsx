@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
-import { localizeApiError } from '@/lib/api';
+import { apiRequest, localizeApiError } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { openExternalUrl } from '@/lib/desktop';
 import {
@@ -346,11 +346,37 @@ type PublishPreviewData = {
   warnings: string[];
 };
 
+type WooSpotRates = { gold_24k_dkk?: string; silver_dkk?: string };
+
 function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[] }) {
   // Hooks erken dönüşten ÖNCE gelmeli.
   const toast = useToast();
   const [publishPreview, setPublishPreview] = useState<PublishPreviewData | null>(null);
+  // Woo otomatik fiyat önizlemesi: canlı WP priser kaynağı (tek kaynak).
+  const [wooSpotRates, setWooSpotRates] = useState<WooSpotRates | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<WooSpotRates>('/api/v2/market-rates/defaults')
+      .then((data) => {
+        if (!cancelled) setWooSpotRates(data);
+      })
+      .catch(() => {
+        // Sessiz: önizleme "oran yok" durumuna düşer, uydurma fiyat yok.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const detail = state.detail;
+  const wooPricePreview = useMemo(() => {
+    if (!wooSpotRates || !detail) return null;
+    const rate = detail.metal_type === 'silver' ? Number(wooSpotRates.silver_dkk || '0') : Number(wooSpotRates.gold_24k_dkk || '0');
+    const weight = Number(detail.weight_grams || '0');
+    const purity = (Number(detail.purity_percentage || '0') || 0) / 100;
+    const markup = (Number(state.publishMarkupRate || '0') || 0) / 100;
+    if (!rate || weight <= 0 || purity <= 0) return null;
+    return rate * weight * purity * (1 + markup);
+  }, [detail, state.publishMarkupRate, wooSpotRates]);
   if (!detail) return <ModernLoadingState title="Yayın alanı hazırlanıyor" />;
   const ready = isPublishReady(detail) && seoMissing.length === 0 && Number(state.publishPrice || 0) > 0;
   const suggestions = parseAiSuggestions(state.aiDraft || detail.ai_description);
@@ -401,6 +427,21 @@ function PublishTab({ state, seoMissing }: { state: WooMakeState; seoMissing: st
         ) : null}
       </div>
       <label className="block max-w-sm"><span className="mb-2 block text-sm font-semibold text-sg-text">Shop fiyatı (DKK)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishPrice} onChange={(event) => state.setPublishPrice(event.target.value)} /></label>
+      <div className="max-w-md space-y-3 rounded-sg-md border border-sky-200 bg-sky-50 p-4">
+        <div><p className="text-sm font-semibold text-sg-text">Woo otomatik fiyat</p><p className="mt-1 text-xs text-sg-text-soft">Markup girilince fiyat hesaplanır; yayında WP canlı altın fiyatıyla güncellemeye devam eder.</p></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block"><span className="mb-2 block text-sm font-semibold text-sg-text">Markup (%)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishMarkupRate} onChange={(event) => state.setPublishMarkupRate(event.target.value)} /></label>
+          <label className="block"><span className="mb-2 block text-sm font-semibold text-sg-text">Min fiyat (DKK, opsiyonel)</span><ModernTextInput inputMode="decimal" type="number" min="0" step="0.01" value={state.publishMinPrice} onChange={(event) => state.setPublishMinPrice(event.target.value)} /></label>
+        </div>
+        {wooPricePreview != null ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-sg-md border border-sg-green/30 bg-sg-green-soft px-3 py-2">
+            <p className="text-sm font-semibold text-sg-green-strong">Önizleme: {formatMoney(wooPricePreview)} <span className="font-normal text-sg-text-soft">= canlı spot × ağırlık × saflık × (1 + markup)</span></p>
+            <ModernButton size="sm" tone="info" onClick={() => state.setPublishPrice(wooPricePreview.toFixed(2))}>Fiyata uygula</ModernButton>
+          </div>
+        ) : (
+          <p className="text-xs text-sg-text-soft">Fiyat önizlemesi için markup girin (saflık/ağırlık ürün girdilerinden gelir).</p>
+        )}
+      </div>
       <label className="flex max-w-sm items-center gap-2 text-sm text-sg-text">
         <input type="checkbox" checked={state.publishNewBadge} onChange={(event) => state.setPublishNewBadge(event.target.checked)} className="h-4 w-4 accent-sg-green-strong" />
         Nyhed-rozet (yeni ürün · 30 gün)

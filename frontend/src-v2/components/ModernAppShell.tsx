@@ -93,7 +93,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
     // birden aktif kalmasın — belgeler görünümü aktif öğeyi tek başına belirler.
     const isRootPath = location.pathname === '/';
     const belgelerViewActive = isRootPath && new URLSearchParams(location.search).get('view') === 'belgeler';
-    return [
+    const groups = [
       {
         label: t('navigation.operations'),
         items: [
@@ -130,6 +130,14 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         ],
       },
     ];
+    // Menü sadeleştirmesi (kullanıcı kararı, 2026-08-31): yalnız 3 modül menüde
+    // görünür — Raporlar, AFG Belgeleri, Müşteri ekranı. Route'lar ve sayfalar
+    // yerinde durur (menüden gizleme; tamamen kaldırma değil). Seti genişletmek
+    // gizlenen öğeyi geri getirir.
+    const menuVisibleKeys = new Set(['/reports', '/?view=belgeler', '/musteri-ekran']);
+    return groups
+      .map((group) => ({ ...group, items: group.items.filter((entry) => menuVisibleKeys.has(entry.key)) }))
+      .filter((group) => group.items.length > 0);
   }, [location.pathname, location.search, navigate, state.stats, t]);
 
   const runtimeRows = useMemo<ModernShellRuntimeRow[]>(() => {
