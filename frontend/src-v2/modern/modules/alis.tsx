@@ -567,7 +567,17 @@ function AlisToolDrawer({ tool, state, hasSelectedCustomer, filters, onFilterCha
 export function ModernCustomerDrawerBody({ state, hasSelectedCustomer }: { state: ModernAlisState; hasSelectedCustomer: boolean }) {
   const confirm = useConfirm();
   const [replacingCustomer, setReplacingCustomer] = useState(false);
-  useEffect(() => { setReplacingCustomer(false); }, [hasSelectedCustomer]);
+  // Klasik AlisPage sözleşmesi: replacing reset'i aksiyon tıklama anında yapılır
+  // (hasSelectedCustomer effect'ine bırakılmaz — "Değiştir"de müşteri zaten
+  // bağlı olduğundan değer değişmez, bayrak takılı kalır).
+  const handlePickExisting = (customerId: string) => {
+    setReplacingCustomer(false);
+    state.onSelectExistingCustomer(customerId);
+  };
+  const handleCreateNew = (event: FormEvent) => {
+    setReplacingCustomer(false);
+    state.onCreateNewCustomer(event);
+  };
 
   const view = resolveCustomerPanelView(state.customerMode, hasSelectedCustomer, replacingCustomer);
   const customer = state.workspace?.customer;
@@ -632,7 +642,7 @@ export function ModernCustomerDrawerBody({ state, hasSelectedCustomer }: { state
   return (
     <div className="space-y-4">
       {segment}
-      {view === 'create-new' ? <NewCustomerForm state={state} /> : <SearchExistingPanel state={state} />}
+      {view === 'create-new' ? <NewCustomerForm state={state} onSubmit={handleCreateNew} /> : <SearchExistingPanel state={state} onPick={handlePickExisting} />}
     </div>
   );
 }
@@ -662,7 +672,7 @@ function KnivCalculators({ state }: { state: ModernAlisState }) {
   );
 }
 
-function SearchExistingPanel({ state }: { state: ModernAlisState }) {
+function SearchExistingPanel({ state, onPick }: { state: ModernAlisState; onPick: (customerId: string) => void }) {
   return (
     <div className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
       <p className="text-sm text-sg-text">Gerçek müşteri kaydını seçin.</p>
@@ -675,7 +685,7 @@ function SearchExistingPanel({ state }: { state: ModernAlisState }) {
           <p className="px-4 py-8 text-center text-sm text-sg-text-soft">Kayıtlı müşteri bulunamadı.</p>
         ) : (
           state.candidateCustomers.map((customer) => (
-            <button key={customer.id} type="button" disabled={state.customerSelecting} onClick={() => state.onSelectExistingCustomer(customer.id)} className="flex w-full items-center justify-between gap-3 border-b border-sg-border-soft px-4 py-3 text-left transition last:border-b-0 hover:bg-sg-accent-soft disabled:cursor-wait disabled:opacity-60">
+            <button key={customer.id} type="button" disabled={state.customerSelecting} onClick={() => onPick(customer.id)} className="flex w-full items-center justify-between gap-3 border-b border-sg-border-soft px-4 py-3 text-left transition last:border-b-0 hover:bg-sg-accent-soft disabled:cursor-wait disabled:opacity-60">
               <span>
                 <span className="block text-sm font-semibold text-sg-text">{customer.name}</span>
                 <span className="mt-1 block text-xs text-sg-text-soft">{customer.phone || 'Telefon yok'} · {customer.cpr_number_masked || 'CPR gizli'}</span>
@@ -689,7 +699,7 @@ function SearchExistingPanel({ state }: { state: ModernAlisState }) {
   );
 }
 
-function NewCustomerForm({ state }: { state: ModernAlisState }) {
+function NewCustomerForm({ state, onSubmit }: { state: ModernAlisState; onSubmit: (event: FormEvent) => void }) {
   const hasValidNewCustomer =
     state.newCustomer.name.trim().length >= 2 &&
     state.newCustomer.phone.trim().length >= 7 &&
@@ -699,7 +709,7 @@ function NewCustomerForm({ state }: { state: ModernAlisState }) {
   const hasValidPostal = newPostal.length === 0 || newPostal.length === 4;
 
   return (
-    <form onSubmit={(event: FormEvent) => state.onCreateNewCustomer(event)} className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
+    <form onSubmit={onSubmit} className="rounded-sg-xl border border-sg-border bg-sg-surface-soft p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-sg-text">Zorunlu kimlik alanlarını tamamlayın.</p>
         <button type="button" onClick={() => state.setCustomerMode('existing')} className={shellButtonClass('ghost')}>Kapat</button>

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConfirmProvider } from '@/components/ConfirmDialog';
@@ -95,5 +96,45 @@ describe('ModernCustomerDrawerBody', () => {
     fireEvent.click(screen.getByText('Bağlantıyı kaldır'));
 
     await waitFor(() => expect(onDetachCustomer).toHaveBeenCalledTimes(1));
+  });
+
+  it('"Değiştir" → müşteri seçimi sonrası panel attached görünümüne döner (replacing bayrağı takılı kalmaz)', () => {
+    // Gerçek hook davranışını taklit eden sarmalayıcı: seçim başarıyla
+    // tamamlandığında hook customerMode'u null'a çeker.
+    function Harness({ onSelectExistingCustomer }: { onSelectExistingCustomer: (id: string) => void }) {
+      const [mode, setMode] = useState<'existing' | 'new' | null>('existing');
+      const [searchTerm, setSearchTerm] = useState('');
+      const handleSelect = (id: string) => {
+        onSelectExistingCustomer(id);
+        setMode(null); // selectCustomerMutation.onSuccess davranışı
+      };
+      const state = {
+        ...buildState({ customerMode: mode, hasSelectedCustomer: true }),
+        customerSearchTerm: searchTerm,
+        setCustomerSearchTerm: setSearchTerm,
+        candidateCustomers: searchTerm.trim().length >= 2
+          ? [{ id: 'c-2', name: 'Ada Yılmaz', phone: '87654321', cpr_number_masked: '******1234' }]
+          : [],
+        onSelectExistingCustomer: handleSelect,
+      } as unknown as AlisPageProps;
+      return <ModernCustomerDrawerBody state={state} hasSelectedCustomer />;
+    }
+
+    const onSelectExistingCustomer = vi.fn();
+    render(<ConfirmProvider><Harness onSelectExistingCustomer={onSelectExistingCustomer} /></ConfirmProvider>);
+
+    // Attached görünüm → Değiştir → arama paneli
+    fireEvent.click(screen.getByText('Değiştir'));
+    expect(screen.getByRole('tablist', { name: 'Müşteri seçim yöntemi' })).toBeInTheDocument();
+
+    // Arama yapınca aday satırı gelir; tıklanınca seçim tetiklenir
+    fireEvent.change(screen.getByPlaceholderText('İsim, CPR, telefon...'), { target: { value: 'Ada' } });
+    fireEvent.click(screen.getByText('Ada Yılmaz'));
+
+    expect(onSelectExistingCustomer).toHaveBeenCalledWith('c-2');
+
+    // Seçim başarılı (mode null) olduktan sonra ASLA pick-action/segment'te takılı kalmaz
+    expect(screen.queryByRole('tablist', { name: 'Müşteri seçim yöntemi' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Ad Soyad')).toBeInTheDocument();
   });
 });
