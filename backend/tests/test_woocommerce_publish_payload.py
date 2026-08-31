@@ -107,7 +107,7 @@ def test_full_maps_produce_categories_attributes_and_metas() -> None:
 
     # Attributes — sitedeki 'Yderligere information' tablosu.
     attributes = {item["name"]: item["options"][0] for item in payload["attributes"]}
-    assert attributes["Karat"] == "22 karat"
+    assert attributes["Karat"] == "22 Karat"
     assert attributes["Renhed"] == "0,916"
     assert attributes["Vægt"] == "19,65g"
     assert attributes["Længde"] == "20,00cm"
@@ -117,8 +117,9 @@ def test_full_maps_produce_categories_attributes_and_metas() -> None:
     assert attributes["Vare nr."] == "xxxx"
     assert "Diameter" not in attributes  # boş alan atlanır
 
-    # SEO title artık Yoast/RankMath meta'larına da gider.
-    assert meta["_yoast_wpseo_title"].startswith("Guldarmbånd")
+    # SEO title artık Yoast/RankMath meta'larına da gider; site şablonu
+    # "{name} - Seroguld" olduğundan son ek sığdığında kod tarafında eklenir.
+    assert meta["_yoast_wpseo_title"] == "Guldarmbånd i gult guld 19,65 g - 22 kt - Seroguld"
     assert meta["rank_math_title"] == meta["_yoast_wpseo_title"]
     assert meta["_yoast_wpseo_metadesc"] == "Guldarmbånd med flade led."
 
@@ -453,3 +454,24 @@ def test_metal_pricing_meta_skipped_without_weight_or_purity() -> None:
         settings=_settings(),
     )
     assert "_metal_type" not in _meta_map(payload)
+
+
+def test_seo_title_suffix_skipped_when_title_long() -> None:
+    """70 karakter SEO üst sınırı: son ek sığmıyorsa olduğu gibi kalır."""
+    long_title = "Laaaang Guldkæde med diamantskårne fantastiske led i gult guld"  # 63
+    product = _product(ai_description=(
+        f"SEO_TITLE: {long_title}\n"
+        "SHORT_DESCRIPTION: Elegant kæde.\n"
+        "LONG_DESCRIPTION_HTML: <p>Fin kæde.</p>\n"
+        "META_DESCRIPTION: Kæde med glans.\n"
+        "URL_SLUG: laaang-guldkdce\n"
+    ))
+    payload, _ = build_publish_payload(
+        product=product,
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    meta = _meta_map(payload)
+    assert meta["_yoast_wpseo_title"] == long_title

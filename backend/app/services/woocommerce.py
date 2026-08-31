@@ -371,14 +371,15 @@ def _jewelry_attributes(product: Product) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     karat = _karat_number(product)
     if karat:
-        entries.append(("Karat", f"{karat} karat"))
+        # Sitedeki tablo b\u00fcy\u00fck harfle yazar: "14 Karat".
+        entries.append(("Karat", f"{karat} Karat"))
     if product.purity_percentage is not None:
         fraction = (Decimal(str(product.purity_percentage)) / Decimal("100")).quantize(Decimal("0.001"))
         entries.append(("Renhed", _danish_number(fraction)))
     if product.weight_grams is not None:
         entries.append(("V\u00e6gt", f"{_danish_number(quantize_2(product.weight_grams))}g"))
     if getattr(product, "length_cm", None):
-        entries.append(("L\u00e6ngde", str(product.length_cm).strip()))
+        entries.append(("L\u00e6ngde", _length_text(product.length_cm)))
     if getattr(product, "width_mm", None) is not None:
         entries.append(("Bredde", f"{_danish_number(quantize_2(product.width_mm))}mm"))
     if getattr(product, "thickness_mm", None) is not None:
@@ -568,6 +569,17 @@ SPEC_STRIP_MARKER_START = "<!-- sg-spec -->"
 SPEC_STRIP_MARKER_END = "<!-- /sg-spec -->"
 
 
+def _length_text(length: Any) -> str:
+    """length_cm serbest metindir (or. "1,40cm" / "18-19cm"). X5: birimsiz ham
+    sayi girildiyse 'cm' eklenir — "1.8" tek basina cm/mm belirsizligi
+    yaratirdi; alanin kanonik birimi cm'dir. Spec seridi VE attribute tablosu
+    ayni kurali kullanir (sitedeki 'Yderligere information' ile uyumlu)."""
+    text = str(length).strip()
+    if text and not any(ch.isalpha() for ch in text):
+        text = f"{text}cm"
+    return text
+
+
 def _spec_strip_text(product: Product) -> str:
     """Yayin profiline gore yesil kutu seridi.
 
@@ -601,13 +613,7 @@ def _spec_strip_text(product: Product) -> str:
     dims: list[str] = []
     length = getattr(product, "length_cm", None)
     if length:
-        # length_cm birim iceren serbest metindir (or. "1,40cm" / "18-19cm").
-        # X5: birimsiz ham sayi girildiyse 'cm' eklenir \u2014 "1.8" tek basina
-        # cm/mm belirsizligi yaratiyordu; alanin kanonik birimi cm'dir.
-        length_text = str(length).strip()
-        if length_text and not any(ch.isalpha() for ch in length_text):
-            length_text = f"{length_text}cm"
-        dims.append(f"L\u00e6ngde: {length_text}")
+        dims.append(f"L\u00e6ngde: {_length_text(length)}")
     if getattr(product, "width_mm", None) is not None:
         dims.append(f"Bredde: {_danish_number(quantize_2(product.width_mm))}mm")
     if getattr(product, "thickness_mm", None) is not None:
@@ -907,10 +913,16 @@ def build_publish_payload(
     if slug_value:
         payload["slug"] = slug_value
     if seo_title_value:
+        # Sitenin Yoast şablonu "{name} - Seroguld" — manuel SEO title override
+        # şablonu ezer, marka son eki kaybolur. Sığdığında kod tarafında eklenir
+        # (AI prompt'u son eki bilmez; 70 karakter SEO üst sınırı korunur).
+        seo_title_full = seo_title_value.strip()
+        if "seroguld" not in seo_title_full.lower() and len(seo_title_full) + 11 <= 70:
+            seo_title_full = f"{seo_title_full} - Seroguld"
         payload["meta_data"].extend(
             [
-                {"key": "_yoast_wpseo_title", "value": seo_title_value},
-                {"key": "rank_math_title", "value": seo_title_value},
+                {"key": "_yoast_wpseo_title", "value": seo_title_full},
+                {"key": "rank_math_title", "value": seo_title_full},
             ]
         )
     if meta_description_value:

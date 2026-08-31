@@ -160,10 +160,12 @@ class AIService:
                 "- Skriv professionelt, klart og salgsvenligt for dansk e-handel.\n"
             )
             spec_hint = (
-                "specifikationer + afsluttende CTA. Specifikationslisten skal mindst "
-                "indeholde: Vare nr., Vægt (g), Karat/Renhed og mål (hvis kendt), og derefter "
-                "referencesidens kategorier: Materiale, Design, Overflade, Stil, Lukning, "
-                "Anvendelse — samme struktur som referencesiden (R1-12)."
+                "specifikationer + afsluttende CTA. Specifikationslisten følger sidens "
+                "struktur (R1-12): Materiale (fx '18 karat guld (750)'), Smykketype, evt. "
+                "kædetype/undertype, Design, Detaljer, Overflade, Farve, Stil, Anvendelse — "
+                "og Lukning hvis smykket har en. SKRIV IKKE numeriske specifikationer "
+                "(Vare nr., Vægt, mål, karat som liste punkt) — de står automatisk i det "
+                "grønne specifikationsfelt og i specifikationstabellen."
             )
 
         return (

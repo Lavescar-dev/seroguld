@@ -60,11 +60,20 @@ def test_operator_override_wins():
 
 def test_jewelry_attributes_and_strip():
     attrs = _attrs(_p())
-    assert attrs["Karat"] == "14 karat"
+    assert attrs["Karat"] == "14 Karat"
     assert attrs["Renhed"] == "0,585"
     assert attrs["Vægt"] == "1,15g"
     assert attrs["Længde"] == "1,40cm"
     assert _spec_strip_text(_p()) == "Vare nr. : 1201 Vægt: 1,15g Længde: 1,40cm Bredde: 1,10mm Tykkelse: 5,22mm"
+
+
+def test_jewelry_attributes_length_auto_cm():
+    # Birimsiz ham sayı: attribute tablosunda da 'cm' eklenir (X5, spec şeridiyle aynı kural).
+    attrs = _attrs(_p(length_cm="42,6"))
+    assert attrs["Længde"] == "42,6cm"
+    # Aralıklı serbest metin olduğu gibi kalır.
+    attrs2 = _attrs(_p(length_cm="18-19cm"))
+    assert attrs2["Længde"] == "18-19cm"
 
 
 def test_gold_coin_attributes_include_dimensions_and_year():
