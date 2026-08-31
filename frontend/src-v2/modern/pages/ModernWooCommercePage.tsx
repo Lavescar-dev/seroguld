@@ -322,15 +322,33 @@ function AiTab({ state, seoMissing }: { state: WooMakeState; seoMissing: string[
 
 function specStripPreview(detail: WooMakeState['detail']): string {
   if (!detail) return '';
+  // 2026-09-01: backend `_spec_strip_text` tek kaynak — ProductOut
+  // spec_strip_text taşıyorsa onu göster, yerel kopya drift etmesin.
+  const backendStrip = (detail.spec_strip_text || '').trim();
+  if (backendStrip) return backendStrip;
+  // Fallback: aynı kuralın yerel kopyası (canlı site formatı: virgülsüz tek
+  // boşluk, "Vægt" hemen Vare nr.'dan sonra, 2 ondalık Danca virgül).
   const ref = (detail.reference_number || detail.product_number || '').trim();
   if (!ref) return '';
+  const danish2 = (value: string | number | null | undefined, suffix: string): string | null => {
+    if (value == null || value === '') return null;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    return `${num.toFixed(2).replace('.', ',')}${suffix}`;
+  };
+  let base = `Vare nr. : ${ref}`;
+  const vaegt = danish2(detail.weight_grams, 'g');
+  if (vaegt) base = `${base} Vægt: ${vaegt}`;
   const dims: string[] = [];
-  if (detail.length_cm) dims.push(`Længde: ${String(detail.length_cm).trim()}`);
-  if (detail.width_mm != null) dims.push(`Bredde: ${String(detail.width_mm).replace('.', ',')}mm`);
-  if (detail.thickness_mm != null) dims.push(`Tykkelse: ${String(detail.thickness_mm).replace('.', ',')}mm`);
-  if (detail.diameter_mm != null) dims.push(`Diameter: ${String(detail.diameter_mm).replace('.', ',')}mm`);
-  const base = `Vare nr. : ${ref}`;
-  return dims.length ? `${base} ${dims.join(', ')}` : base;
+  const lengthText = String(detail.length_cm || '').trim();
+  if (lengthText) dims.push(`Længde: ${/[a-zA-Z]/.test(lengthText) ? lengthText : `${lengthText}cm`}`);
+  const bredde = danish2(detail.width_mm, 'mm');
+  if (bredde) dims.push(`Bredde: ${bredde}`);
+  const tykkelse = danish2(detail.thickness_mm, 'mm');
+  if (tykkelse) dims.push(`Tykkelse: ${tykkelse}`);
+  const diameter = danish2(detail.diameter_mm, 'mm');
+  if (diameter) dims.push(`Diameter: ${diameter}`);
+  return dims.length ? `${base} ${dims.join(' ')}` : base;
 }
 
 // R1-10: yayın öncesi şablon önizleme yanıtı (backend publish-preview).

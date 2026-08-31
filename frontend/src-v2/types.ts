@@ -211,6 +211,8 @@ export interface ProductOut {
   width_mm?: string | null;
   thickness_mm?: string | null;
   diameter_mm?: string | null;
+  /** Yayında yeşil kutuya yazılacak spec şeridi — backend tek kaynak. */
+  spec_strip_text?: string | null;
   producer?: string | null;
   inventory_category?: string | null;
   inventory_subcategory?: string | null;

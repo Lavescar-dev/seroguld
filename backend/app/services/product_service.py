@@ -20,6 +20,9 @@ from app.schemas.customer import CustomerCreate
 from app.schemas.product import ProductCreate, ProductOut, ProductStatusUpdate, ProductUpdate
 from app.services.customer_service import create_customer
 from app.services.sequence_service import consume_product_number
+# Yayın spec şeridinin TEK kaynağı Woo servisindedir; ProductOut bunu taşır,
+# UI önizlemesi kendi kopyasını hesaplayıp drift etmesin.
+from app.services.woocommerce import _spec_strip_text as spec_strip_text_for
 from app.utils.helpers import quantize_2, to_decimal, utc_now
 
 
@@ -299,6 +302,7 @@ def to_product_out(product: Product) -> ProductOut:
         thickness_mm=product.thickness_mm,
         producer=product.producer,
         diameter_mm=product.diameter_mm,
+        spec_strip_text=spec_strip_text_for(product),
         inventory_category=product.inventory_category,
         inventory_subcategory=product.inventory_subcategory,
         operation_destination=product.operation_destination,

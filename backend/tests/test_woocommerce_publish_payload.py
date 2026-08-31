@@ -272,15 +272,15 @@ def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
         thickness_mm=Decimal("5.22"),
         diameter_mm=None,
     )
-    assert _spec_strip_text(pendant) == "Vare nr. : 1201, Vægt: 19,65g Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
+    assert _spec_strip_text(pendant) == "Vare nr. : 1201 Vægt: 19,65g Længde: 1,40cm Bredde: 1,10mm Tykkelse: 5,22mm"
 
     # Yalnız çaplı ürün (yüzük): sadece Diameter.
     ring = _product(reference_number="1427", length_cm=None, width_mm=None, thickness_mm=None, diameter_mm=Decimal("5.97"))
-    assert _spec_strip_text(ring) == "Vare nr. : 1427, Vægt: 19,65g Diameter: 5,97mm"
+    assert _spec_strip_text(ring) == "Vare nr. : 1427 Vægt: 19,65g Diameter: 5,97mm"
 
     # Ölçüsüz ürün: yalnız Vare nr.
     plain = _product(reference_number="9000", length_cm=None, width_mm=None, thickness_mm=None, diameter_mm=None)
-    assert _spec_strip_text(plain) == "Vare nr. : 9000, Vægt: 19,65g"
+    assert _spec_strip_text(plain) == "Vare nr. : 9000 Vægt: 19,65g"
 
     payload, _ = build_publish_payload(
         product=pendant,
@@ -289,7 +289,7 @@ def test_spec_strip_added_to_both_descriptions_idempotently() -> None:
         images=[],
         settings=_settings(),
     )
-    strip = "Vare nr. : 1201, Vægt: 19,65g Længde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm"
+    strip = "Vare nr. : 1201 Vægt: 19,65g Længde: 1,40cm Bredde: 1,10mm Tykkelse: 5,22mm"
     # A2: şerit iki açıklamada da paragrafın ALTINDA; kısa açıklamada
     # kapanış satırı ("Detaljeret…") en sonda kalır.
     short = payload["short_description"]

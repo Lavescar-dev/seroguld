@@ -571,10 +571,14 @@ SPEC_STRIP_MARKER_END = "<!-- /sg-spec -->"
 def _spec_strip_text(product: Product) -> str:
     """Yayin profiline gore yesil kutu seridi.
 
-    jewelry: 'Vare nr. : 1201 L\u00e6ngde: 1,40cm, Bredde: 1,10mm, Tykkelse: 5,22mm'
+    jewelry: 'Vare nr. : 1201 V\u00e6gt: 1,15g L\u00e6ngde: 1,40cm Bredde: 1,10mm Tykkelse: 5,22mm'
     (Vare nr. + doldurulmus olculer). investment (bar/coin/platin): olcu yok;
     spec_strip_mode='weight' ise 'Vare nr. : X V\u00e6gt: N gram', 'none' ise bos.
     Birimler bosluksuz; sayilar Danca ondalik virgulle.
+
+    2026-09-01: canli sitenin guncel S-serisi (1590-1617) virgulsuz tek bosluk
+    formati kullaniyor ("Vare nr. : 1617 V\u00e6gt: 2,39g L\u00e6ngde: 40,00cm Bredde:
+    1,91mm Tykkelse: 0,29mm"); eski 1427 virgulluydu, R2-18 referansi guncellendi.
     """
     ref = (product.reference_number or product.product_number or "").strip()
     if not ref:
@@ -590,10 +594,10 @@ def _spec_strip_text(product: Product) -> str:
             return f"{base} Vægt: {_danish_number(quantize_2(product.weight_grams))} gram"
         return base
 
-    # R2-18: Vægt vare nr.'dan HEMEN sonra gelir (referans: "Vare nr. : 1427,
-    # Vægt: 0,93g Diameter: 5,97mm").
+    # Vægt vare nr.'dan HEMEN sonra gelir, virgulsuz (canli site: "Vare nr. :
+    # 1617 Vægt: 2,39g Længde: 40,00cm Bredde: 1,91mm Tykkelse: 0,29mm").
     if product.weight_grams is not None:
-        base = f"{base}, Vægt: {_danish_number(quantize_2(product.weight_grams))}g"
+        base = f"{base} Vægt: {_danish_number(quantize_2(product.weight_grams))}g"
     dims: list[str] = []
     length = getattr(product, "length_cm", None)
     if length:
@@ -610,7 +614,7 @@ def _spec_strip_text(product: Product) -> str:
         dims.append(f"Tykkelse: {_danish_number(quantize_2(product.thickness_mm))}mm")
     if getattr(product, "diameter_mm", None) is not None:
         dims.append(f"Diameter: {_danish_number(quantize_2(product.diameter_mm))}mm")
-    return f"{base} {', '.join(dims)}" if dims else base
+    return f"{base} {' '.join(dims)}" if dims else base
 
 
 def _strip_spec_block(value: str) -> str:
@@ -857,7 +861,7 @@ def build_publish_payload(
             ).strip() or DESC_FOOTER_INVESTMENT_DA_DEFAULT
             description_value = _apply_description_footer(description_value, footer_html)
 
-    # Referans sitedeki spec şeridi ("Vare nr. : X, Vægt: Yg Diameter: Zmm")
+    # Referans sitedeki spec şeridi ("Vare nr. : X Vægt: Yg Diameter: Zmm")
     # A2: iki açıklamada da paragrafın ALTINA idempotent eklenir
     # (paragraf → yeşil kutu → kapanış satırı).
     spec_text = _spec_strip_text(product)

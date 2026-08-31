@@ -228,6 +228,9 @@ class ProductOut(AppBaseModel):
     width_mm: Decimal | None = None
     thickness_mm: Decimal | None = None
     diameter_mm: Decimal | None = None
+    # Yayında yeşil kutuya yazılacak spec şeridi — backend tek kaynak
+    # (_spec_strip_text); UI önizlemesi bunu gösterir, yerel kopya drift etmesin.
+    spec_strip_text: str = ""
     producer: str | None = None
     inventory_category: str | None = None
     inventory_subcategory: str | None = None
