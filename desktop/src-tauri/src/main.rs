@@ -1746,6 +1746,10 @@ struct IdentityScannerCapabilities {
     image_file_fallback: bool,
     max_file_bytes: usize,
     accepted_mime_types: Vec<String>,
+    // OCR dil paketi yoklaması: Danca paket yoksa UI uyarır (saha teshisi).
+    ocr_danish_available: bool,
+    ocr_profile_language: String,
+    ocr_available_languages: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1757,6 +1761,14 @@ struct IdentityScanResult {
     preview_data_url: String,
     ocr_text: String,
     ocr_lines: Vec<String>,
+    // Saha teshisi için OCR koşu bilgisi: hangi dil paketi seçildi, görüntü
+    // ölçeklendi mi (MaxImageDimension aşımı "4 satır" semptomunun nedeni).
+    ocr_language: String,
+    ocr_requested_language: String,
+    ocr_max_image_dimension: u32,
+    image_scaled: bool,
+    image_source_width: u32,
+    image_source_height: u32,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2052,6 +2064,18 @@ fn identity_scanner_platform() -> &'static str {
 
 fn identity_scanner_capabilities() -> IdentityScannerCapabilities {
     let supported = cfg!(target_os = "windows");
+    #[cfg(target_os = "windows")]
+    let (ocr_danish_available, ocr_profile_language, ocr_available_languages) = {
+        let probe = identity_ocr_language_probe();
+        (
+            probe.danish_available,
+            probe.profile_language.clone(),
+            probe.available_languages.clone(),
+        )
+    };
+    #[cfg(not(target_os = "windows"))]
+    let (ocr_danish_available, ocr_profile_language, ocr_available_languages) =
+        (true, String::new(), Vec::new());
     IdentityScannerCapabilities {
         supported,
         platform: identity_scanner_platform().to_string(),
@@ -2063,6 +2087,9 @@ fn identity_scanner_capabilities() -> IdentityScannerCapabilities {
             .iter()
             .map(|mime_type| (*mime_type).to_string())
             .collect(),
+        ocr_danish_available,
+        ocr_profile_language,
+        ocr_available_languages,
     }
 }
 
@@ -2136,15 +2163,21 @@ fn identity_scan_result(
     source: &str,
     image_bytes: Vec<u8>,
     mime_type: &str,
-    ocr_lines: Vec<String>,
+    ocr: &WindowsOcrOutput,
 ) -> IdentityScanResult {
     IdentityScanResult {
         side: side.to_string(),
         source: source.to_string(),
         mime_type: mime_type.to_string(),
         preview_data_url: format!("data:{mime_type};base64,{}", BASE64.encode(image_bytes)),
-        ocr_text: ocr_lines.join("\n"),
-        ocr_lines,
+        ocr_text: ocr.lines.join("\n"),
+        ocr_lines: ocr.lines.clone(),
+        ocr_language: ocr.language.clone(),
+        ocr_requested_language: ocr.requested_language.clone(),
+        ocr_max_image_dimension: ocr.max_image_dimension,
+        image_scaled: ocr.scaled,
+        image_source_width: ocr.source_width,
+        image_source_height: ocr.source_height,
     }
 }
 
@@ -2160,7 +2193,10 @@ try {
   $device = $dialog.ShowSelectDevice()
   if ($null -eq $device) { exit 2 }
   $item = $device.Items.Item(1)
-  $image = $dialog.ShowTransfer($item)
+  # FormatID verilmezse cihazin tercih ettigi format kullanilir; bazi tarayicilar
+  # BMP dondurur ve magic-byte kontrolu INVALID_IMAGE ile reddeder. JPEG iste;
+  # cihaz desteklemiyorsa WIA tercih ettigi formata duser (asagi dogru sniff var).
+  $image = $dialog.ShowTransfer($item, '{B96B3CA6-0728-11D3-9D7B-0000F81EF32E}', $false)
   if ($null -eq $image) { exit 2 }
   $image.SaveFile($env:SEROGULD_SCAN_PATH)
   exit 0
@@ -2169,40 +2205,50 @@ try {
 }
 "#;
 
+// Ortak OCR script'i (fonksiyonlar): identity_ocr.ps1 hem uretimde hem
+// ocr-fixture-harness.ps1'de kullanilir; dil secimi/on-isleme drift'i kalici
+// olarak kapalidir.
 #[cfg(target_os = "windows")]
-const WINDOWS_OCR_SCRIPT: &str = r#"
-$ErrorActionPreference = 'Stop'
+const WINDOWS_OCR_SCRIPT: &str = concat!(
+    include_str!("identity_ocr.ps1"),
+    r#"
 try {
-  Add-Type -AssemblyName System.Runtime.WindowsRuntime
-  $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
-  $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
-  $null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime]
-
-  # AsTask($op) dogrudan cagrisi PowerShell 5.1'de generic overload'u cozemeyip
-  # MethodCountCouldNotFindBest ile patlayabiliyor (gercek makinede dogrulandi);
-  # bu yuzden AsTask, MakeGenericMethod ile reflection uzerinden baglanir.
-  $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
-      $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
-      $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
-    })[0]
-
-  function Await-WinRt($operation, [Type]$resultType) {
-    $task = $asTaskGeneric.MakeGenericMethod($resultType).Invoke($null, @($operation))
-    $task.Wait() | Out-Null
-    return $task.Result
-  }
-
-  $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($env:SEROGULD_SCAN_PATH)) ([Windows.Storage.StorageFile])
-  $stream = Await-WinRt ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-  $decoder = Await-WinRt ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-  $bitmap = Await-WinRt ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-  $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-  if ($null -eq $engine) { exit 3 }
-  $result = Await-WinRt ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-  $lines = @($result.Lines | ForEach-Object { $_.Text })
-  $json = $lines | ConvertTo-Json -Compress
+  $json = Get-OcrJson -Path $env:SEROGULD_SCAN_PATH
+  if ($null -eq $json) { exit 3 }
   [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
   [Console]::WriteLine([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($json)))
+  exit 0
+} catch {
+  exit 1
+}
+"#
+);
+
+// Dil paketi yoklamasi: async yok (~300-600 ms) ve capabilities mount'ta bir
+// kez cagirilir; OnceLock ile cache'lenir. Danca paket yoksa UI uyarir.
+#[cfg(target_os = "windows")]
+const OCR_LANGUAGE_PROBE_SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+try {
+  $null = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime]
+  $null = [Windows.Globalization.Language, Windows.Globalization, ContentType = WindowsRuntime]
+  $danish = $false
+  try {
+    $danish = [bool][Windows.Media.Ocr.OcrEngine]::IsLanguageSupported([Windows.Globalization.Language]::new('da-DK'))
+  } catch {
+    $danish = $false
+  }
+  $profileTag = ''
+  $profileEngine = $null
+  try { $profileEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() } catch {}
+  if ($null -ne $profileEngine) { $profileTag = [string]$profileEngine.RecognizerLanguage.LanguageTag }
+  $available = @()
+  try {
+    $available = @([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages() | ForEach-Object { [string]$_.LanguageTag })
+  } catch {}
+  $payload = @{ danishAvailable = $danish; profileLanguage = $profileTag; availableLanguages = $available }
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  [Console]::WriteLine([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $payload -Compress -Depth 3))))
   exit 0
 } catch {
   exit 1
@@ -2241,6 +2287,37 @@ impl TemporaryIdentityImage {
             }
         }
         Err(IdentityScannerError::acquisition_failed())
+    }
+
+    /// WIA, istenen formata rağmen cihazın tercih ettiği formatta (ör. BMP)
+    /// dönebilir; sabit `identity-scan.jpg` adı magic-byte kontrolüyle
+    /// INVALID_IMAGE yutmasına yol açar. Gerçek formatı tespit edip dosyayı
+    /// doğru uzantıya taşır — `path` güncellenmeli, aksi halde cleanup bozuk
+    /// dizinle kalır.
+    fn retarget_to_detected_format(&mut self) -> Result<(), IdentityScannerError> {
+        let mut head = [0u8; 8];
+        let read = {
+            let mut file = fs::File::open(&self.path)
+                .map_err(|_| IdentityScannerError::acquisition_failed())?;
+            file.read(&mut head)
+                .map_err(|_| IdentityScannerError::acquisition_failed())?
+        };
+        let mime = identity_mime_type(&head[..read])
+            .ok_or_else(IdentityScannerError::invalid_image)?;
+        let extension = match mime {
+            "image/jpeg" => "jpg",
+            "image/png" => "png",
+            "image/tiff" => "tif",
+            "image/bmp" => "bmp",
+            _ => return Err(IdentityScannerError::invalid_image()),
+        };
+        let target = self.directory.join(format!("identity-scan.{extension}"));
+        if target != self.path {
+            fs::rename(&self.path, &target)
+                .map_err(|_| IdentityScannerError::acquisition_failed())?;
+            self.path = target;
+        }
+        Ok(())
     }
 
     fn remove(&self) -> Result<(), IdentityScannerError> {
@@ -2304,8 +2381,24 @@ fn acquire_wia_image(path: &std::path::Path) -> Result<(), IdentityScannerError>
     }
 }
 
+/// OCR script'inin çıktı sözleşmesi (identity_ocr.ps1 → Get-OcrJson).
+/// PS 5.1 pipeline unwrap hatasına karşı tüm alanlar default'lu: boş/tek
+/// satırlı çıktı bile güvenle parse edilir.
 #[cfg(target_os = "windows")]
-fn run_windows_local_ocr(path: &std::path::Path) -> Result<Vec<String>, IdentityScannerError> {
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct WindowsOcrOutput {
+    lines: Vec<String>,
+    language: String,
+    requested_language: String,
+    max_image_dimension: u32,
+    scaled: bool,
+    source_width: u32,
+    source_height: u32,
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_local_ocr(path: &std::path::Path) -> Result<WindowsOcrOutput, IdentityScannerError> {
     let output = run_windows_powershell(WINDOWS_OCR_SCRIPT, path)
         .map_err(|_| IdentityScannerError::ocr_unavailable())?;
     match output.status.code() {
@@ -2323,11 +2416,11 @@ fn run_windows_local_ocr(path: &std::path::Path) -> Result<Vec<String>, Identity
     let json = BASE64
         .decode(encoded_lines)
         .map_err(|_| IdentityScannerError::ocr_failed())?;
-    let lines: Vec<String> =
+    let mut ocr: WindowsOcrOutput =
         serde_json::from_slice(&json).map_err(|_| IdentityScannerError::ocr_failed())?;
     let mut sanitized_lines = Vec::new();
     let mut total_length = 0usize;
-    for line in lines {
+    for line in std::mem::take(&mut ocr.lines) {
         let line = line.trim().to_string();
         if line.is_empty() {
             continue;
@@ -2338,7 +2431,54 @@ fn run_windows_local_ocr(path: &std::path::Path) -> Result<Vec<String>, Identity
         }
         sanitized_lines.push(line);
     }
-    Ok(sanitized_lines)
+    ocr.lines = sanitized_lines;
+    Ok(ocr)
+}
+
+/// Dil paketi yoklaması (Windows): bir kez çalıştırılıp cache'lenir.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct IdentityOcrLanguageProbe {
+    danish_available: bool,
+    profile_language: String,
+    available_languages: Vec<String>,
+}
+
+#[cfg(target_os = "windows")]
+impl Default for IdentityOcrLanguageProbe {
+    fn default() -> Self {
+        // Probe başarısızsa uyarı YOK (sessiz geç): yanlış uyarıdan iyidir.
+        Self {
+            danish_available: true,
+            profile_language: String::new(),
+            available_languages: Vec::new(),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn identity_ocr_language_probe() -> &'static IdentityOcrLanguageProbe {
+    static PROBE: std::sync::OnceLock<IdentityOcrLanguageProbe> = std::sync::OnceLock::new();
+    PROBE.get_or_init(|| {
+        let output = match run_windows_powershell(OCR_LANGUAGE_PROBE_SCRIPT, std::path::Path::new(""))
+        {
+            Ok(output) => output,
+            Err(_) => return IdentityOcrLanguageProbe::default(),
+        };
+        if output.status.code() != Some(0) || output.stdout.len() > 64 * 1024 {
+            return IdentityOcrLanguageProbe::default();
+        }
+        let encoded = match std::str::from_utf8(&output.stdout) {
+            Ok(encoded) => encoded.trim(),
+            Err(_) => return IdentityOcrLanguageProbe::default(),
+        };
+        let json = match BASE64.decode(encoded) {
+            Ok(json) => json,
+            Err(_) => return IdentityOcrLanguageProbe::default(),
+        };
+        serde_json::from_slice(&json).unwrap_or_default()
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -2348,14 +2488,8 @@ fn build_windows_identity_scan_result(
     image_path: &std::path::Path,
 ) -> Result<IdentityScanResult, IdentityScannerError> {
     let (image_bytes, mime_type) = read_identity_image(image_path)?;
-    let ocr_lines = run_windows_local_ocr(image_path)?;
-    Ok(identity_scan_result(
-        side,
-        source,
-        image_bytes,
-        mime_type,
-        ocr_lines,
-    ))
+    let ocr = run_windows_local_ocr(image_path)?;
+    Ok(identity_scan_result(side, source, image_bytes, mime_type, &ocr))
 }
 
 fn show_customer_display_window(
@@ -2398,6 +2532,66 @@ fn _app_window_hash_url_for_tests(route: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // OCR script sürüklenme koruması: identity_ocr.ps1 üretimde include_str!
+    // ile gömülür; bu marker'lar ön işleme/dil/JSON düzeltmelerinin yanlışlıkla
+    // silinmesini engeller.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_ocr_script_keeps_preprocessing_and_language_contract() {
+        assert!(WINDOWS_OCR_SCRIPT.contains("Select-OcrEngine"));
+        assert!(WINDOWS_OCR_SCRIPT.contains("Get-OcrJson"));
+        assert!(WINDOWS_OCR_SCRIPT.contains("da-DK"));
+        assert!(WINDOWS_OCR_SCRIPT.contains("MaxImageDimension"));
+        assert!(WINDOWS_OCR_SCRIPT.contains("-InputObject"));
+        assert!(WINDOWS_OCR_SCRIPT.contains("RecognizerLanguage.LanguageTag"));
+        // Ortak dosya gerçekten gömülüyor (boş include sürüklenmeyi gizler).
+        assert!(WINDOWS_OCR_SCRIPT.contains("New-OcrSoftwareBitmap"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wia_script_requests_jpeg_transfer_format() {
+        assert!(WIA_ACQUIRE_SCRIPT.contains("B96B3CA6-0728-11D3-9D7B-0000F81EF32E"));
+    }
+
+    // PS 5.1 ConvertTo-Json pipeline unwrap'ine karşı: 0/1/n satır ve alan
+    // default'larıyla güvenli parse (identity_ocr.ps1 çıktı sözleşmesi).
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_ocr_output_parses_zero_one_and_many_lines() {
+        for payload in [
+            r#"{"lines":[],"language":"da-DK","requestedLanguage":"da-DK","maxImageDimension":2600,"scaled":false,"sourceWidth":1011,"sourceHeight":1099}"#,
+            r#"{"lines":["tek satır"],"language":"tr-TR","requestedLanguage":"","maxImageDimension":2600,"scaled":true,"sourceWidth":3024,"sourceHeight":4032}"#,
+            r#"{"lines":["a","b","c"],"language":"da","requestedLanguage":"da-DK","maxImageDimension":2600,"scaled":false,"sourceWidth":800,"sourceHeight":600}"#,
+        ] {
+            let ocr: WindowsOcrOutput = serde_json::from_str(payload).expect("parse");
+            assert_eq!(ocr.max_image_dimension, 2600);
+        }
+        let empty: WindowsOcrOutput = serde_json::from_str(r#"{"lines":[]}"#).expect("parse");
+        assert!(empty.lines.is_empty());
+        assert!(empty.language.is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn temporary_identity_image_retargets_detected_format() {
+        // WIA JPEG istese de cihaz BMP dönebilir; sabit .jpg adı magic-byte
+        // kontrolünde INVALID_IMAGE yutuyordu. Retarget gerçek formatı bulur.
+        let directory = std::env::temp_dir().join(format!("ocr-retarget-{}-{:016x}", std::process::id(), rand::random::<u64>()));
+        std::fs::create_dir_all(&directory).expect("mkdir");
+        let stale = directory.join("identity-scan.jpg");
+        std::fs::write(&stale, [b'B', b'M', 0x00, 0x00]).expect("write bmp bytes");
+        let mut image = TemporaryIdentityImage {
+            directory: directory.clone(),
+            path: stale,
+        };
+        image.retarget_to_detected_format().expect("retarget");
+        let expected = directory.join("identity-scan.bmp");
+        assert_eq!(image.path, expected);
+        assert!(expected.is_file());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
 
     #[test]
     fn normalizes_display_routes() {
@@ -2955,9 +3149,12 @@ async fn acquire_identity_scan(
 
     #[cfg(target_os = "windows")]
     {
-        let temporary_image = TemporaryIdentityImage::new(&app)?;
+        let mut temporary_image = TemporaryIdentityImage::new(&app)?;
         let result = acquire_wia_image(&temporary_image.path)
-            .and_then(|()| build_windows_identity_scan_result(&side, "wia", &temporary_image.path));
+            .and_then(|()| temporary_image.retarget_to_detected_format())
+            .and_then(|()| {
+                build_windows_identity_scan_result(&side, "wia", &temporary_image.path)
+            });
         let cleanup = temporary_image.remove();
         cleanup?;
         result

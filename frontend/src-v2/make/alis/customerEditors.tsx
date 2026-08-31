@@ -457,6 +457,11 @@ export function CustomerEditorTable({
           ) : null}
         </div>
 
+        {identity.ocrNotice ? <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-800">{identity.ocrNotice}</p> : null}
+        {identity.error && identity.diagnostic ? (
+          <pre className="max-h-28 overflow-y-auto whitespace-pre-line border-b border-brand-700 bg-brand-900 px-3 py-1.5 font-mono text-[10px] text-brand-200">{identity.diagnostic}</pre>
+        ) : null}
+
         {identity.result ? (
           <div className="border-b border-emerald-300 bg-emerald-50 px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Okunan alanları inceleyin</p>

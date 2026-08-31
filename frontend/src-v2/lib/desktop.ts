@@ -35,6 +35,9 @@ export interface IdentityScannerCapabilities {
   imageFileFallback: boolean;
   maxFileBytes: number;
   acceptedMimeTypes: IdentityScanMimeType[];
+  ocrDanishAvailable: boolean;
+  ocrProfileLanguage: string;
+  ocrAvailableLanguages: string[];
 }
 
 export interface IdentityScanResult {
@@ -44,6 +47,13 @@ export interface IdentityScanResult {
   previewDataUrl: string;
   ocrText: string;
   ocrLines: string[];
+  // Saha teshisi: hangi dil paketi seçildi, görüntü ölçeklendi mi.
+  ocrLanguage: string;
+  ocrRequestedLanguage: string;
+  ocrMaxImageDimension: number;
+  imageScaled: boolean;
+  imageSourceWidth: number;
+  imageSourceHeight: number;
 }
 
 export interface IdentityScannerErrorPayload {
@@ -302,6 +312,10 @@ function unsupportedIdentityScannerCapabilities(platform: IdentityScannerPlatfor
     imageFileFallback: false,
     maxFileBytes: 10 * 1024 * 1024,
     acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
+    // Probe yok: sessiz geç (yanlış "Danca paketi yok" uyarısı olmasın).
+    ocrDanishAvailable: true,
+    ocrProfileLanguage: '',
+    ocrAvailableLanguages: [],
   };
 }
 

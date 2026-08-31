@@ -174,10 +174,74 @@ describe('OCR fixture sözleşmesi — MRZ translitere ad zorla eşitlenmez', ()
 
   it('pas: bozuk MRZ satırları TD3 yolunu yanlışlıkla tetiklemez', () => {
     // Gerçek OCR MRZ'yi boşluklu/«'lı verir; TD3 44-karakter sözleşmesi
-    // tutmaz ve parser basılı-etiket dalına düşer.
+    // tutmaz ve parser basılı-etiket dalına düşer. (Onarım dalı ayrı test
+    // edilir: aşağıdaki 'MRZ normalizasyonu' bloğu.)
     const result = parseFixture('pas_01_clean.png');
     expect(result.documentType).toBe('passport');
     expect(result.fields.name?.value).not.toContain('PROEVE');
+    const expected = groundTruth.fixtures.find((item) => item.file.endsWith('pas_01_clean.png'));
+    expect(expected).toBeDefined();
+    expect(result.fields.identity_doc_number?.value).toBe(expected?.expected_fields.document_number);
+  });
+});
+
+// Kanonik ICAO 9303 TD3 örneği (check digit'leri geçerli) — « ve boşluklu
+// gerçek OCR biçimine çevrilerek onarım dalının girdisi yapılır.
+const ICAO_TD3_PRISTINE = [
+  'P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<',
+  'L898902C36UTO7408122F1204159ZE184226B<<<<<10',
+];
+
+describe('OCR fixture sözleşmesi — MRZ normalizasyonu (« ve boşluk onarımı)', () => {
+  it('« + boşluklu gerçek OCR TD3 çifti onarılıp parse edilir', () => {
+    // Pristine dal bu satırları reddeder (« [A-Z0-9<] dışında); onarım dalı
+    // normalize eder ve ICAO check digit doğrulamasıyla kabul eder.
+    const raw = ICAO_TD3_PRISTINE.map((line, index) => (index === 0 ? line.replace(/</g, '«') : line.replace(/</g, ' « ').replace('L8989', 'l8989'))).join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('passport');
+    expect(result.fields.name?.value).toBe('ANNA MARIA ERIKSSON');
+    expect(result.fields.identity_doc_number?.value).toBe('L898902C3');
+  });
+
+  it('check digit bozuk onarılmış satır reddedilir (uydurma yok)', () => {
+    // Bileşik kontrol hanesini geçersiz kılan tek harf değişimi: onarım dalı
+    // kabul etmez, etiket dalı da yok → unknown.
+    const broken = ICAO_TD3_PRISTINE.map((line, index) => {
+      const mangled = index === 0 ? line.replace(/</g, '«') : line.replace(/</g, ' « ').replace('L898902C3', 'M898902C3');
+      return mangled;
+    }).join('\n');
+    const result = parseIdentityScan(broken);
+    expect(result.documentType).toBe('unknown');
+    expect(Object.keys(result.fields)).toHaveLength(0);
+  });
+
+  it('whitelist dışı satırlar (« ile bile) MRZ sanılmaz', () => {
+    // raw_ocr.json'dan gerçek hayatta görülen şekiller: '(' içeren kısmi MRZ
+    // ve uzun SPECIMEN başlığı — normalizasyon sonrası bile reddedilmeli.
+    const raw = ['I (DNKID1000066«««««««««', 'SPECIMEN — TEST FIXTURE — IKKE ET GYLDIGT DOKUMENT «««'].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('unknown');
+    expect(Object.keys(result.fields)).toHaveLength(0);
+  });
+
+  it('onarılmış MRZ + zayıf etiket çıktısı: basılı ad kazanır, MRZ eksik belge noyu doldurur', () => {
+    const repairedLines = [
+      ICAO_TD3_PRISTINE[0].replace(/</g, '«'),
+      ICAO_TD3_PRISTINE[1].replace(/</g, ' « '),
+    ];
+    const raw = [
+      'KONGERIGET DANMARK',
+      'Efternavn',
+      'YILMAZ',
+      'Pasnr.',
+      ...repairedLines,
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('passport');
+    // Basılı ad kanoniktir; MRZ transliterasyonu (ERIKSSON) adı ezmez.
+    expect(result.fields.name?.value).toBe('YILMAZ');
+    // Parlamada basılı Pasnr. değeri okunamadı — MRZ'den doldurulur.
+    expect(result.fields.identity_doc_number?.value).toBe('L898902C3');
   });
 });
 

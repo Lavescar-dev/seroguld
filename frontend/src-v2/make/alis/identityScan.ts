@@ -23,10 +23,17 @@ export type IdentityParseResult = {
   fields: Partial<Record<IdentityFieldName, ParsedIdentityField>>;
 };
 
+export type IdentityOcrLanguageInfo = {
+  danishAvailable: boolean;
+  profileLanguage: string;
+  availableLanguages: string[];
+};
+
 export type IdentityScannerCapabilities = {
   scanner: boolean;
   file: boolean;
   message?: string;
+  ocr?: IdentityOcrLanguageInfo;
 };
 
 export type IdentityScanStatus = 'checking' | 'ready' | 'acquiring' | 'review' | 'applied' | 'unavailable' | 'error';
@@ -268,11 +275,69 @@ export function parseIdentityScan(raw: string): IdentityParseResult {
   if (td3) return td3;
   const td1 = parseTd1(mrzLines.filter((line) => line.length === 30).slice(0, 3));
   if (td1) return td1;
+  // Onarılmış MRZ: Windows OCR '<' yerine « okur ve aralara boşluk koyar
+  // (raw_ocr.json: "2010000337 D N K 8611172 M 3103142 « « «"). Artıklardan
+  // arındırıp ICAO karakter kümesine oturan satırlar MRZ adayıdır; check
+  // digit gate'i yanlış pozitifi engeller. Basılı etiket dalı varsa kazınır:
+  // basılı ad kanoniktir, MRZ yalnız eksik alanları doldurur.
+  const repaired = parseRepairedMrz(lines);
   const labeled = parseDanishLabeled(raw, lines);
+  if (labeled && repaired) return mergeParsedIdentity(labeled, repaired);
   if (labeled) return labeled;
+  if (repaired) return repaired;
   const license = parseDriverLicense(raw, lines);
   if (license) return license;
   return { documentType: 'unknown', rawLines: lines, fields: {} };
+}
+
+// MRZ adayı: « → <, boşluklar silinir; geri kalan her karakter ICAO kümesinde
+// olmak zorunda ('SPECIMEN — TEST FIXTURE' gibi uzun başlık satırlarını ve
+// "I (DNKID…" gibi kısmi MRZ parçalarını eler).
+function mrzCandidate(line: string): string | null {
+  const compact = line.toUpperCase().replace(/«/g, '<').replace(/\s+/g, '');
+  return /^[A-Z0-9<]{30,}$/.test(compact) ? compact : null;
+}
+
+// ICAO 9303 TD3: birleşik kontrol hanesi 2. satırın 44. hanesi; 1-10, 14-20
+// ve 22-43 (1 tabanlı) haneleri üzerinden hesaplanır.
+function td3CompositeCheckValid(second: string): boolean {
+  return hasValidMrzCheck(second.slice(0, 10) + second.slice(13, 20) + second.slice(21, 43), second[43]);
+}
+
+// ICAO 9303 TD1: 2. satırın 1-6 haneleri doğum tarihi, 7. hane kontrol hanesi.
+function td1BirthCheckValid(second: string): boolean {
+  return hasValidMrzCheck(second.slice(0, 6), second[6]);
+}
+
+function parseRepairedMrz(lines: string[]): IdentityParseResult | null {
+  const candidates = lines
+    .map((line) => {
+      const candidate = mrzCandidate(line);
+      // Yalnız normalizasyonun DEĞİŞTİRDİĞİ satırlar; temiz satırlar zaten
+      // yukarıdaki pristine dalda değerlendirildi (davranış değişmez).
+      return candidate && candidate !== line ? candidate : null;
+    })
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  const td3Lines = candidates.filter((line) => line.length === 44).slice(0, 2);
+  if (td3Lines.length === 2 && td3CompositeCheckValid(td3Lines[1])) {
+    return parseTd3(td3Lines);
+  }
+  const td1Lines = candidates.filter((line) => line.length === 30).slice(0, 3);
+  if (td1Lines.length === 3 && td1BirthCheckValid(td1Lines[1])) {
+    return parseTd1(td1Lines);
+  }
+  return null;
+}
+
+// Basılı dal primary: documentType ve dolu alanlar korunur; secondary (MRZ)
+// yalnız eksik alanları doldurur (ör. parlamada basılı belge no okunmazsa).
+function mergeParsedIdentity(primary: IdentityParseResult, secondary: IdentityParseResult): IdentityParseResult {
+  return {
+    documentType: primary.documentType,
+    rawLines: [...secondary.rawLines, ...primary.rawLines],
+    fields: { ...secondary.fields, ...primary.fields },
+  };
 }
 
 export function hasParsedIdentityFields(result: IdentityParseResult | null | undefined): boolean {
@@ -298,7 +363,18 @@ export function normalizeIdentityScannerCapabilities(value: unknown): IdentitySc
   const file = supported === false
     ? false
     : Boolean(record?.imageFileFallback ?? record?.file ?? record?.file_picker ?? record?.file_picker_available ?? record?.can_pick_file);
-  return { scanner, file, message: text(record?.message) || undefined };
+  const danishAvailable = record?.ocrDanishAvailable ?? record?.ocr_danish_available;
+  const languagesRaw: unknown = record?.ocrAvailableLanguages ?? record?.ocr_available_languages;
+  const ocr: IdentityOcrLanguageInfo | undefined = danishAvailable === undefined
+    ? undefined
+    : {
+        danishAvailable: Boolean(danishAvailable),
+        profileLanguage: text(record?.ocrProfileLanguage ?? record?.ocr_profile_language),
+        availableLanguages: Array.isArray(languagesRaw)
+          ? languagesRaw.map((tag) => text(tag)).filter(Boolean)
+          : [],
+      };
+  return { scanner, file, message: text(record?.message) || undefined, ocr };
 }
 
 export function extractIdentityScanText(value: unknown): string {
@@ -328,6 +404,71 @@ export function extractIdentityScanPreview(value: unknown): string {
   return '';
 }
 
+export function extractIdentityScanLanguage(value: unknown): string {
+  const record = asRecord(value);
+  if (!record) return '';
+  const language = text(record.ocrLanguage) || text(record.ocr_language);
+  if (language) return language;
+  for (const key of ['scan', 'result', 'data', 'document']) {
+    const candidate = extractIdentityScanLanguage(record[key]);
+    if (candidate) return candidate;
+  }
+  return '';
+}
+
+export type IdentityScanImageInfo = {
+  language: string;
+  scaled?: boolean;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  maxImageDimension?: number;
+};
+
+function readNumericField(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return undefined;
+}
+
+// Saha teshisi: hangi dil paketi seçildi, görüntü ölçeklendi mi. Kalıcı
+// log YOK — yalnız hook state'i ve hata mesajı.
+export function extractIdentityScanImageInfo(value: unknown): IdentityScanImageInfo {
+  const record = asRecord(value);
+  if (!record) return { language: '' };
+  const direct: IdentityScanImageInfo = {
+    language: text(record.ocrLanguage) || text(record.ocr_language),
+    scaled: typeof record.imageScaled === 'boolean' ? record.imageScaled : typeof record.image_scaled === 'boolean' ? record.image_scaled : undefined,
+    sourceWidth: readNumericField(record, ['imageSourceWidth', 'image_source_width']),
+    sourceHeight: readNumericField(record, ['imageSourceHeight', 'image_source_height']),
+    maxImageDimension: readNumericField(record, ['ocrMaxImageDimension', 'ocr_max_image_dimension']),
+  };
+  if (direct.language || direct.scaled !== undefined || direct.sourceWidth !== undefined) return direct;
+  for (const key of ['scan', 'result', 'data', 'document']) {
+    const nested = asRecord(record[key]);
+    if (!nested) continue;
+    const candidate = extractIdentityScanImageInfo(nested);
+    if (candidate.language || candidate.scaled !== undefined || candidate.sourceWidth !== undefined) return candidate;
+  }
+  return { language: '' };
+}
+
+// Tanılamada ham satırlar ASLA düz metin olarak gösterilmez: rakamlar 9'a,
+// harfler a'ya maskelenir; «/< ve satır uzunluğu korunur (operatör "MRZ « ile
+// gelmiş, 44 karakter" gibi yapısal ipucu görür, kişisel veri görmez).
+export function maskIdentityScanDiagnostic(lines: string[]): string {
+  return lines
+    .slice(0, 8)
+    .map((line) => {
+      const trimmed = line.trim();
+      const masked = trimmed.slice(0, 40).replace(/[^\s«<]/g, (character) => (/\d/.test(character) ? '9' : 'a'));
+      return `${masked} (${trimmed.length})`;
+    })
+    .join('\n');
+}
+
 function mergeIdentityResults(previous: IdentityParseResult | null, next: IdentityParseResult): IdentityParseResult {
   if (!previous || next.documentType === 'unknown') return next.documentType === 'unknown' && previous ? previous : next;
   return {
@@ -350,9 +491,16 @@ export function useIdentityScan({
   const [status, setStatus] = useState<IdentityScanStatus>('checking');
   const [result, setResult] = useState<IdentityParseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<'front' | 'back', string>>>({});
   const resultRef = useRef(result);
   resultRef.current = result;
+
+  // Danca OCR paketi yoksa sahadan uyarı: profil dili (ör. tr) Danca'yı
+  // bozarak okur (Æ→E, Ø→O, Å→Â) — isim/adres alanları hatalı olabilir.
+  const ocrNotice = capabilities.ocr && capabilities.ocr.availableLanguages.length > 0 && !capabilities.ocr.danishAvailable
+    ? `Danca OCR paketi bulunamadı (${capabilities.ocr.profileLanguage || 'profil dili'} kullanılıyor) — Danca karakterler hatalı okunabilir.`
+    : null;
 
   const refreshCapabilities = useCallback(async () => {
     setStatus('checking');
@@ -380,17 +528,28 @@ export function useIdentityScan({
       // R2-04: tek genel mesaj yerine neden sınıfı — OCR metin verdi mi,
       // vermediyse cihaz/görüntü; verdiyse belge türü tanınmadı (hangi türler
       // desteklendiği söylenir). Kısmi MRZ zaten merge ile korunuyor.
-      const lineCount = raw ? raw.split('\n').filter(Boolean).length : 0;
+      // Saha teshisi: okunan satır sayısı + dil + ölçekleme bilgisi ve
+      // maskeli ham satır önizlemesi (yalnız ekranda, kalıcı kayıt yok).
+      const rawLines = raw ? raw.split('\n').filter((line) => line.trim()) : [];
+      const imageInfo = extractIdentityScanImageInfo(value);
+      const detailParts: string[] = [];
+      if (imageInfo.language) detailParts.push(`OCR dili ${imageInfo.language}`);
+      if (imageInfo.sourceWidth && imageInfo.sourceHeight) {
+        detailParts.push(`görüntü ${imageInfo.sourceWidth}×${imageInfo.sourceHeight}${imageInfo.scaled === false ? ' (ölçeklenemedi)' : ''}`);
+      }
+      const detailSuffix = detailParts.length ? ` — ${detailParts.join(', ')}` : '';
+      setDiagnostic(rawLines.length ? maskIdentityScanDiagnostic(rawLines) : null);
       setError(
         !raw
           ? 'Tarayıcı/görüntü metin döndürmedi — görüntü kalitesini veya cihazı kontrol edin.'
-          : `Belge türü tanınamadı (${lineCount} satır okundu). Desteklenen: pas, ID-kort, kørekort, sundhedskort. Bilgileri elle girebilirsiniz.`,
+          : `Belge türü tanınamadı (${rawLines.length} satır okundu${detailSuffix}). Desteklenen: pas, ID-kort, kørekort, sundhedskort. Bilgileri elle girebilirsiniz.`,
       );
       return;
     }
     setResult((current) => mergeIdentityResults(current, nextResult));
     setStatus('review');
     setError(null);
+    setDiagnostic(null);
   }, []);
 
   const acquire = useCallback(async (side: 'front' | 'back' = 'front') => {
@@ -455,6 +614,7 @@ export function useIdentityScan({
     setResult(null);
     setPreviews({});
     setError(null);
+    setDiagnostic(null);
     setStatus(capabilities.scanner || capabilities.file ? 'ready' : 'unavailable');
   }, [capabilities.file, capabilities.scanner]);
 
@@ -464,11 +624,13 @@ export function useIdentityScan({
     result,
     previews,
     error,
+    diagnostic,
+    ocrNotice,
     acquire,
     pickFile,
     dropFile,
     confirm,
     clear,
     refreshCapabilities,
-  }), [acquire, capabilities, clear, confirm, dropFile, error, pickFile, previews, refreshCapabilities, result, status]);
+  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, ocrNotice, pickFile, previews, refreshCapabilities, result, status]);
 }

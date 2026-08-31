@@ -36,6 +36,9 @@ const TAURI_CAPABILITIES: IdentityScannerCapabilities = {
   imageFileFallback: true,
   maxFileBytes: 10 * 1024 * 1024,
   acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
+  ocrDanishAvailable: true,
+  ocrProfileLanguage: 'da-DK',
+  ocrAvailableLanguages: ['da-DK', 'en-US'],
 };
 
 const scanResult = (overrides: Partial<IdentityScanResult> = {}): IdentityScanResult => ({
@@ -45,6 +48,12 @@ const scanResult = (overrides: Partial<IdentityScanResult> = {}): IdentityScanRe
   previewDataUrl: '',
   ocrText: TD3_PASSPORT,
   ocrLines: TD3_PASSPORT.split('\n'),
+  ocrLanguage: 'da-DK',
+  ocrRequestedLanguage: 'da-DK',
+  ocrMaxImageDimension: 2600,
+  imageScaled: false,
+  imageSourceWidth: 1011,
+  imageSourceHeight: 1099,
   ...overrides,
 });
 
@@ -61,7 +70,12 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
   it('yetenek hazir oldugunda ready durumuna gecer', async () => {
     const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
     await waitFor(() => expect(result.current.status).toBe('ready'));
-    expect(result.current.capabilities).toEqual({ scanner: true, file: true });
+    expect(result.current.capabilities).toEqual({
+      scanner: true,
+      file: true,
+      message: undefined,
+      ocr: { danishAvailable: true, profileLanguage: 'da-DK', availableLanguages: ['da-DK', 'en-US'] },
+    });
   });
 
   it('acquire sonrasi MRZ review sonucu ve onizleme uretir', async () => {
@@ -126,5 +140,44 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     });
     expect(result.current.status).toBe('applied');
     expect(result.current.result).toBeNull();
+  });
+
+  it('Danca OCR paketi yoksa ocrNotice uyarisi uretir', async () => {
+    mockedCapabilities.mockResolvedValue({
+      ...TAURI_CAPABILITIES,
+      ocrDanishAvailable: false,
+      ocrProfileLanguage: 'tr-TR',
+      ocrAvailableLanguages: ['tr-TR'],
+    });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.ocrNotice).toContain('Danca OCR paketi bulunamadı');
+    expect(result.current.ocrNotice).toContain('tr-TR');
+  });
+
+  it('taninamayan belgede ham tani maskelemeyle gosterilir; gercek rakamlar sizmaz', async () => {
+    const garbage = 'SPECIMEN CARD\nCPR 123456-7890\nOMAR AL-RASHID\nFoo Bar Baz';
+    mockedAcquire.mockResolvedValueOnce(scanResult({
+      ocrText: garbage,
+      ocrLines: garbage.split('\n'),
+      imageScaled: true,
+      imageSourceWidth: 3024,
+      imageSourceHeight: 4032,
+    }));
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('error');
+    expect(result.current.error).toContain('4 satır okundu');
+    expect(result.current.error).toContain('OCR dili da-DK');
+    expect(result.current.error).toContain('3024×');
+    const diagnostic = result.current.diagnostic ?? '';
+    expect(diagnostic.length).toBeGreaterThan(0);
+    // '-' de harf-sınıfına düşer → 'a' ile maskelenir; rakamlar 9 olur.
+    expect(diagnostic).toContain('999999a9999');
+    expect(diagnostic).not.toContain('123456');
+    expect(diagnostic).not.toContain('OMAR');
   });
 });

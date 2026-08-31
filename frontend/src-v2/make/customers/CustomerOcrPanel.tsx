@@ -95,7 +95,9 @@ export function CustomerOcrPanel({
       <p className="mt-1 text-[11px] text-brand-500">
         Pas / ID-kort / kørekort / sundhedskort görüntüsünü sürükleyip bırakın veya seçin — alanlar önerilen değer olarak dolar, kayıt onayınızla oluşur.
       </p>
+      {identity.ocrNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.ocrNotice}</p> : null}
       {identity.error ? <p className="mt-1 text-[11px] font-semibold text-rose-700">{identity.error}</p> : null}
+      {identity.error && identity.diagnostic ? <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-line border border-brand-200 bg-brand-50 px-2 py-1 font-mono text-[10px] text-brand-600">{identity.diagnostic}</pre> : null}
       {identity.status === 'review' && scannedFields.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-brand-200 pt-2">
           <span className="text-[10px] font-black uppercase tracking-widest text-emerald-800">Okunan:</span>
