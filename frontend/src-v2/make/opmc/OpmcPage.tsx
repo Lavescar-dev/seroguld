@@ -250,13 +250,16 @@ export function MakeOpmcPage({
         </div>
       ) : null}
 
-      <div className="grid flex-shrink-0 grid-cols-6 border-b-2 border-brand-300 bg-white">
+      <div className="grid flex-shrink-0 grid-cols-3 border-b-2 border-brand-300 bg-white md:grid-cols-6 xl:grid-cols-9">
         <SummaryMetric label="Toplam" value={summary?.total_orders ?? 0} icon={<ClipboardList className="h-3.5 w-3.5 text-brand-400" />} background="bg-brand-50/50" border="border-brand-200" valueClass="text-brand-900" />
         <SummaryMetric label="Yüksek Risk" value={summary?.high_risk_count ?? 0} icon={<AlertTriangle className="h-3.5 w-3.5 text-red-500" />} background="bg-red-50" border="border-red-200" valueClass="text-red-700" />
         <SummaryMetric label="Orta Risk" value={summary?.medium_risk_count ?? 0} icon={<AlertCircle className="h-3.5 w-3.5 text-amber-500" />} background="bg-amber-50" border="border-amber-200" valueClass="text-amber-700" />
         <SummaryMetric label="Düşük Risk" value={summary?.low_risk_count ?? 0} icon={<CheckCircle className="h-3.5 w-3.5 text-emerald-500" />} background="bg-emerald-50" border="border-emerald-200" valueClass="text-emerald-700" />
         <SummaryMetric label="Belirsiz" value={summary?.unknown_risk_count ?? 0} icon={<HelpCircle className="h-3.5 w-3.5 text-slate-400" />} background="bg-slate-50" border="border-slate-200" valueClass="text-slate-600" />
-        <SummaryMetric label="Manuel" value={summary?.manual_review_count ?? 0} icon={<Eye className="h-3.5 w-3.5 text-orange-500" />} background="bg-orange-50" border="border-orange-200" valueClass="text-orange-700" />
+        <SummaryMetric label="Aktif İnceleme" value={summary?.active_review_count ?? summary?.manual_review_count ?? 0} icon={<Eye className="h-3.5 w-3.5 text-orange-500" />} background="bg-orange-50" border="border-orange-200" valueClass="text-orange-700" />
+        <SummaryMetric label="Atlanan" value={summary?.skipped_whitelist_count ?? 0} icon={<CheckCircle className="h-3.5 w-3.5 text-emerald-500" />} background="bg-emerald-50" border="border-emerald-200" valueClass="text-emerald-700" />
+        <SummaryMetric label="Skorsuz" value={summary?.not_scored_count ?? 0} icon={<HelpCircle className="h-3.5 w-3.5 text-slate-400" />} background="bg-slate-50" border="border-slate-200" valueClass="text-slate-600" />
+        <SummaryMetric label="AI Uyarı" value={summary?.ai_alert_count ?? 0} icon={<AlertTriangle className="h-3.5 w-3.5 text-violet-500" />} background="bg-violet-50" border="border-violet-200" valueClass="text-violet-700" />
       </div>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -366,12 +369,19 @@ export function MakeOpmcPage({
                                           : 'AI'}
                               </span>
                             ) : null}
+                            {item.assessment_status === 'skipped_whitelist' ? (
+                              <span className="border border-emerald-300 bg-emerald-50 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-emerald-700">Kontrol Atlandı</span>
+                            ) : item.assessment_status === 'not_scored' ? (
+                              <span className="border border-slate-300 bg-slate-100 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-600">Skor Yok</span>
+                            ) : null}
                             {item.customer_history?.known_safe ? (
                               <span className="border border-sky-300 bg-sky-50 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-sky-700">
                                 {item.customer_history.successful_orders} eski sipariş
                               </span>
                             ) : null}
-                            {item.requires_manual_review ? <span className="border border-orange-300 bg-orange-100 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-orange-700">MANUEL İNCELEME</span> : null}
+                            {item.review_queue_status === 'active' ? <span className="border border-orange-300 bg-orange-100 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-orange-700">AKTİF İNCELEME</span> : null}
+                            {item.review_queue_status === 'historical' ? <span className="border border-slate-300 bg-slate-100 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-600">GEÇMİŞ SİNYAL</span> : null}
+                            {item.score_consistency === 'mismatch' ? <span className="border border-red-300 bg-red-50 px-1 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-700">SKOR UYUŞMAZLIĞI</span> : null}
                           </div>
                         </td>
                         <td className="px-4 py-3 align-middle">

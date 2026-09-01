@@ -4,7 +4,19 @@ import { ModernOpmcListPage } from '@/modern/pages';
 import { useUiVariant } from '@/ui-variants';
 import type { AntiFraudSummary } from '@/types';
 
-const EMPTY_SUMMARY: AntiFraudSummary = { total_orders: 0, high_risk_count: 0, medium_risk_count: 0, low_risk_count: 0, unknown_risk_count: 0, manual_review_count: 0 };
+const EMPTY_SUMMARY: AntiFraudSummary = {
+  total_orders: 0,
+  high_risk_count: 0,
+  medium_risk_count: 0,
+  low_risk_count: 0,
+  unknown_risk_count: 0,
+  manual_review_count: 0,
+  active_review_count: 0,
+  historical_review_count: 0,
+  skipped_whitelist_count: 0,
+  not_scored_count: 0,
+  ai_alert_count: 0,
+};
 
 export function AntifraudPage() {
   const state = useOpmcMakeState();

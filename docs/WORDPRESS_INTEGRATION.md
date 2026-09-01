@@ -29,6 +29,9 @@ Hedef site: `https://seroguld.dk` (harici WordPress + WooCommerce). Ayrı bir Wo
 ### 1.4 OPMC anti-fraud
 
 - WC Anti-Fraud (OPMC) meta'sı (`wc_af_score`, `_wc_af_*`) parse: `antifraud_helpers.py:30`; whitelist/known_customer/blacklist + manuel override + müşteri geçmişi.
+- Sero Guld'de aktif OPMC 7.2.2, `wc_af_score` değerini kalan güven puanı olarak saklıyor. CRM `OPMC_WC_AF_SCORE_MODE=trust` semantiğiyle `risk = 100 - wc_af_score` hesaplar; kaynak, güven ve risk değerlerini ayrı gösterir.
+- OPMC eşikleri normalize edilmiş risk üzerinde uygulanır: `<25 düşük`, `25-75 orta`, `>=76 yüksek`. Whitelist siparişlerinde kontrol atlandığı için sahte bir düşük skor üretilmez.
+- Completed/cancelled/refunded/failed siparişlerin risk kaydı korunur ancak aktif inceleme kuyruğuna girmez.
 
 ## 2. Planlanan ama eksik / çelişkili (CONTRADICTED)
 

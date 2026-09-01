@@ -1231,6 +1231,11 @@ export interface AntiFraudSummary {
   low_risk_count: number;
   unknown_risk_count: number;
   manual_review_count: number;
+  active_review_count: number;
+  historical_review_count: number;
+  skipped_whitelist_count: number;
+  not_scored_count: number;
+  ai_alert_count: number;
 }
 
 export interface AntiFraudHumanField {
@@ -1268,6 +1273,17 @@ export interface AntiFraudCustomerHistory {
   matched_by?: string | null;
 }
 
+export type AntiFraudAssessmentStatus =
+  | 'assessed'
+  | 'skipped_whitelist'
+  | 'not_scored'
+  | 'manual_override'
+  | 'blacklisted';
+
+export type AntiFraudReviewQueueStatus = 'active' | 'historical' | 'none';
+
+export type AntiFraudScoreConsistency = 'consistent' | 'mismatch' | 'not_checkable';
+
 export type RiskScoreSource =
   | 'opmc'
   | 'ai'
@@ -1297,10 +1313,18 @@ export interface AntiFraudOrder {
   risk_level?: string | null;
   risk_score?: number | null;
   ai_risk_score?: number | null;
+  opmc_source_score?: number | null;
   opmc_risk_score?: number | null;
+  opmc_trust_score?: number | null;
+  opmc_score_mode?: 'trust' | 'risk';
+  failed_rule_points_total?: number | null;
+  score_consistency?: AntiFraudScoreConsistency;
   risk_score_source?: RiskScoreSource | null;
+  assessment_status?: AntiFraudAssessmentStatus;
   raw_risk_score?: number | null;
   requires_manual_review: boolean;
+  review_queue_status?: AntiFraudReviewQueueStatus;
+  review_reason_codes?: string[];
   risk_meta: AntiFraudRiskMeta[];
   risk_reasons: AntiFraudRiskReason[];
   notes: string[];

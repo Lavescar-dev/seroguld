@@ -454,6 +454,7 @@ async def get_opmc_orders_v2(
     include_notes: bool = Query(default=False),
     notes_per_order: int = Query(default=5, ge=1, le=20),
     detail_mode: bool = Query(default=True),
+    force_refresh: bool = Query(default=False),
     admin: User = Depends(require_admin),
 ) -> AntiFraudOrdersResponse:
     return await get_legacy_antifraud_recent_orders(
@@ -462,6 +463,7 @@ async def get_opmc_orders_v2(
         include_notes=include_notes,
         notes_per_order=notes_per_order,
         detail_mode=detail_mode,
+        force_refresh=force_refresh,
         _=admin,
     )
 

@@ -58,7 +58,7 @@ _FAILED_RULE_LABELS_TR: dict[str, str] = {
 }
 _META_LABELS_TR: dict[str, str] = {
     "_wc_af_waiting": "Manuel İnceleme Kuyruğu",
-    "wc_af_score": "OPMC Risk Skoru",
+    "wc_af_score": "OPMC Güven Skoru",
     "_ai_risk_score": "AI Risk Skoru",
     "_ai_explanations": "AI Açıklamaları",
     "whitelist_action": "Beyaz Liste Eylemi",
@@ -106,6 +106,29 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
+def _extract_explicit_score_from_text(text: str) -> int | None:
+    """Parse only explicit score keys from malformed JSON-like strings.
+
+    Woo/AI sometimes stores values such as:
+        ```json
+        {
+          "risk_score": 20
+
+    That is not valid JSON, but the score key is explicit. Keep this narrow so
+    free text like "100% safe customer" never becomes a risk score again.
+    """
+    match = re.search(
+        r'(?i)(?:"|\b)(risk_score|wc_af_score|score)(?:"|\b)\s*[:=]\s*"?(-?\d+(?:[.,]\d+)?)"?',
+        text,
+    )
+    if not match:
+        return None
+    try:
+        return _clamp_score(int(round(float(match.group(2).replace(",", ".")))))
+    except ValueError:
+        return None
+
+
 def _clamp_score(score: int | None) -> int | None:
     """O2 — 0-100 dışındaki değerleri reddet."""
     if score is None:
@@ -113,6 +136,18 @@ def _clamp_score(score: int | None) -> int | None:
     if score < 0 or score > 100:
         return None
     return score
+
+
+def _normalize_opmc_score(source_score: int | None, score_mode: str = "trust") -> tuple[int | None, int | None]:
+    """Return (risk, trust) from the plugin's persisted wc_af_score value."""
+    if source_score is None:
+        return None, None
+    normalized_mode = str(score_mode or "").strip().lower()
+    if normalized_mode == "risk":
+        return source_score, _clamp_score(100 - source_score)
+    if normalized_mode != "trust":
+        raise ValueError(f"Unsupported OPMC score mode: {score_mode}")
+    return _clamp_score(100 - source_score), source_score
 
 
 def _extract_score_from_value(value: Any) -> int | None:
@@ -173,7 +208,7 @@ def _extract_score_from_value(value: Any) -> int | None:
     try:
         loaded = json.loads(text)
     except Exception:
-        return None
+        return _extract_explicit_score_from_text(text)
     if isinstance(loaded, (int, float)) and not isinstance(loaded, bool):
         return _clamp_score(int(round(float(loaded))))
     if isinstance(loaded, (dict, list)):
@@ -235,7 +270,11 @@ def _extract_risk_meta(order: dict[str, Any]) -> list[AntiFraudRiskMetaOut]:
     return result
 
 
-def _resolve_risk_score(risk_meta: list[AntiFraudRiskMetaOut]) -> int | None:
+def _resolve_risk_score(
+    risk_meta: list[AntiFraudRiskMetaOut],
+    *,
+    opmc_score_mode: str = "trust",
+) -> int | None:
     """Risk skorunu öncelikli kaynaklarla seçer.
 
     O3 — OPMC plugin kural-tabanlı ve test edilmiş; AI yorumlamaya açık olduğu
@@ -247,6 +286,8 @@ def _resolve_risk_score(risk_meta: list[AntiFraudRiskMetaOut]) -> int | None:
     for item in risk_meta:
         lower = item.key.lower()
         score = _extract_score_from_value(item.value)
+        if lower == "wc_af_score":
+            score, _ = _normalize_opmc_score(score, opmc_score_mode)
         if score is None:
             continue
         if lower == "wc_af_score":
@@ -314,12 +355,19 @@ def _has_manual_override(risk_meta: list[AntiFraudRiskMetaOut]) -> tuple[bool, s
     return False, None
 
 
-def _resolve_risk_level(score: int | None) -> str:
+def _resolve_risk_level(
+    score: int | None,
+    *,
+    medium_min: int = 25,
+    high_min: int = 76,
+) -> str:
     if score is None:
         return "unknown"
-    if score >= 70:
+    medium_threshold = max(0, int(medium_min))
+    high_threshold = max(medium_threshold + 1, int(high_min))
+    if score >= high_threshold:
         return "high"
-    if score >= 35:
+    if score >= medium_threshold:
         return "medium"
     return "low"
 
@@ -329,46 +377,31 @@ def _resolve_effective_risk(
     score: int | None,
     risk_meta: list[AntiFraudRiskMetaOut],
     customer_history: dict | None = None,
+    medium_min: int = 25,
+    high_min: int = 76,
 ) -> tuple[str, int | None, list[str]]:
-    """Whitelist/blacklist/override/customer_history override mantığı.
+    """Resolve operator overrides without rewriting the OPMC score.
 
-    Returns (effective_level, effective_score, override_reasons[])
+    Customer history remains display-only. It must not turn a high OPMC
+    result into a low result because that hides the plugin's decision.
     """
     reasons: list[str] = []
 
-    # 1) Manuel override en yüksek öncelik (operatör kararı)
     has_override, override_level = _has_manual_override(risk_meta)
     if has_override and override_level:
         score_map = {"low": 10, "medium": 50, "high": 90}
-        reasons.append(f"Manuel override (operatör kararı): {override_level}")
+        reasons.append(f"Manuel override (operat\u00f6r karar\u0131): {override_level}")
         return override_level, score_map.get(override_level, score), reasons
 
-    # 2) Kara liste → mutlak high
     if _is_blacklisted(risk_meta):
-        reasons.append("Kara liste işareti (IP/email/manuel).")
+        reasons.append("Kara liste i\u015fareti (IP/email/manuel).")
         return "high", max(score or 0, 90), reasons
 
-    # 3) Whitelist → low (skor yüksek olsa bile)
     if _is_whitelisted(risk_meta):
-        reasons.append("Müşteri beyaz listede (ödeme/IP/email whitelist).")
-        return "low", min(score or 0, 25), reasons
+        reasons.append("OPMC kontrol\u00fc whitelist nedeniyle atland\u0131; risk seviyesi \u00fcretilmedi.")
+        return "unknown", None, reasons
 
-    # 4) Bilinen müşteri pre-empt
-    if customer_history and customer_history.get("known_safe"):
-        successful = customer_history.get("successful_orders", 0)
-        reasons.append(
-            f"Bilinen müşteri: {successful} başarılı sipariş geçmişi."
-        )
-        # high → medium düşür, medium → low düşür
-        base_level = _resolve_risk_level(score)
-        if base_level == "high":
-            return "medium", min(score or 70, 60), reasons
-        if base_level == "medium":
-            return "low", min(score or 35, 30), reasons
-        return "low", score, reasons
-
-    # 5) Varsayılan davranış
-    return _resolve_risk_level(score), score, reasons
+    return _resolve_risk_level(score, medium_min=medium_min, high_min=high_min), score, reasons
 
 
 def _extract_customer_name(order: dict[str, Any]) -> str | None:
@@ -426,8 +459,29 @@ def _extract_whitelist_action_human(risk_meta: list[AntiFraudRiskMetaOut]) -> st
     return None
 
 
-def _extract_manual_review(risk_level: str, risk_meta: list[AntiFraudRiskMetaOut]) -> bool:
-    if risk_level == "high":
+def _extract_manual_review(
+    risk_level: str,
+    risk_meta: list[AntiFraudRiskMetaOut],
+    *,
+    risk_score: int | None = None,
+    ai_risk_score: int | None = None,
+    medium_min: int = 25,
+    ai_review_min: int = 70,
+) -> bool:
+    has_override, _ = _has_manual_override(risk_meta)
+    if has_override:
+        return risk_level in {"medium", "high"}
+
+    # Whitelisting skips the OPMC check. An independent high AI alert still
+    # needs a human look instead of silently disappearing.
+    if _is_whitelisted(risk_meta):
+        return ai_risk_score is not None and ai_risk_score >= ai_review_min
+
+    if risk_level in {"medium", "high"}:
+        return True
+    if risk_score is not None and risk_score >= medium_min:
+        return True
+    if ai_risk_score is not None and ai_risk_score >= ai_review_min:
         return True
     for item in risk_meta:
         lower = item.key.lower()
@@ -545,11 +599,21 @@ def _friendly_meta_value(
     key: str,
     value: Any,
     ai_explanations_human: list[str],
+    is_whitelisted_context: bool = False,
+    opmc_score_mode: str = "trust",
 ) -> str:
     normalized = key.strip().lower()
     if normalized == "_wc_af_waiting":
+        if _is_truthy(value) and is_whitelisted_context:
+            return "Evet (ham OPMC flag; beyaz liste nedeniyle manuel inceleme sayılmıyor)"
         return "Evet (manuel inceleme bekliyor)" if _is_truthy(value) else "Hayır"
-    if normalized in {"wc_af_score", "_ai_risk_score"}:
+    if normalized == "wc_af_score":
+        source_score = _extract_score_from_value(value)
+        if source_score is None:
+            return _compact_text(value, max_len=80)
+        risk_score, trust_score = _normalize_opmc_score(source_score, opmc_score_mode)
+        return f"{trust_score} güven / {risk_score} risk"
+    if normalized == "_ai_risk_score":
         score = _extract_score_from_value(value)
         return str(score) if score is not None else _compact_text(value, max_len=80)
     if normalized == "whitelist_action":
@@ -583,8 +647,11 @@ def _friendly_meta_value(
 def _build_human_meta_fields(
     risk_meta: list[AntiFraudRiskMetaOut],
     ai_explanations_human: list[str],
+    *,
+    opmc_score_mode: str = "trust",
 ) -> list[AntiFraudHumanFieldOut]:
     rows: list[AntiFraudHumanFieldOut] = []
+    is_whitelisted_context = _is_whitelisted(risk_meta)
     for item in risk_meta:
         rows.append(
             AntiFraudHumanFieldOut(
@@ -594,10 +661,47 @@ def _build_human_meta_fields(
                     key=item.key,
                     value=item.value,
                     ai_explanations_human=ai_explanations_human,
+                    is_whitelisted_context=is_whitelisted_context,
+                    opmc_score_mode=opmc_score_mode,
                 ),
             )
         )
     return rows
+
+
+def _extract_malformed_rule_fields(raw: str) -> tuple[str, str]:
+    """Recover the stable rule id and label from malformed JSON-like values."""
+    rule_id_match = re.search(r'"id"\s*:\s*"([^"]+)"', raw, flags=re.IGNORECASE)
+    label_match = re.search(r'"label"\s*:\s*"([^"]+)"', raw, flags=re.IGNORECASE)
+    return (
+        rule_id_match.group(1).strip() if rule_id_match else "",
+        label_match.group(1).strip() if label_match else "",
+    )
+
+
+def _extract_failed_rule_points(risk_meta: list[AntiFraudRiskMetaOut]) -> list[int]:
+    points: list[int] = []
+    for item in risk_meta:
+        if item.key.lower() != "wc_af_failed_rules":
+            continue
+        values = item.value if isinstance(item.value, list) else [item.value]
+        for value in values:
+            if isinstance(value, dict):
+                raw_points = value.get("risk_points")
+                try:
+                    parsed = int(str(raw_points).strip())
+                except (TypeError, ValueError):
+                    continue
+                if parsed >= 0:
+                    points.append(parsed)
+                continue
+            matches = re.findall(
+                r'["\']risk_points["\']\s*:\s*["\']?(\d+)',
+                str(value),
+                flags=re.IGNORECASE,
+            )
+            points.extend(int(match) for match in matches)
+    return points
 
 
 def _extract_failed_rules(risk_meta: list[AntiFraudRiskMetaOut]) -> list[tuple[str, str]]:
@@ -629,6 +733,10 @@ def _extract_failed_rules(risk_meta: list[AntiFraudRiskMetaOut]) -> list[tuple[s
             if isinstance(payload, dict):
                 rule_id = str(payload.get("id") or "").strip()
                 rule_label = str(payload.get("label") or "").strip()
+            elif isinstance(payload, str):
+                rule_id, rule_label = _extract_malformed_rule_fields(payload)
+                if not rule_label:
+                    rule_label = payload.strip()
             else:
                 rule_id = ""
                 rule_label = str(payload or "").strip()
@@ -697,12 +805,20 @@ def _build_risk_reasons(
     for meta in risk_meta:
         key = meta.key.lower().strip()
         if key == "_wc_af_waiting" and _is_truthy(meta.value):
-            _append_reason(
-                reasons,
-                seen_codes=seen_codes,
-                code="manual_queue",
-                reason="OPMC siparişi manuel inceleme kuyruğuna almış.",
-            )
+            if _is_whitelisted(risk_meta):
+                _append_reason(
+                    reasons,
+                    seen_codes=seen_codes,
+                    code="assessment_skipped",
+                    reason="OPMC kontrol\u00fc whitelist nedeniyle atland\u0131.",
+                )
+            else:
+                _append_reason(
+                    reasons,
+                    seen_codes=seen_codes,
+                    code="manual_queue",
+                    reason="OPMC sipari\u015fi manuel inceleme kuyru\u011funa alm\u0131\u015f.",
+                )
         elif key == "whitelist_action" and str(meta.value or "").strip():
             action = str(meta.value or "").strip()
             _append_reason(
@@ -716,7 +832,7 @@ def _build_risk_reasons(
                 reasons,
                 seen_codes=seen_codes,
                 code="recommended_status",
-                reason=f"OPMC önerilen durum: {str(meta.value).strip()}",
+                reason=f"OPMC \u00f6nerilen durum: {str(meta.value).strip()}",
             )
 
     for idx, (rule_id, rule_label) in enumerate(_extract_failed_rules(risk_meta), start=1):

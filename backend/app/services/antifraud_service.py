@@ -7,10 +7,13 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.config import get_settings
+
 from app.schemas.antifraud import (
     AntiFraudCustomerHistoryOut,
     AntiFraudOrdersResponse,
     AntiFraudOrderOut,
+    AntiFraudRiskReasonOut,
     AntiFraudSummaryOut,
 )
 from app.services.antifraud_helpers import (
@@ -20,6 +23,7 @@ from app.services.antifraud_helpers import (
     _extract_cities,
     _extract_countries,
     _extract_customer_name,
+    _extract_failed_rule_points,
     _extract_failed_rules,
     _extract_manual_review,
     _extract_named_score,
@@ -31,6 +35,7 @@ from app.services.antifraud_helpers import (
     _is_blacklisted,
     _is_truthy,
     _is_whitelisted,
+    _normalize_opmc_score,
     _parse_wc_datetime,
     _resolve_effective_risk,
     _resolve_risk_level,
@@ -46,6 +51,16 @@ from app.utils.helpers import utc_now
 # O11 — In-memory cache (5 dakika TTL). Process-singleton.
 _ORDERS_CACHE_TTL = timedelta(minutes=5)
 _orders_cache: dict[str, tuple[list[dict[str, Any]], datetime]] = {}
+
+_TERMINAL_ORDER_STATUSES = {"completed", "cancelled", "refunded", "failed"}
+
+
+def _resolve_review_queue_status(order_status: str, requires_review: bool) -> str:
+    if not requires_review:
+        return "none"
+    if str(order_status or "").strip().lower() in _TERMINAL_ORDER_STATUSES:
+        return "historical"
+    return "active"
 
 
 def _orders_cache_key(days: int, per_page: int) -> str:
@@ -196,7 +211,24 @@ async def _build_order_item(
     all_orders: list[dict[str, Any]] | None = None,
 ) -> AntiFraudOrderOut:
     risk_meta = _extract_risk_meta(order)
-    raw_risk_score = _resolve_risk_score(risk_meta)
+    settings = get_settings()
+    opmc_score_mode = settings.opmc_wc_af_score_mode
+    opmc_source_score = _extract_named_score(risk_meta, "wc_af_score")
+    opmc_risk_score, opmc_trust_score = _normalize_opmc_score(opmc_source_score, opmc_score_mode)
+    ai_risk_score = _extract_named_score(risk_meta, "_ai_risk_score")
+    raw_risk_score = opmc_risk_score if opmc_risk_score is not None else ai_risk_score
+    failed_rule_points = _extract_failed_rule_points(risk_meta)
+    failed_rule_points_total = min(sum(failed_rule_points), 100) if failed_rule_points else None
+    if opmc_risk_score is None or failed_rule_points_total is None:
+        score_consistency = "not_checkable"
+    elif opmc_risk_score == failed_rule_points_total:
+        score_consistency = "consistent"
+    else:
+        score_consistency = "mismatch"
+
+    medium_min = max(0, int(settings.opmc_medium_risk_min))
+    high_min = max(medium_min + 1, int(settings.opmc_high_risk_min))
+    ai_review_min = max(0, min(100, int(settings.opmc_ai_review_min)))
 
     # O6 — Müşteri geçmişi (varsa)
     history: AntiFraudCustomerHistoryOut | None = None
@@ -216,27 +248,77 @@ async def _build_order_item(
         score=raw_risk_score,
         risk_meta=risk_meta,
         customer_history=history_dict,
+        medium_min=medium_min,
+        high_min=high_min,
     )
 
-    # Skor kaynağı tespiti (O8)
-    score_source: str | None
-    if _has_manual_override(risk_meta)[0]:
-        score_source = "manual_override"
-    elif _is_blacklisted(risk_meta):
-        score_source = "blacklist"
-    elif _is_whitelisted(risk_meta):
-        score_source = "whitelist"
-    elif history and history.known_safe and raw_risk_score is not None and raw_risk_score >= 35:
-        score_source = "known_customer"
-    elif raw_risk_score is None:
-        score_source = "unknown"
-    else:
-        # OPMC önce; AI sonra
-        has_opmc = any(item.key.lower() == "wc_af_score" for item in risk_meta)
-        has_ai = any(item.key.lower() == "_ai_risk_score" for item in risk_meta)
-        score_source = "opmc" if has_opmc else ("ai" if has_ai else "other")
+    has_manual = _has_manual_override(risk_meta)[0]
+    is_white = _is_whitelisted(risk_meta)
+    is_black = _is_blacklisted(risk_meta)
 
-    requires_manual_review = _extract_manual_review(effective_level, risk_meta)
+    if has_manual:
+        assessment_status = "manual_override"
+        score_source = "manual_override"
+    elif is_black:
+        assessment_status = "blacklisted"
+        score_source = "blacklist"
+    elif is_white:
+        assessment_status = "skipped_whitelist"
+        score_source = "whitelist"
+    elif raw_risk_score is None:
+        assessment_status = "not_scored"
+        score_source = "unknown"
+    elif opmc_risk_score is not None:
+        assessment_status = "assessed"
+        score_source = "opmc"
+    elif ai_risk_score is not None:
+        assessment_status = "assessed"
+        score_source = "ai"
+    else:
+        assessment_status = "not_scored"
+        score_source = "unknown"
+
+    requires_manual_review = _extract_manual_review(
+        effective_level,
+        risk_meta,
+        risk_score=raw_risk_score,
+        ai_risk_score=ai_risk_score,
+        medium_min=medium_min,
+        ai_review_min=ai_review_min,
+    )
+    if score_consistency == "mismatch" and not is_white:
+        requires_manual_review = True
+
+    order_status = str(order.get("status") or "")
+    review_queue_status = _resolve_review_queue_status(order_status, requires_manual_review)
+    review_reason_codes: list[str] = []
+    if has_manual:
+        review_reason_codes.append("manual_override")
+    if is_black:
+        review_reason_codes.append("blacklist")
+    if is_white:
+        review_reason_codes.append("whitelist_skipped")
+    if assessment_status == "not_scored":
+        review_reason_codes.append("not_scored")
+    if score_consistency == "mismatch":
+        review_reason_codes.append("score_mismatch")
+    if (
+        not has_manual
+        and not is_white
+        and effective_score is not None
+        and effective_score >= medium_min
+    ):
+        review_reason_codes.append("risk_threshold")
+    if ai_risk_score is not None and ai_risk_score >= ai_review_min:
+        review_reason_codes.append("ai_alert")
+    if (
+        not is_white
+        and any(
+            item.key.lower().strip() == "_wc_af_waiting" and _is_truthy(item.value)
+            for item in risk_meta
+        )
+    ):
+        review_reason_codes.append("opmc_waiting")
 
     notes: list[str] = []
     if detail_mode and include_notes:
@@ -260,8 +342,6 @@ async def _build_order_item(
     billing_email = str((billing.get("email") if isinstance(billing, dict) else "") or "").strip() or None
     billing_country, shipping_country = _extract_countries(order)
     billing_city, shipping_city = _extract_cities(order)
-    ai_risk_score = _extract_named_score(risk_meta, "_ai_risk_score")
-    opmc_risk_score = _extract_named_score(risk_meta, "wc_af_score")
     risk_reasons = _build_risk_reasons(
         risk_meta=risk_meta,
         risk_level=effective_level,
@@ -270,17 +350,47 @@ async def _build_order_item(
         billing_country=billing_country,
         shipping_country=shipping_country,
     )
-    risk_meta_human = _build_human_meta_fields(risk_meta, ai_explanations_human) if detail_mode else []
+    if ai_risk_score is not None and ai_risk_score >= ai_review_min:
+        if opmc_risk_score is not None:
+            ai_reason = (
+                f"AI ayr\u0131 uyar\u0131s\u0131: {ai_risk_score}; "
+                f"OPMC risk skoru {opmc_risk_score} karar kayna\u011f\u0131d\u0131r."
+            )
+        else:
+            ai_reason = f"AI ayr\u0131 uyar\u0131s\u0131: {ai_risk_score}."
+        risk_reasons.append(AntiFraudRiskReasonOut(code="ai_alert", reason=ai_reason))
+    if assessment_status == "not_scored":
+        risk_reasons.append(
+            AntiFraudRiskReasonOut(
+                code="assessment_not_scored",
+                reason="Bu sipari\u015fte ge\u00e7erli bir OPMC veya AI risk skoru bulunamad\u0131.",
+            )
+        )
+    if score_consistency == "mismatch":
+        risk_reasons.append(
+            AntiFraudRiskReasonOut(
+                code="score_mismatch",
+                reason=(
+                    f"OPMC risk skoru {opmc_risk_score}; tetiklenen kural puanları "
+                    f"toplamı {failed_rule_points_total}. Manuel doğrulama gerekli."
+                ),
+            )
+        )
+    risk_meta_human = (
+        _build_human_meta_fields(
+            risk_meta,
+            ai_explanations_human,
+            opmc_score_mode=opmc_score_mode,
+        )
+        if detail_mode
+        else []
+    )
     whitelist_action_human = _extract_whitelist_action_human(risk_meta) if detail_mode else None
-
-    has_manual = _has_manual_override(risk_meta)[0]
-    is_white = _is_whitelisted(risk_meta)
-    is_black = _is_blacklisted(risk_meta)
 
     return AntiFraudOrderOut(
         order_id=_to_int(order.get("id")) or 0,
         order_number=str(order.get("number") or order.get("id") or ""),
-        status=str(order.get("status") or ""),
+        status=order_status,
         total=_to_decimal(order.get("total")),
         currency=str(order.get("currency") or "").strip() or None,
         date_created=_parse_wc_datetime(order.get("date_created_gmt")) or _parse_wc_datetime(order.get("date_created")),
@@ -295,11 +405,19 @@ async def _build_order_item(
         shipping_city=shipping_city,
         risk_score=effective_score,
         ai_risk_score=ai_risk_score,
+        opmc_source_score=opmc_source_score,
         opmc_risk_score=opmc_risk_score,
+        opmc_trust_score=opmc_trust_score,
+        opmc_score_mode=opmc_score_mode,
+        failed_rule_points_total=failed_rule_points_total,
+        score_consistency=score_consistency,
         risk_score_source=score_source,
+        assessment_status=assessment_status,
         raw_risk_score=raw_risk_score,
         risk_level=effective_level,
         requires_manual_review=requires_manual_review,
+        review_queue_status=review_queue_status,
+        review_reason_codes=review_reason_codes,
         risk_meta=(risk_meta if detail_mode else []),
         risk_reasons=risk_reasons,
         notes=(notes if detail_mode else []),
@@ -322,12 +440,20 @@ async def list_recent_orders_antifraud(
     include_notes: bool,
     notes_per_order: int,
     detail_mode: bool,
+    force_refresh: bool = False,
 ) -> AntiFraudOrdersResponse:
     service = WooCommerceService()
-    orders = await _fetch_recent_orders_with_retry(service, days=days, per_page=per_page)
+    orders = await _fetch_recent_orders_with_retry(
+        service,
+        days=days,
+        per_page=per_page,
+        use_cache=not force_refresh,
+    )
 
     items: list[AntiFraudOrderOut] = []
     high = medium = low = unknown = manual = 0
+    active_review = historical_review = 0
+    skipped_whitelist = not_scored = ai_alert = 0
 
     for order in orders:
         if not isinstance(order, dict):
@@ -342,6 +468,13 @@ async def list_recent_orders_antifraud(
         )
         items.append(item)
 
+        if item.assessment_status == "skipped_whitelist":
+            skipped_whitelist += 1
+        elif item.assessment_status == "not_scored":
+            not_scored += 1
+        if "ai_alert" in item.review_reason_codes:
+            ai_alert += 1
+
         if item.risk_level == "high":
             high += 1
         elif item.risk_level == "medium":
@@ -352,6 +485,10 @@ async def list_recent_orders_antifraud(
             unknown += 1
         if item.requires_manual_review:
             manual += 1
+        if item.review_queue_status == "active":
+            active_review += 1
+        elif item.review_queue_status == "historical":
+            historical_review += 1
 
     summary = AntiFraudSummaryOut(
         total_orders=len(items),
@@ -360,10 +497,15 @@ async def list_recent_orders_antifraud(
         low_risk_count=low,
         unknown_risk_count=unknown,
         manual_review_count=manual,
+        active_review_count=active_review,
+        historical_review_count=historical_review,
+        skipped_whitelist_count=skipped_whitelist,
+        not_scored_count=not_scored,
+        ai_alert_count=ai_alert,
     )
 
     return AntiFraudOrdersResponse(
-        source="WooCommerce + OPMC meta/not",
+        source="WooCommerce + OPMC meta",
         generated_at=utc_now(),
         summary=summary,
         items=items,

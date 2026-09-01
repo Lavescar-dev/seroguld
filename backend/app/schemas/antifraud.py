@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+
+from pydantic import Field
 from decimal import Decimal
 from typing import Any
 
@@ -53,12 +55,20 @@ class AntiFraudOrderOut(AppBaseModel):
     shipping_city: str | None = None
     risk_score: int | None = None
     ai_risk_score: int | None = None
+    opmc_source_score: int | None = None
     opmc_risk_score: int | None = None
+    opmc_trust_score: int | None = None
+    opmc_score_mode: str = "trust"
+    failed_rule_points_total: int | None = None
+    score_consistency: str = "not_checkable"
     # O8 — Skor kaynağı UI badge'i için
-    risk_score_source: str | None = None  # "opmc" | "ai" | "manual_override" | "whitelist" | "blacklist" | "unknown"
+    risk_score_source: str | None = None
+    assessment_status: str = "assessed"
     raw_risk_score: int | None = None  # override öncesi orijinal skor
     risk_level: str
     requires_manual_review: bool
+    review_queue_status: str = "none"
+    review_reason_codes: list[str] = Field(default_factory=list)
     risk_meta: list[AntiFraudRiskMetaOut]
     risk_reasons: list[AntiFraudRiskReasonOut]
     notes: list[str]
@@ -67,7 +77,7 @@ class AntiFraudOrderOut(AppBaseModel):
     risk_meta_human: list[AntiFraudHumanFieldOut]
     whitelist_action_human: str | None = None
     # O5/O7/O9 yeni alanlar
-    override_reasons: list[str] = []
+    override_reasons: list[str] = Field(default_factory=list)
     is_whitelisted: bool = False
     is_blacklisted: bool = False
     has_manual_override: bool = False
@@ -82,6 +92,11 @@ class AntiFraudSummaryOut(AppBaseModel):
     low_risk_count: int
     unknown_risk_count: int
     manual_review_count: int
+    active_review_count: int = 0
+    historical_review_count: int = 0
+    skipped_whitelist_count: int = 0
+    not_scored_count: int = 0
+    ai_alert_count: int = 0
 
 
 class AntiFraudOrdersResponse(AppBaseModel):

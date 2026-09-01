@@ -1336,9 +1336,10 @@ class WooCommerceService:
         per_page: int = 50,
         statuses: str = "processing,completed",
     ) -> list[dict[str, Any]]:
+        page_size = max(1, min(per_page, 100))
         params: dict[str, Any] = {
             "status": statuses,
-            "per_page": max(1, min(per_page, 100)),
+            "per_page": page_size,
             "orderby": "date",
             "order": "desc",
         }
@@ -1349,10 +1350,26 @@ class WooCommerceService:
             after = (utc_now() - timedelta(days=days)).isoformat()
             params["after"] = after
 
-        payload = await self._wc_request("GET", "/orders", params=params)
-        if not isinstance(payload, list):
-            return []
-        return [item for item in payload if isinstance(item, dict)]
+        rows: list[dict[str, Any]] = []
+        seen_page_ids: set[tuple[Any, ...]] = set()
+        # Woo paginates orders; stopping at the first page corrupts period totals.
+        page = 1
+        while True:
+            params["page"] = page
+            payload = await self._wc_request("GET", "/orders", params=params)
+            if not isinstance(payload, list):
+                break
+            page_rows = [item for item in payload if isinstance(item, dict)]
+            page_ids = tuple(item.get("id") for item in page_rows)
+            if page_ids and page_ids in seen_page_ids:
+                break
+            if page_ids:
+                seen_page_ids.add(page_ids)
+            rows.extend(page_rows)
+            if len(payload) < page_size:
+                break
+            page += 1
+        return rows
 
     async def fetch_order_notes(self, *, order_id: int, per_page: int = 20) -> list[dict[str, Any]]:
         payload = await self._wc_request(

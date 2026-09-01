@@ -43,6 +43,16 @@ function countryCityLabel(country?: string | null, city?: string | null) {
   return head || tail || '-';
 }
 
+function assessmentLabel(status?: string | null, source?: string | null) {
+  if (status === 'skipped_whitelist') return 'OPMC kontrolü atlandı (beyaz liste)';
+  if (status === 'not_scored') return 'Geçerli skor bulunamadı';
+  if (status === 'manual_override') return 'Manuel override uygulanıyor';
+  if (status === 'blacklisted') return 'Kara liste işareti';
+  if (source === 'opmc') return 'OPMC skoru değerlendirildi';
+  if (source === 'ai') return 'AI skoru değerlendirildi';
+  return 'Risk skoru değerlendirildi';
+}
+
 function RiskIcon({ level }: { level?: string | null }) {
   const normalized = normalizeRiskLevel(level);
   if (normalized === 'high') return <AlertTriangle className="h-4 w-4 text-red-600" />;
@@ -231,7 +241,8 @@ export function MakeOpmcDetailPage({
                 <div className="mt-0.5 flex items-center gap-2">
                   <span className="text-lg font-black text-brand-900" style={monoStyle}>Sipariş {orderLabel}</span>
                   <span className="bg-brand-100 px-2 py-0.5 text-xs font-bold text-brand-700">{formatOrderStatus(detail.status)}</span>
-                  {detail.requires_manual_review ? <span className="border border-violet-300 bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-800">Manuel İnceleme: Evet</span> : null}
+                  {detail.review_queue_status === 'active' ? <span className="border border-violet-300 bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-800">Aktif İnceleme</span> : null}
+                  {detail.review_queue_status === 'historical' ? <span className="border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">Geçmiş Risk Kaydı</span> : null}
                 </div>
               </div>
             </div>
@@ -314,15 +325,22 @@ export function MakeOpmcDetailPage({
                     }`}>
                       Risk Seviyesi: {tone.label}
                     </p>
+                    <p className="mt-1 text-xs font-bold text-brand-500">
+                      Değerlendirme: {assessmentLabel(detail.assessment_status, detail.risk_score_source)}
+                    </p>
                     <p className="mt-1.5 text-sm text-brand-700">
                       Toplam tutar: <span className="font-black text-brand-900" style={monoStyle}>{detail.total ? `${Number(detail.total).toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DKK` : '—'}</span>
                       {' · '}Ödeme: <span className="font-bold text-brand-800">{detail.payment_method || '-'}</span>
                     </p>
                     <div className="mt-2 flex items-center gap-3">
-                      {detail.requires_manual_review ? (
+                      {detail.review_queue_status === 'active' ? (
                         <span className="inline-flex items-center gap-1.5 border border-violet-300 bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-800">
                           <ClipboardList className="h-3 w-3" />
-                          Manuel İnceleme Kuyruğu
+                          Aktif İnceleme Kuyruğu
+                        </span>
+                      ) : detail.review_queue_status === 'historical' ? (
+                        <span className="inline-flex items-center gap-1.5 border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">
+                          Geçmiş sinyal; aktif işlem gerekmiyor
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
@@ -330,6 +348,12 @@ export function MakeOpmcDetailPage({
                         </span>
                       )}
                       <span className="text-xs text-brand-400" style={monoStyle}>{detail.risk_reasons.length} sinyal</span>
+                      {detail.assessment_status === 'skipped_whitelist' ? (
+                        <span className="border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-700">Kontrol Atlandı</span>
+                      ) : null}
+                      {detail.score_consistency === 'mismatch' ? (
+                        <span className="border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-red-700">Skor Uyuşmazlığı</span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -364,7 +388,7 @@ export function MakeOpmcDetailPage({
             {/* O8 — Skor kaynağı + override gerekçeleri panel */}
             {(detail.override_reasons && detail.override_reasons.length > 0) ||
             (detail.raw_risk_score != null && detail.raw_risk_score !== detail.risk_score) ||
-            detail.risk_score_source ? (
+            detail.risk_score_source || detail.assessment_status !== 'assessed' ? (
               <div className="overflow-hidden border border-emerald-300">
                 <div className="flex items-center gap-2 border-b border-emerald-200 bg-emerald-50 px-4 py-2">
                   <ShieldAlert className="h-3.5 w-3.5 text-emerald-700" />
@@ -372,7 +396,7 @@ export function MakeOpmcDetailPage({
                     Skor Kaynağı & Override Zinciri
                   </span>
                 </div>
-                <div className="grid gap-2 bg-white p-3 sm:grid-cols-3">
+                <div className="grid gap-2 bg-white p-3 sm:grid-cols-4">
                   <div className="border border-brand-200 bg-brand-50 px-3 py-2">
                     <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Kaynak</p>
                     <p className="mt-0.5 text-sm font-black text-brand-900">
@@ -392,7 +416,11 @@ export function MakeOpmcDetailPage({
                     </p>
                   </div>
                   <div className="border border-brand-200 bg-brand-50 px-3 py-2">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Ham Skor</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Değerlendirme</p>
+                    <p className="mt-0.5 text-sm font-black text-brand-900">{assessmentLabel(detail.assessment_status, detail.risk_score_source)}</p>
+                  </div>
+                  <div className="border border-brand-200 bg-brand-50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Ham Risk Skoru</p>
                     <p className="mt-0.5 text-sm font-black text-brand-900" style={monoStyle}>
                       {detail.raw_risk_score ?? '—'}
                     </p>
@@ -589,10 +617,15 @@ export function MakeOpmcDetailPage({
               <div className="space-y-1 bg-white p-3">
                 <OpmcField label="Manuel İnceleme Kuyruğu">
                   <div className="flex items-center gap-2">
-                    {detail.requires_manual_review ? (
+                    {detail.review_queue_status === 'active' ? (
                       <>
                         <CircleCheck className="h-4 w-4 text-violet-600" />
-                        <span className="text-sm font-bold text-violet-800">Evet (manuel inceleme bekliyor)</span>
+                        <span className="text-sm font-bold text-violet-800">Evet (aktif inceleme bekliyor)</span>
+                      </>
+                    ) : detail.review_queue_status === 'historical' ? (
+                      <>
+                        <CircleCheck className="h-4 w-4 text-slate-500" />
+                        <span className="text-sm font-bold text-slate-700">Geçmiş sinyal (aktif işlem yok)</span>
                       </>
                     ) : (
                       <>
@@ -613,6 +646,20 @@ export function MakeOpmcDetailPage({
 
                 <OpmcField label="OPMC Risk Skoru">
                   <span className="text-lg font-black text-brand-900" style={monoStyle}>{detail.opmc_risk_score ?? '—'}</span>
+                </OpmcField>
+
+                <OpmcField label="OPMC Güven Skoru">
+                  <span className="text-lg font-black text-brand-900" style={monoStyle}>{detail.opmc_trust_score ?? '—'}</span>
+                </OpmcField>
+
+                <OpmcField label="OPMC Kaynak Değeri">
+                  <span className="text-sm font-black text-brand-900" style={monoStyle}>{detail.opmc_source_score ?? '—'} ({detail.opmc_score_mode === 'risk' ? 'risk modu' : 'güven modu'})</span>
+                </OpmcField>
+
+                <OpmcField label="Kural Puanları / Tutarlılık">
+                  <span className={`text-sm font-black ${detail.score_consistency === 'mismatch' ? 'text-red-700' : 'text-emerald-700'}`} style={monoStyle}>
+                    {detail.failed_rule_points_total ?? '—'} · {detail.score_consistency === 'consistent' ? 'Tutarlı' : detail.score_consistency === 'mismatch' ? 'Uyuşmuyor' : 'Kontrol edilemedi'}
+                  </span>
                 </OpmcField>
 
                 {detail.whitelist_action_human ? (

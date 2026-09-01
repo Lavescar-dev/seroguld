@@ -32,6 +32,7 @@ async def get_recent_orders(
     include_notes: bool = Query(default=False),
     notes_per_order: int = Query(default=5, ge=1, le=20),
     detail_mode: bool = Query(default=False),
+    force_refresh: bool = Query(default=False),
     _=Depends(require_admin),
 ) -> AntiFraudOrdersResponse:
     return await list_recent_orders_antifraud(
@@ -40,6 +41,7 @@ async def get_recent_orders(
         include_notes=include_notes,
         notes_per_order=notes_per_order,
         detail_mode=detail_mode,
+        force_refresh=force_refresh,
     )
 
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { TransportError, apiRequest } from '@/lib/api';
@@ -10,11 +10,20 @@ export function useOpmcMakeState() {
   const [riskFilter, setRiskFilter] = useState<RiskFilter>('all');
   const [manualOnly, setManualOnly] = useState<'all' | 'yes' | 'no'>('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const forceRefreshRef = useRef(false);
 
   const ordersQuery = useQuery({
     queryKey: ['antifraud', 'recent', days],
-    queryFn: () =>
-      apiRequest<AntiFraudOrdersResponse>(`/api/v2/opmc/orders?days=${days}&per_page=40&detail_mode=true`),
+    queryFn: () => {
+      const forceRefresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      return apiRequest<AntiFraudOrdersResponse>(
+        '/api/v2/opmc/orders?days=' +
+          days +
+          '&per_page=40&detail_mode=true&force_refresh=' +
+          (forceRefresh ? 'true' : 'false'),
+      );
+    },
     retry: (failureCount, error) => error instanceof TransportError && failureCount < 2,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
@@ -37,9 +46,12 @@ export function useOpmcMakeState() {
   const filteredOrders = useMemo(
     () =>
       (ordersQuery.data?.items || []).filter((item) => {
+        const isActiveReview = item.review_queue_status
+          ? item.review_queue_status === 'active'
+          : item.requires_manual_review;
         if (riskFilter !== 'all' && normalizeRiskLevel(item.risk_level) !== riskFilter) return false;
-        if (manualOnly === 'yes' && !item.requires_manual_review) return false;
-        if (manualOnly === 'no' && item.requires_manual_review) return false;
+        if (manualOnly === 'yes' && !isActiveReview) return false;
+        if (manualOnly === 'no' && isActiveReview) return false;
         if (statusFilter !== 'all' && (item.status || '').toLowerCase() !== statusFilter) return false;
         return true;
       }),
@@ -47,7 +59,10 @@ export function useOpmcMakeState() {
   );
 
   const quickReviewOrders = useMemo(
-    () => (ordersQuery.data?.items || []).filter((item) => item.requires_manual_review),
+    () =>
+      (ordersQuery.data?.items || []).filter((item) =>
+        item.review_queue_status ? item.review_queue_status === 'active' : item.requires_manual_review,
+      ),
     [ordersQuery.data?.items],
   );
 
@@ -68,6 +83,7 @@ export function useOpmcMakeState() {
     isError: ordersQuery.isError,
     errorMessage,
     onRefresh: () => {
+      forceRefreshRef.current = true;
       void ordersQuery.refetch();
     },
     onDaysChange: (value: number) => setDays(value || 30),

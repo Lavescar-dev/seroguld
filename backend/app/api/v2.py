@@ -1464,11 +1464,14 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
             detail_mode=False,
             _=admin,
         )
-        opmc_yuksek = opmc_orders.summary.high_risk_count
-        opmc_orta = opmc_orders.summary.medium_risk_count
-        opmc_dusuk = opmc_orders.summary.low_risk_count
-        opmc_belirsiz = opmc_orders.summary.unknown_risk_count
-        opmc_manuel = opmc_orders.summary.manual_review_count
+        active_review_orders = [
+            item for item in opmc_orders.items if item.review_queue_status == "active"
+        ]
+        opmc_yuksek = sum(item.risk_level == "high" for item in active_review_orders)
+        opmc_orta = sum(item.risk_level == "medium" for item in active_review_orders)
+        opmc_dusuk = sum(item.risk_level == "low" for item in active_review_orders)
+        opmc_belirsiz = sum(item.risk_level == "unknown" for item in active_review_orders)
+        opmc_manuel = opmc_orders.summary.active_review_count
     except Exception:
         logger.exception("OPMC dashboard özeti alınamadı — risk sayaçları 0 gösteriliyor")
 

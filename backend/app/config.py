@@ -8,6 +8,7 @@ import sys
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -88,6 +89,11 @@ class Settings(BaseSettings):
     opmc_api_url: str = "https://api.opmc.dk/v1"
     opmc_api_key: str = ""
     opmc_webhook_secret: str = ""
+    # OPMC 7.2.2 stores wc_af_score as remaining trust: risk = 100 - source.
+    opmc_wc_af_score_mode: Literal["trust", "risk"] = "trust"
+    opmc_medium_risk_min: int = 25
+    opmc_high_risk_min: int = 76
+    opmc_ai_review_min: int = 70
 
     woocommerce_base_url: str = ""
     woocommerce_consumer_key: str = ""
