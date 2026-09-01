@@ -415,9 +415,9 @@ async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_s
     (CPR maskeli).
     """
     core = _core()
-    from app.services.email_service import send_afg_email, smtp_configured
+    from app.services.email_service import afg_email_transport_ready, send_afg_email
 
-    if not smtp_configured():
+    if not afg_email_transport_ready():
         return
     import json as _json
 
@@ -443,6 +443,9 @@ async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_s
         )
     except Exception as exc:  # noqa: BLE001
         note = f"E-posta akışı hatası: {exc}"
+    from app.config import get_settings as _gs
+
+    _transport = (_gs().email_transport or "smtp").strip().lower()
     session.add(
         PosDocumentAudit(
             sequence_no=pos_document.sequence_no,
@@ -450,7 +453,10 @@ async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_s
             action="afg_email_sent" if sent else "afg_email_skipped",
             actor_user_id=None,
             actor_email="system:afg_email",
-            payload_json=_json.dumps({"to": to_address or None, "sent": sent, "note": note}, ensure_ascii=False),
+            payload_json=_json.dumps(
+                {"to": to_address or None, "sent": sent, "note": note, "transport": _transport},
+                ensure_ascii=False,
+            ),
             note=note[:500] or None,
         )
     )
