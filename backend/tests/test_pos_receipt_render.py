@@ -55,12 +55,13 @@ def _sample_context(audience: str = "customer") -> dict[str, object]:
 
 
 def test_render_pos_receipt_html_customer_copy():
+    # AFG-P1: customer kopyası artık orijinal Afregningsbilag düzeninde.
     html = render_pos_receipt_html(_sample_context("customer"))
     assert "<!DOCTYPE html>" in html
     assert "SG-2026-000123" in html
-    assert "Alım Makbuzu" in html
-    assert "Kopya: Müşteri" in html
-    assert "Müşteriye Ödenen Tutar: 12146.09 DKK" in html
+    assert "Afregningsbilag" in html
+    assert "Alım Makbuzu" not in html  # POS fiş başlığı müşteriye sızmaz
+    assert "Overførsel" in html
 
 
 def test_render_pos_receipt_html_admin_copy():

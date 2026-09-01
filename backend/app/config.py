@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_address: str = ""
     afg_email_enabled: bool = False
+    # AFG-P2 — transport seçimi: "wp-bridge" (şifre WordPress/WP Mail SMTP'de
+    # kalır, CRM'e girmez) veya "smtp" (CRM'den direkt, .env'deki SMTP_PASSWORD ile).
+    # wp-bridge başarısızsa SMTP yapılandırılmışsa bir kez fallback denenir.
+    email_transport: str = "smtp"
+    wp_bridge_url: str = ""
+    wp_bridge_secret: str = ""
 
     wordpress_base_url: str = ""
     wp_app_username: str = ""
@@ -157,6 +163,14 @@ class Settings(BaseSettings):
     invoice_seller_email: str = "info@seroguld.dk"
     invoice_seller_phone: str = "22255504"
     invoice_seller_website: str = "www.seroguld.dk"
+    # AFG (afregningsbilag) ödeme bloğu sabitleri — şablonun "Faktura guld og
+    # sølv" sheet'indeki banka satırları; .env ile ezebilir. Öncelik session'daki
+    # bank_info'dadır (_workspace_bank_info_from_session).
+    afg_bank_reg_number: str = "5512"
+    afg_bank_account_number: str = "0725397984"
+    # AFG belgesindeki marka logosu (şablondaki sikke logosunun karşılığı);
+    # boşsa yalnız yazı markası basılır. Mutlak dosya yolu veya media altı yol.
+    afg_logo_path: str = ""
 
     pos_reference_start: int = 9600
     pos_reference_scan_window: int = 5000

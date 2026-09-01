@@ -123,6 +123,7 @@ from app.services.sequence_service import (
     preview_reference_number,
 )
 from app.utils.helpers import quantize_2, to_decimal, utc_now
+from app.utils.cpr import cpr_birth_part
 from app.utils.security import decrypt_field, hash_sensitive_value, mask_cpr, mask_last4
 
 settings = get_settings()
@@ -2583,6 +2584,11 @@ async def build_pos_receipt_context(
         "identity_type": (identity.identity_doc_type.value if identity and identity.identity_doc_type else "-"),
         "identity_number_masked": mask_last4(identity_number) or "-",
         "identity_country": (identity.identity_doc_country or "-") if identity else "-",
+        # AFG-P1: müşteri belgesi alanları (orijinal AFG düzeni) — dash bloğu
+        # yalnız POS fişi yolunda uygulanmaya devam eder; AFG renderer bu
+        # ham değerleri cpr_birth_part/Excel minimizasyon politikasıyla kullanır.
+        "cpr_plain": cpr_plain or "",
+        "identity_number_plain": identity_number or "",
     }
 
     trade_side = _resolved_trade_side(pos_session)
@@ -2657,6 +2663,9 @@ async def build_pos_receipt_context(
                 "product_number": line.product_number or "-",
                 "reference_number": line.reference_number or "-",
                 "product_type": _display_product_type(line.product_type),
+                # AFG-P1: ham enum'lar — AFG renderer slot sınıflandırması bunlara bakar.
+                "product_type_raw": line.product_type or "",
+                "metal_type_raw": _metal_value(line.metal_type) or "",
                 "metal_type": _metal_value(line.metal_type),  # ham enum; Danca etiket renderer'da (X2)
                 "weight_grams": (_fmt_decimal(line.weight_grams) if line.weight_grams is not None else "-"),
                 "purity_karat": purity_karat_value,
@@ -2689,6 +2698,8 @@ async def build_pos_receipt_context(
                 "product_number": product.product_number,
                 "reference_number": product.reference_number or "-",
                 "product_type": _display_product_type(product.product_type),
+                "product_type_raw": _product_value(product.product_type) or "",
+                "metal_type_raw": _metal_value(product.metal_type) or "",
                 "metal_type": _metal_value(product.metal_type),  # ham enum; Danca etiket renderer'da (X2)
                 "weight_grams": _fmt_decimal(product.weight_grams),
                 "purity_karat": purity_karat_value,
@@ -2708,6 +2719,47 @@ async def build_pos_receipt_context(
     supply_at = pos_document.supply_at or pos_session.confirmed_at or generated_at
     document_type = pos_document.document_type
     primary_line = receipt_lines[0] if receipt_lines else None
+
+    # AFG-P1 — afregningsbilag görünüm verisi (orijinal şablon düzeni).
+    # Müşteri kopyasında dash'lenmez: cpr yalnız doğum bölümü (cpr_birth_part,
+    # Excel yoluyla aynı minimizasyon), kimlik belge no tam yazılır.
+    _bank_info = _workspace_bank_info_from_session(pos_session)
+    _identity_label_da = {
+        "passport": "Pas",
+        "driver_license": "Kørekort",
+        "national_id": "ID-kort",
+        "residence_permit": "Opholdstilladelse",
+    }.get(str(customer_info.get("identity_type") or ""), "Kørekort/pas")
+    _postal_line = " ".join(
+        part
+        for part in (
+            (pos_document.customer_postal_code or getattr(customer, "postal_code", None) or "").strip(),
+            (pos_document.customer_city or getattr(customer, "city", None) or "").strip(),
+        )
+        if part
+    )
+    afg_customer = {
+        "navn": customer.name or "-",
+        "adresse": address_plain or "-",
+        "postnr": _postal_line or "-",
+        "cpr": cpr_birth_part(cpr_plain) or "-",
+        "korekort": identity_number or "-",
+        "korekort_etiket": _identity_label_da,
+        "tlf": customer.phone or "-",
+        "email": customer.email or "-",
+    }
+    afg_block = {
+        "afregningsnr": document_number,
+        "dato": generated_at.strftime("%d.%m.%Y") if hasattr(generated_at, "strftime") else "-",
+        "customer": afg_customer,
+        "betaling": {
+            "reg_nr": _bank_info.reg_number or "",
+            "konto_nr": _bank_info.account_number or "",
+            "yontem": _workspace_payment_method_from_session(pos_session),
+        },
+        "logo_path": settings.afg_logo_path or "",
+    }
+
     if audience == "customer":
         customer_info["cpr_masked"] = "-"
         customer_info["identity_type"] = "-"
@@ -2784,6 +2836,7 @@ async def build_pos_receipt_context(
         "line_count": len(receipt_lines),
         "lines": receipt_lines,
         "customer": customer_info,
+        "afg": afg_block,
     }
     return context
 

@@ -32,10 +32,15 @@ def _ensure_pdf_font_names() -> tuple[str, str]:
     regular_candidates = [
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+        # Windows müşteri kurulumu — DejaVu yoksa Arial ø/æ/å içeren bir yedektir.
+        Path("C:/Windows/Fonts/arial.ttf"),
+        Path("C:/Windows/Fonts/segoeui.ttf"),
     ]
     bold_candidates = [
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
         Path("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"),
+        Path("C:/Windows/Fonts/arialbd.ttf"),
+        Path("C:/Windows/Fonts/segoeuib.ttf"),
     ]
 
     regular_path = next((path for path in regular_candidates if path.exists()), None)
@@ -62,6 +67,12 @@ def _format_datetime(value: Any) -> str:
 
 
 def render_pos_receipt_html(context: dict[str, Any]) -> str:
+    # AFG-P1: müşteri kopyası orijinal şablon düzeninde (Afregningsbilag)
+    # basılır; admin fişi değişmez. Önizleme == e-posta eki düzeni.
+    if context.get("audience") == "customer":
+        from app.services.afg_document_renderer import render_afg_document_html
+
+        return render_afg_document_html(context)
     generated_at_str = _format_datetime(context.get("generated_at"))
     supply_at_str = _format_datetime(context.get("supply_at"))
     customer = context["customer"]
@@ -178,6 +189,12 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
 
 
 def render_pos_receipt_pdf(context: dict[str, Any]) -> bytes:
+    # AFG-P1: müşteri kopyası orijinal şablon düzeninde (Afregningsbilag)
+    # üretilir; admin fişi mevcut POS fiş şablonunda kalır.
+    if context.get("audience") == "customer":
+        from app.services.afg_document_renderer import render_afg_document_pdf
+
+        return render_afg_document_pdf(context)
     payload = BytesIO()
     font_regular, font_bold = _ensure_pdf_font_names()
     document = SimpleDocTemplate(
