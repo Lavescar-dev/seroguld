@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Eklendi
+
+- **AFG belgesi orijinal düzeninde (AFG-P1):** Müşteri kopyası (POS ekranındaki "Müşteri PDF" önizlemesi ve finalize e-postasının eki) artık POS fiş şablonundan değil, orijinal `Afregningsbilag` Excel şablonunun print düzeniyle aynı olan bağımsız bir reportlab renderer'ından üretiliyor (`afg_document_renderer.py`) — LibreOffice/Office bağımlılığı yok. İç marj, POS kodu ve kalem sayısı müşteri belgesine sızmaz; altın satırları şablon sarısı, gümüş satırları şablon grisiyle basılır; yalnız dolu satırlar basılır (18705a9'daki Excel boş-satır gizleme davranışıyla aynı); tek sayfa garantisi 15 sabit slot + KeepInFrame ile mühürlenir; CPR yalnız doğum tarihi bölümüyle yazılır (`cpr_birth_part`, Excel yoluyla aynı minimizasyon).
+- **AFG e-posta WP-bridge transportu (AFG-P2):** `EMAIL_TRANSPORT=wp-bridge` seçildiğinde e-posta, seroguld.dk'daki yeni WordPress eklentisi (`ops/wordpress/seroguld-crm-bridge/`) üzerinden `wp_mail()` + WP Mail SMTP ile gönderilir — SMTP şifresi WordPress'te kalır, CRM'e asla girmez. Bridge başarısızsa ve SMTP yapılandırılmışsa bir kez SMTP fallback denenir; audit kaydına `transport` alanı eklendi. Bridge: token (`X-SeroGuld-Bridge-Token`, `hash_equals`, downtime'sız rotasyon), 10 MB gövde tavanı (413), saatte 10 istek (429), HTTPS zorunlu (403), geçici ek dosyası gönderim sonrası silinir.
+- PDF font yedek yollarına Windows adayları (`arial.ttf`/`segoeui.ttf` + bold) eklendi — müşteri Windows kurulumunda DejaVu yokluğunda ø/æ/å bozulması giderildi (mevcut latent bug).
+
 ## [0.3.26] — 2026-08-31
 
 ### Eklendi

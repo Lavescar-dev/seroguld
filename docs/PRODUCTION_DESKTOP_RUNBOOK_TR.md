@@ -230,6 +230,7 @@ Production'a çıkmadan önce şu liste 100% tamamlanmalı:
 - [ ] Sentry / error tracking entegre edildi
 - [ ] `/readyz` ve `/api/v2/runtime/readiness` yeşil
 - [ ] Restore drill başarılı (`make backup-restore-drill`)
+- [ ] AFG e-posta: `WP_BRIDGE_SECRET` üretildi (`openssl rand -hex 32`), WP option'a + CRM `.env`'e yazıldı (bkz. §11)
 
 ---
 
@@ -279,7 +280,54 @@ make desktop-restart
 
 ---
 
-## 10. İlgili dökümanlar
+## 11. AFG E-posta Kurulumu (WP Bridge — şifresiz CRM)
+
+AFG (afregningsbilag) finalize edildiğinde müşteriye PDF e-posta ile gider
+(R2-16 + AFG-P1/P2). Transport `EMAIL_TRANSPORT` env'iyle seçilir:
+
+- **`wp-bridge`** (önerilen — şifresiz CRM): seroguld.dk'daki WordPress
+  eklentisi (`ops/wordpress/seroguld-crm-bridge/`) e-postayı `wp_mail()` +
+  WP Mail SMTP ile gönderir. SMTP şifresi WordPress'te kalır; CRM'e ASLA
+  girmez. (`websmtp.simply.com` yalnız Simply sunucularından erişilebildiği
+  için masaüstü CRM'in tek şifresiz yolu budur.)
+- **`smtp`** (fallback): CRM'den direkt `smtp.simply.com:587` — auth zorunlu,
+  şifre `.env`'de düz metin. wp-bridge başarısızsa bir kez otomatik denenir.
+
+### 11.1 Kurulum
+
+```bash
+# 1. Secret üret
+openssl rand -hex 32
+
+# 2. WordPress tarafına kur (ssh seroguld.dk@linux185.unoeuro.com):
+bash scripts/package-wordpress-bridge.sh        # → .run/seroguld-crm-bridge-<ver>.zip
+# zip'i wp-content/plugins/ altına aç, eklentiyi etkinleştir:
+ssh seroguld.dk@linux185.unoeuro.com \
+  'cd /var/www/seroguld.dk/public_html/wp-content/plugins && unzip -o /tmp/seroguld-crm-bridge-*.zip'
+ssh seroguld.dk@linux185.unoeuro.com \
+  'cd /var/www/seroguld.dk/public_html && wp plugin activate seroguld-crm-bridge'
+ssh seroguld.dk@linux185.unoeuro.com \
+  'cd /var/www/seroguld.dk/public_html && wp option add seroguld_crm_bridge_secret "<32-hex>"'
+
+# 2. CRM .env (müşteri Windows kurulumu):
+#    EMAIL_TRANSPORT=wp-bridge
+#    WP_BRIDGE_URL=https://seroguld.dk/wp-json/seroguld/v1/send-afg-email
+#    WP_BRIDGE_SECRET=<aynı 32-hex>
+#    AFG_EMAIL_ENABLED=true
+```
+
+### 11.2 Canlı smoke
+
+```bash
+TOKEN=<32-hex>; URL=https://seroguld.dk/wp-json/seroguld/v1/send-afg-email
+# 200 + {"sent":true}; yanlış token 401; 12MB 413; 11. istek 429; http:// 403
+curl -s -X POST "$URL" -H "X-SeroGuld-Bridge-Token: $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"to":"test@example.dk","customer_name":"T","document_number":"T-1","pdf_base64":""}'
+```
+
+Detaylı smoke seti: `ops/wordpress/seroguld-crm-bridge/readme.txt`.
+
+## 12. İlgili dökümanlar
 
 - `docs/PROJECT_SYSTEM_GUIDE_TR.md` — Ana sistem dokümantasyonu
 - `docs/HANDOVER.md` — Detaylı teknisyen devir kılavuzu
