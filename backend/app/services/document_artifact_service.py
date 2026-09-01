@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 from openpyxl.cell.cell import MergedCell
 from openpyxl import load_workbook
-from openpyxl.styles import Protection
+from openpyxl.styles import PatternFill, Protection
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -191,6 +191,10 @@ AFG_SILVER_CALCULATOR_ROWS = (
     ("calc_silver:5", "J36", "K36", "L36"),
     ("calc_silver:6", "J37", "K37", "L37"),
 )
+
+# Dinamik satır görünürlüğü: boş grid satırları hidden bayrağıyla gizlenir
+# (değerler dosyada kalır; F38/H38 SUM'ları ve round-trip parse etkilenmez).
+AFG_GOLD_FILL_ARGB = "FFFFC000"  # şablondaki karat satırı sarısı (22-28)
 
 
 def _afg_row_editable_cells() -> list[dict[str, str]]:
@@ -1760,6 +1764,11 @@ def _apply_afg_detail_rows(
     for blank_idx in range(idx, AFG_DETAIL_LAST_METAL_ROW + 1):
         for column in "ABCDEFGH":
             sheet[f"{column}{blank_idx}"] = None
+    # Şablon hesaplayıcı hayaletleri (J22=10, J32=1.754 vb.) final belgeye
+    # taşınmaz: detail yolu hesaplayıcı verisi yazmaz.
+    for calc_idx in range(AFG_GOLD_ROW_START, AFG_DETAIL_LAST_METAL_ROW + 1):
+        for column in "JKL":
+            sheet[f"{column}{calc_idx}"] = None
 
     sheet["D75"] = total_gold_grams
     sheet["E75"] = total_gold_amount
@@ -1785,6 +1794,98 @@ def _apply_afg_detail_rows(
         sheet[f"J{row_idx}"] = fine
     sheet["J82"] = fine_silver_total
     sheet["F88"] = fine_gold_total
+
+
+def _afg_cell_amount(sheet, cell_ref: str) -> Decimal:
+    cell = sheet[cell_ref]
+    if cell.data_type == "f":  # formül hücresi görünürlük sinyali taşımaz
+        return Decimal("0.00")
+    return quantize_2(to_decimal(cell.value or 0))
+
+
+def _afg_reset_row_geometry(sheet, idx: int) -> None:
+    """İnce ayraç satırının (29: ht=7.5, thickBot) ölçüsünü normal grid
+    satırı ölçüsüne döndürür — Guldbarre doluyken karat satırları gibi dursun.
+    customHeight height'tan türetilir (salt-okunur), ayrıca set edilmez."""
+    sibling = sheet.row_dimensions.get(idx - 1)
+    dim = sheet.row_dimensions[idx]
+    dim.height = sibling.height if sibling is not None else None
+    dim.thickTop = getattr(sibling, "thickTop", None) if sibling is not None else None
+    dim.thickBot = getattr(sibling, "thickBot", None) if sibling is not None else None
+
+
+def _afg_calc_cells_filled(sheet, idx: int) -> bool:
+    return any(_afg_cell_amount(sheet, f"{column}{idx}") > 0 for column in "JKL")
+
+
+def _apply_afg_row_visibility(sheet, *, blank_splitter_visible: bool = True) -> None:
+    """AFG grid satırlarını (21-37) veriye göre gizler/açar; her build'in
+    sonunda (satır + hesaplayıcı yazımından sonra) çağrılır.
+
+    Görünürlük yalnız gramdan (F kolonu) türetilir — hesaplayıcı (J/K)
+    varsayılanları (kniv ağırlıkları) görünürlüğü zorlamaz, aksi halde tüm
+    karat satırları her taslakta açık kalırdı. Satır 29 çift rol oynar:
+    doluyken Guldbarre sarı karat satırı, boşken altın bloğunu gümüş/pt/pd
+    bloğundan ayıran ince mavi şerit (yalnız iki taraf da doluyken görünür).
+    Final yolu (blank_splitter_visible=False) satırları 22'den paketler;
+    boş kalan şerit verinin altında başıboş görünmemesi için gizlenir.
+    """
+    gold_filled = {
+        idx: _afg_cell_amount(sheet, f"F{idx}") > 0
+        for idx in range(AFG_GOLD_ROW_START, AFG_BAR_GOLD_ROW)
+    }
+    silver_filled = {
+        idx: _afg_cell_amount(sheet, f"F{idx}") > 0
+        for idx in range(AFG_SILVER_ROW_START, AFG_EXTRA_ROW + 1)
+    }
+    if not silver_filled[AFG_EXTRA_ROW]:  # agregat: gram 0 ama toplam yazılmış olabilir
+        silver_filled[AFG_EXTRA_ROW] = _afg_cell_amount(sheet, f"H{AFG_EXTRA_ROW}") > 0
+
+    row_dims = sheet.row_dimensions
+    # 21: kniv hesaplayıcı tablo başlığı — tablosu (22-26) tamamen boşsa gizli:
+    # satır görünür olsa bile J/K/L içeriği yoksa başlık başıboş kalır.
+    row_dims[21].hidden = not any(
+        gold_filled[idx] and _afg_calc_cells_filled(sheet, idx)
+        for idx in range(AFG_GOLD_ROW_START, AFG_GOLD_ROW_START + 5)
+    )
+    for idx in range(AFG_GOLD_ROW_START, AFG_BAR_GOLD_ROW):  # 22-28 karat satırları
+        row_dims[idx].hidden = not gold_filled[idx]
+
+    bar_gold_filled = (
+        to_decimal(sheet[f"A{AFG_BAR_GOLD_ROW}"].value or 0) == 6
+        and _afg_cell_amount(sheet, f"F{AFG_BAR_GOLD_ROW}") > 0
+    )
+    bar_row_has_data = _afg_cell_amount(sheet, f"F{AFG_BAR_GOLD_ROW}") > 0
+    gold_side = any(gold_filled.values()) or bar_gold_filled
+    silver_side = any(silver_filled.values())
+    if bar_row_has_data:
+        # Guldbarre (veya final yolunda paketlenmiş satır) → normal satır görünümü.
+        row_dims[AFG_BAR_GOLD_ROW].hidden = False
+        _afg_reset_row_geometry(sheet, AFG_BAR_GOLD_ROW)
+        if bar_gold_filled:
+            gold_fill = PatternFill(fill_type="solid", fgColor=AFG_GOLD_FILL_ARGB)
+            for column in "CDEFGH":
+                sheet[f"{column}{AFG_BAR_GOLD_ROW}"].fill = gold_fill
+    else:
+        # Boş şerit: yazı artıklarını temizle ("Guldbarre 24 0,00" kalmasın),
+        # yalnız iki taraf da doluyken ayraç olarak göster.
+        for column in "ACDEFGH":
+            sheet[f"{column}{AFG_BAR_GOLD_ROW}"] = None
+        row_dims[AFG_BAR_GOLD_ROW].hidden = not (
+            blank_splitter_visible and gold_side and silver_side
+        )
+
+    # 31: Sterling satırı VE gümüş hesaplayıcı tablo başlığı — tablosu (32-37)
+    # hesaplayıcı içeriğiyle görünürken başlık olarak da açık kalır.
+    silver_calc_block = any(
+        silver_filled[idx] and _afg_calc_cells_filled(sheet, idx)
+        for idx in range(32, AFG_EXTRA_ROW + 1)
+    )
+    for idx in range(AFG_SILVER_ROW_START, AFG_EXTRA_ROW + 1):  # 30-37
+        if idx == AFG_SILVER_ROW_START + 1:
+            row_dims[idx].hidden = not (silver_filled[idx] or silver_calc_block)
+        else:
+            row_dims[idx].hidden = not silver_filled[idx]
 
 
 def _build_afg_workbook_bytes_from_workspace(workspace: PosWorkspaceOut, *, sync_context: ArtifactSyncContext) -> bytes:

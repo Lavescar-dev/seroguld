@@ -27,3 +27,19 @@ def test_xlsm_vba_project_survives_openpyxl_roundtrip() -> None:
     workbook.close()
 
     assert "xl/vbaProject.bin" in _zip_names(buffer.getvalue())
+
+
+def test_hidden_row_flag_survives_save_and_keeps_vba() -> None:
+    """Dinamik satır görünürlüğü: hidden bayrağıyla kayıt VBA'yı bozmaz ve
+    bayrak tura (round-trip) sağ kalır — Excel'de satır gizli açılır."""
+    workbook = load_workbook(io.BytesIO(AFG_TEMPLATE.read_bytes()), keep_vba=True, data_only=False)
+    sheet = workbook["Afregningsbilag"]
+    sheet.row_dimensions[22].hidden = True
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    assert "xl/vbaProject.bin" in _zip_names(buffer.getvalue())
+    reloaded = load_workbook(io.BytesIO(buffer.getvalue()), keep_vba=True, data_only=False)
+    assert reloaded["Afregningsbilag"].row_dimensions[22].hidden is True
+    reloaded.close()

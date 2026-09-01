@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from decimal import Decimal
 
 from openpyxl import load_workbook
@@ -277,3 +278,193 @@ def test_draft_writer_puts_ptpd_rows_on_35_36_and_backup_vlookup_rows() -> None:
     assert float(ptpd_inputs["platinum"].gram) == 3.2
     assert float(ptpd_inputs["palladium"].gram) == 7.0
     assert float(ptpd_inputs["palladium"].avance_percent) == 10.0
+
+
+# --- Dinamik satır görünürlüğü: boş satır gizle + Guldbarre sarı + ayraç ---
+# Karat → satır: 22'den itibaren sırayla 8,14,18,21,21.6,22,24 (22K = 27).
+# Gümüş → satır: 30'dan itibaren 2,3,4,5 (Finsølv = 30); Guldbarre = 29.
+
+
+def _gold_rows(filled: dict[str, str] | None = None) -> list["PosWorkspaceGoldRowOut"]:
+    from app.schemas.pos import PosWorkspaceGoldRowOut
+
+    lodighed = {"8": "333", "14": "585", "18": "750", "21": "875", "21.6": "900", "22": "916", "24": "999"}
+    filled = filled or {}
+    return [
+        PosWorkspaceGoldRowOut(
+            row_key=f"gold:{karat}",
+            karat=Decimal(karat),
+            label=f"Guld {karat}k",
+            lodighed=lodighed[karat],
+            purity_percentage=Decimal("91.60"),
+            gram=Decimal(filled.get(karat, "0")),
+            avance_percent=Decimal("8.50"),
+            rate_dkk=Decimal("615.50"),
+            unit_price_dkk=Decimal("501.03") if filled.get(karat) else Decimal("0"),
+            line_total_dkk=Decimal("2404.94") if filled.get(karat) else Decimal("0"),
+        )
+        for karat in ("8", "14", "18", "21", "21.6", "22", "24")
+    ]
+
+
+def _silver_rows(filled: dict[str, str] | None = None) -> list["PosWorkspaceSilverRowOut"]:
+    from app.schemas.pos import PosWorkspaceSilverRowOut
+
+    meta = {"2": ("Finsølv999‰", "999"), "3": ("Sterlingsølv", "925"), "4": ("3 tårnet sølv", "830"), "5": ("Plet", "")}
+    filled = filled or {}
+    return [
+        PosWorkspaceSilverRowOut(
+            row_key=f"silver:{key}",
+            type_code=key,
+            label=meta[key][0],
+            lodighed=meta[key][1],
+            purity_percentage=Decimal("92.50"),
+            gram=Decimal(filled.get(key, "0")),
+            avance_percent=Decimal("0"),
+            rate_dkk=Decimal("7.80"),
+            unit_price_dkk=Decimal("7.80") if filled.get(key) else Decimal("0"),
+            line_total_dkk=Decimal("23.40") if filled.get(key) else Decimal("0"),
+        )
+        for key in ("2", "3", "4", "5")
+    ]
+
+
+def _gold_bar_row(gram: str) -> "PosWorkspaceBarRowOut":
+    from app.schemas.pos import PosWorkspaceBarRowOut
+
+    return PosWorkspaceBarRowOut(
+        row_key="bar:gold",
+        bar_type="gold",
+        label="Guldbarre",
+        lodighed="999.9",
+        purity_percentage=Decimal("99.99"),
+        gram=Decimal(gram),
+        avance_percent=Decimal("0"),
+        rate_dkk=Decimal("620.00"),
+        unit_price_dkk=Decimal("620.00"),
+        line_total_dkk=Decimal("7750.00") if Decimal(gram) > 0 else Decimal("0"),
+    )
+
+
+def _visible_rows(out, start: int = 21, end: int = 37) -> set[int]:
+    return {idx for idx in range(start, end + 1) if not out.row_dimensions[idx].hidden}
+
+
+def test_draft_hides_empty_rows_and_shows_only_filled_karat() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [], [])
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    # Müşteri yalnız 22K satmış: yalnız satır 27 görünür; kniv başlığı (21)
+    # ve boş ayraç (29) dahil tüm boş satırlar gizli.
+    assert _visible_rows(out) == {27}
+    assert float(out["F27"].value) == 5.0
+    # I alt satırı (38) dokunulmaz.
+    assert not out.row_dimensions[38].hidden
+    reloaded.close()
+
+
+def test_draft_shows_blue_splitter_only_when_both_sides_filled() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows({"2": "3.00"}), [], [])
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert _visible_rows(out) == {27, 29, 30}
+    # Ayraç temiz: boş Guldbarre yazı artıkları ("Guldbarre 24 0,00") taşımaz.
+    assert out["A29"].value is None
+    assert out["C29"].value is None
+    assert out["D29"].value is None
+    assert out["F29"].value is None
+    # Sarıya boyanmadı — şablonun açık mavisi korunur.
+    fill = out["C29"].fill
+    assert not (fill.patternType == "solid" and str(fill.fgColor.rgb or "").endswith("FFC000"))
+    reloaded.close()
+
+
+def test_draft_fills_guldbarre_row_yellow_when_present() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [_gold_bar_row("12.50")], [])
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert _visible_rows(out) == {27, 29}
+    assert int(out["A29"].value) == 6
+    assert float(out["D29"].value) == 24
+    assert float(out["H29"].value) == 7750.0
+    # C:H kolonları şablon karat sarısına (FFC000) boyanır.
+    for column in "CDEFGH":
+        fill = out[f"{column}29"].fill
+        assert fill.patternType == "solid" and str(fill.fgColor.rgb).endswith("FFC000"), column
+    # İnce ayraç ölçüsü (ht=7.5) normal grid ölçüsüne döner.
+    height = out.row_dimensions[29].height
+    assert height is None or height > 10
+    reloaded.close()
+
+
+def test_draft_hides_splitter_when_only_silver_side_filled() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows(), _silver_rows({"2": "3.00"}), [], [])
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert _visible_rows(out) == {30}
+    reloaded.close()
+
+
+def test_calculator_defaults_do_not_force_row_visibility() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows(), _silver_rows(), [], [])
+    core._apply_afg_calculator_cells(sheet, _workspace_calculators_from_note({}))
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    # Kniv varsayılanları (J22=4, J32=1.75 vb.) karat satırlarını AÇMAZ:
+    # aksi halde her taslakta tüm satırlar açık kalırdı.
+    assert _visible_rows(out) == set()
+    # Hesaplayıcı verisi gizli satırda yaşamaya devam eder — parse etkilenmez.
+    assert float(out["J22"].value) == 4.0
+    assert float(out["J32"].value) == 1.75
+    reloaded.close()
+
+
+def test_final_hides_blank_rows_and_clears_calculator_ghosts() -> None:
+    workbook, sheet = _template_sheet()
+    gold_rows = [
+        {"row_key": "gold:14", "label": "Guld 14k", "karat": Decimal("14"), "lodighed": "585",
+         "gram": Decimal("4.80"), "avance_percent": Decimal("8.50"), "unit_price_dkk": Decimal("501.03"),
+         "line_total_dkk": Decimal("2404.94")},
+    ]
+    silver_rows = [
+        {"row_key": "silver:5", "type_code": "5", "label": "Plet", "lodighed": "",
+         "gram": Decimal("120.00"), "avance_percent": Decimal("0"), "unit_price_dkk": Decimal("0.02"),
+         "line_total_dkk": Decimal("2.40")},
+    ]
+    _apply_afg_detail_rows(sheet, gold_rows, silver_rows, [])
+    core._apply_afg_row_visibility(sheet, blank_splitter_visible=False)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    # Paketlenmiş final: 14K (22) ve Plet (23); boş satırlar + boş şerit gizli.
+    assert out["C22"].value == "Guld"
+    assert out["C23"].value == "Plet"
+    assert _visible_rows(out) == {22, 23}
+    # Şablon hesaplayıcı hayaletleri (J22=10, J32=1.754) finalden kalkar.
+    for idx in range(22, 38):
+        for column in "JKL":
+            assert out[f"{column}{idx}"].value is None, f"{column}{idx}"
+    reloaded.close()
+
+
+def test_hidden_rows_keep_vba_and_values_in_xlsm() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [], [])
+    core._apply_afg_row_visibility(sheet)
+    content = _save_workbook_bytes(workbook)
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        assert "xl/vbaProject.bin" in archive.namelist()
+    # Değerler gizli satırda durur: unhide edildiğinde veri kaybolmaz.
+    reloaded = load_workbook(io.BytesIO(content), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert out.row_dimensions[22].hidden is True
+    reloaded.close()

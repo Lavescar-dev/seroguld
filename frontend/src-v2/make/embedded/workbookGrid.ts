@@ -99,7 +99,9 @@ export function parseWorkbookGrid(
   try {
     const workbook = XLSX.read(buffer.slice(0), {
       type: 'array',
-      cellStyles: false,
+      // !rows[].hidden yalnız cellStyles açıkken parse edilir — AFG grid
+      // satırlarının görünürlüğü backend'de veriye göre belirlenir.
+      cellStyles: true,
       cellHTML: false,
       bookVBA: true,
       cellFormula: true,
@@ -119,15 +121,25 @@ export function parseWorkbookGrid(
       const preview = previewByName.get(sheetName);
       const ref = sheet['!ref'] || 'A1:A1';
       const range = XLSX.utils.decode_range(ref);
+      const rowMeta = sheet['!rows'] || [];
+      const isRowHidden = (rowIndex: number) => rowMeta[rowIndex]?.hidden === true;
       const merges = sheet['!merges'] || [];
       const hiddenCells = new Set<string>();
       const mergeRoots = new Map<string, { colSpan: number; rowSpan: number }>();
 
       merges.forEach((merge) => {
+        // Kökü gizli satırda olan merge düşer; kökü görünür satırda olan
+        // merge'in rowSpan'ı yalnız görünür satırları sayar (gizli satırlar
+        // grid'den çıkarıldığı için rowspan tabloda kaymaya yol açar).
+        if (isRowHidden(merge.s.r)) return;
+        let visibleRowCount = 0;
+        for (let rowIndex = merge.s.r; rowIndex <= merge.e.r; rowIndex += 1) {
+          if (!isRowHidden(rowIndex)) visibleRowCount += 1;
+        }
         const rootKey = `${merge.s.r}:${merge.s.c}`;
         mergeRoots.set(rootKey, {
           colSpan: merge.e.c - merge.s.c + 1,
-          rowSpan: merge.e.r - merge.s.r + 1,
+          rowSpan: visibleRowCount,
         });
         for (let rowIndex = merge.s.r; rowIndex <= merge.e.r; rowIndex += 1) {
           for (let columnIndex = merge.s.c; columnIndex <= merge.e.c; columnIndex += 1) {
@@ -140,6 +152,10 @@ export function parseWorkbookGrid(
 
       const rows: Array<Array<EmbeddedWorkbookCell | null>> = [];
       for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+        // Gizli satır grid'e hiç girmez; kalan hücreler orijinal Excel
+        // referanslarını (cellRef/rowNumber) korur — PATCH adresleri ve
+        // backend parse bozulmaz.
+        if (isRowHidden(rowIndex)) continue;
         const row: Array<EmbeddedWorkbookCell | null> = [];
         for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
           if (hiddenCells.has(`${rowIndex}:${columnIndex}`)) {

@@ -100,6 +100,7 @@ def build_afg_workbook_bytes_from_workspace(workspace: "PosWorkspaceOut", *, syn
         vat_enabled=workspace.purchase_vat_enabled,
         note=workspace.afg_note,
     )
+    core._apply_afg_row_visibility(sheet)
     core._write_sync_sheet(workbook, context=sync_context)
     return core._save_workbook_bytes(workbook)
 
@@ -162,6 +163,8 @@ def build_afg_workbook_bytes_from_detail(detail: "PosDocumentDetailOut", *, sync
         vat_enabled=core.to_decimal(detail.vat_amount_dkk) > 0,
         note=detail.notes,
     )
+    # Final yolu satırları paketler; boş şerit verinin altında başıboş kalmasın.
+    core._apply_afg_row_visibility(sheet, blank_splitter_visible=False)
     core._write_sync_sheet(workbook, context=sync_context)
     return core._save_workbook_bytes(workbook)
 
