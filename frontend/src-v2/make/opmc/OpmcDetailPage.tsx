@@ -129,7 +129,7 @@ export function MakeOpmcDetailPage({
   const showLoadingState = isLoading && !hasData;
   const showErrorState = isError && !hasData;
   const showWarningRail = isError && hasData;
-  const warningTitle = errorKind === 'transport' ? 'Yerel baglanti kesildi' : 'Detay yenileme hatasi';
+  const warningTitle = errorKind === 'transport' ? 'Yerel bağlantı kesildi' : 'Detay yenileme hatası';
   const warningMessage =
     errorKind === 'transport'
       ? 'Son gecerli OPMC detay verisi gosteriliyor. Backend yeniden ulasilabilir oldugunda ekran toparlanacak.'
@@ -143,7 +143,7 @@ export function MakeOpmcDetailPage({
             <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">OPMC Risk Detayi</p>
             <p className="mt-1 text-sm text-brand-700">Siparis #{requestedId}</p>
           </div>
-          <div className="px-6 py-12 text-center text-sm text-brand-500">Detay alani hazirlaniyor.</div>
+          <div className="px-6 py-12 text-center text-sm text-brand-500">Detay alanı hazırlanıyor.</div>
         </div>
       </div>
     );

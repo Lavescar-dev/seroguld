@@ -4,6 +4,18 @@
 
 ### Eklendi
 
+- **OPMC düzeltmesi — güven/risk semantiği:** OPMC (WC Anti-Fraud 7.2.2) `wc_af_score`'u **kalan güven puanı** olarak yazıyor; CRM bunu risk sanıp gösteriyordu ("güvenilir müşteriye 90 risk"). Artık `risk = 100 − güven` normalizasyonu uygulanıyor (`opmc_wc_af_score_mode="trust"`), eşikler resmi OPMC bantlarına çekildi (25-75 orta, ≥76 yüksek), skor kaynağı "OPMC Güven Skoru" olarak etiketleniyor. Güvenilir müşterinin 90 güven skoru artık 10 risk olarak görünüyor.
+- OPMC ekranına skor tutarlılık denetimi (OPMC riski vs kural puanları), bozuk JSON meta kurtarma, aktif/geçmiş inceleme ayrımı (tamamlanan siparişler kuyruğa girmez), AI uyarısının ayrıştırılması ve Woo sipariş çekiminde tüm-sayfa gezme (eski tek-sayfa davranış dönem listelerini kesiyordu) eklendi.
+- OPMC listesine `force_refresh` parametresi (5 dk önbelleği bypass eden Yenile butonu).
+
+### Düzeltildi
+
+- OPMC CRM görünümü yeniden düzenlendi: kalıcı "Yapım aşamasında" bandı ve nav "YAPIM" etiketi kaldırıldı; İngilizce/ham enum etiketler Türkçeleştirildi (Kaynak/Durum/Müşteri geçmişi); sahte "Kural görünümü" sekmesi ve uydurma "Owner" alanları temizlendi; dev risk sayıları küçük rozetlere çevrildi (0-100 ölçek ipucu); make/ ekranındaki ş/ı atılmış Türkçe metinler düzeltildi; pencere odağı değişiminde sürekli yeniden istek atan agresif refetch kapatıldı (Yenile butonu + force_refresh kaldı).
+
+## [0.3.26] — 2026-08-31
+
+### Eklendi
+
 - **AFG belgesi orijinal düzeninde (AFG-P1):** Müşteri kopyası (POS ekranındaki "Müşteri PDF" önizlemesi ve finalize e-postasının eki) artık POS fiş şablonundan değil, orijinal `Afregningsbilag` Excel şablonunun print düzeniyle aynı olan bağımsız bir reportlab renderer'ından üretiliyor (`afg_document_renderer.py`) — LibreOffice/Office bağımlılığı yok. İç marj, POS kodu ve kalem sayısı müşteri belgesine sızmaz; altın satırları şablon sarısı, gümüş satırları şablon grisiyle basılır; yalnız dolu satırlar basılır (18705a9'daki Excel boş-satır gizleme davranışıyla aynı); tek sayfa garantisi 15 sabit slot + KeepInFrame ile mühürlenir; CPR yalnız doğum tarihi bölümüyle yazılır (`cpr_birth_part`, Excel yoluyla aynı minimizasyon).
 - **AFG e-posta WP-bridge transportu (AFG-P2):** `EMAIL_TRANSPORT=wp-bridge` seçildiğinde e-posta, seroguld.dk'daki yeni WordPress eklentisi (`ops/wordpress/seroguld-crm-bridge/`) üzerinden `wp_mail()` + WP Mail SMTP ile gönderilir — SMTP şifresi WordPress'te kalır, CRM'e asla girmez. Bridge başarısızsa ve SMTP yapılandırılmışsa bir kez SMTP fallback denenir; audit kaydına `transport` alanı eklendi. Bridge: token (`X-SeroGuld-Bridge-Token`, `hash_equals`, downtime'sız rotasyon), 10 MB gövde tavanı (413), saatte 10 istek (429), HTTPS zorunlu (403), geçici ek dosyası gönderim sonrası silinir.
 - PDF font yedek yollarına Windows adayları (`arial.ttf`/`segoeui.ttf` + bold) eklendi — müşteri Windows kurulumunda DejaVu yokluğunda ø/æ/å bozulması giderildi (mevcut latent bug).

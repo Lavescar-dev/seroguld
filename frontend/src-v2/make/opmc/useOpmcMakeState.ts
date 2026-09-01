@@ -26,8 +26,8 @@ export function useOpmcMakeState() {
     },
     retry: (failureCount, error) => error instanceof TransportError && failureCount < 2,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const hasData = Boolean(ordersQuery.data);

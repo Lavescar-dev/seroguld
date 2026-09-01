@@ -119,7 +119,7 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         items: [
           item('/uniconta', 'Uniconta', 'ERP mutabakatı', Building2),
           item('/woocommerce', 'WooCommerce', 'Web operasyonları', ShoppingCart),
-          item('/opmc', 'OPMC / Risk', 'Yapım aşamasında', ShieldAlert, 'YAPIM'),
+          item('/opmc', 'OPMC / Risk', 'Risk izleme', ShieldAlert),
         ],
       },
       {

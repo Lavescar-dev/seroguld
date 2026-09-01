@@ -121,13 +121,13 @@ export function MakeOpmcPage({
   const sourceLabel = hasData
     ? source || 'Kaynak bilinmiyor'
     : showLoadingState
-      ? 'Kaynak hazirlaniyor'
+      ? 'Kaynak hazırlanıyor'
       : errorKind === 'transport'
-        ? 'Yerel baglanti'
+        ? 'Yerel bağlantı'
         : errorKind === 'upstream'
           ? 'Upstream hatasi'
-          : 'Kaynak hazirlaniyor';
-  const warningTitle = errorKind === 'transport' ? 'Yerel baglanti kesildi' : 'Upstream yenileme hatasi';
+          : 'Kaynak hazırlanıyor';
+  const warningTitle = errorKind === 'transport' ? 'Yerel bağlantı kesildi' : 'Upstream yenileme hatası';
   const warningMessage =
     errorKind === 'transport'
       ? 'Son gecerli OPMC verisi gosteriliyor. Backend yeniden ulasilabilir oldugunda ekran toparlanacak.'
@@ -279,14 +279,14 @@ export function MakeOpmcPage({
                 {showLoadingState ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-16 text-center text-sm font-bold text-brand-500">
-                      Risk siparisleri hazirlaniyor.
+                      Risk siparişleri hazırlanıyor.
                     </td>
                   </tr>
                 ) : showErrorState ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-16 text-center">
                       <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">
-                        {errorKind === 'transport' ? 'Yerel baglanti' : 'Upstream'}
+                        {errorKind === 'transport' ? 'Yerel bağlantı' : 'Upstream'}
                       </p>
                       <p className="mt-2 text-sm font-bold text-brand-600">{errorMessage}</p>
                     </td>
@@ -419,7 +419,7 @@ export function MakeOpmcPage({
             {showErrorState ? (
               <div className="border border-brand-200 bg-white p-4 text-center text-xs font-bold text-brand-500">
                 {errorKind === 'transport'
-                  ? 'Yerel backend baglantisi su an kurulamadigi icin inceleme listesi acilamadi.'
+                  ? 'Yerel backend bağlantısı şu an kurulamadığı için inceleme listesi açılamadı.'
                   : 'Manuel inceleme listesi şu an yenilenemedi.'}
               </div>
             ) : quickReviewOrders.length === 0 ? (

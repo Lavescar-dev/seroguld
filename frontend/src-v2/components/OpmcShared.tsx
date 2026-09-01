@@ -52,6 +52,26 @@ export function formatOrderStatus(value?: string | null): string {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
+/** Skor kaynağının Türkçe etiketi (O8 badge eşlemesinin paylaşılan hali). */
+export function riskSourceLabel(value?: string | null): string {
+  switch ((value || '').toLowerCase()) {
+    case 'manual_override':
+      return 'Manuel';
+    case 'whitelist':
+      return 'Beyaz Liste';
+    case 'blacklist':
+      return 'Kara Liste';
+    case 'known_customer':
+      return 'Bilinen Müşteri';
+    case 'opmc':
+      return 'OPMC';
+    case 'ai':
+      return 'AI';
+    default:
+      return 'Belirsiz';
+  }
+}
+
 export function SummaryBox({
   label,
   value,
