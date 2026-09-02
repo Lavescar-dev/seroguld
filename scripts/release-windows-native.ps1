@@ -755,19 +755,33 @@ function Invoke-InstallerCodeSigning {
 function Publish-UpdaterArtifacts {
   # Tauri signs the freshly bundled installer while createUpdaterArtifacts is
   # enabled.  The desktop updater refuses a release without that signature, so
-  # a missing .sig is a hard failure rather than a warning.  Authenticode
-  # imzalama koştuysa Invoke-InstallerCodeSigning imzalı final byte'lar
-  # üzerinden imzayı yeniledi ($NsisOutput.sig) — o önceliklidir.
-  $refreshedSignature = "$NsisOutput.sig"
-  if (Test-Path -LiteralPath $refreshedSignature -PathType Leaf) {
-    $script:UpdaterSignature = Get-Content -LiteralPath $refreshedSignature -Raw -Encoding UTF8
+  # a missing .sig is a hard failure rather than a warning.
+  # İmza kaynağı seçimi: Authenticode koştuysa PE byte'ları değiştiği için
+  # Invoke-InstallerCodeSigning'in imzalı final exe üzerinden yenilediği
+  # $NsisOutput.sig önceliklidir. Koşmadıysa tauri'nin bundle anında ürettiği
+  # taze imza geçerlidir — .run altında eski bir build'den kalan .sig ARTIĞI
+  # asla kullanılmaz (0.3.26-0.3.29 dersi: bayat 0.3.26 imzası latest.json'a
+  # girdi). Kural: taze bundle imzası her zaman üzerine kopyalanır.
+  $finalSignaturePath = "$NsisOutput.sig"
+  $builtSignature = "$($builtInstaller[0].FullName).sig"
+  if ($CodeSigned -and (Test-Path -LiteralPath $finalSignaturePath -PathType Leaf)) {
+    $sourceSignature = $finalSignaturePath
+  } elseif (Test-Path -LiteralPath $builtSignature -PathType Leaf) {
+    Copy-Item -LiteralPath $builtSignature -Destination $finalSignaturePath -Force
+    $sourceSignature = $finalSignaturePath
   } else {
-    $builtSignature = "$($builtInstaller[0].FullName).sig"
-    if (-not (Test-Path -LiteralPath $builtSignature -PathType Leaf)) {
-      throw "updater imza dosyası yok — TAURI_SIGNING_PRIVATE_KEY env set edilmemis olabilir: $builtSignature"
-    }
-    Copy-Item -LiteralPath $builtSignature -Destination $UpdaterSignaturePath -Force
-    $script:UpdaterSignature = Get-Content -LiteralPath $UpdaterSignaturePath -Raw -Encoding UTF8
+    throw "updater imza dosyası yok — TAURI_SIGNING_PRIVATE_KEY env set edilmemis olabilir: $builtSignature"
+  }
+  # Get-Content ETS notları (PSPath/PSChildName) ConvertTo-Json'a sızarsa
+  # latest.json'daki signature string değil obje olur ve updater doğrulama
+  # yapamaz (0.3.29 dersi) — ham string olarak oku.
+  $script:UpdaterSignature = [System.IO.File]::ReadAllText($sourceSignature).Trim()
+  # Bayat imza kapısı: tauri .sig, base64(minisign dosyası)dır ve trusted
+  # comment imzalanan dosya adını taşır. Ürün sürümü eşleşmezse release
+  # düşer — dört sürüm boyunca yinelenen bayat-imza hatasına kapı.
+  $signatureText = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($script:UpdaterSignature -replace "\s+", "")))
+  if (-not $signatureText.Contains("file:SERO GULD CRM_$ProductVersion")) {
+    throw "updater imzası $ProductVersion için üretilmemiş (bayat imza): $sourceSignature"
   }
   $latest = [ordered]@{
     version = $ProductVersion
@@ -775,7 +789,7 @@ function Publish-UpdaterArtifacts {
     pub_date = (Get-Date).ToUniversalTime().ToString("o")
     platforms = [ordered]@{
       "windows-x86_64" = [ordered]@{
-        signature = $script:UpdaterSignature
+        signature = [string]$script:UpdaterSignature
         url = "https://github.com/Lavescar-dev/seroguld/releases/download/seroguld-desktop-v$ProductVersion/SERO-GULD-CRM-FULL-SETUP.exe"
       }
     }
@@ -783,7 +797,7 @@ function Publish-UpdaterArtifacts {
   # BOM-less UTF-8: the updater fetches and JSON-parses this file directly.
   $latestJson = $latest | ConvertTo-Json -Depth 5
   [System.IO.File]::WriteAllText($LatestJsonPath, $latestJson, [System.Text.UTF8Encoding]::new($false))
-  Write-Host "Updater artifact üretildi: $UpdaterSignaturePath"
+  Write-Host "Updater artifact üretildi: $finalSignaturePath"
   Write-Host "Updater manifesti üretildi: $LatestJsonPath"
 }
 
