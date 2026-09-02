@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.31] — 2026-09-02
+
+### Düzeltildi
+
+- **Yeni müşteri formunda her tuş vuruşunda imlecin kaçması:** ModernDrawer/ModernDialog'un odak tuzağı her render'da yeniden kuruluyordu — `onClose` çağrı yerinde her render'da yeni fonksiyon olduğu için forma her yazılan karakterde odak önce panel arkasına, sonra paneldeki ilk elemana atıyordu. Artık tuzak yalnız panel açılıp kapanırken kuruluyor; yazma sırasında odak alanda kalıyor.
+- **Sundhedskortta Ad Soyad boş kalması (0.3.30 saha teshisiyle sınandı):** Danca OCR 9 satır okuyor, adres/posta kodu/şehir/CPR doluyordu ama isim düşüyordu. Üç gerçek düzen saptandı: ad ile c/o+sokak satırı arasına giren CPR satırı (eski kod yalnız posta bloğunun tam iki üstüne bakıyordu), ad satırının kenarında kalan madde imi/etiket kalıntısı ve "Soyad, Ad" virgüllü basım. Blok sezgisi artık 3 satır pencereyle yukarı tarıyor, kenar gürültüsünü kırpıyor, virgüllü düzeni düzeltiyor; ad hiç okunmazsa başlık kelimesinin ("Sundhedskort") isim olarak sızması da kapatıldı.
+
 ## [0.3.30] — 2026-09-02
 
 ### Eklendi
