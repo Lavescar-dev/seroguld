@@ -464,6 +464,82 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
     expect(result.fields.cpr_number?.value).toBe('010190');
   });
 
+  it('sundhedskort: ad ile c/o arasına giren CPR satırı ismi düşürmez (0.3.30 saha kartı)', () => {
+    // 0.3.30 saha bildirimi: da motoru 9 satır okudu, ad ile c/o+sokak
+    // satırı arasına CPR düştü — tek-satır bakış ismi kaçırmıştı.
+    const raw = [
+      'Hvidovre Kommune',
+      'Sundhedskort',
+      'Test Person',
+      '010190-1234',
+      'c/o Testgade 1',
+      '9999 Testby',
+      'Sygehus Hovedstaden',
+      'Gyldigt til 2027-01-01',
+      'Læge Test Jensen',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.address?.value).toBe('c/o Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('9999');
+    expect(result.fields.city?.value).toBe('Testby');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('sundhedskort: ad satırının kenarındaki madde imi kırpılır', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      '• Test Person',
+      'c/o Testgade 1',
+      '9999 Testby',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+  });
+
+  it('sundhedskort: "Soyad, Ad" virgüllü düzen doğrudan ada çevrilir', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      'Person, Test',
+      'c/o Testgade 1',
+      '9999 Testby',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+  });
+
+  it('sundhedskort: ad satırı okunmazsa başlık kelimesi isim olarak sızmaz', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      'Sundhedskort',
+      'c/o Testgade 1',
+      '9999 Testby',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBeUndefined();
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('sundhedskort: başlıkla birleşen ad satırı ayıklanır', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      'Sundhedskort Test Person',
+      'c/o Testgade 1',
+      '9999 Testby',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+  });
+
   it('kombine kart fotoğrafı: sundhedskort bloğu kazanır, alanlar doldurulur', () => {
     // Tek fotoğrafta üstte kørekort altta sundhedskort (gerçek kullanım).
     const raw = [

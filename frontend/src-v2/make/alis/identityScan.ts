@@ -202,7 +202,7 @@ const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔ�
 // Bilinen etiket kelimeleri asla ad değeri değildir (case-tolerant kontrolde
 // "Fornavn" gibi satırlar ad sanılmasın). OCR başlıkları bozabilir
 // (Fornavn→PORNAVN) — "navn" sonu (Danca: isim) ek bazında dışlanır.
-const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b/;
+const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b|SUNDHEDSKORT|^DANMARK\b/;
 
 function isPrintedNamePart(line: string): boolean {
   const trimmed = line.trim();
@@ -210,6 +210,24 @@ function isPrintedNamePart(line: string): boolean {
   // Gerçek kartlarda ad karışık durumda basılır ("Recai Demtr"); sentetik
   // fixture'larda tamamen büyüktür — iki biçim de kabul edilir.
   return PRINTED_NAME_PART.test(trimmed) || PRINTED_NAME_PART.test(trimmed.toUpperCase());
+}
+
+// Ad satırı adayı: kenar gürültüsünü kırp (madde imi, nokta, etiket artığı),
+// başlık kelimesiyle birleşen satırı ayır, "Soyad, Ad" düzenini "Ad Soyad"a
+// çevir. Gerçek kartlarda OCR ad satırının kenarına im/etiket kalıntısı
+// bırakabilir — çekirdek harflerle başlayıp harfle biter.
+function printedNameCandidate(line: string): string {
+  const stripped = line
+    .trim()
+    .replace(/^[^\p{L}]+/u, '')
+    .replace(/[^\p{L}.]+$/u, '')
+    .replace(/^sundhedskort\s+/i, '')
+    .replace(/^danmark\s+/i, '')
+    .replace(/^(?:efternavn|fornavn|fuldt\s+navn|navn)\s*[:\-.]?\s*/i, '')
+    .trim();
+  if (!stripped) return '';
+  const comma = stripped.match(/^(\p{L}[\p{L} .'’-]{0,39}),\s*(\p{L}[\p{L} .'’-]{0,39})$/u);
+  return comma ? `${comma[2].trim()} ${comma[1].trim()}` : stripped;
 }
 
 function cprFirstSix(value: string): string {
@@ -279,16 +297,30 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     if (postalIndex >= 2) {
       const streetLine = lines[postalIndex - 1]?.trim() ?? '';
       const careOf: string[] = [];
-      let nameCursor = postalIndex - 2;
-      while (nameCursor >= 0 && CARE_OF_LINE.test(lines[nameCursor]?.trim() ?? '')) {
-        careOf.unshift(lines[nameCursor].trim());
-        nameCursor -= 1;
+      // Ad adayı her zaman posta bloğunun iki üstünde değildir: araya CPR/
+      // tarih satırı girebilir (gerçek saha kartı), ad satırının kenarında
+      // madde imi/etiket kalıntısı olabilir. En fazla 3 satır pencereyle
+      // yukarı tara: c/o toplanır, rakam/iman satırları atlanır, ad olmayan
+      // harfli satırda (başlık bloğu) pencere kapanır.
+      let nameCandidate = '';
+      for (let cursor = postalIndex - 2, depth = 0; cursor >= 0 && depth < 3; cursor -= 1, depth += 1) {
+        const line = lines[cursor]?.trim() ?? '';
+        if (CARE_OF_LINE.test(line)) {
+          careOf.unshift(line);
+          continue;
+        }
+        if (/\d/.test(line) || !/\p{L}/u.test(line) || IDENTITY_NOISE_LINE.test(line)) continue;
+        const candidate = printedNameCandidate(line);
+        if (candidate && isPrintedNamePart(candidate)) {
+          nameCandidate = candidate;
+          break;
+        }
+        break;
       }
-      const nameLine = nameCursor >= 0 ? (lines[nameCursor]?.trim() ?? '') : '';
       const blockPostal = lines[postalIndex].trim().match(/^(\d{4})\s+(.+)$/);
       const blockAddress = /\d/.test(streetLine) ? [...careOf, streetLine].filter(Boolean).join(', ') : '';
       const blockFields = definedFields([
-        ['name', isPrintedNamePart(nameLine) ? parsedField(nameLine, 'needs_review') : undefined],
+        ['name', nameCandidate ? parsedField(nameCandidate, 'needs_review') : undefined],
         ['address', blockAddress ? parsedField(blockAddress, 'needs_review') : undefined],
         ['postal_code', parsedField(blockPostal?.[1] || '', 'needs_review')],
         ['city', parsedField(blockPostal?.[2] || '', 'needs_review')],
