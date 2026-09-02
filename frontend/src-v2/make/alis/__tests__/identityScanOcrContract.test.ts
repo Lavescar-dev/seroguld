@@ -17,6 +17,7 @@ import type { EditableCustomer } from '../types';
 import {
   applyConfirmedIdentityResult,
   type IdentityParseResult,
+  mergeSideScanResults,
   parseIdentityScan,
 } from '../identityScan';
 
@@ -332,6 +333,116 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
     expect(result.fields.identity_doc_number?.value).toBe('30499459');
     expect(result.fields.cpr_number?.value).toBe('200485');
     expect(result.fields.identity_doc_country?.value).toBe('DNK');
+  });
+
+  it('kørekort: başlık Ø→OE translitresiyle (KOEREKORT) okunduğunda yine tanınır', () => {
+    // Bazı motorlar Ø'yi OE diye translitre eder; iki tetikleyici de E?
+    // toleransıyla kapsanır — yoksa belge unknown düşer, tüm alanlar kaybolur.
+    const raw = [
+      'KOEREKORT',
+      '1. Hansen',
+      '2. Lars',
+      '3. 1990-01-01, Danmark',
+      '4a. 2010-01-01 4c. Rigspolitichefen',
+      '4b. 2050-01-01 4d. 010190-1234',
+      '5. 30998877',
+      '9. B·C·D',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Lars Hansen');
+    expect(result.fields.identity_doc_number?.value).toBe('30998877');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+  });
+
+  it('sundhedskort: c/o satırı sokağı yutmaz — etiketli düzende adres birleşir', () => {
+    // Gerçek kart: "Adresse" etiketi altında önce c/o satırı, sonra sokak.
+    const raw = [
+      'Aarhus Kommune',
+      'Navn',
+      'Mette Hansen',
+      'Adresse',
+      'c/o Jens Jensen',
+      'Testgade 1',
+      'Postnr. og by',
+      '8000 Aarhus C',
+      'CPR-nr',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Mette Hansen');
+    expect(result.fields.address?.value).toBe('c/o Jens Jensen, Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('8000');
+    expect(result.fields.city?.value).toBe('Aarhus C');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('sundhedskort: c/o satırı sokak ile ad arasındaki blok düzende de kaybolmaz', () => {
+    const raw = [
+      'Aarhus Kommune',
+      '010190-1234',
+      'Mette Hansen',
+      'c/o Jens Jensen',
+      'Testgade 1',
+      '8000 Aarhus C',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Mette Hansen');
+    expect(result.fields.address?.value).toBe('c/o Jens Jensen, Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('8000');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('sundhedskort: EHIC/kart no 10 haneli sayı CPR sanılmaz', () => {
+    // "Kort nr" işaretli 10 hane CPR değil; kart CPR'siz okunduğunda
+    // cpr_number uydurulmaz (yanlış dolum yok).
+    const raw = [
+      'Aarhus Kommune',
+      'Kort nr. 0512345678',
+      'Mette Hansen',
+      'Testgade 1',
+      '8000 Aarhus C',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.fields.cpr_number).toBeUndefined();
+  });
+
+  it('sundhedskort: makul olmayan CPR (999999-9999) taşınmaz', () => {
+    // CPR tarih bölümü (ddmm) makul olmalı — OCR bozuk okumasında uydurma
+    // CPR kalıcı yüzeye yazılmaz.
+    const raw = [
+      'Aarhus Kommune',
+      '999999-9999',
+      'Mette Hansen',
+      'Testgade 1',
+      '8000 Aarhus C',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.fields.cpr_number).toBeUndefined();
+  });
+
+  it('çoklu tarama: arka yüz MRZ adı basılı adı EZMEZ, eksik belge noyu doldurur', () => {
+    // Ön yüz basılı etiketlerden okundu; arka yüz TD3 MRZ'si transliterasyon
+    // adı üretir — birleşimde basılı ad kanonik kalır (çoklu-tarama merge'i
+    // tek-pars sözleşmesiyle aynıdır), MRZ yalnız eksik anahtarı doldurur.
+    const front = parseIdentityScan([
+      'KONGERIGET DANMARK',
+      'Efternavn',
+      'YILMAZ',
+      'Fornavn',
+      'AHMET',
+      'Pasnr.',
+    ].join('\n'));
+    const back = parseIdentityScan(ICAO_TD3_PRISTINE.map((line, index) => (index === 0 ? line.replace(/</g, '«') : line.replace(/</g, ' « ')).replace('l8989', 'L8989')).join('\n'));
+    expect(front.documentType).toBe('passport');
+    expect(front.fields.name?.value).toBe('AHMET YILMAZ');
+    const merged = mergeSideScanResults(front, back);
+    expect(merged?.documentType).toBe('passport');
+    expect(merged?.fields.name?.value).toBe('AHMET YILMAZ');
+    expect(merged?.fields.identity_doc_number?.value).toBe('L898902C3');
   });
 
   it('sundhedskort: etiketsiz yeni düzen — başlık okunmasa da blok sezgisiyle okunur', () => {

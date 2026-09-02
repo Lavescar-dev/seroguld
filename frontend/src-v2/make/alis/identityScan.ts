@@ -169,6 +169,27 @@ function valueAfterLabelLine(
   return '';
 }
 
+// Adres penceresi: "c/o Jens Jensen" sokağın ÜSTÜNDE basılır; yalnız c/o
+// satırını adres almak gerçek sokağı kaybettirir. c/o satırları toplanıp
+// sokakla birleştirilir → "c/o Jens Jensen, Testgade 1".
+function addressValueAfterLabelLine(lines: string[], label: RegExp, labels: RegExp[], window = 4): string {
+  const start = lines.findIndex((line) => label.test(line));
+  if (start < 0) return '';
+  const careOf: string[] = [];
+  for (let index = start + 1; index <= start + window && index < lines.length; index += 1) {
+    const line = lines[index];
+    if (labels.some((candidate) => candidate.test(line))) break;
+    if (IDENTITY_NOISE_LINE.test(line)) continue;
+    const trimmed = line.trim();
+    if (CARE_OF_LINE.test(trimmed)) {
+      careOf.push(trimmed);
+      continue;
+    }
+    if (/\d/.test(line) || line.length > 4) return [...careOf, trimmed].filter(Boolean).join(', ');
+  }
+  return careOf.join(', ');
+}
+
 const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔÛ '’-]{1,39}$/;
 
 // Bilinen etiket kelimeleri asla ad değeri değildir (case-tolerant kontrolde
@@ -189,6 +210,35 @@ function cprFirstSix(value: string): string {
   return digits.length >= 6 ? digits.slice(0, 6) : '';
 }
 
+// Danca CPR tarih bölümü makul bir tarih kodlar (dd 01-31, mm 01-12) — OCR
+// bozulmalarında uydurma CPR kalıcı yüzeye taşınmasın diye son makuliyet
+// kapısı. 6+4 desenine uyan yabancı sayılar da burada elenir.
+function plausibleCprSix(value: string): string {
+  const digits = cprFirstSix(value);
+  if (digits.length < 6) return '';
+  const day = Number(digits.slice(0, 2));
+  const month = Number(digits.slice(2, 4));
+  return day >= 1 && day <= 31 && month >= 1 && month <= 12 ? digits : '';
+}
+
+const CARE_OF_LINE = /^c\s*[/\\]\s*o\b/i;
+
+// Etiketsiz CPR adayı: Danca CPR 6+4 düzenidir ve tarih bölümü makul bir
+// tarih kodlar (dd 01-31, mm 01-12) — EHIC/kart no gibi 10 haneli yabancı
+// sayılar (ör. "Kort nr 0512345678", "999999-9999") CPR sanılmaz. Kart-no
+// işaretli satırlar ("Kortnr.", "EHIC", "sygesikr") baştan elenir.
+function findBareCpr(lines: string[]): string {
+  for (const line of lines) {
+    if (/kort\s*\.?\s*nr|kortnr|ehic|sygesikr/i.test(line)) continue;
+    const match = line.match(/\b(\d{6})[-\s]?(\d{4})\b/);
+    if (!match) continue;
+    const day = Number(match[1].slice(0, 2));
+    const month = Number(match[1].slice(2, 4));
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return match[0];
+  }
+  return '';
+}
+
 function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult | null {
   const upper = raw.toUpperCase();
 
@@ -196,19 +246,19 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
   // belge türü/numarası doldurulmaz; ad, CPR ilk-6 ve adres alınır.
   // Yeni kartlarda başlık kelimesi dikey basılı olduğu için OCR okumayabilir;
   // KOMMUNE + CPR kombinasyonu da kartı tanır (diğer kartlarda Kommune yok).
-  const bareCpr = raw.match(/\b\d{6}[-\s]?\d{4}\b/)?.[0] ?? '';
+  const bareCpr = findBareCpr(lines);
   const isSundhedskort = /SUNDHEDSKORT/.test(upper) || (/KOMMUNE/.test(upper) && Boolean(bareCpr));
   if (isSundhedskort) {
     const labels = [/^Navn$/i, /CPR[-\s.]?n/i, /^Ad?resse$/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
     const name = valueAfterLabelLine(lines, /^Navn$/i, labels, isPrintedNamePart);
     const cprLine = valueAfterLabelLine(lines, /CPR[-\s.]?n/i, labels, (line) => /\d{6}/.test(line));
-    const street = valueAfterLabelLine(lines, /^Ad?resse$/i, labels, (line) => /\d/.test(line) || line.length > 4);
+    const street = addressValueAfterLabelLine(lines, /^Ad?resse$/i, labels);
     const postalLine = valueAfterLabelLine(lines, /r\.?\s*og\s*by/i, labels, (line) => /^\d{4}\s+\S/.test(line));
     const postalMatch = postalLine.match(/^(\d{4})\s+(.+)$/);
     const fields = definedFields([
       ['name', parsedField(name, 'needs_review')],
       // Kartta tam CPR basılıdır; kalıcı yüzeylere YALNIZ ilk 6 hane taşınır.
-      ['cpr_number', parsedField(cprFirstSix(cprLine), 'needs_review')],
+      ['cpr_number', parsedField(plausibleCprSix(cprLine), 'needs_review')],
       ['address', parsedField(street, 'needs_review')],
       ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
       ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
@@ -216,17 +266,26 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     if (Object.keys(fields).length) return { documentType: 'health_card', rawLines: lines, fields };
     // Etiketsiz yeni düzen: ad/sokak/posta bloğu alt alta basılır, etiket yok.
     // Posta satırı (9999 By) çıpaydır; bir üstü sokak, iki üstü addır.
+    // Sokak ile ad arasına c/o satırı düşebilir — c/o satırları atlanır ve
+    // adrese eklenir ("c/o Jens Jensen, Testgade 1").
     const postalIndex = lines.findIndex((line) => /^\d{4}\s+\S/.test(line.trim()));
     if (postalIndex >= 2) {
       const streetLine = lines[postalIndex - 1]?.trim() ?? '';
-      const nameLine = lines[postalIndex - 2]?.trim() ?? '';
+      const careOf: string[] = [];
+      let nameCursor = postalIndex - 2;
+      while (nameCursor >= 0 && CARE_OF_LINE.test(lines[nameCursor]?.trim() ?? '')) {
+        careOf.unshift(lines[nameCursor].trim());
+        nameCursor -= 1;
+      }
+      const nameLine = nameCursor >= 0 ? (lines[nameCursor]?.trim() ?? '') : '';
       const blockPostal = lines[postalIndex].trim().match(/^(\d{4})\s+(.+)$/);
+      const blockAddress = /\d/.test(streetLine) ? [...careOf, streetLine].filter(Boolean).join(', ') : '';
       const blockFields = definedFields([
         ['name', isPrintedNamePart(nameLine) ? parsedField(nameLine, 'needs_review') : undefined],
-        ['address', /\d/.test(streetLine) ? parsedField(streetLine, 'needs_review') : undefined],
+        ['address', blockAddress ? parsedField(blockAddress, 'needs_review') : undefined],
         ['postal_code', parsedField(blockPostal?.[1] || '', 'needs_review')],
         ['city', parsedField(blockPostal?.[2] || '', 'needs_review')],
-        ['cpr_number', parsedField(cprFirstSix(bareCpr), 'needs_review')],
+        ['cpr_number', parsedField(plausibleCprSix(bareCpr), 'needs_review')],
       ]);
       if (Object.keys(blockFields).length) return { documentType: 'health_card', rawLines: lines, fields: blockFields };
     }
@@ -235,15 +294,17 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       return {
         documentType: 'health_card',
         rawLines: lines,
-        fields: definedFields([['cpr_number', parsedField(cprFirstSix(bareCpr), 'needs_review')]]),
+        fields: definedFields([['cpr_number', parsedField(plausibleCprSix(bareCpr), 'needs_review')]]),
       };
     }
     return null;
   }
 
   // Dansk kørekort: numaralı etiketler ve değerler aynı satırda ("1. Demir");
-  // tr-paketi başlığı bozabilir (MOREKORT) — [KMG] toleransı. 4d = personnummer.
-  if (/[KMG][OØ0]REKORT/.test(upper)) {
+  // tr-paketi başlığı bozabilir (MOREKORT) — [KMG] toleransı; Ø bazı
+  // motorlarda OE diye translitre okunur (KOEREKORT) — E? toleransı.
+  // 4d = personnummer.
+  if (/[KMG][OØ0]E?REKORT/.test(upper)) {
     const labels = [/^1[.:]/, /^2[.:]/, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
     let surname = valueAfterLabelLine(lines, /^1[.:]/, labels, isPrintedNamePart);
     let givenName = valueAfterLabelLine(lines, /^2[.:]/, labels, isPrintedNamePart);
@@ -257,7 +318,7 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       const blockNames = lines
         .filter((line) => {
           const trimmed = line.trim();
-          if (/^[KMG][OØ0]REKORT/i.test(trimmed) || IDENTITY_NOISE_LINE.test(trimmed)) return false;
+          if (/^[KMG][OØ0]E?REKORT/i.test(trimmed) || IDENTITY_NOISE_LINE.test(trimmed)) return false;
           return isPrintedNamePart(trimmed);
         })
         .slice(0, 2);
@@ -284,7 +345,7 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
       ['identity_doc_type', name || documentNumber ? { value: 'driver_license', review: 'validated' as const } : undefined],
       ['identity_doc_country', parsedField(/DANMARK|\bDNK\b|\bDK\b/.test(upper) ? 'DNK' : '', 'needs_review')],
-      ['cpr_number', parsedField(cprFirstSix(cprRaw), 'needs_review')],
+      ['cpr_number', parsedField(plausibleCprSix(cprRaw), 'needs_review')],
       ['address', parsedField(addressLine.replace(/\b\d{4}\s+.*$/, '').replace(/[,-]\s*$/, ''), 'needs_review')],
       ['postal_code', parsedField(addressPostal?.[1] || '', 'needs_review')],
       ['city', parsedField(addressPostal?.[2]?.trim() || '', 'needs_review')],
@@ -320,14 +381,14 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
     ['identity_doc_type', name || documentNumber ? { value: documentType, review: 'validated' as const } : undefined],
     ['identity_doc_country', parsedField(normalizeCountry(country), 'needs_review')],
-    ['cpr_number', parsedField(cprFirstSix(personnr), 'needs_review')],
+    ['cpr_number', parsedField(plausibleCprSix(personnr), 'needs_review')],
   ]);
   return Object.keys(fields).length ? { documentType, rawLines: lines, fields } : null;
 }
 
 function parseDriverLicense(raw: string, lines: string[]): IdentityParseResult | null {
   const upper = raw.toUpperCase();
-  const looksLikeLicense = /[KMG][ØO]REKORT|DRIVING\s+LICEN[CS]E|PERMIS\s+DE\s+CONDUIRE|F[ÜU]HRERSCHEIN/.test(upper);
+  const looksLikeLicense = /[KMG][ØO]E?REKORT|DRIVING\s+LICEN[CS]E|PERMIS\s+DE\s+CONDUIRE|F[ÜU]HRERSCHEIN/.test(upper);
   if (!looksLikeLicense) return null;
 
   const surname = valueAfterLabel(raw, '1');
@@ -556,12 +617,24 @@ export function maskIdentityScanDiagnostic(lines: string[]): string {
     .join('\n');
 }
 
-function mergeIdentityResults(previous: IdentityParseResult | null, next: IdentityParseResult): IdentityParseResult {
-  if (!previous || next.documentType === 'unknown') return next.documentType === 'unknown' && previous ? previous : next;
+// Çoklu tarama birleşimi: ÖN YÜZ kanoniktir. Arka yüz taraması (MRZ
+// transliterasyonu "SOERENSEN AABERG", kategori legend gürültüsü, ikinci bir
+// kartın karışması) ön yüzden gelen doğru dolumları EZMEZ — yalnız eksik
+// anahtarları doldurur (basılı Pasnr. okunmadıysa MRZ belge noyu verir,
+// tek-pars davranışıyla aynı sözleşme). documentType: bilinen ilk tür kazanır.
+export function mergeSideScanResults(
+  front: IdentityParseResult | null,
+  back: IdentityParseResult | null,
+): IdentityParseResult | null {
+  const frontKnown = front && front.documentType !== 'unknown' ? front : null;
+  const backKnown = back && back.documentType !== 'unknown' ? back : null;
+  const primary = frontKnown ?? backKnown;
+  if (!primary) return null;
+  const secondary = primary === frontKnown ? backKnown : frontKnown;
   return {
-    documentType: previous.documentType === 'unknown' ? next.documentType : previous.documentType,
-    rawLines: [...previous.rawLines, ...next.rawLines],
-    fields: { ...previous.fields, ...next.fields },
+    documentType: primary.documentType,
+    rawLines: [...(front?.rawLines ?? []), ...(back?.rawLines ?? [])],
+    fields: { ...secondary?.fields, ...primary.fields },
   };
 }
 
@@ -576,10 +649,13 @@ export function useIdentityScan({
 }) {
   const [capabilities, setCapabilities] = useState<IdentityScannerCapabilities>({ scanner: false, file: false });
   const [status, setStatus] = useState<IdentityScanStatus>('checking');
-  const [result, setResult] = useState<IdentityParseResult | null>(null);
+  // Taramalar yüze göre tutulur: aynı yüzün yeniden taraması o yüzün sonucunu
+  // günceller (bozuk tarama düzeltilebilir); ön+arka birleşimi kanoniktir.
+  const [scanBySide, setScanBySide] = useState<{ front: IdentityParseResult | null; back: IdentityParseResult | null }>({ front: null, back: null });
   const [error, setError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<'front' | 'back', string>>>({});
+  const result = useMemo(() => mergeSideScanResults(scanBySide.front, scanBySide.back), [scanBySide]);
   const resultRef = useRef(result);
   resultRef.current = result;
 
@@ -633,7 +709,7 @@ export function useIdentityScan({
       );
       return;
     }
-    setResult((current) => mergeIdentityResults(current, nextResult));
+    setScanBySide((current) => ({ ...current, [side]: nextResult }));
     setStatus('review');
     setError(null);
     setDiagnostic(null);
@@ -691,14 +767,14 @@ export function useIdentityScan({
   const confirm = useCallback(() => {
     if (!result) return;
     setCustomer((current) => applyConfirmedIdentityResult(current, result));
-    setResult(null);
+    setScanBySide({ front: null, back: null });
     setPreviews({});
     setStatus('applied');
     window.setTimeout(() => onApplied?.(), 0);
   }, [onApplied, result, setCustomer]);
 
   const clear = useCallback(() => {
-    setResult(null);
+    setScanBySide({ front: null, back: null });
     setPreviews({});
     setError(null);
     setDiagnostic(null);

@@ -118,6 +118,36 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     expect(result.current.result?.documentType).toBe('driver_license');
   });
 
+  it('ön+arka yüz taraması birleşir: basılı ad MRZ adını ezmez, eksik belge no dolar', async () => {
+    const printedPas = 'KONGERIGET DANMARK\nEfternavn\nYILMAZ\nFornavn\nAHMET\nPasnr.';
+    const backMrz = TD3_PASSPORT;
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: printedPas, ocrLines: printedPas.split('\n') }));
+    mockedAcquire.mockResolvedValueOnce(scanResult({ side: 'back', ocrText: backMrz, ocrLines: backMrz.split('\n') }));
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    await act(async () => {
+      await result.current.acquire('back');
+    });
+    expect(result.current.status).toBe('review');
+    // Basılı ad kanonik kalır; MRZ transliterasyonu (ERIKSSON) ezmez.
+    expect(result.current.result?.fields.name?.value).toBe('AHMET YILMAZ');
+    // Ön yüzde Pasnr. değeri yoktu — MRZ doldurur.
+    expect(result.current.result?.fields.identity_doc_number?.value).toBe('L898902C3');
+
+    // Aynı yüz yeniden taranırsa o yüzün sonucu güncellenir (bozuk tarama
+    // düzeltilebilir); basılı Pasnr. artık dolu — ön yüz kazanır.
+    const corrected = 'KONGERIGET DANMARK\nEfternavn\nYILMAZ\nFornavn\nAHMET CAN\nPasnr.\n1234567';
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: corrected, ocrLines: corrected.split('\n') }));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.result?.fields.name?.value).toBe('AHMET CAN YILMAZ');
+    expect(result.current.result?.fields.identity_doc_number?.value).toBe('1234567');
+  });
+
   it('confirm uygulanan sonucu setCustomer a aktarir ve durumu temizler', async () => {
     mockedAcquire.mockResolvedValueOnce(scanResult());
     const setCustomer = vi.fn();
