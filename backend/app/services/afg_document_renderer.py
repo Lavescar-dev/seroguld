@@ -11,8 +11,8 @@ Düzen (şablonla hizalı):
 - Müşteri bloğu: Navn/Adresse/Postnr. + CPR nr./Kørekort·pas/Tlf./E-mail
 - Metal tablosu: sabit slot sırası (7 altın karat + Guldbarre + Sølvbarre +
   Finsølv/Sterling/3 tårnet/Plet + Platin/Palladium); 15 slotun TÜMÜ basılır
-  (Excel orijinali: satırlar dursun, içleri boş — 18705a9 gizlemesinin tersi).
-  Dolgu yalnız dolu satırda: altın şablon sarısı, gümüş şablon grisi.
+  (0.3.32 şablon paritesi: satırlar bantlarıyla dursun — 18705a9 gizlemesinin
+  tersi). Dolgu tüm slotlarda: altın şablon sarısı, gümüş şablon grisi.
 - Ödeme bloğu: Overførsel/Reg.nr./Kontonr. + Subtotal/Moms/I alt
 - Underskrift + R2-09 üç maddelik beyan (`AFG_DECLARATION_*` tek kaynağı)
 - Resmi footer (CVR/tel/e-posta) — invoice_seller_* ayarlarından
@@ -198,9 +198,9 @@ def aggregate_afg_rows(
     """Receipt satırlarını sabit AFG slotlarına paketler (Excel 22-37 modeli).
 
     Dönüş: (AFG_SLOT_ORDER'ın 15 sabit slotu — boşlar weight=0/total=0,
-    toplam gram, toplam tutar). Excel orijinali davranış: boş slotlar da
-    üretilir, tablo daima 15 satır. Toplamlar yalnız dolu bucket'lardan
-    birikir (boşlar 0 ekler) ve transaction toplamlarıyla birebir eşleşmeli
+    toplam gram, toplam tutar). Şablon paritesi: boş slotlar da üretilir,
+    tablo daima 15 satır. Toplamlar yalnız dolu bucket'lardan birikir
+    (boşlar 0 ekler) ve transaction toplamlarıyla birebir eşleşmeli
     (sum(line_total_dkk) == gross_amount_dkk) — testte mühürlenir.
     """
     buckets: dict[str, dict[str, Any]] = {}
@@ -230,8 +230,13 @@ def aggregate_afg_rows(
             "is_gold": is_gold,
         }
 
+    # 0.3.32: boş slotlar da satır olarak üretilir — müşteri belgesi orijinal
+    # şablonun bantlı slot ızgarasıyla aynı görünür (Excel _apply_afg_row_visibility
+    # şablon-parite kararının PDF karşılığı). Toplamlar yalnız dolu bucket'lardan
+    # beslenir; boş satır 0 gram/0 tutar taşır ve toplamı değiştirmez.
+    empty_bucket = {"weight": Decimal("0"), "total": Decimal("0")}
     for slot_key in AFG_SLOT_ORDER:
-        bucket = buckets.pop(slot_key, None) or {"weight": Decimal("0"), "total": Decimal("0")}
+        bucket = buckets.pop(slot_key, None) or empty_bucket
         label, karat, lodighed, is_gold = AFG_SLOT_LABELS[slot_key]
         row = _row_from_bucket(slot_key, bucket, label=label, karat=karat, lodighed=lodighed, is_gold=is_gold)
         rows.append(row)
@@ -496,10 +501,12 @@ def _afg_metal_table(view: dict[str, Any], font_regular: str, font_bold: str) ->
         ("ALIGN", (0, 0), (0, -1), "LEFT"),
     ]
     for row in view["rows"]:
+        # 0.3.32: boş slotlar da basılır (şablon ızgarası) — atlanmaz.
         weight = _to_decimal(row.get("weight_grams"))
         total = _to_decimal(row.get("line_total"))
         filled = weight is not None and weight > 0
-        # Excel orijinali: boş slot da basılır — Vægt/I alt '–', dolgu yok.
+        # 0.3.32 şablon paritesi: boş slot da basılır — Vægt/I alt '–';
+        # bant dolgusu şablondaki gibi TÜM slota uygulanır (renkli ızgara).
         data.append(
             [
                 str(row.get("type", "")),
@@ -510,10 +517,8 @@ def _afg_metal_table(view: dict[str, Any], font_regular: str, font_bold: str) ->
                 _da_amount(total, dash="–") if filled else "–",
             ]
         )
-        # Dolgu yalnız dolu satırda (weight > 0); boş slot beyaz kalır.
-        if filled:
-            fill = GOLD_FILL if row.get("is_gold") else SILVER_FILL
-            styles.append(("BACKGROUND", (0, len(data) - 1), (-1, len(data) - 1), fill))
+        fill = GOLD_FILL if row.get("is_gold") else SILVER_FILL
+        styles.append(("BACKGROUND", (0, len(data) - 1), (-1, len(data) - 1), fill))
 
     data.append(
         [
@@ -544,15 +549,13 @@ def render_afg_document_html(context: dict[str, Any]) -> str:
     customer = view["customer"]
     rows_html: list[str] = []
     for row in view["rows"]:
+        # 0.3.32: boş slotlar da basılır (şablon ızgarası) — atlanmaz.
         weight = _to_decimal(row.get("weight_grams"))
         total = _to_decimal(row.get("line_total"))
         filled = weight is not None and weight > 0
-        # Excel orijinali: 15 slotun tümü basılır; dolgu yalnız dolu satırda.
-        if filled:
-            fill = "#FFC000" if row.get("is_gold") else "#C9C9C9"
-            row_open = f"<tr style=\"background:{fill}\">"
-        else:
-            row_open = "<tr>"
+        # 0.3.32 şablon paritesi: bant dolgusu tüm slotlara (renkli ızgara).
+        fill = "#FFC000" if row.get("is_gold") else "#C9C9C9"
+        row_open = f"<tr style=\"background:{fill}\">"
         rows_html.append(
             f"{row_open}"
             f"<td>{row.get('type', '')}</td>"

@@ -174,20 +174,22 @@ def test_aggregate_afg_rows_slots_and_totals():
 
 
 def test_afg_metal_table_renders_fifteen_fixed_slots():
-    """Müşteri belgesi 15 sabit slotu basar: boş slot '–' + dolgusuz,
-    dolu slot dolgulu; toplam yalnız dolu bucket'lardan gelir."""
+    """Müşteri belgesi 15 sabit slotu basar — 0.3.32 şablon paritesi:
+    boş slotlar da bant dolgusuyla ('–' değerli), toplam yalnız dolu
+    bucket'lardan gelir."""
     html = render_afg_document_html(_sample_context())
-    # Tüm slot etiketleri belgede görünür (boşlar dahil — Excel orijinali).
+    # Tüm slot etiketleri belgede görünür (boşlar dahil — şablon ızgarası).
     for label in ("Guldbarre", "Sølvbarre", "Finsølv", "Sterling sølv", "3 tårnet sølv", "Plet", "Platin", "Palladium"):
         assert label in html, label
     # Metal tablosu: başlık + 15 slot + I alt = 17 satır.
     metal = html.split('class="metal"')[1].split("</table>")[0]
     assert metal.count("<tr") == 17
-    # Dolu satırlar dolgulu: 2 altın (14K + 18K sarı) + 1 gümüş (Sterling grisi).
-    assert metal.count('<tr style="background:#FFC000">') == 2
-    assert metal.count('<tr style="background:#C9C9C9">') == 1
-    # Boş slotlar (12) düz <tr> ile açılır ve Vægt/pris/I alt '–' taşır.
-    empty_rows = [segment for segment in metal.split("<tr")[1:] if segment.startswith("><td>")]
+    # Şablon ızgarası: TÜM slotlar bantlı — 8 altın bandı (7 karat +
+    # Guldbarre) sarı, 7 gümüş/platin bandı (Sølvbarre + 4 sølv + 2 ptpd) gri.
+    assert metal.count('<tr style="background:#FFC000">') == 8
+    assert metal.count('<tr style="background:#C9C9C9">') == 7
+    # Boş slotlar (12) da dolgulu açılır ve Vægt/pris/I alt '–' taşır.
+    empty_rows = [segment for segment in metal.split("<tr")[1:] if "–" in segment.split("</tr>")[0]]
     assert len(empty_rows) == 12
     assert empty_rows[0].count("–") == 3
     # Toplam mührü: slot I alt toplamı gross ile birebir.

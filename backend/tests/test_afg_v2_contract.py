@@ -499,3 +499,28 @@ def test_hidden_rows_keep_vba_and_values_in_xlsm() -> None:
     out = reloaded["Afregningsbilag"]
     assert out.row_dimensions[22].hidden is True
     reloaded.close()
+
+
+def test_draft_splitter_visible_when_only_silver_side_filled() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows(), _silver_rows({"2": "3.00"}), [], [])
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    # Görünürlük veriye bağlı değil: şerit daima görünür (şablon gibi).
+    assert _visible_rows(out) == set(range(21, 38))
+    reloaded.close()
+
+
+def test_rebuild_clears_hidden_flags_from_older_files() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [], [])
+    # 18705a9 üretiminden kalan gizli satır bayrağını simüle et: yeni build
+    # şablon paritesi için bayrakları temizler (migrasyon).
+    sheet.row_dimensions[27].hidden = True
+    sheet.row_dimensions[30].hidden = True
+    core._apply_afg_row_visibility(sheet)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert _visible_rows(out) == set(range(21, 38))
+    reloaded.close()
