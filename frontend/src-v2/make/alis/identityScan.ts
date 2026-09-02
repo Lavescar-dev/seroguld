@@ -245,13 +245,31 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
   // tr-paketi başlığı bozabilir (MOREKORT) — [KMG] toleransı. 4d = personnummer.
   if (/[KMG][OØ0]REKORT/.test(upper)) {
     const labels = [/^1[.:]/, /^2[.:]/, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
-    const surname = valueAfterLabelLine(lines, /^1[.:]/, labels, isPrintedNamePart);
-    const givenName = valueAfterLabelLine(lines, /^2[.:]/, labels, isPrintedNamePart);
+    let surname = valueAfterLabelLine(lines, /^1[.:]/, labels, isPrintedNamePart);
+    let givenName = valueAfterLabelLine(lines, /^2[.:]/, labels, isPrintedNamePart);
+    // tr-OCR numara öneklerini yutabilir ("1. Demir" → "Demir") ve başlığın
+    // altındaki değer satırlarını etiketsiz bırakabilir (gerçek saha
+    // fotoğrafı: KOREKORT / Demir / 21 / Recai / 1985-04-20 …). Etiket yolu
+    // iki alanı da bulamadıysa başlık sonrasındaki ilk iki basılı isim
+    // satırını sırayla soyad/ad al — sayı/gürültü satırları isPrintedNamePart
+    // dışında kalır.
+    if (!surname && !givenName) {
+      const blockNames = lines
+        .filter((line) => {
+          const trimmed = line.trim();
+          if (/^[KMG][OØ0]REKORT/i.test(trimmed) || IDENTITY_NOISE_LINE.test(trimmed)) return false;
+          return isPrintedNamePart(trimmed);
+        })
+        .slice(0, 2);
+      [surname, givenName] = [blockNames[0] ?? '', blockNames[1] ?? ''];
+    }
     const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()))
       || (lines.find((line) => /^\d{8,9}$/.test(line.trim()))?.trim() ?? '');
     // Kørekort CPR'si 4d alanındadır ("4d. 010190-1234"); tarihlerden ayrışır
-    // (tarihler 4+2+2 hanedir, CPR 6+4).
-    const cprRaw = raw.match(/4d\s*[.:]?\s*(\d{6}[-\s]?\d{4})/i)?.[1] ?? '';
+    // (tarihler 4+2+2 hanedir, CPR 6+4). tr-OCR '4d.' önekini '48.' olarak
+    // okuyabilir (d→8) — 4[db8] toleransı; 4b'deki tarih 4+2+2 düzeni
+    // yüzünden 6+4 desenine asla uymaz, yanlış pozitif oluşmaz.
+    const cprRaw = raw.match(/4[db8]\s*[.:]?\s*(\d{6}[-\s]?\d{4})/i)?.[1] ?? '';
     // Eski kart düzeninde 8. alan bopælsadresse (kayıtlı adres) taşır.
     const addressLine = valueAfterLabelLine(lines, /^8[.:]/, labels, (line) => /\d/.test(line) || line.length > 4);
     const addressPostal = addressLine.match(/\b(\d{4})\s+([^,\n]+)$/);

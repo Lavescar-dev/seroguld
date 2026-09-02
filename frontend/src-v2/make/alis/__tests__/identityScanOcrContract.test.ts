@@ -278,6 +278,35 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
     expect(result.fields.name).toBeUndefined();
   });
 
+  it('kørekort: tr-OCR numara öneklerini yuttuğunda başlık bloğundan ad okunur (gerçek saha fotoğrafı)', () => {
+    // Gerçek Windows OCR (tr paketi, 2026-09-02 saha fotoğrafı): "1." / "2."
+    // önekleri tamamen kayboldu; isim satırları etiketsiz kaldı. Başlık
+    // sonrasındaki ilk iki basılı isim satırı soyad/ad alınır; sayı ve
+    // gürültü satırları (21, tarih) alınmaz. 4d öneki "48." bozuk okunmuş —
+    // 4[db8] toleransı CPR'yi kurtarır.
+    const raw = [
+      'KOREKORT',
+      'Demir',
+      '21',
+      'Recai',
+      '1985-04-20,',
+      '-40. 2012-05-09',
+      '46. 2055-04-20',
+      '5. - 30499459',
+      'DANMARK / z',
+      'Tyrkiej',
+      '4c. Rigsp.iitkfwö•n-—-',
+      '48.200485-2985',
+      '9.- B.C-D-BE.CE.DE',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Recai Demir');
+    expect(result.fields.identity_doc_number?.value).toBe('30499459');
+    expect(result.fields.cpr_number?.value).toBe('200485');
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+  });
+
   it('sundhedskort: etiketsiz yeni düzen — başlık okunmasa da blok sezgisiyle okunur', () => {
     // Gerçek kart: Navn/Adresse etiketi yok; ad/sokak/posta alt alta.
     const raw = [
