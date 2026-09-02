@@ -20,6 +20,13 @@ function useBodyScrollLock(active: boolean) {
 }
 
 function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElement>, onClose?: () => void) {
+  // onClose her render'da yeniden yaratılır (inline arrow); effect onClose'a
+  // bağlıysa her tuş vuruşunda temizlenip kurulur ve başlangıç odağını geri
+  // yazar — yazma alanında imleç her karakterden sonra kaçar. En son callback
+  // ref'te tutulur, effect yalnız open durumuna bağlı kurulur.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!active || typeof document === 'undefined') return undefined;
     const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -35,7 +42,7 @@ function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElement>, onC
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -61,7 +68,7 @@ function useFocusTrap(active: boolean, containerRef: RefObject<HTMLElement>, onC
       document.removeEventListener('keydown', handleKeyDown);
       previousActive?.focus();
     };
-  }, [active, containerRef, onClose]);
+  }, [active, containerRef]);
 }
 
 function OverlayPortal({ children }: { children: ReactNode }) {

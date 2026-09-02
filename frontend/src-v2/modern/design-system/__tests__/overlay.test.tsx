@@ -131,6 +131,35 @@ describe.each(CASES)('overlay ($variant)', ({ variant, title, root }) => {
 
     await waitFor(() => expect(sentinel).toHaveFocus());
   });
+
+  it('re-render focuses the typing field back (focus trap should only set up when open changes)', async () => {
+    // Yeni müşteri formunda her tuş vuruşu state değiştirir; tüketici onClose'u
+    // her render'da yeni arrow olarak geçirir. Effect onClose'a bağlı olsaydı
+    // her karakterden sonra başlangıç odağı geri yazılırdı (saha bildirimi).
+    function RerenderHarness() {
+      const [tick, setTick] = useState(0);
+      return (
+        <div>
+          <span data-testid="tick">{tick}</span>
+          <ModernDrawer open onClose={() => setTick((t) => t + 1)} title="Deneme paneli">
+            <input aria-label="Ad" />
+            <button type="button" onClick={() => setTick((t) => t + 1)}>Tazele</button>
+          </ModernDrawer>
+        </div>
+      );
+    }
+
+    render(<RerenderHarness />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Kapat' })).toHaveFocus());
+
+    const input = screen.getByLabelText('Ad');
+    input.focus();
+    expect(input).toHaveFocus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tazele' }));
+    expect(screen.getByTestId('tick')).toHaveTextContent('1');
+    expect(input).toHaveFocus();
+  });
 });
 
 describe('overlay closed state', () => {
