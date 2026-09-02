@@ -110,10 +110,12 @@ export function ModernCard({
 
 export function ModernBadge({
   tone = 'neutral',
+  title,
   className,
   children,
 }: {
   tone?: ModernTone;
+  title?: string;
   className?: string;
   children: ReactNode;
 }) {
@@ -124,6 +126,7 @@ export function ModernBadge({
         badgeToneClasses[tone],
         className,
       )}
+      title={title}
     >
       {children}
     </span>

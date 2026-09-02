@@ -88,6 +88,11 @@ function ordersResponse(items: AntiFraudOrder[]): AntiFraudOrdersResponse {
       low_risk_count: 0,
       unknown_risk_count: 0,
       manual_review_count: items.filter((item) => item.requires_manual_review).length,
+      active_review_count: items.filter((item) => item.review_queue_status === 'active').length,
+      historical_review_count: items.filter((item) => item.review_queue_status !== 'active').length,
+      skipped_whitelist_count: 0,
+      not_scored_count: 0,
+      ai_alert_count: 0,
     },
     items,
   };
@@ -140,7 +145,7 @@ describe('useOpmcMakeState', () => {
   it('varsayılan 30 gün ile siparişleri getirir ve listeyi açar', async () => {
     const { result } = await renderLoadedState([order({ order_id: 11 })]);
 
-    expect(apiRequestMock).toHaveBeenCalledWith('/api/v2/opmc/orders?days=30&per_page=40&detail_mode=true');
+    expect(apiRequestMock).toHaveBeenCalledWith('/api/v2/opmc/orders?days=30&per_page=40&detail_mode=true&force_refresh=false');
     expect(result.current.days).toBe(30);
     expect(result.current.hasData).toBe(true);
     expect(result.current.source).toBe('opmc');
@@ -264,7 +269,7 @@ describe('useOpmcMakeState', () => {
     });
     expect(result.current.days).toBe(7);
     await waitFor(() =>
-      expect(apiRequestMock.mock.calls.at(-1)?.[0]).toBe('/api/v2/opmc/orders?days=7&per_page=40&detail_mode=true'),
+      expect(apiRequestMock.mock.calls.at(-1)?.[0]).toBe('/api/v2/opmc/orders?days=7&per_page=40&detail_mode=true&force_refresh=false'),
     );
 
     // 0 veya boş değer 30'a döner
@@ -273,7 +278,7 @@ describe('useOpmcMakeState', () => {
     });
     expect(result.current.days).toBe(30);
     await waitFor(() =>
-      expect(apiRequestMock.mock.calls.at(-1)?.[0]).toBe('/api/v2/opmc/orders?days=30&per_page=40&detail_mode=true'),
+      expect(apiRequestMock.mock.calls.at(-1)?.[0]).toBe('/api/v2/opmc/orders?days=30&per_page=40&detail_mode=true&force_refresh=false'),
     );
   });
 
@@ -285,7 +290,7 @@ describe('useOpmcMakeState', () => {
       result.current.onRefresh();
     });
     await waitFor(() => expect(apiRequestMock).toHaveBeenCalledTimes(2));
-    expect(apiRequestMock.mock.calls.at(-1)?.[0]).toBe('/api/v2/opmc/orders?days=30&per_page=40&detail_mode=true');
+    expect(apiRequestMock.mock.calls.at(-1)?.[0]).toBe('/api/v2/opmc/orders?days=30&per_page=40&detail_mode=true&force_refresh=true');
   });
 
   it('TransportError için errorKind "transport" olur ve iki kez yeniden dener', async () => {
