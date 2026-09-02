@@ -342,7 +342,7 @@ export function CustomerEditorTable({
   onSelectMatchedCustomer?: (customerId: string) => void;
 }) {
   const [bankOpen, setBankOpen] = useState(false);
-  const identity = useIdentityScan({ customer, setCustomer, onApplied: onBlur });
+  const identity = useIdentityScan({ customer, setCustomer, onApplied: onBlur, uiVariant: 'classic' });
   const address = useAddressAutocomplete({ customer, setCustomer, onApplied: onBlur });
   const customerMatch = useCustomerMatch(customer);
 
@@ -470,6 +470,17 @@ export function CustomerEditorTable({
                 <p key={field} className="text-xs text-emerald-900"><strong>{identityFieldLabel(field as IdentityFieldName)}:</strong> {parsed.value} <span className={parsed.review === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p>
               ) : null)}
             </div>
+            {identity.scanMeta ? (
+              <p className="mt-2 text-[10px] font-semibold text-emerald-700">
+                OCR teşhisi: {identity.scanMeta.language || 'dil bilinmiyor'} · {identity.scanMeta.lineCount} satır{identity.scanMeta.scaled === undefined ? '' : identity.scanMeta.scaled ? ' · ölçeklendi' : ' · ölçeklenmedi'}{identity.scanMeta.fieldKeys.includes('name') ? '' : ' · İSİM OKUNAMADI'}
+              </p>
+            ) : null}
+            {identity.diagnostic ? (
+              <details className="mt-1">
+                <summary className="cursor-pointer text-[10px] font-semibold text-emerald-700">Maskeli ham satırlar (kişisel veri içermez)</summary>
+                <pre className="mt-1 max-h-28 overflow-y-auto whitespace-pre-line border border-emerald-200 bg-white px-2 py-1 font-mono text-[10px] text-emerald-900">{identity.diagnostic}</pre>
+              </details>
+            ) : null}
             {Object.keys(identity.previews).length ? <div className="mt-2 flex gap-2">{(['front', 'back'] as const).map((side) => identity.previews[side] ? <img key={side} src={identity.previews[side]} alt={`Kimlik ${side === 'front' ? 'ön' : 'arka'} yüz önizlemesi`} className="h-16 max-w-28 border border-emerald-300 object-cover" /> : null)}</div> : null}
             <div className="mt-2 flex justify-end gap-2"><button type="button" onClick={identity.clear} className="border border-emerald-300 px-2 py-1 text-[10px] font-bold text-emerald-800">Vazgeç</button><button type="button" onClick={identity.confirm} className="border border-emerald-700 bg-emerald-700 px-2 py-1 text-[10px] font-black text-white">İnceledim, alanları uygula</button></div>
           </div>

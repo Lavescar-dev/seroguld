@@ -5,6 +5,7 @@ import {
   getIdentityScannerCapabilities,
   identityScanFromBytes,
   pickIdentityScanFile,
+  writeUiDiagnostic,
 } from '@/lib/desktop';
 
 import type { EditableCustomer } from './types';
@@ -617,6 +618,38 @@ export function maskIdentityScanDiagnostic(lines: string[]): string {
     .join('\n');
 }
 
+// Saha teshisi (0.3.30): tarama başına atomik özet — PII yok, yalnız yüz, OCR
+// dili, satır sayısı, ölçek bilgisi ve DOLU alan anahtarlarının baş
+// harfleri. ui-diagnostics.jsonl'e yazılır; OCR satırlarının kendisi asla
+// kalıcı yüzeye girmez (GDPR minimizasyonu, maskeli önizleme yalnız ekranda).
+export type IdentityScanMeta = {
+  side: 'front' | 'back';
+  language: string;
+  lineCount: number;
+  scaled?: boolean;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  fieldKeys: string[];
+};
+
+const IDENTITY_FIELD_INITIAL: Record<string, string> = {
+  name: 'N',
+  cpr_number: 'C',
+  identity_doc_number: 'D',
+  identity_doc_type: 'T',
+  identity_doc_country: 'U',
+  address: 'A',
+  postal_code: 'P',
+  city: 'S',
+};
+
+export function buildIdentityScanDiagnosticCode(meta: IdentityScanMeta): string {
+  const initials = meta.fieldKeys.map((key) => IDENTITY_FIELD_INITIAL[key] ?? 'X').join('');
+  const language = (meta.language || 'none').replace(/[^A-Za-z0-9-]/g, '');
+  const scaledTag = meta.scaled === undefined ? '' : meta.scaled ? '.S' : '.NS';
+  return `idscan.${meta.side}.${language}.${meta.lineCount}L.${meta.fieldKeys.length}F${scaledTag}.${initials || 'none'}`;
+}
+
 // Çoklu tarama birleşimi: ÖN YÜZ kanoniktir. Arka yüz taraması (MRZ
 // transliterasyonu "SOERENSEN AABERG", kategori legend gürültüsü, ikinci bir
 // kartın karışması) ön yüzden gelen doğru dolumları EZMEZ — yalnız eksik
@@ -642,10 +675,12 @@ export function useIdentityScan({
   customer: _customer,
   setCustomer,
   onApplied,
+  uiVariant = 'modern',
 }: {
   customer: EditableCustomer;
   setCustomer: Dispatch<SetStateAction<EditableCustomer>>;
   onApplied?: () => void;
+  uiVariant?: 'classic' | 'modern';
 }) {
   const [capabilities, setCapabilities] = useState<IdentityScannerCapabilities>({ scanner: false, file: false });
   const [status, setStatus] = useState<IdentityScanStatus>('checking');
@@ -654,6 +689,7 @@ export function useIdentityScan({
   const [scanBySide, setScanBySide] = useState<{ front: IdentityParseResult | null; back: IdentityParseResult | null }>({ front: null, back: null });
   const [error, setError] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
+  const [scanMeta, setScanMeta] = useState<IdentityScanMeta | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<'front' | 'back', string>>>({});
   const result = useMemo(() => mergeSideScanResults(scanBySide.front, scanBySide.back), [scanBySide]);
   const resultRef = useRef(result);
@@ -685,6 +721,32 @@ export function useIdentityScan({
     const preview = extractIdentityScanPreview(value);
     if (preview) setPreviews((current) => ({ ...current, [side]: preview }));
     const nextResult = parseIdentityScan(raw);
+    // Saha teshisi (0.3.30): her tarama — başarılı dahil — maskeli satır
+    // önizlemesini ve atomik özeti üretir. Başarılı taramada isim yoksa
+    // panel bunu görünür kılar; özet ui-diagnostics.jsonl'e yazılır.
+    const rawLines = raw ? raw.split('\n').filter((line) => line.trim()) : [];
+    const imageInfo = extractIdentityScanImageInfo(value);
+    const filledKeys = nextResult
+      ? Object.entries(nextResult.fields).filter(([, field]) => Boolean(field?.value)).map(([key]) => key)
+      : [];
+    const meta: IdentityScanMeta = {
+      side,
+      language: imageInfo.language,
+      lineCount: rawLines.length,
+      scaled: imageInfo.scaled,
+      sourceWidth: imageInfo.sourceWidth,
+      sourceHeight: imageInfo.sourceHeight,
+      fieldKeys: filledKeys,
+    };
+    setScanMeta(meta);
+    setDiagnostic(rawLines.length ? maskIdentityScanDiagnostic(rawLines) : null);
+    void writeUiDiagnostic({
+      occurredAt: new Date().toISOString(),
+      route: '/alis/identity-scan',
+      uiVariant,
+      frontendBuild: typeof __SERO_FRONTEND_BUILT_AT__ === 'string' ? __SERO_FRONTEND_BUILT_AT__ : 'dev',
+      errorCode: buildIdentityScanDiagnosticCode(meta),
+    });
     if (!hasParsedIdentityFields(nextResult)) {
       if (!resultRef.current) setPreviews({});
       setStatus((current) => current === 'review' ? 'review' : 'error');
@@ -693,15 +755,12 @@ export function useIdentityScan({
       // desteklendiği söylenir). Kısmi MRZ zaten merge ile korunuyor.
       // Saha teshisi: okunan satır sayısı + dil + ölçekleme bilgisi ve
       // maskeli ham satır önizlemesi (yalnız ekranda, kalıcı kayıt yok).
-      const rawLines = raw ? raw.split('\n').filter((line) => line.trim()) : [];
-      const imageInfo = extractIdentityScanImageInfo(value);
       const detailParts: string[] = [];
       if (imageInfo.language) detailParts.push(`OCR dili ${imageInfo.language}`);
       if (imageInfo.sourceWidth && imageInfo.sourceHeight) {
         detailParts.push(`görüntü ${imageInfo.sourceWidth}×${imageInfo.sourceHeight}${imageInfo.scaled === false ? ' (ölçeklenemedi)' : ''}`);
       }
       const detailSuffix = detailParts.length ? ` — ${detailParts.join(', ')}` : '';
-      setDiagnostic(rawLines.length ? maskIdentityScanDiagnostic(rawLines) : null);
       setError(
         !raw
           ? 'Tarayıcı/görüntü metin döndürmedi — görüntü kalitesini veya cihazı kontrol edin.'
@@ -712,8 +771,7 @@ export function useIdentityScan({
     setScanBySide((current) => ({ ...current, [side]: nextResult }));
     setStatus('review');
     setError(null);
-    setDiagnostic(null);
-  }, []);
+  }, [uiVariant]);
 
   const acquire = useCallback(async (side: 'front' | 'back' = 'front') => {
     if (!capabilities.scanner) return;
@@ -769,6 +827,8 @@ export function useIdentityScan({
     setCustomer((current) => applyConfirmedIdentityResult(current, result));
     setScanBySide({ front: null, back: null });
     setPreviews({});
+    setScanMeta(null);
+    setDiagnostic(null);
     setStatus('applied');
     window.setTimeout(() => onApplied?.(), 0);
   }, [onApplied, result, setCustomer]);
@@ -776,6 +836,7 @@ export function useIdentityScan({
   const clear = useCallback(() => {
     setScanBySide({ front: null, back: null });
     setPreviews({});
+    setScanMeta(null);
     setError(null);
     setDiagnostic(null);
     setStatus(capabilities.scanner || capabilities.file ? 'ready' : 'unavailable');
@@ -788,6 +849,7 @@ export function useIdentityScan({
     previews,
     error,
     diagnostic,
+    scanMeta,
     ocrNotice,
     acquire,
     pickFile,
@@ -795,5 +857,5 @@ export function useIdentityScan({
     confirm,
     clear,
     refreshCapabilities,
-  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, ocrNotice, pickFile, previews, refreshCapabilities, result, status]);
+  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, status]);
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.30] — 2026-09-02
+
+### Eklendi
+
+- **Kimlik OCR saha teşhisi (0.3.29 saha bildirimi üzerine):** 0.3.29'da bir taramada Ad Soyad yine boş kaldı; yerel çoğaltmada aynı fotoğraf (da motoru, 12 satır) parser'da isim dahil 5 alan üretiyor ve kurulu paketin kodu doğrulandı. Açıklanamayan durum, uygulama içi gözlemlenebilir teşhis olmadan kapatılamaz: her tarama artık (1) inceleme panelinde maskeli OCR teşhis satırı gösteriyor (OCR dili, satır sayısı, ölçek bilgisi, isim okunmadıysa "İSİM OKUNAMADI" uyarısı ve açılır maskeli ham satırlar — rakamlar 9'a harfler a'ya maskeli, ekran dışı kopya yok) ve (2) kişisel veri içermeyen atomik özeti (yüz, dil, satır sayısı, dolu alan harfleri — ör. `idscan.front.da-DK.12L.5F.S.NCDTU`) `ui-diagnostics.jsonl`'e yazıyor. Bir sonraki saha bildiriminde panel ekran görüntüsü OCR'ın ne okuduğunu ve parser'ın neyi kaçırdığını tek bakışta gösterecek.
+
 ## [0.3.29] — 2026-09-02
 
 ### Düzeltildi

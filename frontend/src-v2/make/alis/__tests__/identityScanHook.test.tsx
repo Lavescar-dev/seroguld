@@ -7,12 +7,14 @@ vi.mock('@/lib/desktop', () => ({
   pickIdentityScanFile: vi.fn(),
   identityScanFromBytes: vi.fn(),
   discardIdentityScan: vi.fn(),
+  writeUiDiagnostic: vi.fn(),
 }));
 
 import {
   acquireIdentityScan,
   getIdentityScannerCapabilities,
   identityScanFromBytes,
+  writeUiDiagnostic,
   type IdentityScanResult,
   type IdentityScannerCapabilities,
 } from '@/lib/desktop';
@@ -60,6 +62,7 @@ const scanResult = (overrides: Partial<IdentityScanResult> = {}): IdentityScanRe
 const mockedCapabilities = vi.mocked(getIdentityScannerCapabilities);
 const mockedAcquire = vi.mocked(acquireIdentityScan);
 const mockedFromBytes = vi.mocked(identityScanFromBytes);
+const mockedWriteDiagnostic = vi.mocked(writeUiDiagnostic);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -146,6 +149,51 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     });
     expect(result.current.result?.fields.name?.value).toBe('AHMET CAN YILMAZ');
     expect(result.current.result?.fields.identity_doc_number?.value).toBe('1234567');
+  });
+
+  it('basarili taramada saha teshisi uretilir: atomik ozet + maskeli satirlar, isim doluysa uyari yok', async () => {
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: TD3_PASSPORT, ocrLines: TD3_PASSPORT.split('\n') }));
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('review');
+    expect(mockedWriteDiagnostic).toHaveBeenCalledTimes(1);
+    const payload = mockedWriteDiagnostic.mock.calls[0][0];
+    expect(payload.route).toBe('/alis/identity-scan');
+    expect(payload.uiVariant).toBe('modern');
+    // Atomik özet: PII yok — yalnız yüz, dil, satır sayısı, ölçek etiketi ve dolu alan harfleri.
+    expect(payload.errorCode).toMatch(/^idscan\.front\.da-DK\.2L\.\d+F\.NS\.[A-Z]+$/);
+    expect(payload.errorCode).not.toContain('ERIKSSON');
+    expect(result.current.scanMeta).toMatchObject({
+      side: 'front',
+      language: 'da-DK',
+      lineCount: 2,
+      fieldKeys: expect.arrayContaining(['name', 'identity_doc_number']),
+    });
+    expect(result.current.diagnostic).toContain('(44)');
+    await act(async () => {
+      result.current.confirm();
+    });
+    expect(result.current.scanMeta).toBeNull();
+    expect(result.current.diagnostic).toBeNull();
+    expect(mockedWriteDiagnostic).toHaveBeenCalledTimes(1);
+  });
+
+  it('isim okunmayan tarama tesiste isaretlenir ama alanlar yine onaya gider', async () => {
+    const noName = 'KØREKORT\n4d.200485-2985\n5. 30499459';
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: noName, ocrLines: noName.split('\n') }));
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('review');
+    expect(result.current.scanMeta?.fieldKeys).not.toContain('name');
+    expect(result.current.scanMeta?.fieldKeys).toContain('identity_doc_number');
+    // Özetin alan harflerinde N (name) yok — son segment yalnız dolu alanların baş harfleri.
+    expect(mockedWriteDiagnostic.mock.calls[0][0].errorCode.split('.').pop()).not.toContain('N');
   });
 
   it('confirm uygulanan sonucu setCustomer a aktarir ve durumu temizler', async () => {
