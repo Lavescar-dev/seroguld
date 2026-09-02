@@ -264,7 +264,12 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       [surname, givenName] = [blockNames[0] ?? '', blockNames[1] ?? ''];
     }
     const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()))
-      || (lines.find((line) => /^\d{8,9}$/.test(line.trim()))?.trim() ?? '');
+      || (lines.find((line) => /^\d{8,9}$/.test(line.trim()))?.trim() ?? '')
+      // da-motor '-5. . 30499459' gibi önek gürültüsü bırakabilir; satır
+      // içinde bağımsız 8-9 haneli sayı (tarih/CPR parçası olmayan) belge no
+      // adayıdır — tarih (4+2+2) ve CPR (6+4) desenleri 8-9 bitişik hane
+      // üretmediğinden yanlış pozitif oluşmaz.
+      || (lines.map((line) => line.match(/(?<![\d-])\d{8,9}(?!\d)/)?.[0]).find(Boolean) ?? '');
     // Kørekort CPR'si 4d alanındadır ("4d. 010190-1234"); tarihlerden ayrışır
     // (tarihler 4+2+2 hanedir, CPR 6+4). tr-OCR '4d.' önekini '48.' olarak
     // okuyabilir (d→8) — 4[db8] toleransı; 4b'deki tarih 4+2+2 düzeni

@@ -307,6 +307,33 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
     expect(result.fields.identity_doc_country?.value).toBe('DNK');
   });
 
+  it('kørekort: da-motor satırlarında belge no önek gürültüsüyle tek satırda düşer (gerçek saha fotoğrafı)', () => {
+    // Aynı fotoğrafın da-DK motoru kaydı (2026-09-02, raw_ocr_da.json):
+    // KØREKORT başlığı ve 4d. öneki doğru okunur (rakamlar artık güvenilir);
+    // ama 5. etiketi '-5. . ' önekiyle bozuk düşer — etiket yolu kaçar,
+    // satır-içi 8-9 hane taraması belge noyu kurtarır.
+    const raw = [
+      'KØREKORT',
+      'Demir',
+      '21',
+      'Recai',
+      '2012.05-09',
+      'Ab. 2055-04-20',
+      '-5. . 30499459',
+      'DANMARK /',
+      'Tyrkiet',
+      '4c. Rigs p.titiciwf•n•—-',
+      '4d.200485-2985',
+      '9., B.C.D.BE.CE.DE',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Recai Demir');
+    expect(result.fields.identity_doc_number?.value).toBe('30499459');
+    expect(result.fields.cpr_number?.value).toBe('200485');
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+  });
+
   it('sundhedskort: etiketsiz yeni düzen — başlık okunmasa da blok sezgisiyle okunur', () => {
     // Gerçek kart: Navn/Adresse etiketi yok; ad/sokak/posta alt alta.
     const raw = [
