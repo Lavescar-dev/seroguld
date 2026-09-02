@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.29] — 2026-09-02
+
+### Düzeltildi
+
+- **Kimlik OCR — kørekort isim ve belge no dolumu:** Türkçe OCR motoru "1."/"2." numara öneklerini yuttuğunda ad-soyad hiç doldurulmuyordu; başlık bloğundan (etiketsiz ilk iki basılı isim satırı) ad okuma yedeği eklendi, sayı/gürültü satırları elenir. `4d.` öneki bozuk okunduğunda (`48.` vb.) CPR'nin kurtarılması için `4[db8]` toleransı eklendi. Danca motorda `5.` etiketi `-5. . ` önek gürültüsüyle düştüğünde belge no kaybolmasın diye satır içi bağımsız 8-9 haneli sayı taraması eklendi (tarih/CPR desenleri 8-9 bitişik hane üretmediğinden yanlış pozitif yok). Gerçek saha fotoğrafı satırlarıyla (tr + da motor kayıtları) regresyon testleri eklendi.
+- OCR rakam karışmalarının (3↔5) asıl kaynağı parser değil eksik dil paketiydi: makinede Danca paketi yokken Windows OCR Türkçe motorla okuyordu. Geliştirme makinesine `Language.OCR~~~da-DK` yeteneği kuruldu; üretim motoru seçimi zaten da-DK'yı öncelikliyor (kurulu müşteri makinelerinde değişiklik gerekmez).
+
 ## [0.3.28] — 2026-09-02
 
 ### Eklendi
