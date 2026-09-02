@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.32] — 2026-09-02
+
+### Düzeltildi
+
+- **Afregningsbilag artık orijinal şablon gibi (saha karşılaştırması üzerine):** CRM çıktısı yalnız dolu grid satırlarını gösteriyordu (1 Eylül'deki boş-satır gizleme kararı); mağazanın gerçek Prisberegneren şablonu ise tüm slot satırlarını renkli bantlarıyla boş halde bile basılı tutuyor. Excel çıktısı ve müşteri PDF'i artık şablon ızgarasıyla aynı: 7 turuncu guld karat slotu, Guldbarre/ayraç bandı ve gri sølv slotları boşken de görünür (PDF'te 15 slotun tamamı çizilir; tek sayfa garantisi korunur). Eski, gizli satırlı dosyaların yeniden üretiminde gizleme bayrakları temizlenir. Küçük temizlik: Reg.nr./Kontonr. artık boş bırakılıyor ('—' yerleşimi kaldırıldı), Not alanına geçmiş üretimden sızabilen 'None' metni yazılmıyor.
+
 ## [0.3.31] — 2026-09-02
 
 ### Düzeltildi
