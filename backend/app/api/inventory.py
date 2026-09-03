@@ -23,6 +23,7 @@ from app.schemas.inventory import (
 )
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
 from app.services.pos_value_helpers import display_metal_type, display_product_type
+from app.services.market_rate_profile import get_effective_market_rate_profile_cached
 from app.services.product_service import (
     ACTIVE_STATUSES,
     create_product,
@@ -37,13 +38,18 @@ from app.utils.helpers import quantize_2, to_decimal
 router = APIRouter()
 
 
-def _get_market_prices() -> InventoryMarketPricesOut:
-    settings = get_settings()
+def _get_market_prices(market_profile: dict[str, object] | None = None) -> InventoryMarketPricesOut:
+    """Etkin profil (manuel + canlı overlay) üzerinden güncel metal fiyatları.
+
+    Env skalerleri bayat kalırdı: canlı Pt/Pd overlay'i ve WP priser'den
+    çekilen değerler env'e ayrıca yazılmadığında görünmezdi.
+    """
+    profile = market_profile if market_profile is not None else get_effective_market_rate_profile_cached()
     return InventoryMarketPricesOut(
-        gold=quantize_2(settings.inventory_market_gold_dkk),
-        silver=quantize_2(settings.inventory_market_silver_dkk),
-        platinum=quantize_2(settings.inventory_market_platinum_dkk),
-        palladium=quantize_2(settings.inventory_market_palladium_dkk),
+        gold=quantize_2(str(profile.get("gold_24k_dkk") or "0")),
+        silver=quantize_2(str(profile.get("silver_dkk") or "0")),
+        platinum=quantize_2(str(profile.get("platinum_dkk") or "0")),
+        palladium=quantize_2(str(profile.get("palladium_dkk") or "0")),
     )
 
 

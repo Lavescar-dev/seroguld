@@ -24,7 +24,11 @@ from app.schemas.pos import (
     PosWorkspaceNumberingOut,
     PosWorkspaceSilverRowOut,
 )
-from app.services.market_rate_profile import get_effective_market_rate_profile_cached
+from app.services.market_rate_profile import (
+    DEFAULT_GOLD_DKK,
+    DEFAULT_SILVER_DKK,
+    get_effective_market_rate_profile_cached,
+)
 from app.utils.helpers import quantize_2, to_decimal
 
 
@@ -251,16 +255,19 @@ def _market_rate_payload_to_workspace(
     }
 
     # Plet ve bar skalerleri: payload → eski "800" gümüş anahtarı → global profil.
+    # Bar fiyatı 24K hurda oranından TÜRETİLMEZ; profil kendi bar default'unu
+    # taşır (WP priser'den gelmiş gerçek bar fiyatı ya da profil default'u).
     profile = get_effective_market_rate_profile_cached()
     plet_raw = market_payload.get("plet_dkk")
     if plet_raw is None and raw_silver_dkk.get("800") is not None:
         plet_raw = raw_silver_dkk.get("800")
-    plet_dkk = _workspace_positive_decimal(plet_raw, to_decimal(profile.get("plet_dkk", "0.02")))
+    # Plet 4 hane taşır (profil de 4 hane üretir; 2 hane 0.0210 → 0.02 budar).
+    plet_dkk = _workspace_positive_decimal4(plet_raw, to_decimal(profile.get("plet_dkk", "0.02")))
     gold_bar_dkk = _workspace_positive_decimal(
-        market_payload.get("gold_bar_dkk"), to_decimal(profile.get("gold_bar_dkk", fallback_gold_24k_dkk))
+        market_payload.get("gold_bar_dkk"), to_decimal(profile.get("gold_bar_dkk", DEFAULT_GOLD_DKK))
     )
     silver_bar_dkk = _workspace_positive_decimal(
-        market_payload.get("silver_bar_dkk"), to_decimal(profile.get("silver_bar_dkk", fallback_silver_dkk))
+        market_payload.get("silver_bar_dkk"), to_decimal(profile.get("silver_bar_dkk", DEFAULT_SILVER_DKK))
     )
     platinum_dkk = _workspace_positive_decimal(
         market_payload.get("platinum_dkk"), to_decimal(profile.get("platinum_dkk", "0"))

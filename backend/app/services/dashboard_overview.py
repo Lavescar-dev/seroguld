@@ -34,6 +34,7 @@ from app.services.dashboard_helpers import (
     find_latest_hourly_backup,
     find_latest_restore_drill,
 )
+from app.services.market_rate_profile import get_effective_market_rate_profile_cached
 from app.services.product_service import ACTIVE_STATUSES, visible_product_clause
 from app.utils.helpers import to_decimal, utc_now
 
@@ -83,12 +84,20 @@ def _period_bounds(now: datetime) -> list[tuple[str, datetime, datetime]]:
     ]
 
 
-def _current_market_rates(settings: Settings) -> DashboardMarketRatesOut:
+def _current_market_rates(
+    market_profile: dict[str, object] | None = None,
+) -> DashboardMarketRatesOut:
+    """Güncel oranlar ETKİN profilden (manuel + canlı overlay) okunur.
+
+    Env skalerleri bayat kalıyordu: canlı modda Stooq Pt/Pd/fx overlay'i ve
+    WP'den çekilen bar/plet değerleri dashboard'a yansımıyordu.
+    """
+    profile = market_profile if market_profile is not None else get_effective_market_rate_profile_cached()
     return DashboardMarketRatesOut(
-        goldDkk=_money(settings.inventory_market_gold_dkk),
-        silverDkk=_money(settings.inventory_market_silver_dkk),
-        platinumDkk=_money(settings.inventory_market_platinum_dkk),
-        palladiumDkk=_money(settings.inventory_market_palladium_dkk),
+        goldDkk=_money(str(profile.get("gold_24k_dkk") or "")),
+        silverDkk=_money(str(profile.get("silver_dkk") or "")),
+        platinumDkk=_money(str(profile.get("platinum_dkk") or "")),
+        palladiumDkk=_money(str(profile.get("palladium_dkk") or "")),
     )
 
 
@@ -113,7 +122,7 @@ async def build_market_rate_confirmation_state(
     row = await db.scalar(
         select(MarketRateConfirmation).where(MarketRateConfirmation.business_date == business_date)
     )
-    current_rates = _current_market_rates(effective_settings)
+    current_rates = _current_market_rates()
     if row is None:
         return DashboardMarketRateConfirmationOut(
             businessDate=business_date,
@@ -148,7 +157,7 @@ async def record_market_rate_confirmation(
     effective_now = _to_utc(now or utc_now())
     effective_settings = settings or get_settings()
     business_date = copenhagen_business_date(effective_now)
-    rates = _current_market_rates(effective_settings)
+    rates = _current_market_rates()
     row = await db.scalar(
         select(MarketRateConfirmation)
         .where(MarketRateConfirmation.business_date == business_date)

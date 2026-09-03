@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 import uuid
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -321,11 +322,30 @@ def test_dashboard_overview_uses_local_semantic_sources_and_period_boundaries(tm
     _run(scenario())
 
 
-def test_market_rate_confirmation_uses_copenhagen_day_and_detects_changed_rates(tmp_path: Path) -> None:
+def test_market_rate_confirmation_uses_copenhagen_day_and_detects_changed_rates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Güncel oranlar env yerine ETKİN profilden okunur (canlı overlay dahil);
+    # değişim simülasyonu env değeriyle değil profil değeriyle yapılır.
+    import app.services.dashboard_overview as dashboard_module
+
+    profile_initial = {
+        "gold_24k_dkk": "615.50",
+        "silver_dkk": "7.80",
+        "platinum_dkk": "280.00",
+        "palladium_dkk": "335.00",
+    }
+    profile_next = {**profile_initial, "gold_24k_dkk": "101.00"}
+    active_profile = {"value": profile_initial}
+    monkeypatch.setattr(
+        dashboard_module,
+        "get_effective_market_rate_profile_cached",
+        lambda: active_profile["value"],
+    )
+
     async def scenario() -> None:
         engine, Session = await _session_factory()
         settings = _settings(tmp_path)
-        next_settings = _settings(tmp_path, inventory_market_gold_dkk=Decimal("101"))
         before_midnight = datetime(2026, 1, 1, 22, 59, tzinfo=timezone.utc)
         after_midnight = datetime(2026, 1, 1, 23, 1, tzinfo=timezone.utc)
         assert copenhagen_business_date(before_midnight).isoformat() == "2026-01-01"
@@ -355,8 +375,9 @@ def test_market_rate_confirmation_uses_copenhagen_day_and_detects_changed_rates(
             assert unchanged.matchesCurrentRates is True
             assert unchanged.confirmationMode == "unchanged"
 
+            active_profile["value"] = profile_next
             changed = await build_market_rate_confirmation_state(
-                db, now=before_midnight, settings=next_settings
+                db, now=before_midnight, settings=settings
             )
             assert changed.recorded is True
             assert changed.confirmed is False
@@ -367,7 +388,7 @@ def test_market_rate_confirmation_uses_copenhagen_day_and_detects_changed_rates(
                 confirmed_by_user_id=admin.id,
                 mode="saved",
                 now=before_midnight + timedelta(seconds=30),
-                settings=next_settings,
+                settings=settings,
             )
             assert saved.confirmed is True
             assert saved.confirmationMode == "saved"
@@ -379,7 +400,7 @@ def test_market_rate_confirmation_uses_copenhagen_day_and_detects_changed_rates(
                 confirmed_by_user_id=admin.id,
                 mode="unchanged",
                 now=after_midnight,
-                settings=next_settings,
+                settings=settings,
             )
             assert next_day.businessDate.isoformat() == "2026-01-02"
             assert int(await db.scalar(select(func.count(MarketRateConfirmation.id))) or 0) == 2
@@ -387,6 +408,25 @@ def test_market_rate_confirmation_uses_copenhagen_day_and_detects_changed_rates(
         await engine.dispose()
 
     _run(scenario())
+
+
+def test_current_market_rates_read_effective_profile_with_overlay() -> None:
+    """Dashboard güncel oranları etkin profilden alır: canlı Pt/Pd overlay'i
+    ve WP'den çekilen değerler env'e yazılmasa da yansır."""
+    from app.services.dashboard_overview import _current_market_rates
+
+    rates = _current_market_rates(
+        {
+            "gold_24k_dkk": "867.00",
+            "silver_dkk": "12.80",
+            "platinum_dkk": "355.91",  # Stooq overlay değer gibi
+            "palladium_dkk": "266.31",
+        }
+    )
+    assert rates.goldDkk == Decimal("867.00")
+    assert rates.silverDkk == Decimal("12.80")
+    assert rates.platinumDkk == Decimal("355.91")
+    assert rates.palladiumDkk == Decimal("266.31")
 
 
 def test_market_rate_confirmation_get_post_endpoints_commit_the_daily_record(
