@@ -46,7 +46,7 @@ async def test_manual_toggle_is_the_single_source_for_market_rate_profile(monkey
     # Kanonik birim DKK/g; türetilmiş 24K değeri matrisin kendisidir (fx çarpımı yok).
     assert profile["gold_rates_dkk"]["24"] == "615.50"
     assert profile["gold_rates_dkk"]["14"] == "359.04"
-    assert profile["plet_dkk"] == "0.02"
+    assert profile["plet_dkk"] == "0.0200"
     assert profile["rate_meta"]["platinum_dkk"]["source"] == "manual"
 
 
@@ -204,7 +204,7 @@ def test_saved_profile_json_round_trips_through_settings(monkeypatch: pytest.Mon
     assert reloaded["gold_rates_dkk"]["14"] == "382.00"
     assert reloaded["gold_bar_dkk"] == "620.00"
     assert reloaded["silver_bar_dkk"] == "8.30"
-    assert reloaded["plet_dkk"] == "0.02"
+    assert reloaded["plet_dkk"] == "0.0200"
 
 
 def test_save_persists_per_field_auto_flags(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -265,5 +265,148 @@ def test_legacy_eur_profile_json_is_converted_on_read(monkeypatch: pytest.Monkey
     # 82.6174 EUR × 7.45 = 615.50 DKK
     assert profile["gold_rates_dkk"]["24"] == "615.50"
     assert profile["silver_rates_dkk"]["999"] == "7.80"
-    # Eski "800" gümüş anahtarı Plet skalerine taşınır: 0.8383 × 7.45 = 6.25
-    assert profile["plet_dkk"] == "6.25"
+    # Eski "800" gümüş anahtarı Plet skalerine taşınır: 0.8383 × 7.45 = 6.2453
+    # (plet 4 ondalık taşınır — 2 hane 0.0210 gibi ayrımları yutardı).
+    assert profile["plet_dkk"] == "6.2453"
+
+
+# ---------------------------------------------------------------------------
+# refresh-from-wp: skaler metaller + Pt/Pd alan-bazlı oto bayrak kapatma
+# ---------------------------------------------------------------------------
+
+def _fetched_wp_payload(**overrides: object) -> dict:
+    """Canlı 6738 sayfasından gelen tipik fetch yanıtı (03.09.2026 değerleri)."""
+    payload: dict = {
+        "gold_rates_dkk": {"24": "867.00"},
+        "silver_rates_dkk": {"999": "12.80"},
+        "gold_bar_dkk": "873.00",
+        "silver_bar_dkk": "13.10",
+        "platinum_dkk": "290.00",
+        "palladium_dkk": "220.00",
+        "plet_dkk": "0.0200",
+        "fetched_at": "2026-09-03T10:00:00",
+        "page_title": "Guldpriser",
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def _run_refresh(monkeypatch: pytest.MonkeyPatch, fetched: dict) -> tuple[dict, dict]:
+    """Endpoint'i fetch sahtesiyle koşturur; (yanıt, env'e yazılanlar) döner."""
+    from app.api import market_rates as api_module
+    from app.services import wp_priser_service
+
+    saved_env: dict[str, str] = {}
+    saved_payloads: list[dict] = []
+
+    async def fake_fetch() -> dict:
+        return fetched
+
+    def fake_upsert(_path: object, values: dict) -> None:
+        saved_env.update(values)
+
+    def fake_save(payload: dict) -> dict:
+        saved_payloads.append(payload)
+        # Gerçek save'in env yan etkisi plet/bar/Pt/Pd yazımı açısından
+        # önemlidir; bayrak yazımını da fake_upsert yakalar.
+        return market_rate_profile.save_manual_market_rate_profile(payload)
+
+    monkeypatch.setattr(wp_priser_service, "fetch_wp_priser_rates", fake_fetch)
+    monkeypatch.setattr(market_rate_profile, "upsert_env_values", fake_upsert)
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=True))
+    monkeypatch.setattr(market_rate_profile.get_settings, "cache_clear", lambda: None, raising=False)
+    monkeypatch.setattr(api_module, "save_manual_market_rate_profile", fake_save)
+    import app.utils.env_file as env_file_module
+
+    monkeypatch.setattr(env_file_module, "upsert_env_values", fake_upsert)
+
+    response = await api_module.post_market_rates_refresh_from_wp(_=None)
+    return response, saved_env
+
+
+@pytest.mark.asyncio
+async def test_refresh_applies_scalars_and_disables_pt_pd_auto_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WP'den Pt/Pd gelirse: değerler uygulanır, o alanların oto bayrağı
+    kapanır, fx oto akışı kalır (alan-bazlı çözüm)."""
+    response, _ = await _run_refresh(monkeypatch, _fetched_wp_payload())
+
+    assert response["ok"] is True
+    assert response["applied_scalars"] == {
+        "gold_bar_dkk": "873.00",
+        "silver_bar_dkk": "13.10",
+        "platinum_dkk": "290.00",
+        "palladium_dkk": "220.00",
+        "plet_dkk": "0.0200",
+    }
+    assert response["auto_fields_disabled"] == ["platinum_dkk", "palladium_dkk"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_pt_pd_leaves_auto_flags_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WP sayfasında Pt/Pd satırı yoksa canlı bayraklara dokunulmaz."""
+    from app.api import market_rates as api_module
+
+    fetched = _fetched_wp_payload(platinum_dkk=None, palladium_dkk=None)
+    seen: list[dict] = []
+
+    async def fake_fetch() -> dict:
+        return fetched
+
+    def fake_save(payload: dict) -> dict:
+        seen.append(payload)
+        return payload
+
+    monkeypatch.setattr("app.services.wp_priser_service.fetch_wp_priser_rates", fake_fetch)
+    monkeypatch.setattr(api_module, "save_manual_market_rate_profile", fake_save)
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=True))
+    monkeypatch.setattr(market_rate_profile.get_settings, "cache_clear", lambda: None, raising=False)
+    monkeypatch.setattr("app.utils.env_file.upsert_env_values", lambda *_a: None)
+    monkeypatch.setattr(market_rate_profile, "upsert_env_values", lambda *_a: None)
+
+    response = await api_module.post_market_rates_refresh_from_wp(_=None)
+
+    assert response["auto_fields_disabled"] == []
+    assert "platinum_dkk" not in response["applied_scalars"]
+    # save'e gönderilen payload'da bayrak güncellemesi yok.
+    assert seen and "live_fields" not in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_refresh_scalars_only_still_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Karat/gümüş boş olsa bile skaler metal geldiğinde 422 atılmaz."""
+    fetched = _fetched_wp_payload(gold_rates_dkk={}, silver_rates_dkk={})
+    response, _ = await _run_refresh(monkeypatch, fetched)
+
+    assert response["ok"] is True
+    assert response["applied_gold"] == {}
+    assert response["applied_silver"] == {}
+    assert response["applied_scalars"]["plet_dkk"] == "0.0200"
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_nothing_applicable_returns_422(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hiçbir profil anahtarına oturan değer yoksa anlamlı 422."""
+    from fastapi import HTTPException
+
+    from app.api import market_rates as api_module
+
+    async def fake_fetch() -> dict:
+        return {"gold_rates_dkk": {}, "silver_rates_dkk": {}, "fetched_at": "x"}
+
+    monkeypatch.setattr("app.services.wp_priser_service.fetch_wp_priser_rates", fake_fetch)
+    with pytest.raises(HTTPException) as exc_info:
+        await api_module.post_market_rates_refresh_from_wp(_=None)
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_refresh_persists_plet_with_four_decimals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plet profilde 4 ondalıkla kalıcılaşır (0.0200), env skaleri de öyle."""
+    _, saved_env = await _run_refresh(monkeypatch, _fetched_wp_payload())
+    assert saved_env["INVENTORY_MARKET_PLET_DKK"] == "0.0200"
+    assert saved_env["INVENTORY_MARKET_GOLD_BAR_DKK"] == "873.00"
+    assert saved_env["INVENTORY_MARKET_SILVER_BAR_DKK"] == "13.10"
