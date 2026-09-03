@@ -21,6 +21,31 @@ GULDPRISER_HTML = """
 </tbody></table>
 """
 
+# Canlı seroguld.dk/guldpriser, 03.09.2026, page_id=6738 — TEK birleşik sayfa:
+# altın karatları + barlar + gümüş + plet + platin/palladium aynı tabloda.
+GULDPRISER_COMBINED_HTML = (
+    '<table id="table-dagens-priser"><tbody>'
+    '<tr class="table-header"><th>Dagens Priser</th><th>Finhed%</th><th>Gram pris</th></tr>'
+    '<tr class="even-guld"><td>8 karat</td><td>333%</td><td>273.00 DKK</td></tr>'
+    '<tr class="odd-guld"><td>14 karat</td><td>585%</td><td>480.00 DKK</td></tr>'
+    '<tr class="even-guld"><td>18 karat</td><td>750%</td><td>617.00 DKK</td></tr>'
+    '<tr class="odd-guld"><td>21 karat</td><td>875%</td><td>719.00 DKK</td></tr>'
+    '<tr class="even-guld"><td>21,6 karat</td><td>900%</td><td>735.00 DKK</td></tr>'
+    '<tr class="odd-guld"><td>22 karat</td><td>916%</td><td>750.00 DKK</td></tr>'
+    '<tr class="even-guld"><td>24 karat</td><td>999%</td><td>867.00 DKK</td></tr>'
+    '<tr class="odd-guld"><td>Guldbarre</td><td>999,9%</td><td>873.00 DKK</td></tr>'
+    '<tr><td colspan="3">&nbsp;</td></tr>'
+    '<tr class="odd-soelv"><td>Sølv – 3 tårnet</td><td>830%</td><td>9.50 DKK</td></tr>'
+    '<tr class="even-soelv"><td>Sølv – sterling</td><td>925%</td><td>10.60 DKK</td></tr>'
+    '<tr class="odd-soelv"><td>Sølv – finsølv</td><td>999%</td><td>12.80 DKK</td></tr>'
+    '<tr class="even-soelv"><td>Sølvbarre</td><td>999,9%</td><td>13.10 DKK</td></tr>'
+    '<tr class="odd-soelv"><td>Pletsølv</td><td></td><td>20 kr/kg</td></tr>'
+    '<tr><td colspan="3">&nbsp;</td></tr>'
+    '<tr class="odd-other"><td>Platin</td><td></td><td>290.00 DKK</td></tr>'
+    '<tr class="even-other"><td>Palladium</td><td></td><td>220.00 DKK</td></tr>'
+    '</tbody></table>'
+)
+
 # Canlı site (soelvpriser): "Sølv – " önekli etiketler, nokta ondalık.
 SOELVPRISER_HTML = """
 <table><tbody>
@@ -109,3 +134,91 @@ def test_price_to_decimal(raw: str, expected: str) -> None:
 def test_price_to_decimal_requires_currency_suffix() -> None:
     assert _price_to_decimal("9,16 finhed") is None
     assert _price_to_decimal("") is None
+
+
+# ---------------------------------------------------------------------------
+# Birleşik canlı sayfa (6738): barlar + Platin + Palladium + Pletsølv
+# ---------------------------------------------------------------------------
+
+def test_parse_combined_table_extracts_bars_pt_pd_plet() -> None:
+    """Canlı birleşik tablo: 5 skaler metal satırının TAMAMI çekilir.
+
+    Eski parser bu satırları sessizce atıyordu; bar fiyatları 24K/999'dan
+    uyduruluyordu, Pt/Pd Stooq default'unda kalıyordu.
+    """
+    parsed = parse_priser_content(GULDPRISER_COMBINED_HTML)
+    assert parsed["gold_bar_dkk"] == "873.00"
+    assert parsed["silver_bar_dkk"] == "13.10"
+    assert parsed["platinum_dkk"] == "290.00"
+    assert parsed["palladium_dkk"] == "220.00"
+    assert parsed["plet_dkk"] == "0.0200"
+
+
+def test_combined_table_still_parses_karat_and_silver() -> None:
+    """Birleşik sayfada karat/gümüş ayrıştırması bozulmaz (regresyon)."""
+    parsed = parse_priser_content(GULDPRISER_COMBINED_HTML)
+    gold = parsed["gold_rates_dkk"]
+    assert gold["8"] == "273.00"
+    assert gold["21.6"] == "735.00"
+    assert gold["24"] == "867.00"
+    silver = parsed["silver_rates_dkk"]
+    assert silver["830"] == "9.50"
+    assert silver["925"] == "10.60"
+    assert silver["999"] == "12.80"
+
+
+def test_plet_per_kg_is_converted_to_per_gram() -> None:
+    """'kr/kg' hücresi 1000'e bölünerek DKK/g yazılır — 1000× şişme yok."""
+    variants = {
+        '<table><tr><td>Pletsølv</td><td></td><td>20 kr/kg</td></tr></table>': "0.0200",
+        '<table><tr><td>Pletsølv</td><td></td><td>21 kr/kg</td></tr></table>': "0.0210",
+        '<table><tr><td>Pletsølv</td><td></td><td>20 kr./kg</td></tr></table>': "0.0200",
+        '<table><tr><td>Pletsølv</td><td></td><td>20,00 kr/kg</td></tr></table>': "0.0200",
+    }
+    for html, expected in variants.items():
+        parsed = parse_priser_content(html)
+        assert parsed.get("plet_dkk") == expected, html
+
+
+def test_per_kg_value_is_not_accepted_for_non_plet_row() -> None:
+    """Per-kg hücre yalnız Pletsølv hedefine — Sølvbarre '20 kr/kg' yazarsa
+    silver_bar_dkk 20 olarak (1000×) yazılamaz."""
+    html = '<table><tr><td>Sølvbarre</td><td>999,9%</td><td>20 kr/kg</td></tr></table>'
+    parsed = parse_priser_content(html)
+    assert "silver_bar_dkk" not in parsed
+    assert parsed["silver_rates_dkk"] == {}
+
+
+def test_bar_and_metal_rows_outside_band_are_rejected() -> None:
+    """Bant dışı bar/Pt/Pd değerleri sessizce atlanır (mevcut profil korunur)."""
+    parsed = parse_priser_content(
+        '<table>'
+        '<tr><td>Platin</td><td></td><td>5.00 DKK</td></tr>'
+        '<tr><td>Pletsølv</td><td></td><td>500 kr/kg</td></tr>'
+        '</table>'
+    )
+    assert "platinum_dkk" not in parsed
+    # 500 kr/kg = 0.5 DKK/g → plet bandı (0.001–0.10) dışı → RED.
+    assert "plet_dkk" not in parsed
+
+
+def test_platin_label_does_not_match_palladium_or_plet() -> None:
+    """Etiket ayrımı: 'Platin' yalnız platinum_dkk doldurur."""
+    parsed = parse_priser_content(
+        '<table>'
+        '<tr><td>Platin</td><td></td><td>290.00 DKK</td></tr>'
+        '<tr><td>Palladium</td><td></td><td>220.00 DKK</td></tr>'
+        '</table>'
+    )
+    assert parsed["platinum_dkk"] == "290.00"
+    assert parsed["palladium_dkk"] == "220.00"
+    assert "plet_dkk" not in parsed
+    assert "gold_bar_dkk" not in parsed
+
+
+def test_empty_finhed_cell_is_dropped() -> None:
+    """Boş finhed hücresi satırı bozmaz — 2 hücreli satır fiyatı bulunur."""
+    parsed = parse_priser_content(
+        '<table><tr><td>Palladium</td><td></td><td>220.00 DKK</td></tr></table>'
+    )
+    assert parsed["palladium_dkk"] == "220.00"

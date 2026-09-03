@@ -5,12 +5,15 @@ API üzerinden okunur ve tablo satırlarından ayrıştırılır:
 
     <td>8 karat</td><td>333%</td><td>280.00 DKK</td>
     <td>Sølv – 3 tårnet</td><td>830%</td><td>10.20 DKK</td>
+    <td>Guldbarre</td><td>999,9%</td><td>873.00 DKK</td>
+    <td>Pletsølv</td><td></td><td>20 kr/kg</td>
 
 Sayfa scrape edilmez — REST'in döndürdüğü rendered içerik ayrıştırılır.
-Fiyat hücresi DKK son eki olmadan kabul edilmez; makullük bantlarının
-dışındaki değerler (ör. saflık metninden gelen "9,16" gibi) reddedilir.
-Çekilemeyen değer sessizce atlanır; mevcut profil değeri korunur (AFG
-fiyatları asla sıfırlanmaz).
+Fiyat hücresi DKK/kr. son eki olmadan kabul edilmez; "kr/kg" ekli hücreler
+kilogram fiyatı sayılır ve 1000'e bölünerek gram fiyatına çevrilir (yalnız
+Pletsølv hedefine). Makullük bantlarının dışındaki değerler (ör. saflık
+metninden gelen "9,16" gibi) reddedilir. Çekilemeyen değer sessizce atlanır;
+mevcut profil değeri korunur (AFG fiyatları asla sıfırlanmaz).
 
 metals.dev bu karar ile tamamen devre dışıdır (kullanıcı kararı, Tur 2).
 """
@@ -19,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from html import unescape
 from typing import Any
 
@@ -42,9 +45,26 @@ _SILVER_ROWS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"sterling", re.IGNORECASE), "925"),
     (re.compile(r"3\s*-?\s*t[åa]rnet", re.IGNORECASE), "830"),
 )
+# Skaler metal satırları → profil anahtarı. Sıra önemli: "palladium" önce
+# denenir ki "platin" deseni onu yakalamasın (savunma; ^platin\b zaten
+# "Pletsølv"ü eşlemez).
+_SCALAR_ROWS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^guldbarre\b", re.IGNORECASE), "gold_bar_dkk"),
+    (re.compile(r"^s[øo]lvbarre\b", re.IGNORECASE), "silver_bar_dkk"),
+    (re.compile(r"^plets[øo]lv\b", re.IGNORECASE), "plet_dkk"),
+    (re.compile(r"^palladium\b", re.IGNORECASE), "palladium_dkk"),
+    (re.compile(r"^platin\b", re.IGNORECASE), "platinum_dkk"),
+)
 # Fiyat hücresi: DKK/kr. eki zorunlu. 280.00 / 1.234,56 / 1 234,56 biçimleri.
 _PRICE_CELL = re.compile(
     r"(?P<num>\d{1,4}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?)\s*(?:dkk|kr\.?)\b",
+    re.IGNORECASE,
+)
+# Kilogram fiyatı hücresi: "20 kr/kg", "20 kr./kg", "20,00 kr/kg".
+# Değer /1000 ile DKK/g'ye çevrilir (plet gibi gram başına çok küçük
+# fiyatlı metallerde 1000× şişirme tuzağını kapatan dönüşüm).
+_PRICE_CELL_PER_KG = re.compile(
+    r"(?P<num>\d{1,6}(?:[.,]\d{1,2})?)\s*(?:dkk|kr\.?)\s*/\s*kg\b",
     re.IGNORECASE,
 )
 # Prose yedeği: aynı fiyat kalıbı, karat etiketiyle AYNI metin parçasında.
@@ -74,6 +94,16 @@ GOLD_MIN_DKK = Decimal("100")
 GOLD_MAX_DKK = Decimal("10000")
 SILVER_MIN_DKK = Decimal("1")
 SILVER_MAX_DKK = Decimal("1000")
+# Skaler metal bantları (DKK/g). Plet bandı özellikle dar (canlı ~0.02):
+# per-kg → per-gram dönüşümü kaçsa ya da birim karışsa bile 5× üstündeki
+# değerler profile sızamaz (ör. 500 kr/kg = 0.5 DKK/g RED).
+_SCALAR_BANDS: dict[str, tuple[Decimal, Decimal]] = {
+    "gold_bar_dkk": (Decimal("100"), Decimal("10000")),
+    "silver_bar_dkk": (Decimal("1"), Decimal("1000")),
+    "platinum_dkk": (Decimal("50"), Decimal("10000")),
+    "palladium_dkk": (Decimal("20"), Decimal("10000")),
+    "plet_dkk": (Decimal("0.001"), Decimal("0.10")),
+}
 
 
 def _price_to_decimal(raw: str) -> Decimal | None:
@@ -118,33 +148,85 @@ def _row_cells(html: str) -> list[list[str]]:
     return rows
 
 
-def _row_price(cells: list[str]) -> Decimal | None:
+def _per_kg_to_decimal(raw: str) -> Decimal | None:
+    """Kilogram fiyatı hücresini DKK/g Decimal'ine çevirir (4 hane).
+
+    "20 kr/kg" → 0.0200. Dönüşüm kaçarsa (birim karışıklığı tuzağı) bant
+    reddi 1000× şişmiş değeri zaten durdurur.
+    """
+    match = _PRICE_CELL_PER_KG.search(raw or "")
+    if not match:
+        return None
+    num = match.group("num").replace(" ", "")
+    if "," in num:
+        num = num.replace(",", ".")
+    try:
+        value = Decimal(num)
+    except InvalidOperation:
+        return None
+    if not value.is_finite() or value <= 0:
+        return None
+    return (value / Decimal("1000")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def _row_price(cells: list[str]) -> tuple[Decimal | None, bool]:
+    """Satır fiyatını (ters sırada ilk eşleşen hücre) döndürür.
+
+    İkinci eleman per_kg: hücre "kr/kg" ekliyse True'dur ve değer DKK/g'ye
+    çevrilmiş olur. Per-kg değer yalnız Pletsølv hedefine kabul edilir —
+    başka satırda per-kg hücre görünürse satır atlanır.
+    """
     for cell in reversed(cells):
+        per_kg_value = _per_kg_to_decimal(cell)
+        if per_kg_value is not None:
+            return per_kg_value, True
         value = _price_to_decimal(cell)
         if value is not None:
-            return value
-    return None
+            return value, False
+    return None, False
 
 
-def _extract_table_rates(html: str) -> tuple[dict[str, str], dict[str, str]]:
+def _extract_table_rates(html: str) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     gold: dict[str, str] = {}
     silver: dict[str, str] = {}
+    scalars: dict[str, str] = {}
     for cells in _row_cells(html):
         first = cells[0]
         gold_match = _GOLD_ROW.match(first)
         if gold_match:
             key = gold_match.group("karat").replace(",", ".")
-            value = _row_price(cells[1:])
-            if value is not None and GOLD_MIN_DKK <= value <= GOLD_MAX_DKK and key not in gold:
+            value, per_kg = _row_price(cells[1:])
+            if (
+                not per_kg
+                and value is not None
+                and GOLD_MIN_DKK <= value <= GOLD_MAX_DKK
+                and key not in gold
+            ):
                 gold[key] = str(quantize_2(value))
             continue
         for pattern, key in _SILVER_ROWS:
             if pattern.search(first):
-                value = _row_price(cells[1:])
-                if value is not None and SILVER_MIN_DKK <= value <= SILVER_MAX_DKK and key not in silver:
+                value, per_kg = _row_price(cells[1:])
+                if (
+                    not per_kg
+                    and value is not None
+                    and SILVER_MIN_DKK <= value <= SILVER_MAX_DKK
+                    and key not in silver
+                ):
                     silver[key] = str(quantize_2(value))
                 break
-    return gold, silver
+        else:
+            for pattern, key in _SCALAR_ROWS:
+                if pattern.match(first):
+                    value, per_kg = _row_price(cells[1:])
+                    if value is not None and key not in scalars:
+                        low, high = _SCALAR_BANDS[key]
+                        if low <= value <= high:
+                            scalars[key] = (
+                                str(value) if key == "plet_dkk" else str(quantize_2(value))
+                            )
+                    break
+    return gold, silver, scalars
 
 
 def _extract_prose_rates(html: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -167,18 +249,25 @@ def _extract_prose_rates(html: str) -> tuple[dict[str, str], dict[str, str]]:
 
 
 def parse_priser_content(html: str) -> dict[str, Any]:
-    """Rendered sayfa içeriğinden karat/gümüş fiyat haritası çıkarır (saf, test edilebilir).
+    """Rendered sayfa içeriğinden karat/gümüş/skaler metal fiyatlarını çıkarır.
 
     Önce tablo satırları (canlı sitenin biçimi), bulunamazsa DKK-ekli prose
-    yedeği denenir. Fiyat hücresi DKK/kr. eki taşımadan asla kabul edilmez.
+    yedeği denenir (yalnız karat/gümüş için — "Platin"/"Guldbarre" kelimeleri
+    sayfa gövde metninde de geçtiğinden skalerler prose'dan ÇEKİLMEZ).
+    Fiyat hücresi DKK/kr. eki taşımadan asla kabul edilmez.
+
+    Skaler alanlar (gold_bar_dkk, silver_bar_dkk, platinum_dkk,
+    palladium_dkk, plet_dkk) tabloda satır yoksa anahtarda bulunmaz.
     """
-    gold, silver = _extract_table_rates(html)
+    gold, silver, scalars = _extract_table_rates(html)
     prose_gold, prose_silver = _extract_prose_rates(html)
     for key, value in prose_gold.items():
         gold.setdefault(key, value)
     for key, value in prose_silver.items():
         silver.setdefault(key, value)
-    return {"gold_rates_dkk": gold, "silver_rates_dkk": silver}
+    result: dict[str, Any] = {"gold_rates_dkk": gold, "silver_rates_dkk": silver}
+    result.update(scalars)
+    return result
 
 
 async def fetch_wp_priser_rates() -> dict[str, Any]:
@@ -229,6 +318,8 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
 
     best_gold: tuple[dict[str, Any], dict[str, Any]] | None = None
     best_silver: tuple[dict[str, Any], dict[str, Any]] | None = None
+    best_scalars: dict[str, Any] | None = None
+    scalar_keys = ("gold_bar_dkk", "silver_bar_dkk", "platinum_dkk", "palladium_dkk", "plet_dkk")
     for page in candidates:
         parsed = parse_priser_content(_rendered(page))
         if parsed["gold_rates_dkk"] and (
@@ -241,6 +332,9 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
             or len(parsed["silver_rates_dkk"]) > len(best_silver[1]["silver_rates_dkk"])
         ):
             best_silver = (page, parsed)
+        scalar_count = sum(1 for key in scalar_keys if parsed.get(key))
+        if scalar_count and (best_scalars is None or scalar_count > best_scalars["_count"]):
+            best_scalars = {**{key: parsed.get(key) for key in scalar_keys}, "_count": scalar_count}
 
     if best_gold is None and best_silver is None:
         raise ValueError("Fiyat sayfalarında DKK etiketli karat fiyatı bulunamadı.")
@@ -255,13 +349,16 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
         if silver_title and silver_title not in title:
             title = f"{title} + {silver_title}".strip(" +")
 
-    return {
+    result: dict[str, Any] = {
         "gold_rates_dkk": gold_parsed["gold_rates_dkk"],
         "silver_rates_dkk": silver_parsed["silver_rates_dkk"],
         "fetched_at": utc_now().isoformat(),
         "page_id": primary[0].get("id"),
         "page_title": title,
     }
+    if best_scalars is not None:
+        result.update({key: best_scalars.get(key) for key in scalar_keys})
+    return result
 
 
 def _rendered(page: dict[str, Any]) -> str:
