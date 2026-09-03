@@ -143,9 +143,9 @@ describe('parseWorkbookGrid (gerçek xlsx)', () => {
 
 describe('parseWorkbookGrid (gizli satırlar)', () => {
   /**
-   * Backend AFG grid satırlarını veriye göre hidden bayrağıyla gizler
-   * (openpyxl row_dimensions[idx].hidden). Bu fixture aynı etkiyi üretir:
-   * 3. satır (r2) gizli, kalanlar görünür.
+   * Excel'te gizli satırlar (openpyxl row_dimensions[idx].hidden) grid'den
+   * DÜŞMEZ (Excel orijinali): hiddenRow bayrağıyla basılır, render'da soluk
+   * gösterilir. Bu fixture aynı etkiyi üretir: 3. satır (r2) gizli.
    */
   function buildHiddenRowWorkbook(): ArrayBuffer {
     const wb = XLSX.utils.book_new();
@@ -159,7 +159,7 @@ describe('parseWorkbookGrid (gizli satırlar)', () => {
     ws['!rows'] = [{}, {}, { hidden: true }, {}, {}];
     ws['!merges'] = [
       { s: { r: 4, c: 0 }, e: { r: 4, c: 1 } }, // kökü görünür
-      { s: { r: 2, c: 1 }, e: { r: 2, c: 2 } }, // kökü gizli → düşmeli
+      { s: { r: 2, c: 1 }, e: { r: 2, c: 2 } }, // kökü gizli → düşmez
       { s: { r: 1, c: 0 }, e: { r: 3, c: 0 } }, // kökü görünür, gizli satırdan geçer
     ];
     XLSX.utils.book_append_sheet(wb, ws, 'AFG');
@@ -167,35 +167,52 @@ describe('parseWorkbookGrid (gizli satırlar)', () => {
     return new Uint8Array(bytes).buffer;
   }
 
-  it('gizli satırı grid\'den çıkarır ve orijinal Excel referanslarını korur', () => {
+  it('gizli satırı hiddenRow bayrağıyla basar ve orijinal Excel referanslarını korur', () => {
     const sheets = parseWorkbookGrid(buildHiddenRowWorkbook(), [], []);
     expect(sheets).toHaveLength(1);
     const sheet = sheets[0];
-    // Satır numaraları gerçek Excel numaralarıdır (3 atlanır).
-    expect(sheet.rows.map((row) => row.find((cell) => cell !== null)?.rowNumber)).toEqual([1, 2, 4, 5]);
-    // Gizli satırın hücreleri hiçbir yerde yok — overlay adresi üretilemez.
-    const refs = sheet.rows.flat().map((cell) => cell?.cellRef);
-    expect(refs).not.toContain('A3');
-    expect(refs).not.toContain('B3');
-    // Görünür satırlar değerlerini orijinal ref'leriyle taşır.
-    expect(sheet.rows[2][1]).toMatchObject({ cellRef: 'B4', value: '3' });
-    expect(sheet.rows[3][2]).toMatchObject({ cellRef: 'C5', value: '2524' });
+    // Excel orijinali: TÜM satırlar grid'de (3 dahil); satır numaraları
+    // gerçek Excel numaralarıdır.
+    expect(sheet.rows.map((row) => row.find((cell) => cell !== null)?.rowNumber)).toEqual([1, 2, 3, 4, 5]);
+    // Gizli satır (fiziksel 3): hücreleri hiddenRow=true ile basılır — cellRef
+    // korunur, overlay/PATCH adresi üretilmeye devam eder. A3, A2:A4
+    // merge'inin devam hücresi olduğundan null'dur; B3 merge kökü olarak basılır.
+    expect(sheet.rows[2][0]).toBeNull();
+    expect(sheet.rows[2][1]).toMatchObject({ cellRef: 'B3', value: '0', hiddenRow: true });
+    // Görünür satır hücrelerinde hiddenRow alanı yoktur.
+    expect(sheet.rows[3][1]).toMatchObject({ cellRef: 'B4', value: '3' });
+    expect(sheet.rows[3][1]).not.toHaveProperty('hiddenRow');
+    expect(sheet.rows[4][2]).toMatchObject({ cellRef: 'C5', value: '2524' });
   });
 
-  it('görünür köklü merge gizli satırı atlar; gizli köklü merge düşer', () => {
+  it('gizli satır hücreleri tanımlı olsa bile düzenlenemez', () => {
+    const editableCells: DocumentArtifactEditableCell[] = [
+      { sheet: 'AFG', cell_ref: 'B3', label: 'Gram', input_kind: 'decimal' },
+      { sheet: 'AFG', cell_ref: 'B4', label: 'Gram', input_kind: 'decimal' },
+    ];
+    const sheets = parseWorkbookGrid(buildHiddenRowWorkbook(), [], editableCells);
+    const sheet = sheets[0];
+    // Gizli satırdaki B3 soluk görünümdür: input üretmemeli.
+    expect(sheet.rows[2][1]).toMatchObject({ cellRef: 'B3', editable: false, hiddenRow: true });
+    // Görünür satırdaki aynı tanım düzenlenebilir kalır.
+    expect(sheet.rows[3][1]).toMatchObject({ cellRef: 'B4', editable: true });
+  });
+
+  it('merge rowSpan tüm fiziksel satırları sayar; gizli köklü merge düşmez', () => {
     const sheets = parseWorkbookGrid(buildHiddenRowWorkbook(), [], []);
     const sheet = sheets[0];
-    // A2:A4 merge'i gizli r2'den geçer — rowSpan yalnız görünür satırları sayar.
-    expect(sheet.rows[1][0]).toMatchObject({ cellRef: 'A2', colSpan: 1, rowSpan: 2 });
-    // Merge'in gizli satırdaki devam hücresi (A4) null.
+    // A2:A4 merge'i gizli r2'den geçer — rowSpan fiziksel 3 satırı sayar
+    // (gizli satır grid'de soluk basıldığı için span kayması olmaz).
+    expect(sheet.rows[1][0]).toMatchObject({ cellRef: 'A2', colSpan: 1, rowSpan: 3 });
+    // Merge'in kapladığı devam hücreleri (A3, A4) null.
     expect(sheet.rows[2][0]).toBeNull();
+    expect(sheet.rows[3][0]).toBeNull();
     // Tek satırlık görünür merge (A5:B5) aynen korunur.
-    expect(sheet.rows[3][0]).toMatchObject({ cellRef: 'A5', colSpan: 2, rowSpan: 1 });
-    expect(sheet.rows[3][1]).toBeNull();
-    // Kökü gizli satırda olan merge (B3:C3) tamamen düşer — span taşıyan
-    // yegâne hücreler A2 ve A5 kalır.
-    const spanned = sheet.rows.flat().filter((cell) => cell && (cell.colSpan || cell.rowSpan));
-    expect(spanned.map((cell) => cell!.cellRef)).toEqual(['A2', 'A5']);
+    expect(sheet.rows[4][0]).toMatchObject({ cellRef: 'A5', colSpan: 2, rowSpan: 1 });
+    expect(sheet.rows[4][1]).toBeNull();
+    // Kökü gizli satırda olan merge (B3:C3) da düşmez: kökü span taşır.
+    expect(sheet.rows[2][1]).toMatchObject({ cellRef: 'B3', colSpan: 2, rowSpan: 1, hiddenRow: true });
+    expect(sheet.rows[2][2]).toBeNull();
   });
 });
 
