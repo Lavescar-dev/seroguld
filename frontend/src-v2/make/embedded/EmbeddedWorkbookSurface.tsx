@@ -302,8 +302,12 @@ export function EmbeddedWorkbookSurface({
                       </tr>
                     </thead>
                     <tbody>
-                      {activeSheet.rows.map((row, rowIndex) => (
-                        <tr key={`${activeSheet.name}-${rowIndex}`} className={modern ? (rowIndex % 2 === 0 ? 'bg-sg-surface' : 'bg-sg-surface-soft/60') : (rowIndex % 2 === 0 ? 'bg-white' : 'bg-stone-50')}>
+                      {activeSheet.rows.map((row, rowIndex) => {
+                        // Excel'te gizli satır grid'den düşmez: soluk basılır
+                        // (hücreleri workbookGrid düzenlenemez işaretler).
+                        const rowHidden = row.some((cell) => cell?.hiddenRow === true);
+                        return (
+                        <tr key={`${activeSheet.name}-${rowIndex}`} className={`${modern ? (rowIndex % 2 === 0 ? 'bg-sg-surface' : 'bg-sg-surface-soft/60') : (rowIndex % 2 === 0 ? 'bg-white' : 'bg-stone-50')}${rowHidden ? ' opacity-40' : ''}`}>
                           <th className={modern ? 'sticky left-0 z-sticky border-b border-r border-sg-border bg-sg-surface-soft px-3 py-2 text-center text-xs font-medium text-sg-text-soft' : 'sticky left-0 z-sticky border-b border-r border-brand-300 bg-stone-100 px-3 py-2 text-center text-[10px] font-black text-brand-600'}>{row[0]?.rowNumber ?? rowIndex + 1}</th>
                           {row.map((cell, columnIndex) => {
                             if (!cell) return null;
@@ -371,7 +375,8 @@ export function EmbeddedWorkbookSurface({
                             );
                           })}
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

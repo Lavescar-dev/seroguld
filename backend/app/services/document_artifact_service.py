@@ -1818,17 +1818,24 @@ def _afg_calc_cells_filled(sheet, idx: int) -> bool:
     return any(_afg_cell_amount(sheet, f"{column}{idx}") > 0 for column in "JKL")
 
 
-def _apply_afg_row_visibility(sheet, *, blank_splitter_visible: bool = True) -> None:
-    """AFG grid satırlarını (21-37) veriye göre gizler/açar; her build'in
-    sonunda (satır + hesaplayıcı yazımından sonra) çağrılır.
+def _apply_afg_row_visibility(
+    sheet, *, blank_splitter_visible: bool = True, hide_blank_rows: bool = False
+) -> None:
+    """AFG grid satırlarının (21-37) görünürlüğü; her build'in sonunda (satır +
+    hesaplayıcı yazımından sonra) çağrılır.
 
-    Görünürlük yalnız gramdan (F kolonu) türetilir — hesaplayıcı (J/K)
-    varsayılanları (kniv ağırlıkları) görünürlüğü zorlamaz, aksi halde tüm
-    karat satırları her taslakta açık kalırdı. Satır 29 çift rol oynar:
-    doluyken Guldbarre sarı karat satırı, boşken altın bloğunu gümüş/pt/pd
-    bloğundan ayıran ince mavi şerit (yalnız iki taraf da doluyken görünür).
-    Final yolu (blank_splitter_visible=False) satırları 22'den paketler;
-    boş kalan şerit verinin altında başıboş görünmemesi için gizlenir.
+    hide_blank_rows=False (default, Excel orijinali): HİÇBİR satır gizlenmez —
+    boş satırlar dursun, içleri boş. hide_blank_rows=True eski (18705a9)
+    davranışı döndürür: görünürlük gramdan (F kolonu) türetilir; hesaplayıcı
+    (J/K) varsayılanları (kniv ağırlıkları) görünürlüğü zorlamaz.
+
+    Her iki modda da değişmeyen kurallar:
+    - Satır 29 doluyken (Guldbarre veya paketlenmiş satır) normal satır
+      görünümüne döner; Guldbarre ise C:H şablon karat sarısıyla boyanır.
+    - Satır 29 boşken yazı artıkları temizlenir ("Guldbarre 24 0,00"
+      kalmasın) — satır görünür ama içi temiz ince ayraç şerididir.
+    - blank_splitter_visible yalnız hide_blank_rows=True modunda anlamlıdır:
+    boş şerit yalnız altın VE gümüş tarafı doluyken ayraç olarak gösterilir.
     """
     gold_filled = {
         idx: _afg_cell_amount(sheet, f"F{idx}") > 0
@@ -1842,14 +1849,24 @@ def _apply_afg_row_visibility(sheet, *, blank_splitter_visible: bool = True) -> 
         silver_filled[AFG_EXTRA_ROW] = _afg_cell_amount(sheet, f"H{AFG_EXTRA_ROW}") > 0
 
     row_dims = sheet.row_dimensions
-    # 21: kniv hesaplayıcı tablo başlığı — tablosu (22-26) tamamen boşsa gizli:
-    # satır görünür olsa bile J/K/L içeriği yoksa başlık başıboş kalır.
-    row_dims[21].hidden = not any(
-        gold_filled[idx] and _afg_calc_cells_filled(sheet, idx)
-        for idx in range(AFG_GOLD_ROW_START, AFG_GOLD_ROW_START + 5)
+
+    def _set_row_hidden(idx: int, legacy_hidden: bool) -> None:
+        # Default (Excel orijinali): satır gizlenmez. hide_blank_rows=True
+        # 18705a9 gizleme davranışını geri getirir.
+        row_dims[idx].hidden = legacy_hidden if hide_blank_rows else False
+
+    # 21: kniv hesaplayıcı tablo başlığı — tablosu (22-26) tamamen boşsa
+    # gizli (yalnız hide_blank_rows modunda): satır görünür olsa bile J/K/L
+    # içeriği yoksa başlık başıboş kalır.
+    _set_row_hidden(
+        21,
+        not any(
+            gold_filled[idx] and _afg_calc_cells_filled(sheet, idx)
+            for idx in range(AFG_GOLD_ROW_START, AFG_GOLD_ROW_START + 5)
+        ),
     )
     for idx in range(AFG_GOLD_ROW_START, AFG_BAR_GOLD_ROW):  # 22-28 karat satırları
-        row_dims[idx].hidden = not gold_filled[idx]
+        _set_row_hidden(idx, not gold_filled[idx])
 
     bar_gold_filled = (
         to_decimal(sheet[f"A{AFG_BAR_GOLD_ROW}"].value or 0) == 6
@@ -1867,12 +1884,14 @@ def _apply_afg_row_visibility(sheet, *, blank_splitter_visible: bool = True) -> 
             for column in "CDEFGH":
                 sheet[f"{column}{AFG_BAR_GOLD_ROW}"].fill = gold_fill
     else:
-        # Boş şerit: yazı artıklarını temizle ("Guldbarre 24 0,00" kalmasın),
-        # yalnız iki taraf da doluyken ayraç olarak göster.
+        # Boş şerit: yazı artıklarını temizle ("Guldbarre 24 0,00" kalmasın);
+        # default'ta görünür ayraç, hide_blank_rows modunda yalnız iki taraf
+        # doluyken göster.
         for column in "ACDEFGH":
             sheet[f"{column}{AFG_BAR_GOLD_ROW}"] = None
-        row_dims[AFG_BAR_GOLD_ROW].hidden = not (
-            blank_splitter_visible and gold_side and silver_side
+        _set_row_hidden(
+            AFG_BAR_GOLD_ROW,
+            not (blank_splitter_visible and gold_side and silver_side),
         )
 
     # 31: Sterling satırı VE gümüş hesaplayıcı tablo başlığı — tablosu (32-37)
@@ -1883,9 +1902,9 @@ def _apply_afg_row_visibility(sheet, *, blank_splitter_visible: bool = True) -> 
     )
     for idx in range(AFG_SILVER_ROW_START, AFG_EXTRA_ROW + 1):  # 30-37
         if idx == AFG_SILVER_ROW_START + 1:
-            row_dims[idx].hidden = not (silver_filled[idx] or silver_calc_block)
+            _set_row_hidden(idx, not (silver_filled[idx] or silver_calc_block))
         else:
-            row_dims[idx].hidden = not silver_filled[idx]
+            _set_row_hidden(idx, not silver_filled[idx])
 
 
 def _build_afg_workbook_bytes_from_workspace(workspace: PosWorkspaceOut, *, sync_context: ArtifactSyncContext) -> bytes:

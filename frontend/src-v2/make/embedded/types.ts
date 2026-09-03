@@ -14,6 +14,8 @@ export type EmbeddedWorkbookCell = {
   formula?: boolean;
   colSpan?: number;
   rowSpan?: number;
+  /** Excel'te gizli satır: grid'den düşmez, soluk basılır ve düzenlenemez. */
+  hiddenRow?: boolean;
 };
 
 export type EmbeddedWorkbookSheet = {
