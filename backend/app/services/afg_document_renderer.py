@@ -10,9 +10,9 @@ Düzen (şablonla hizalı):
 - Marka bloğu (logo + "Sero Guld" + "Din professionelle forhandler")
 - Müşteri bloğu: Navn/Adresse/Postnr. + CPR nr./Kørekort·pas/Tlf./E-mail
 - Metal tablosu: sabit slot sırası (7 altın karat + Guldbarre + Sølvbarre +
-  Finsølv/Sterling/3 tårnet/Plet + Platin/Palladium); yalnız dolu satırlar
-  basılır (18705a9'daki Excel `_apply_afg_row_visibility` ile aynı davranış).
-  Altın satırları şablon sarısı, gümüş satırları şablon grisi.
+  Finsølv/Sterling/3 tårnet/Plet + Platin/Palladium); 15 slotun TÜMÜ basılır
+  (Excel orijinali: satırlar dursun, içleri boş — 18705a9 gizlemesinin tersi).
+  Dolgu yalnız dolu satırda: altın şablon sarısı, gümüş şablon grisi.
 - Ödeme bloğu: Overførsel/Reg.nr./Kontonr. + Subtotal/Moms/I alt
 - Underskrift + R2-09 üç maddelik beyan (`AFG_DECLARATION_*` tek kaynağı)
 - Resmi footer (CVR/tel/e-posta) — invoice_seller_* ayarlarından
@@ -140,10 +140,10 @@ def _da_amount(value: Decimal | str | int | float | None, *, dash: str | None = 
 
 
 def _da_grams(value: Decimal | str | int | float | None) -> str:
-    """Gram gösterimi — 2 ondalık sabit (şablon F kolonu #,##0.00); 0/boş "-"""
+    """Gram gösterimi — 2 ondalık sabit (şablon F kolonu #,##0.00); 0/boş "–\""""
     number = _to_decimal(value)
     if number is None or number == 0:
-        return "-"
+        return "–"
     return _da_amount(number)
 
 
@@ -197,8 +197,10 @@ def aggregate_afg_rows(
 ) -> tuple[list[dict[str, Any]], Decimal, Decimal]:
     """Receipt satırlarını sabit AFG slotlarına paketler (Excel 22-37 modeli).
 
-    Dönüş: (şablon sırasında dolu satırlar, toplam gram, toplam tutar).
-    Toplamlar transaction toplamlarıyla birebir eşleşmeli
+    Dönüş: (AFG_SLOT_ORDER'ın 15 sabit slotu — boşlar weight=0/total=0,
+    toplam gram, toplam tutar). Excel orijinali davranış: boş slotlar da
+    üretilir, tablo daima 15 satır. Toplamlar yalnız dolu bucket'lardan
+    birikir (boşlar 0 ekler) ve transaction toplamlarıyla birebir eşleşmeli
     (sum(line_total_dkk) == gross_amount_dkk) — testte mühürlenir.
     """
     buckets: dict[str, dict[str, Any]] = {}
@@ -229,9 +231,7 @@ def aggregate_afg_rows(
         }
 
     for slot_key in AFG_SLOT_ORDER:
-        bucket = buckets.pop(slot_key, None)
-        if bucket is None:
-            continue
+        bucket = buckets.pop(slot_key, None) or {"weight": Decimal("0"), "total": Decimal("0")}
         label, karat, lodighed, is_gold = AFG_SLOT_LABELS[slot_key]
         row = _row_from_bucket(slot_key, bucket, label=label, karat=karat, lodighed=lodighed, is_gold=is_gold)
         rows.append(row)
@@ -498,20 +498,22 @@ def _afg_metal_table(view: dict[str, Any], font_regular: str, font_bold: str) ->
     for row in view["rows"]:
         weight = _to_decimal(row.get("weight_grams"))
         total = _to_decimal(row.get("line_total"))
-        if not total and not weight:
-            continue  # boş slot — Excel `_apply_afg_row_visibility` kuralı
+        filled = weight is not None and weight > 0
+        # Excel orijinali: boş slot da basılır — Vægt/I alt '–', dolgu yok.
         data.append(
             [
                 str(row.get("type", "")),
                 str(row.get("karat", "")),
                 str(row.get("lodighed", "")),
                 _da_grams(weight),
-                _da_amount(row.get("unit_price"), dash=""),
-                _da_amount(total, dash=""),
+                _da_amount(row.get("unit_price"), dash="–"),
+                _da_amount(total, dash="–") if filled else "–",
             ]
         )
-        fill = GOLD_FILL if row.get("is_gold") else SILVER_FILL
-        styles.append(("BACKGROUND", (0, len(data) - 1), (-1, len(data) - 1), fill))
+        # Dolgu yalnız dolu satırda (weight > 0); boş slot beyaz kalır.
+        if filled:
+            fill = GOLD_FILL if row.get("is_gold") else SILVER_FILL
+            styles.append(("BACKGROUND", (0, len(data) - 1), (-1, len(data) - 1), fill))
 
     data.append(
         [
@@ -544,17 +546,21 @@ def render_afg_document_html(context: dict[str, Any]) -> str:
     for row in view["rows"]:
         weight = _to_decimal(row.get("weight_grams"))
         total = _to_decimal(row.get("line_total"))
-        if not total and not weight:
-            continue
-        fill = "#FFC000" if row.get("is_gold") else "#C9C9C9"
+        filled = weight is not None and weight > 0
+        # Excel orijinali: 15 slotun tümü basılır; dolgu yalnız dolu satırda.
+        if filled:
+            fill = "#FFC000" if row.get("is_gold") else "#C9C9C9"
+            row_open = f"<tr style=\"background:{fill}\">"
+        else:
+            row_open = "<tr>"
         rows_html.append(
-            f"<tr style=\"background:{fill}\">"
+            f"{row_open}"
             f"<td>{row.get('type', '')}</td>"
             f"<td>{row.get('karat', '')}</td>"
             f"<td>{row.get('lodighed', '')}</td>"
             f"<td>{_da_grams(weight)}</td>"
-            f"<td>{_da_amount(row.get('unit_price'), dash='')}</td>"
-            f"<td>{_da_amount(total, dash='')}</td>"
+            f"<td>{_da_amount(row.get('unit_price'), dash='–')}</td>"
+            f"<td>{_da_amount(total, dash='–') if filled else '–'}</td>"
             "</tr>"
         )
     rows_html.append(

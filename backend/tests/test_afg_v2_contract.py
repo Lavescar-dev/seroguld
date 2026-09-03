@@ -280,9 +280,11 @@ def test_draft_writer_puts_ptpd_rows_on_35_36_and_backup_vlookup_rows() -> None:
     assert float(ptpd_inputs["palladium"].avance_percent) == 10.0
 
 
-# --- Dinamik satır görünürlüğü: boş satır gizle + Guldbarre sarı + ayraç ---
+# --- Satır görünürlüğü: Excel orijinali — satırlar dursun, içleri boş ---
 # Karat → satır: 22'den itibaren sırayla 8,14,18,21,21.6,22,24 (22K = 27).
 # Gümüş → satır: 30'dan itibaren 2,3,4,5 (Finsølv = 30); Guldbarre = 29.
+# Default (hide_blank_rows=False) hiçbir satırı gizlemez; 18705a9 gizlemesi
+# hide_blank_rows=True bayrağıyla geri alınabilir.
 
 
 def _gold_rows(filled: dict[str, str] | None = None) -> list["PosWorkspaceGoldRowOut"]:
@@ -350,28 +352,30 @@ def _visible_rows(out, start: int = 21, end: int = 37) -> set[int]:
     return {idx for idx in range(start, end + 1) if not out.row_dimensions[idx].hidden}
 
 
-def test_draft_hides_empty_rows_and_shows_only_filled_karat() -> None:
+def test_draft_shows_all_rows_by_default() -> None:
     workbook, sheet = _template_sheet()
     core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [], [])
     core._apply_afg_row_visibility(sheet)
     reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
     out = reloaded["Afregningsbilag"]
-    # Müşteri yalnız 22K satmış: yalnız satır 27 görünür; kniv başlığı (21)
-    # ve boş ayraç (29) dahil tüm boş satırlar gizli.
-    assert _visible_rows(out) == {27}
+    # Excel orijinali: müşteri yalnız 22K satmış olsa bile 21-37 TÜMÜ görünür
+    # — boş satırlar gizlenmez, içleri boş kalır.
+    assert _visible_rows(out) == set(range(21, 38))
     assert float(out["F27"].value) == 5.0
     # I alt satırı (38) dokunulmaz.
     assert not out.row_dimensions[38].hidden
     reloaded.close()
 
 
-def test_draft_shows_blue_splitter_only_when_both_sides_filled() -> None:
+def test_draft_blank_splitter_visible_and_clean() -> None:
     workbook, sheet = _template_sheet()
-    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows({"2": "3.00"}), [], [])
+    # Yalnız altın tarafı dolu — 18705a9 şeridi gizlerdi; Excel orijinalinde
+    # şerit daima görünür ama yazı artığı taşımaz.
+    core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [], [])
     core._apply_afg_row_visibility(sheet)
     reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
     out = reloaded["Afregningsbilag"]
-    assert _visible_rows(out) == {27, 29, 30}
+    assert not out.row_dimensions[29].hidden
     # Ayraç temiz: boş Guldbarre yazı artıkları ("Guldbarre 24 0,00") taşımaz.
     assert out["A29"].value is None
     assert out["C29"].value is None
@@ -389,7 +393,7 @@ def test_draft_fills_guldbarre_row_yellow_when_present() -> None:
     core._apply_afg_row_visibility(sheet)
     reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
     out = reloaded["Afregningsbilag"]
-    assert _visible_rows(out) == {27, 29}
+    assert _visible_rows(out) == set(range(21, 38))
     assert int(out["A29"].value) == 6
     assert float(out["D29"].value) == 24
     assert float(out["H29"].value) == 7750.0
@@ -403,33 +407,50 @@ def test_draft_fills_guldbarre_row_yellow_when_present() -> None:
     reloaded.close()
 
 
-def test_draft_hides_splitter_when_only_silver_side_filled() -> None:
-    workbook, sheet = _template_sheet()
-    core._apply_afg_workspace_rows(sheet, _gold_rows(), _silver_rows({"2": "3.00"}), [], [])
-    core._apply_afg_row_visibility(sheet)
-    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
-    out = reloaded["Afregningsbilag"]
-    assert _visible_rows(out) == {30}
-    reloaded.close()
-
-
-def test_calculator_defaults_do_not_force_row_visibility() -> None:
+def test_calculator_defaults_keep_all_rows_visible_and_data_alive() -> None:
     workbook, sheet = _template_sheet()
     core._apply_afg_workspace_rows(sheet, _gold_rows(), _silver_rows(), [], [])
     core._apply_afg_calculator_cells(sheet, _workspace_calculators_from_note({}))
     core._apply_afg_row_visibility(sheet)
     reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
     out = reloaded["Afregningsbilag"]
-    # Kniv varsayılanları (J22=4, J32=1.75 vb.) karat satırlarını AÇMAZ:
-    # aksi halde her taslakta tüm satırlar açık kalırdı.
-    assert _visible_rows(out) == set()
-    # Hesaplayıcı verisi gizli satırda yaşamaya devam eder — parse etkilenmez.
+    # Excel orijinali: kniv varsayılanları (J22=4, J32=1.75) satır açmaz da
+    # gizlemez de — grid daima tam görünür, hesaplayıcı verisi yaşamaya devam eder.
+    assert _visible_rows(out) == set(range(21, 38))
     assert float(out["J22"].value) == 4.0
     assert float(out["J32"].value) == 1.75
     reloaded.close()
 
 
-def test_final_hides_blank_rows_and_clears_calculator_ghosts() -> None:
+def test_hide_blank_rows_flag_restores_legacy_hiding() -> None:
+    # 18705a9 gizleme davranışı tek bayrakla geri gelir.
+    scenarios: list[tuple[list, list, list, set[int]]] = [
+        (_gold_rows({"22": "5.00"}), _silver_rows(), [], {27}),
+        (_gold_rows({"22": "5.00"}), _silver_rows({"2": "3.00"}), [], {27, 29, 30}),
+        (_gold_rows(), _silver_rows({"2": "3.00"}), [], {30}),
+    ]
+    for gold, silver, bars, expected in scenarios:
+        workbook, sheet = _template_sheet()
+        core._apply_afg_workspace_rows(sheet, gold, silver, bars, [])
+        core._apply_afg_row_visibility(sheet, hide_blank_rows=True)
+        reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+        out = reloaded["Afregningsbilag"]
+        assert _visible_rows(out) == expected
+        reloaded.close()
+    # Hesaplayıcı varsayılanları gizlemeyi AÇMAZ (eski sözleşme korunur);
+    # veri gizli satırda yaşamaya devam eder.
+    workbook, sheet = _template_sheet()
+    core._apply_afg_workspace_rows(sheet, _gold_rows(), _silver_rows(), [], [])
+    core._apply_afg_calculator_cells(sheet, _workspace_calculators_from_note({}))
+    core._apply_afg_row_visibility(sheet, hide_blank_rows=True)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert _visible_rows(out) == set()
+    assert float(out["J22"].value) == 4.0
+    reloaded.close()
+
+
+def test_final_keeps_all_rows_visible_and_clears_calculator_ghosts() -> None:
     workbook, sheet = _template_sheet()
     gold_rows = [
         {"row_key": "gold:14", "label": "Guld 14k", "karat": Decimal("14"), "lodighed": "585",
@@ -442,24 +463,34 @@ def test_final_hides_blank_rows_and_clears_calculator_ghosts() -> None:
          "line_total_dkk": Decimal("2.40")},
     ]
     _apply_afg_detail_rows(sheet, gold_rows, silver_rows, [])
-    core._apply_afg_row_visibility(sheet, blank_splitter_visible=False)
+    core._apply_afg_row_visibility(sheet)
     reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
     out = reloaded["Afregningsbilag"]
-    # Paketlenmiş final: 14K (22) ve Plet (23); boş satırlar + boş şerit gizli.
+    # Excel orijinali final: 14K (22) ve Plet (23) dolu; kalan satırlar
+    # görünür ama içleri boş.
     assert out["C22"].value == "Guld"
     assert out["C23"].value == "Plet"
-    assert _visible_rows(out) == {22, 23}
+    assert _visible_rows(out) == set(range(21, 38))
     # Şablon hesaplayıcı hayaletleri (J22=10, J32=1.754) finalden kalkar.
     for idx in range(22, 38):
         for column in "JKL":
             assert out[f"{column}{idx}"].value is None, f"{column}{idx}"
     reloaded.close()
 
+    # 18705a9 gizlemeli final yolu bayrakla geri gelir.
+    workbook, sheet = _template_sheet()
+    _apply_afg_detail_rows(sheet, gold_rows, silver_rows, [])
+    core._apply_afg_row_visibility(sheet, blank_splitter_visible=False, hide_blank_rows=True)
+    reloaded = load_workbook(io.BytesIO(_save_workbook_bytes(workbook)), keep_vba=True, data_only=False)
+    out = reloaded["Afregningsbilag"]
+    assert _visible_rows(out) == {22, 23}
+    reloaded.close()
+
 
 def test_hidden_rows_keep_vba_and_values_in_xlsm() -> None:
     workbook, sheet = _template_sheet()
     core._apply_afg_workspace_rows(sheet, _gold_rows({"22": "5.00"}), _silver_rows(), [], [])
-    core._apply_afg_row_visibility(sheet)
+    core._apply_afg_row_visibility(sheet, hide_blank_rows=True)
     content = _save_workbook_bytes(workbook)
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         assert "xl/vbaProject.bin" in archive.namelist()

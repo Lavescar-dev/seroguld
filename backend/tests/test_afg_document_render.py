@@ -145,28 +145,109 @@ def _pdf_page_count(payload: bytes) -> int:
 
 
 def test_aggregate_afg_rows_slots_and_totals():
+    from app.services.afg_document_renderer import AFG_SLOT_ORDER
+
     rows, total_weight, total_amount = aggregate_afg_rows(_sample_context()["lines"])  # type: ignore[arg-type]
-    assert [(r["type"], r["karat"]) for r in rows] == [
-        ("Guld", "14"),
-        ("Guld", "18"),
-        ("Sterling sølv", ""),
-    ]
+    # Excel orijinali: 15 sabit slotun TÜMÜ üretilir (boşlar weight=0/total=0).
+    assert len(rows) == len(AFG_SLOT_ORDER) == 15
+    # Dolu slotlar doğru konumda: gold:14 → 1, gold:18 → 2, silver:3 → 10.
+    assert (rows[1]["type"], rows[1]["karat"], str(rows[1]["weight_grams"])) == ("Guld", "14", "12.50")
+    assert (rows[2]["type"], rows[2]["karat"]) == ("Guld", "18")
+    assert rows[10]["type"] == "Sterling sølv"
+    # Boş slotlar: weight=0, total=0, unit_price yok.
+    empties = [r for r in rows if not r["weight_grams"]]
+    assert len(empties) == 12
+    assert all(r["weight_grams"] == 0 and r["line_total"] == 0 and r["unit_price"] is None for r in empties)
+    # Toplam yalnız dolu bucket'lardan birikir: sum == gross mührü.
     assert str(total_amount) == "6161.10"
     assert str(total_weight) == "46.70"
+    assert total_amount == sum(r["line_total"] for r in rows)
     # Aynı karattan iki satır tek slota toplanmalı
     extra_line = dict(_sample_context()["lines"][0])  # type: ignore[index]
     extra_line["weight_grams"] = "1.00"
     extra_line["line_total_dkk"] = "100.00"
     rows2, _, total2 = aggregate_afg_rows([*_sample_context()["lines"], extra_line])  # type: ignore[arg-type]
+    assert len(rows2) == 15
     gold14 = next(r for r in rows2 if r["karat"] == "14")
     assert str(gold14["weight_grams"]) == "13.50"
     assert str(total2) == "6261.10"
+
+
+def test_afg_metal_table_renders_fifteen_fixed_slots():
+    """Müşteri belgesi 15 sabit slotu basar: boş slot '–' + dolgusuz,
+    dolu slot dolgulu; toplam yalnız dolu bucket'lardan gelir."""
+    html = render_afg_document_html(_sample_context())
+    # Tüm slot etiketleri belgede görünür (boşlar dahil — Excel orijinali).
+    for label in ("Guldbarre", "Sølvbarre", "Finsølv", "Sterling sølv", "3 tårnet sølv", "Plet", "Platin", "Palladium"):
+        assert label in html, label
+    # Metal tablosu: başlık + 15 slot + I alt = 17 satır.
+    metal = html.split('class="metal"')[1].split("</table>")[0]
+    assert metal.count("<tr") == 17
+    # Dolu satırlar dolgulu: 2 altın (14K + 18K sarı) + 1 gümüş (Sterling grisi).
+    assert metal.count('<tr style="background:#FFC000">') == 2
+    assert metal.count('<tr style="background:#C9C9C9">') == 1
+    # Boş slotlar (12) düz <tr> ile açılır ve Vægt/pris/I alt '–' taşır.
+    empty_rows = [segment for segment in metal.split("<tr")[1:] if segment.startswith("><td>")]
+    assert len(empty_rows) == 12
+    assert empty_rows[0].count("–") == 3
+    # Toplam mührü: slot I alt toplamı gross ile birebir.
+    rows, _, total_amount = aggregate_afg_rows(_sample_context()["lines"])  # type: ignore[arg-type]
+    assert str(total_amount) == "6161.10"
+    assert sum(r["line_total"] for r in rows) == total_amount
+    assert str(total_amount) == str(_sample_context()["gross_amount_dkk"])
 
 
 def test_render_afg_document_pdf_single_page():
     payload = render_afg_document_pdf(_sample_context())
     assert payload.startswith(b"%PDF")
     assert len(payload) > 1000
+    assert _pdf_page_count(payload) == 1
+
+
+def _all_slot_lines() -> list[dict[str, object]]:
+    """15 slotun TÜMÜNÜ dolduran satır seti (tek sayfa stress ölçümü)."""
+    gold_karats = (
+        ("8", "33.30"), ("14", "58.50"), ("18", "75.00"), ("21", "87.50"),
+        ("21.6", "90.00"), ("22", "91.60"), ("24", "99.90"),
+    )
+    lines: list[dict[str, object]] = [
+        {
+            "product_type_raw": "ring",
+            "metal_type_raw": "yellow_gold",
+            "purity_karat": f"{karat}k",
+            "purity_percentage": purity,
+            "weight_grams": "5.00",
+            "line_total_dkk": "1000.00",
+        }
+        for karat, purity in gold_karats
+    ]
+    lines.append({"product_type_raw": "bar", "metal_type_raw": "yellow_gold", "weight_grams": "10.00", "line_total_dkk": "6200.00"})
+    lines.append({"product_type_raw": "bar", "metal_type_raw": "silver", "weight_grams": "20.00", "line_total_dkk": "300.00"})
+    lines.append({"metal_type_raw": "silver", "purity_percentage": "99.90", "weight_grams": "3.00", "line_total_dkk": "24.00"})
+    lines.append({"metal_type_raw": "silver", "purity_percentage": "92.50", "weight_grams": "30.00", "line_total_dkk": "660.00"})
+    lines.append({"metal_type_raw": "silver", "purity_percentage": "83.00", "weight_grams": "8.00", "line_total_dkk": "120.00"})
+    # Saflığı slota eşleşmeyen gümüş → Plet fallback'i (pos_service kuralı).
+    lines.append({"metal_type_raw": "silver", "purity_percentage": "40.00", "weight_grams": "120.00", "line_total_dkk": "2.40"})
+    lines.append({"metal_type_raw": "platinum", "weight_grams": "12.50", "line_total_dkk": "3750.00"})
+    lines.append({"metal_type_raw": "palladium", "weight_grams": "7.00", "line_total_dkk": "1575.00"})
+    return lines
+
+
+def test_render_afg_pdf_single_page_with_all_fifteen_slots_filled():
+    """Tek sayfa riski: 15 slotun tümü dolu + uzun Danca müşteri adı —
+    KeepInFrame ölçeklemesi belgeyi yine tek sayfada tutar."""
+    ctx = _sample_context()
+    ctx["lines"] = _all_slot_lines()  # type: ignore[assignment]
+    rows, _, _ = aggregate_afg_rows(ctx["lines"])  # type: ignore[arg-type]
+    assert len([r for r in rows if r["weight_grams"]]) == 15
+    afg = dict(ctx["afg"])  # type: ignore[arg-type]
+    afg["customer"] = {
+        **afg["customer"],  # type: ignore[index]
+        "navn": "Åse Østergaard Sørensen æøå med en meget lang funktionærunderskrift",
+    }
+    ctx["afg"] = afg
+    payload = render_afg_document_pdf(ctx)  # type: ignore[arg-type]
+    assert payload.startswith(b"%PDF")
     assert _pdf_page_count(payload) == 1
 
 
