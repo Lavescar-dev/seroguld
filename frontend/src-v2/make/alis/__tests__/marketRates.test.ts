@@ -56,6 +56,26 @@ describe('syncMarketRateState (DKK-only sözleşme)', () => {
     expect(next.silver_dkk).toBe('8.25');
     expect(next.silver_matrix.find((row) => row.row_key === 'silver:2')?.dkk_per_gram).toBe('8.25');
   });
+
+  it('missing bar prices are NEVER masked with 24K/999 — they stay 0 (backend falls back to profile)', () => {
+    // Bar ≠ 24K hurda: bar alanı yokken 24K'dan uydurmak gerçek bar
+    // fiyatını maskelerdi (WP priser'den bar çekildiğinde görünen hataydı).
+    const next = syncMarketRateState(current);
+    expect(next.gold_bar_dkk).toBe('0.00');
+    expect(next.silver_bar_dkk).toBe('0.00');
+  });
+
+  it('real bar prices pass through untouched', () => {
+    const next = syncMarketRateState({
+      ...current,
+      gold_bar_dkk: '873.00',
+      silver_bar_dkk: '13.10',
+      plet_dkk: '0.0200',
+    });
+    expect(next.gold_bar_dkk).toBe('873.00');
+    expect(next.silver_bar_dkk).toBe('13.10');
+    expect(next.plet_dkk).toBe('0.0200');
+  });
 });
 
 describe('formatKaratLabel (roadmap madde 2 — B1 etiket onayı)', () => {

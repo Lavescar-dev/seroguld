@@ -154,7 +154,8 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
           silver_rates_dkk: Object.fromEntries(
             SILVER_PROFILE_ROWS.map((row) => [row.key, committed.silver_rates_dkk[row.key] || '0']),
           ),
-          plet_dkk: parseDecimalValue(draft.plet_dkk).toFixed(2),
+          // Plet 4 hane gönderilir — 2 hane "21 kr/kg" → 0.0210 ayrımını yutar.
+          plet_dkk: parseDecimalValue(draft.plet_dkk).toFixed(4),
           gold_bar_dkk: parseDecimalValue(draft.gold_bar_dkk).toFixed(2),
           silver_bar_dkk: parseDecimalValue(draft.silver_bar_dkk).toFixed(2),
           platinum_dkk: parseDecimalValue(draft.platinum_dkk).toFixed(2),
@@ -458,10 +459,16 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
           <button
             type="button"
             onClick={() => {
-              // R2-06: karat/gümüş fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
+              // R2-06: karat/gümüş/bar/Pt/Pd/plet fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
               void (async () => {
                 try {
-                  const result = await apiRequest<{ applied_gold: Record<string, string>; applied_silver?: Record<string, string>; fetched_at: string }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
+                  const result = await apiRequest<{
+                    applied_gold: Record<string, string>;
+                    applied_silver?: Record<string, string>;
+                    applied_scalars?: Record<string, string>;
+                    auto_fields_disabled?: string[];
+                    fetched_at: string;
+                  }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
                   await queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
                   await queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
                   // R2-06 takibi: invalidate draft'ı tazelemez (effect yalnız
@@ -469,14 +476,22 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
                   await controller.refreshDraftFromServer();
                   const goldCount = Object.keys(result.applied_gold || {}).length;
                   const silverCount = Object.keys(result.applied_silver || {}).length;
-                  toast.success('WP Priser uygulandı', `${goldCount} karat + ${silverCount} gümüş güncellendi`);
+                  const scalarCount = Object.keys(result.applied_scalars || {}).length;
+                  const summary = `${goldCount} karat + ${silverCount} gümüş${scalarCount ? ` + ${scalarCount} metal (bar/Pt/Pd/plet)` : ''} güncellendi`;
+                  const disabled = result.auto_fields_disabled || [];
+                  if (disabled.length > 0) {
+                    // Pt/Pd site değerine geçti: canlı Stooq akışı alan bazında kapatıldı.
+                    toast.warning('WP Priser uygulandı', `${summary}. Platin/palladium canlı akışı kapatıldı — site değeri esas alınıyor; çekmeceden geri açabilirsiniz.`);
+                  } else {
+                    toast.success('WP Priser uygulandı', summary);
+                  }
                 } catch (fetchError) {
                   toast.error('WP Priser çekilemedi', localizeApiError(fetchError));
                 }
               })();
             }}
             className={dark ? 'mr-auto border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800' : 'mr-auto rounded-sg-sm border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800'}
-            title="Karat ve gümüş fiyatlarını seroguld.dk Priser sayfasından çek"
+            title="Karat, gümüş, bar, platin, palladium ve plet fiyatlarını seroguld.dk Priser sayfasından çek"
           >
             WP&apos;den çek
           </button>
