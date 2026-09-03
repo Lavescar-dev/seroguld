@@ -15,12 +15,18 @@ use std::io::Write;
 #[cfg(target_os = "windows")]
 use std::net::{TcpListener, TcpStream};
 #[cfg(target_os = "windows")]
+use notify::Watcher as _;
+#[cfg(target_os = "windows")]
+use std::collections::VecDeque;
+#[cfg(target_os = "windows")]
 use std::os::windows::io::AsRawHandle;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "windows")]
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -45,6 +51,26 @@ const DISPLAY_SETTINGS_FILE: &str = "customer-display-settings.v1.json";
 const DEV_DISPLAY_BASE_URL: &str = "http://127.0.0.1:3300";
 const IDENTITY_SCAN_MAX_BYTES: usize = 10 * 1024 * 1024;
 const IDENTITY_SCAN_MIME_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/tiff", "image/bmp"];
+// Klasör izleme (İş 4): app_config_dir altındaki kalıcı konfig dosyası.
+// Sabitler yalnız Windows izleyici döngüsünde kullanılır (non-Windows'ta
+// komutlar graceful UNSUPPORTED_PLATFORM döner) — Linux check'inde ölü
+// kalmamaları için cfg'lidir.
+#[cfg(target_os = "windows")]
+const IDENTITY_WATCH_CONFIG_FILE: &str = "identity-watch.json";
+// Debounce: Epson/network tarayıcı dosyayı tamponlu yazar; mtime+boyut
+// ardışık ~300 ms × 3 örnek sabitlenmeden dosya işlenmez (~1 s toplam).
+#[cfg(target_os = "windows")]
+const IDENTITY_WATCH_POLL_INTERVAL_MS: u64 = 300;
+#[cfg(target_os = "windows")]
+const IDENTITY_WATCH_STABLE_SAMPLE_COUNT: u32 = 3;
+// Bekleme tavanı: bu denemeden sonra dosya olduğu gibi işlenir —
+// read_identity_image güvenlik bloğu bozuk/yarım dosyayı reddeder.
+#[cfg(target_os = "windows")]
+const IDENTITY_WATCH_MAX_POLL_ATTEMPTS: u32 = 100;
+#[cfg(target_os = "windows")]
+const IDENTITY_WATCH_SCAN_EVENT: &str = "identity-watch-scan";
+#[cfg(target_os = "windows")]
+const IDENTITY_WATCH_ERROR_EVENT: &str = "identity-watch-error";
 const LOCAL_BACKEND_HEALTH_URL: &str = "http://127.0.0.1:8100/health";
 const RUNTIME_RELATIVE_PATH: &str = "runtime/seroguld-runtime/seroguld-runtime.exe";
 const EXCEL_FOCUS_COMMAND: &[u8] = b"{\"action\":\"focus\"}\n";
@@ -1744,6 +1770,9 @@ struct IdentityScannerCapabilities {
     wia_acquisition: bool,
     local_ocr: bool,
     image_file_fallback: bool,
+    // İş 4: klasör izleme (scan-to-folder) yeteneği — WIA diyaloguna
+    // alternatif hat, aynı read+OCR bloğunu kullanır.
+    watch_folder: bool,
     max_file_bytes: usize,
     accepted_mime_types: Vec<String>,
     // OCR dil paketi yoklaması: Danca paket yoksa UI uyarır (saha teshisi).
@@ -1865,6 +1894,27 @@ impl IdentityScannerError {
             "TEMP_CLEANUP_FAILED",
             "Geçici tarama dosyası temizlenemedi.",
             true,
+        )
+    }
+
+    // İş 4 — klasör izleme hataları. SCANNER_UNAVAILABLE (WIA cihaz hattı)
+    // bilinçli olarak ayrı kalır: klasör izlemede cihazın anlık erişilebilir
+    // olması gerekmez, yalnız klasörün erişilebilir olması gerekir.
+    #[cfg(any(target_os = "windows", test))]
+    const fn watch_folder_unavailable() -> Self {
+        Self::new(
+            "WATCH_FOLDER_UNAVAILABLE",
+            "İzlenecek klasör açılamıyor — yolu ve erişim izinlerini kontrol edin.",
+            true,
+        )
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    const fn watch_already_active() -> Self {
+        Self::new(
+            "WATCH_ALREADY_ACTIVE",
+            "Klasör izleme zaten etkin — önce durdurun.",
+            false,
         )
     }
 }
@@ -2082,6 +2132,7 @@ fn identity_scanner_capabilities() -> IdentityScannerCapabilities {
         wia_acquisition: supported,
         local_ocr: supported,
         image_file_fallback: supported,
+        watch_folder: supported,
         max_file_bytes: IDENTITY_SCAN_MAX_BYTES,
         accepted_mime_types: IDENTITY_SCAN_MIME_TYPES
             .iter()
@@ -2492,6 +2543,440 @@ fn build_windows_identity_scan_result(
     Ok(identity_scan_result(side, source, image_bytes, mime_type, &ocr))
 }
 
+// -----------------------------------------------------------------------------
+// İş 4 — kimlik tarama klasör izleme (scan-to-folder)
+//
+// Epson ET-3850 network WIA diyalogu sahadaki sorunlu hat; tarayıcının
+// "klasöre tara" profili güvenilir çalışıyor. Bu bölüm izlenen klasöre düşen
+// görüntüyü mevcut read_identity_image güvenlik bloğundan (10 MB + magic
+// byte) ve mevcut OCR hattından geçirip `identity-watch-scan` olayıyla öne
+// yollar. Kaynak dosya bilinçli olarak SİLİNMEZ (denetim/yeniden işleme;
+// runbook'ta belgeli). Yalnız Windows; non-Windows komutlar graceful
+// UNSUPPORTED_PLATFORM döner.
+// -----------------------------------------------------------------------------
+
+/// Kalıcı izleme konfigürasyonu (app_config_dir/identity-watch.json).
+/// `folder` boşsa platform varsayılanı kullanılır; `enabled` son oturumun
+/// durumunu hatırlar (UI rozeti açılışta bunu okur).
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct IdentityWatchConfig {
+    folder: String,
+    enabled: bool,
+    side: String,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl Default for IdentityWatchConfig {
+    fn default() -> Self {
+        Self {
+            folder: String::new(),
+            enabled: false,
+            side: "front".to_string(),
+        }
+    }
+}
+
+/// Komutların döndürdüğü anlık izleme durumu (UI rozeti).
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IdentityWatchStatus {
+    active: bool,
+    folder: Option<String>,
+    side: String,
+}
+
+impl IdentityWatchStatus {
+    #[allow(dead_code)] // yalnız non-Windows komut kolları kullanır
+    fn inactive() -> Self {
+        Self {
+            active: false,
+            folder: None,
+            side: "front".to_string(),
+        }
+    }
+}
+
+/// İzlenecek klasörün çözümü: açık `folder` kazanır; boşsa platform varsayılanı
+/// `%USERPROFILE%\Pictures\SeroGuld-Scan`. Ayracı `join` yerine hazır dizeyle
+/// kuruyoruz — Windows'ta `\` zaten ayrıcı, Linux test derlemesinde de aynı
+/// dize sözleşmesi mühürlenir.
+#[cfg(any(target_os = "windows", test))]
+fn resolve_identity_watch_folder(
+    folder: Option<&str>,
+    user_profile: Option<&str>,
+) -> Result<PathBuf, IdentityScannerError> {
+    if let Some(explicit) = folder.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(explicit));
+    }
+    match user_profile
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(profile) => Ok(PathBuf::from(format!(
+            "{profile}\\Pictures\\SeroGuld-Scan"
+        ))),
+        None => Err(IdentityScannerError::watch_folder_unavailable()),
+    }
+}
+
+/// Klasör olaylarının uzantı ön elemesi: yalnız jpg/jpeg/png/tif/tiff/bmp
+/// (read_identity_image'in kabul ettiği küme). Başında `~`/`.` olan dosyalar
+/// tarayıcı yazma protokolünün ara dosyalarıdır; izleme hattına girmez.
+#[cfg(any(target_os = "windows", test))]
+fn is_identity_watch_candidate(path: &std::path::Path) -> bool {
+    if expected_identity_mime_type(path).is_none() {
+        return false;
+    }
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(name) => !name.starts_with('~') && !name.starts_with('.'),
+        None => false,
+    }
+}
+
+/// Debounce örneği: dosyanın anlık mtime+boyutu. `None` = dosya o anda yok.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IdentityWatchFileStamp {
+    size: u64,
+    modified_unix_ms: u128,
+}
+
+/// Debounce saf çekirdeği: örnek dizisinin SONUNDAKİ birbirine eşit Some
+/// örneklik koşu uzunluğunu döndürür. İzleyici döngüsü bu değerin
+/// IDENTITY_WATCH_STABLE_SAMPLE_COUNT'a ulaşmasını bekler — dosya yazımı
+/// bitmeden (mtime/boyut değişirken) koşu kırılır.
+#[cfg(any(target_os = "windows", test))]
+fn identity_watch_trailing_stable_samples(samples: &[Option<IdentityWatchFileStamp>]) -> u32 {
+    let mut run: u32 = 0;
+    let mut previous: Option<&IdentityWatchFileStamp> = None;
+    for sample in samples {
+        match sample {
+            Some(stamp) if previous == Some(stamp) => run += 1,
+            Some(stamp) => {
+                previous = Some(stamp);
+                run = 1;
+            }
+            None => {
+                previous = None;
+                run = 0;
+            }
+        }
+    }
+    run
+}
+
+/// Konfig dosyasını baytlardan okur; bozuk/yabancı içerik varsayılana düşer.
+/// (`side` front/back dışındaysa dosya geçersiz sayılır.)
+#[cfg(any(target_os = "windows", test))]
+fn read_identity_watch_config_file(path: &std::path::Path) -> IdentityWatchConfig {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<IdentityWatchConfig>(&bytes).ok())
+        .filter(|config| matches!(config.side.as_str(), "front" | "back"))
+        .unwrap_or_default()
+}
+
+/// Konfig dosyasını atomik yazar (tmp + rename; display-settings deseni).
+#[cfg(any(target_os = "windows", test))]
+fn write_identity_watch_config_file(
+    path: &std::path::Path,
+    config: &IdentityWatchConfig,
+) -> Result<(), String> {
+    let directory = path
+        .parent()
+        .ok_or_else(|| "Kimlik izleme ayar klasörü bulunamadı".to_string())?;
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(config).map_err(|error| error.to_string())?;
+    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|error| error.to_string())?;
+    }
+    fs::rename(temporary, path).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn identity_watch_config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?
+        .join(IDENTITY_WATCH_CONFIG_FILE))
+}
+
+#[cfg(target_os = "windows")]
+fn load_identity_watch_config(app: &AppHandle) -> IdentityWatchConfig {
+    let Ok(path) = identity_watch_config_path(app) else {
+        return IdentityWatchConfig::default();
+    };
+    read_identity_watch_config_file(&path)
+}
+
+#[cfg(target_os = "windows")]
+fn save_identity_watch_config(app: &AppHandle, config: &IdentityWatchConfig) -> Result<(), String> {
+    let path = identity_watch_config_path(app)?;
+    write_identity_watch_config_file(&path, config)
+}
+
+/// Aktif izleme oturumu: watcher kapatıldığında (drop) fs olayları da durur;
+/// `stop` bayrağı debounce döngüsünü bir poll aralığı içinde sonlandırır.
+#[cfg(target_os = "windows")]
+struct IdentityWatchHandle {
+    side: String,
+    folder: PathBuf,
+    stop: Arc<AtomicBool>,
+    watcher: notify::RecommendedWatcher,
+}
+
+#[derive(Default)]
+struct IdentityWatchState {
+    #[cfg(target_os = "windows")]
+    active: Mutex<Option<IdentityWatchHandle>>,
+}
+
+#[cfg(target_os = "windows")]
+fn identity_watch_file_stamp(path: &std::path::Path) -> Option<IdentityWatchFileStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let modified_unix_ms = metadata
+        .modified()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    Some(IdentityWatchFileStamp {
+        size: metadata.len(),
+        modified_unix_ms,
+    })
+}
+
+/// Olaydan aday dosya: silme olayları aday üretmez; yaln izlenen klasörün
+/// doğrudan altındaki kabul edilebilir uzantılı dosyalar.
+#[cfg(target_os = "windows")]
+fn identity_watch_candidate_from_event(
+    folder: &std::path::Path,
+    event: notify::Result<notify::Event>,
+) -> Option<PathBuf> {
+    let event = event.ok()?;
+    if matches!(event.kind, notify::EventKind::Remove(_)) {
+        return None;
+    }
+    event
+        .paths
+        .into_iter()
+        .filter(|path| path.parent() == Some(folder))
+        .find(|path| is_identity_watch_candidate(path))
+}
+
+/// Stabilene dosyayı mevcut tarama hattından geçirip öne yayar. Kaynak dosya
+/// SİLİNMEZ (bilinçli): müşteri akışında taramalar klasörde kalır, hatalı
+/// OCR'da aynı dosya düzeltilip yeniden işlenebilir (runbook'ta belgeli).
+#[cfg(target_os = "windows")]
+fn emit_identity_watch_scan(app: &AppHandle, side: &str, path: &std::path::Path) {
+    match build_windows_identity_scan_result(side, "watch", path) {
+        Ok(result) => {
+            let _ = app.emit(IDENTITY_WATCH_SCAN_EVENT, result);
+        }
+        Err(error) => {
+            let _ = app.emit(IDENTITY_WATCH_ERROR_EVENT, error);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_identity_watch_loop(
+    app: &AppHandle,
+    side: &str,
+    folder: &std::path::Path,
+    event_receiver: &std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
+    stop: &AtomicBool,
+) {
+    let poll = Duration::from_millis(IDENTITY_WATCH_POLL_INTERVAL_MS);
+    let mut candidate: Option<PathBuf> = None;
+    let mut samples: VecDeque<Option<IdentityWatchFileStamp>> = VecDeque::new();
+    let mut poll_attempts: u32 = 0;
+
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+
+        // Olay penceresi: bir poll aralığı boyunca gelen olaylar toplanır;
+        // yeni aday geldikçe kararar zinciri sıfırlanır (yazım sürüyor).
+        let deadline = Instant::now() + poll;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match event_receiver.recv_timeout(remaining) {
+                Ok(event) => {
+                    if let Some(path) = identity_watch_candidate_from_event(folder, event) {
+                        candidate = Some(path);
+                        samples.clear();
+                        poll_attempts = 0;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+
+        let Some(path) = candidate.clone() else {
+            continue;
+        };
+        poll_attempts += 1;
+        samples.push_back(identity_watch_file_stamp(&path));
+        while samples.len() > IDENTITY_WATCH_STABLE_SAMPLE_COUNT as usize {
+            samples.pop_front();
+        }
+
+        if samples.back().map(Option::is_none).unwrap_or(true) {
+            // Dosya bu aşamada kayboldu (geçici yeniden adlandırma vb.).
+            candidate = None;
+            samples.clear();
+            poll_attempts = 0;
+            continue;
+        }
+
+        let stable = identity_watch_trailing_stable_samples(samples.make_contiguous());
+        if stable >= IDENTITY_WATCH_STABLE_SAMPLE_COUNT
+            || poll_attempts >= IDENTITY_WATCH_MAX_POLL_ATTEMPTS
+        {
+            // Tavan dolduysa dosya olduğu gibi işlenir; güvenlik bloğu
+            // (10 MB + magic byte) yarım dosyayı INVALID_IMAGE ile reddeder.
+            if !stop.load(Ordering::Acquire) {
+                emit_identity_watch_scan(app, side, &path);
+            }
+            candidate = None;
+            samples.clear();
+            poll_attempts = 0;
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_identity_watch(
+    app: &AppHandle,
+    side: &str,
+    folder: &std::path::Path,
+    stop: Arc<AtomicBool>,
+) -> Result<notify::RecommendedWatcher, IdentityScannerError> {
+    let (event_sender, event_receiver) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
+    let watch_folder = folder.to_path_buf();
+    let mut watcher = notify::recommended_watcher(
+        move |event: notify::Result<notify::Event>| {
+            let _ = event_sender.send(event);
+        },
+    )
+    .map_err(|_| IdentityScannerError::watch_folder_unavailable())?;
+    watcher
+        .watch(&watch_folder, notify::RecursiveMode::NonRecursive)
+        .map_err(|_| IdentityScannerError::watch_folder_unavailable())?;
+
+    let thread_app = app.clone();
+    let thread_side = side.to_string();
+    let thread_folder = watch_folder;
+    let thread_stop = Arc::clone(&stop);
+    std::thread::Builder::new()
+        .name("identity-watch".to_string())
+        .spawn(move || {
+            run_identity_watch_loop(
+                &thread_app,
+                &thread_side,
+                &thread_folder,
+                &event_receiver,
+                &thread_stop,
+            );
+        })
+        .map_err(|_| IdentityScannerError::watch_folder_unavailable())?;
+    Ok(watcher)
+}
+
+#[cfg(target_os = "windows")]
+fn identity_watch_status_snapshot(app: &AppHandle) -> IdentityWatchStatus {
+    let state = app.state::<IdentityWatchState>();
+    if let Ok(active) = state.active.lock() {
+        if let Some(handle) = active.as_ref() {
+            return IdentityWatchStatus {
+                active: true,
+                folder: Some(handle.folder.to_string_lossy().into_owned()),
+                side: handle.side.clone(),
+            };
+        }
+    }
+    let config = load_identity_watch_config(app);
+    IdentityWatchStatus {
+        active: false,
+        folder: (!config.folder.trim().is_empty()).then(|| config.folder.clone()),
+        side: config.side,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn start_identity_watch_windows(
+    app: &AppHandle,
+    side: &str,
+    folder: Option<&str>,
+) -> Result<IdentityWatchStatus, IdentityScannerError> {
+    let resolved = resolve_identity_watch_folder(folder, env::var("USERPROFILE").ok().as_deref())?;
+    // Varsayılan klasör ilk kullanımda yoksa oluşturulur; açık yol geçersizse
+    // (ör. sürücü yok) WATCH_FOLDER_UNAVAILABLE döner.
+    fs::create_dir_all(&resolved)
+        .map_err(|_| IdentityScannerError::watch_folder_unavailable())?;
+
+    let state = app.state::<IdentityWatchState>();
+    let Ok(mut active) = state.active.lock() else {
+        return Err(IdentityScannerError::watch_folder_unavailable());
+    };
+    if active.is_some() {
+        return Err(IdentityScannerError::watch_already_active());
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let watcher = spawn_identity_watch(app, side, &resolved, Arc::clone(&stop))?;
+    *active = Some(IdentityWatchHandle {
+        side: side.to_string(),
+        folder: resolved.clone(),
+        stop,
+        watcher,
+    });
+    drop(active);
+
+    let _ = save_identity_watch_config(
+        app,
+        &IdentityWatchConfig {
+            folder: resolved.to_string_lossy().into_owned(),
+            enabled: true,
+            side: side.to_string(),
+        },
+    );
+    Ok(IdentityWatchStatus {
+        active: true,
+        folder: Some(resolved.to_string_lossy().into_owned()),
+        side: side.to_string(),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn stop_identity_watch_windows(app: &AppHandle) -> IdentityWatchStatus {
+    let state = app.state::<IdentityWatchState>();
+    if let Ok(mut active) = state.active.lock() {
+        if let Some(handle) = active.take() {
+            handle.stop.store(true, Ordering::Release);
+            drop(handle.watcher); // fs olay kaynağı hemen kapanır
+        }
+    }
+    let mut config = load_identity_watch_config(app);
+    config.enabled = false;
+    let _ = save_identity_watch_config(app, &config);
+    identity_watch_status_snapshot(app)
+}
+
 fn show_customer_display_window(
     window: &tauri::WebviewWindow,
     route: &str,
@@ -2669,6 +3154,170 @@ mod tests {
             expected_identity_mime_type(std::path::Path::new("identity.pdf")),
             None
         );
+    }
+
+    // ------------------------------------------------------------------
+    // İş 4 — klasör izleme sözleşmeleri (Linux CI'sında da koşar: watcher
+    // kendisi cfg(windows), karar çekirdekleri cfg(any(windows, test)).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn identity_watch_config_round_trips_camel_case() {
+        let config = IdentityWatchConfig {
+            folder: r"C:\Users\Recai\Pictures\SeroGuld-Scan".to_string(),
+            enabled: true,
+            side: "back".to_string(),
+        };
+        let serialized = serde_json::to_string(&config).expect("serialize");
+        assert!(serialized.contains(r#""folder":"#));
+        assert!(serialized.contains(r#""enabled":true"#));
+        assert!(serialized.contains(r#""side":"back""#));
+        let parsed: IdentityWatchConfig = serde_json::from_str(&serialized).expect("parse");
+        assert_eq!(parsed, config);
+
+        // Eksik alanlar Default'a düşer (serde struct-level default).
+        let partial: IdentityWatchConfig =
+            serde_json::from_str(r#"{"folder":"C:\\Scan"}"#).expect("partial parse");
+        assert_eq!(partial.folder, r"C:\Scan");
+        assert!(!partial.enabled);
+        assert_eq!(partial.side, "front");
+
+        // Bozuk / yabancı side dosyası bütünüyle varsayılana düşer.
+        assert_eq!(
+            read_identity_watch_config_file(std::path::Path::new(": yok :")),
+            IdentityWatchConfig::default()
+        );
+    }
+
+    #[test]
+    fn identity_watch_config_file_round_trips_on_disk() {
+        let directory = std::env::temp_dir().join(format!(
+            "identity-watch-config-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&directory).expect("mkdir");
+        let path = directory.join("identity-watch.json");
+        let config = IdentityWatchConfig {
+            folder: r"C:\Users\Recai\Pictures\SeroGuld-Scan".to_string(),
+            enabled: true,
+            side: "front".to_string(),
+        };
+        write_identity_watch_config_file(&path, &config).expect("write");
+        assert_eq!(read_identity_watch_config_file(&path), config);
+        // Bozuk side (elle düzenlenmiş) dosya geçersiz sayılır.
+        std::fs::write(&path, r#"{"folder":"C:\\Scan","enabled":true,"side":"other"}"#)
+            .expect("write bogus");
+        assert_eq!(read_identity_watch_config_file(&path).side, "front");
+        assert!(!read_identity_watch_config_file(&path).enabled);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn identity_watch_candidate_filters_extensions_and_temp_files() {
+        for name in [
+            "front.jpg", "front.jpeg", "front.png", "front.tif", "front.tiff", "front.bmp",
+        ] {
+            assert!(is_identity_watch_candidate(std::path::Path::new(name)), "{name}");
+        }
+        // Desteklenmeyen uzantılar ön elemede düşer (PDF çok sayfa, tmp ara dosyası).
+        for name in ["front.pdf", "front.txt", "front.tmp", "front.docx", "noext"] {
+            assert!(!is_identity_watch_candidate(std::path::Path::new(name)), "{name}");
+        }
+        // Yazma protokolü ara dosyaları (~/. önekli) aday değildir.
+        assert!(!is_identity_watch_candidate(std::path::Path::new("~front.jpg")));
+        assert!(!is_identity_watch_candidate(std::path::Path::new(".front.jpg.partial")));
+    }
+
+    #[test]
+    fn identity_watch_default_folder_uses_user_profile_pictures() {
+        let default = resolve_identity_watch_folder(None, Some(r"C:\Users\Recai"))
+            .expect("default folder");
+        assert_eq!(
+            default.to_str(),
+            Some(r"C:\Users\Recai\Pictures\SeroGuld-Scan")
+        );
+        // Açık klasör varsayılanı ezer; boşluk kırpılır.
+        let explicit =
+            resolve_identity_watch_folder(Some("  D:\\Scan-Inbox  "), Some(r"C:\Users\Recai"))
+                .expect("explicit folder");
+        assert_eq!(explicit.to_str(), Some("D:\\Scan-Inbox"));
+        // USERPROFILE yoksa ve açık klasör de yoksa izleme kurulamaz.
+        assert!(resolve_identity_watch_folder(None, None).is_err());
+        assert!(resolve_identity_watch_folder(Some("  "), None).is_err());
+    }
+
+    #[test]
+    fn identity_watch_trailing_stable_samples_counts_consecutive_agreement() {
+        let stamp = IdentityWatchFileStamp {
+            size: 1024,
+            modified_unix_ms: 1_700_000_000_000,
+        };
+        let changed = IdentityWatchFileStamp {
+            size: 2048,
+            modified_unix_ms: 1_700_000_000_300,
+        };
+        // Üç ardışık sabit örnek → kararar sayısı 3 (yazım bitti).
+        assert_eq!(
+            identity_watch_trailing_stable_samples(&[Some(stamp), Some(stamp), Some(stamp)]),
+            3
+        );
+        // Yazım sürerken (örnek değişiyor) koşu kırılır.
+        assert_eq!(
+            identity_watch_trailing_stable_samples(&[Some(stamp), Some(changed), Some(changed)]),
+            2
+        );
+        assert_eq!(
+            identity_watch_trailing_stable_samples(&[
+                Some(stamp),
+                Some(changed),
+                Some(stamp)
+            ]),
+            1
+        );
+        // Dosya kaybolursa (None) kararar sıfırlanır.
+        assert_eq!(
+            identity_watch_trailing_stable_samples(&[Some(stamp), Some(stamp), None]),
+            0
+        );
+        assert_eq!(identity_watch_trailing_stable_samples(&[]), 0);
+    }
+
+    #[test]
+    fn identity_watch_start_rejects_non_windows_with_unsupported_platform() {
+        // Komutun platform kapısı: Windows None (devam), diğerleri daima
+        // UNSUPPORTED_PLATFORM — graceful, panic/crash değil.
+        match identity_watch_start_platform_error() {
+            None => {
+                assert!(cfg!(target_os = "windows"));
+            }
+            Some(error) => {
+                assert!(!cfg!(target_os = "windows"));
+                assert_eq!(error.code, "UNSUPPORTED_PLATFORM");
+                assert!(!error.retryable);
+            }
+        }
+        // Durdurma/durum komutlarının non-Windows kolu hata değil pasif durumdur.
+        let status = IdentityWatchStatus::inactive();
+        assert!(!status.active);
+        assert!(status.folder.is_none());
+        assert_eq!(status.side, "front");
+    }
+
+    #[test]
+    fn identity_watch_error_codes_are_distinct_from_scanner_unavailable() {
+        // İş 4 sözleşmesi: WATCH_* kodları ayrık; SCANNER_UNAVAILABLE WIA
+        // cihaz hattına aittir (klasör izlemede cihaz anlık gerekmez).
+        assert_eq!(
+            IdentityScannerError::watch_folder_unavailable().code,
+            "WATCH_FOLDER_UNAVAILABLE"
+        );
+        assert_eq!(
+            IdentityScannerError::watch_already_active().code,
+            "WATCH_ALREADY_ACTIVE"
+        );
+        assert!(IdentityScannerError::watch_folder_unavailable().retryable);
+        assert!(!IdentityScannerError::watch_already_active().retryable);
     }
 
     #[cfg(not(debug_assertions))]
@@ -3246,6 +3895,76 @@ async fn discard_identity_scan() -> Result<bool, IdentityScannerError> {
     #[cfg(not(target_os = "windows"))]
     {
         Err(IdentityScannerError::unsupported_platform())
+    }
+}
+
+/// Klasör izlemenin platform kararı (saf, test edilebilir): Windows None
+/// (devam eder), diğerleri UNSUPPORTED_PLATFORM. Komut bu sonucu döndürür —
+/// Linux CI'sı komut sözleşmesini bu fonksiyon üzerinden mühürler.
+fn identity_watch_start_platform_error() -> Option<IdentityScannerError> {
+    if cfg!(target_os = "windows") {
+        None
+    } else {
+        Some(IdentityScannerError::unsupported_platform())
+    }
+}
+
+/// İş 4 — izlenen klasöre düşen kimlik görüntüsünü (Epson scan-to-folder)
+/// mevcut OCR hattından geçirip `identity-watch-scan` olayıyla döndürür.
+/// Yalnız Windows; diğer platformlar graceful UNSUPPORTED_PLATFORM alır.
+#[tauri::command]
+async fn start_identity_watch(
+    app: AppHandle,
+    side: String,
+    folder: Option<String>,
+) -> Result<IdentityWatchStatus, IdentityScannerError> {
+    validate_identity_scan_side(&side)?;
+    if let Some(error) = identity_watch_start_platform_error() {
+        let _ = (&app, &folder);
+        return Err(error);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return start_identity_watch_windows(&app, &side, folder.as_deref());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Platform kapısı yukarıda reddetti; bu kol yalnız tip kontrolü için.
+        Err(identity_watch_start_platform_error()
+            .expect("non-windows platforms are always rejected"))
+    }
+}
+
+/// İzlemeyi durdurur ve konfigürasyona `enabled=false` yazar. Windows dışında
+/// hiç başlamamış olabileceğinden hata değil pasif durum döner.
+#[tauri::command]
+async fn stop_identity_watch(app: AppHandle) -> Result<IdentityWatchStatus, IdentityScannerError> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(stop_identity_watch_windows(&app))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = &app;
+        Ok(IdentityWatchStatus::inactive())
+    }
+}
+
+/// UI rozeti için anlık izleme durumu (aktif oturum yoksa konfigdeki klasör).
+#[tauri::command]
+async fn get_identity_watch_status(app: AppHandle) -> IdentityWatchStatus {
+    #[cfg(target_os = "windows")]
+    {
+        identity_watch_status_snapshot(&app)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = &app;
+        IdentityWatchStatus::inactive()
     }
 }
 
@@ -3911,6 +4630,7 @@ fn main() {
         .setup(|app| {
             let supervisor = RuntimeSupervisor::new();
             app.manage(supervisor);
+            app.manage(IdentityWatchState::default());
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 let state = app_handle.state::<RuntimeSupervisor>();
@@ -3968,6 +4688,9 @@ fn main() {
             pick_identity_scan_file,
             identity_scan_from_bytes,
             discard_identity_scan,
+            start_identity_watch,
+            stop_identity_watch,
+            get_identity_watch_status,
             pick_document_import_file,
             export_document_bytes,
             pending_purchase_draft::persist_pending_purchase_draft,

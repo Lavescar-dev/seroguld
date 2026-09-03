@@ -9,7 +9,7 @@ type TauriGlobal = typeof globalThis & {
 };
 
 export type IdentityScanSide = 'front' | 'back';
-export type IdentityScanSource = 'wia' | 'file';
+export type IdentityScanSource = 'wia' | 'file' | 'watch';
 export type IdentityScanMimeType = 'image/jpeg' | 'image/png' | 'image/tiff' | 'image/bmp';
 export type IdentityScannerPlatform = 'windows' | 'macos' | 'linux' | 'unknown';
 export type IdentityScannerErrorCode =
@@ -25,6 +25,8 @@ export type IdentityScannerErrorCode =
   | 'OCR_UNAVAILABLE'
   | 'OCR_FAILED'
   | 'TEMP_CLEANUP_FAILED'
+  | 'WATCH_FOLDER_UNAVAILABLE'
+  | 'WATCH_ALREADY_ACTIVE'
   | 'INTERNAL_ERROR';
 
 export interface IdentityScannerCapabilities {
@@ -33,6 +35,8 @@ export interface IdentityScannerCapabilities {
   wiaAcquisition: boolean;
   localOcr: boolean;
   imageFileFallback: boolean;
+  /** İş 4: klasör izleme (scan-to-folder) hattı — WIA diyaloguna alternatif. */
+  watchFolder: boolean;
   maxFileBytes: number;
   acceptedMimeTypes: IdentityScanMimeType[];
   ocrDanishAvailable: boolean;
@@ -60,6 +64,13 @@ export interface IdentityScannerErrorPayload {
   code: IdentityScannerErrorCode;
   message: string;
   retryable: boolean;
+}
+
+/** `get_identity_watch_status` / `start_identity_watch` / `stop_identity_watch` yükü. */
+export interface IdentityWatchStatus {
+  active: boolean;
+  folder: string | null;
+  side: IdentityScanSide;
 }
 
 export class IdentityScannerBridgeError extends Error implements IdentityScannerErrorPayload {
@@ -300,6 +311,8 @@ const IDENTITY_SCANNER_ERROR_CODES: IdentityScannerErrorCode[] = [
   'OCR_UNAVAILABLE',
   'OCR_FAILED',
   'TEMP_CLEANUP_FAILED',
+  'WATCH_FOLDER_UNAVAILABLE',
+  'WATCH_ALREADY_ACTIVE',
   'INTERNAL_ERROR',
 ];
 
@@ -310,6 +323,7 @@ function unsupportedIdentityScannerCapabilities(platform: IdentityScannerPlatfor
     wiaAcquisition: false,
     localOcr: false,
     imageFileFallback: false,
+    watchFolder: false,
     maxFileBytes: 10 * 1024 * 1024,
     acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
     // Probe yok: sessiz geç (yanlış "Danca paketi yok" uyarısı olmasın).
@@ -409,6 +423,71 @@ export async function discardIdentityScan(): Promise<boolean> {
     return await invokeDesktop<boolean>('discard_identity_scan');
   } catch (error) {
     throw identityScannerBridgeError(error);
+  }
+}
+
+/**
+ * İş 4 — klasör izlemeyi başlatır (yalnız Windows; diğer platformlar
+ * UNSUPPORTED_PLATFORM alır). `folder` verilmezse masaüstü tarafı
+ * %USERPROFILE%\Pictures\SeroGuld-Scan varsayılanını kullanır. İzlenen
+ * klasöre düşen görüntü `identity-watch-scan` olayıyla döner.
+ */
+export async function startIdentityWatch(
+  side: IdentityScanSide,
+  folder?: string | null,
+): Promise<IdentityWatchStatus> {
+  await requireIdentityScannerCapabilities();
+  const normalizedFolder = typeof folder === 'string' && folder.trim() ? folder.trim() : null;
+  try {
+    return await invokeDesktop<IdentityWatchStatus>('start_identity_watch', {
+      side,
+      folder: normalizedFolder,
+    });
+  } catch (error) {
+    throw identityScannerBridgeError(error);
+  }
+}
+
+/**
+ * Klasör izlemeyi durdurur. Windows dışında izleme hiç başlamamış olabileceği
+ * için hata değil pasif durum döner (Rust tarafıyla aynı sözleşme).
+ */
+export async function stopIdentityWatch(): Promise<IdentityWatchStatus> {
+  if (!isTauriRuntime()) return { active: false, folder: null, side: 'front' };
+  try {
+    return await invokeDesktop<IdentityWatchStatus>('stop_identity_watch');
+  } catch (error) {
+    throw identityScannerBridgeError(error);
+  }
+}
+
+/**
+ * `identity-watch-scan` / `identity-watch-error` olaylarına abone olur.
+ * Tarama yükü mevcut IdentityScanResult sözleşmesidir (yeni parse yok);
+ * hata yükü IdentityScannerErrorPayload'dır.
+ */
+export async function onIdentityWatchScan(
+  onScan: (result: IdentityScanResult) => void,
+  onError?: (error: IdentityScannerErrorPayload) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) return () => undefined;
+  try {
+    const module = await import('@tauri-apps/api/event');
+    const unlistenScan = await module.listen<IdentityScanResult>(
+      'identity-watch-scan',
+      (event) => onScan(event.payload),
+    );
+    const unlistenError = onError
+      ? await module.listen<IdentityScannerErrorPayload>('identity-watch-error', (event) =>
+          onError?.(event.payload),
+        )
+      : null;
+    return () => {
+      void unlistenScan();
+      if (unlistenError) void unlistenError();
+    };
+  } catch {
+    return () => undefined;
   }
 }
 
