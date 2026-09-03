@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from app.config import Settings
 from app.services.woocommerce import (
     DESC_FOOTER_DA_DEFAULT,
@@ -15,6 +17,7 @@ from app.services.woocommerce import (
     _build_badge_meta,
     _spec_strip_text,
     build_publish_payload,
+    compute_suggested_shop_price,
 )
 
 CATEGORY_MAP = {
@@ -80,6 +83,7 @@ def _product(**overrides) -> SimpleNamespace:
         inventory_category="taki",
         inventory_subcategory=None,
         woocommerce_product_id=None,
+        purchase_price_dkk=None,
         ai_description=AI_BUNDLE,
         photos=[],
     )
@@ -475,3 +479,116 @@ def test_seo_title_suffix_skipped_when_title_long() -> None:
     )
     meta = _meta_map(payload)
     assert meta["_yoast_wpseo_title"] == long_title
+
+
+# ---------------------------------------------------------------------------
+# Promille clamp (g.999) + Pt/Pd saflık çarpanı
+# ---------------------------------------------------------------------------
+
+def test_metal_pricing_promille_never_exceeds_999() -> None:
+    """99.99% saflık 'g.1000' üretemez — eklenti sözleşmesi üç hanedir."""
+    payload, _ = build_publish_payload(
+        product=_product(
+            purity_karat="24K",
+            purity_percentage=Decimal("99.99"),
+            woo_markup_rate=Decimal("0.30"),
+        ),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    assert _meta_map(payload)["_metal_purity"] == "g.999"
+
+
+def test_metal_pricing_promille_rounds_down() -> None:
+    """95.05% → 950.5 promille: aşağı yuvarlanır (saflık fazla bildirilmez)."""
+    payload, _ = build_publish_payload(
+        product=_product(purity_percentage=Decimal("95.05"), woo_markup_rate=Decimal("0.30")),
+        regular_price_dkk=Decimal("100"),
+        name=None,
+        images=[],
+        settings=_settings(),
+    )
+    assert _meta_map(payload)["_metal_purity"] == "g.950"
+
+
+def _patch_shop_price_env(
+    monkeypatch: pytest.MonkeyPatch,
+    rates: dict,
+) -> None:
+    """Shop-price önerisinin profil/settings bağımlılıklarını sabitler."""
+    import app.config as config_module
+    from app.services import market_rate_profile
+
+    monkeypatch.setattr(
+        market_rate_profile,
+        "get_effective_market_rate_profile_cached",
+        lambda: rates,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            woocommerce_metal_markup_percent="0",
+            woocommerce_minimum_margin_percent="0",
+        ),
+    )
+
+
+def test_shop_price_applies_purity_factor_to_platinum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pt %95 alaşım tam spotla değil saflık oranıyla fiyatlanır."""
+    _patch_shop_price_env(
+        monkeypatch,
+        {"platinum_dkk": "290.00", "palladium_dkk": "220.00"},
+    )
+    product = _product(
+        metal_type=SimpleNamespace(value="platinum"),
+        purity_karat=None,
+        purity_percentage=Decimal("95.00"),
+        weight_grams=Decimal("10"),
+    )
+    price, reason = compute_suggested_shop_price(product)
+    assert reason is None
+    # 290.00 × 0.950 × 10g = 2755.00
+    assert price == Decimal("2755.00")
+
+
+def test_shop_price_applies_purity_factor_to_palladium(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_shop_price_env(
+        monkeypatch,
+        {"platinum_dkk": "290.00", "palladium_dkk": "220.00"},
+    )
+    product = _product(
+        metal_type=SimpleNamespace(value="palladium"),
+        purity_karat=None,
+        purity_percentage=Decimal("50.00"),
+        weight_grams=Decimal("10"),
+    )
+    price, reason = compute_suggested_shop_price(product)
+    assert reason is None
+    # 220.00 × 0.500 × 10g = 1100.00
+    assert price == Decimal("1100.00")
+
+
+def test_shop_price_ptpd_without_purity_uses_full_spot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Saflık girilmemişse (ör. saf bar) tam spot fiyat kullanılır."""
+    _patch_shop_price_env(
+        monkeypatch,
+        {"platinum_dkk": "290.00", "palladium_dkk": "220.00"},
+    )
+    product = _product(
+        metal_type=SimpleNamespace(value="platinum"),
+        purity_karat=None,
+        purity_percentage=None,
+        weight_grams=Decimal("10"),
+    )
+    price, reason = compute_suggested_shop_price(product)
+    assert reason is None
+    assert price == Decimal("2900.00")
