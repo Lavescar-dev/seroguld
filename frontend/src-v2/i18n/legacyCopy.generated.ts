@@ -200,6 +200,7 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Karar bekliyor": { en: "Awaiting decision", da: "Afventer beslutning" },
   "Karar gerekçesi / operatör notu": { en: "Decision rationale / operator note", da: "Beslutningsbegrundelse / operatørnotat" },
   "Karar gerekçesi veya not": { en: "Decision rationale or note", da: "Beslutningsbegrundelse eller notat" },
+  "Karat, gümüş, bar, platin, palladium ve plet fiyatlarını seroguld.dk Priser sayfasından çek": { en: "Pull karat, silver, bar, platinum, palladium and plet prices from the seroguld.dk Priser page", da: "Hent karat-, sølv-, barre-, platin-, palladium- og pletsølvpriser fra seroguld.dk Priser-siden" },
   "Karat ve gümüş fiyatlarını seroguld.dk Priser sayfasından çek": { en: "Pull karat and silver prices from the seroguld.dk Priser page", da: "Hent karat- og sølvpriser fra seroguld.dk Priser-siden" },
   "Karat ve gümüş oranları seroguld.dk \"Priser\" sayfasından çekilir (üst çubuk → Au/Ag →": { en: "Karat and silver rates are pulled from the seroguld.dk \"Priser\" page (top bar → Au/Ag →", da: "Karat- og sølvkurser hentes fra seroguld.dk \"Priser\"-siden (topbjælke → Au/Ag →" },
   "Katalog ürün detayı": { en: "Catalog product detail", da: "Katalogproduktdetaljer" },
