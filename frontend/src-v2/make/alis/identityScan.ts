@@ -4,8 +4,12 @@ import {
   acquireIdentityScan,
   getIdentityScannerCapabilities,
   identityScanFromBytes,
+  onIdentityWatchScan,
   pickIdentityScanFile,
+  startIdentityWatch,
+  stopIdentityWatch,
   writeUiDiagnostic,
+  type IdentityWatchStatus,
 } from '@/lib/desktop';
 
 import type { EditableCustomer } from './types';
@@ -33,6 +37,8 @@ export type IdentityOcrLanguageInfo = {
 export type IdentityScannerCapabilities = {
   scanner: boolean;
   file: boolean;
+  /** İş 4: klasör izleme (scan-to-folder) yeteneği. */
+  watch: boolean;
   message?: string;
   ocr?: IdentityOcrLanguageInfo;
 };
@@ -503,7 +509,7 @@ export function applyConfirmedIdentityResult(customer: EditableCustomer, result:
 }
 
 export function normalizeIdentityScannerCapabilities(value: unknown): IdentityScannerCapabilities {
-  if (typeof value === 'boolean') return { scanner: value, file: value };
+  if (typeof value === 'boolean') return { scanner: value, file: value, watch: value };
   const record = asRecord(value);
   const supported = record?.supported;
   const scanner = supported === false
@@ -512,6 +518,9 @@ export function normalizeIdentityScannerCapabilities(value: unknown): IdentitySc
   const file = supported === false
     ? false
     : Boolean(record?.imageFileFallback ?? record?.file ?? record?.file_picker ?? record?.file_picker_available ?? record?.can_pick_file);
+  const watch = supported === false
+    ? false
+    : Boolean(record?.watchFolder ?? record?.watch_folder);
   const danishAvailable = record?.ocrDanishAvailable ?? record?.ocr_danish_available;
   const languagesRaw: unknown = record?.ocrAvailableLanguages ?? record?.ocr_available_languages;
   const ocr: IdentityOcrLanguageInfo | undefined = danishAvailable === undefined
@@ -523,7 +532,7 @@ export function normalizeIdentityScannerCapabilities(value: unknown): IdentitySc
           ? languagesRaw.map((tag) => text(tag)).filter(Boolean)
           : [],
       };
-  return { scanner, file, message: text(record?.message) || undefined, ocr };
+  return { scanner, file, watch, message: text(record?.message) || undefined, ocr };
 }
 
 export function extractIdentityScanText(value: unknown): string {
@@ -671,6 +680,30 @@ export function mergeSideScanResults(
   };
 }
 
+// İş 4 — tarayıcı hata kodlarının UI ayrımı (pure). Köprü hatası ya da hata
+// payload'ı şeklinde gelen nesneyi {code, message} olarak açıklar:
+// SCAN_CANCELLED sessizdir (kullanıcı iptali hata değildir) → null.
+// Bilinen teşhis kodlarına saha metni (cihaz açık/ağda mı, WIA sürücüsü,
+// Epson profili JPEG+tek sayfa) bağlanır; diğerleri Rust mesajını korur.
+export type DescribedScannerError = { code: string; message: string };
+
+export function describeScannerError(error: unknown): DescribedScannerError | null {
+  const record = error && typeof error === 'object' ? (error as { code?: unknown; message?: unknown }) : null;
+  const code = typeof record?.code === 'string' && record.code ? record.code : 'INTERNAL_ERROR';
+  if (code === 'SCAN_CANCELLED') return null;
+  const hints: Record<string, string> = {
+    SCANNER_UNAVAILABLE:
+      'Tarayıcı bulunamadı. Cihazın açık ve aynı ağda olduğundan, Windows’ta WIA tarayıcı sürücüsünün kurulu olduğundan emin olun (Epson ET-3850 kurulumu için kimlik tarayıcı runbook’una bakın). Cihaz WIA üzerinden cevap vermiyorsa tarayıcının “klasöre tara” profilini kullanıp “Klasörden” izlemesini başlatın.',
+    INVALID_IMAGE:
+      'Görüntü okunamadı. Epson tarayıcı profilinde çıktı biçimi JPEG, tek sayfa ve yaklaşık 300 dpi olacak şekilde ayarlayın; PDF ve çok sayfalı taramalar desteklenmez.',
+    WATCH_FOLDER_UNAVAILABLE:
+      'İzlenecek klasör açılamadı — klasör yolunun geçerli ve erişilebilir olduğundan emin olun.',
+    WATCH_ALREADY_ACTIVE: 'Klasör izleme zaten açık — önce durdurun.',
+  };
+  const fallback = typeof record?.message === 'string' && record.message.trim() ? record.message : 'Tarama başarısız oldu.';
+  return { code, message: hints[code] ?? fallback };
+}
+
 export function useIdentityScan({
   customer: _customer,
   setCustomer,
@@ -682,15 +715,20 @@ export function useIdentityScan({
   onApplied?: () => void;
   uiVariant?: 'classic' | 'modern';
 }) {
-  const [capabilities, setCapabilities] = useState<IdentityScannerCapabilities>({ scanner: false, file: false });
+  const [capabilities, setCapabilities] = useState<IdentityScannerCapabilities>({ scanner: false, file: false, watch: false });
   const [status, setStatus] = useState<IdentityScanStatus>('checking');
   // Taramalar yüze göre tutulur: aynı yüzün yeniden taraması o yüzün sonucunu
   // günceller (bozuk tarama düzeltilebilir); ön+arka birleşimi kanoniktir.
   const [scanBySide, setScanBySide] = useState<{ front: IdentityParseResult | null; back: IdentityParseResult | null }>({ front: null, back: null });
   const [error, setError] = useState<string | null>(null);
+  // İş 4: hata kodu UI'da ayrışır — mesajın yanında teşhis kodu da gösterilir
+  // (exit 3 = cihaz yok ≠ iptal karışmasın).
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [scanMeta, setScanMeta] = useState<IdentityScanMeta | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<'front' | 'back', string>>>({});
+  // Klasör izleme durumu (rozet); null = hiç sorgulanmadı / destek yok.
+  const [watchStatus, setWatchStatus] = useState<IdentityWatchStatus | null>(null);
   const result = useMemo(() => mergeSideScanResults(scanBySide.front, scanBySide.back), [scanBySide]);
   const resultRef = useRef(result);
   resultRef.current = result;
@@ -701,6 +739,16 @@ export function useIdentityScan({
     ? `Danca OCR paketi bulunamadı (${capabilities.ocr.profileLanguage || 'profil dili'} kullanılıyor) — Danca karakterler hatalı okunabilir.`
     : null;
 
+  // Ortak hata bildirimi: describeScannerError iptali sessizce yutar (null),
+  // diğerlerini teşhis kodu + saha metniyle state'e yazar. true = hata gösterildi.
+  const reportScanError = useCallback((scanError: unknown) => {
+    const described = describeScannerError(scanError);
+    if (!described) return false;
+    setError(described.message);
+    setErrorCode(described.code);
+    return true;
+  }, []);
+
   const refreshCapabilities = useCallback(async () => {
     setStatus('checking');
     setError(null);
@@ -709,7 +757,7 @@ export function useIdentityScan({
       setCapabilities(next);
       setStatus(next.scanner || next.file ? 'ready' : 'unavailable');
     } catch {
-      setCapabilities({ scanner: false, file: false });
+      setCapabilities({ scanner: false, file: false, watch: false });
       setStatus('unavailable');
     }
   }, []);
@@ -777,18 +825,21 @@ export function useIdentityScan({
     if (!capabilities.scanner) return;
     setStatus('acquiring');
     setError(null);
+    setErrorCode(null);
     try {
       receive(await acquireIdentityScan(side), side);
     } catch (scanError) {
       setStatus('ready');
-      setError(scanError instanceof Error ? scanError.message : 'Tarayıcı başlatılamadı.');
+      // İptal (SCAN_CANCELLED) sessiz: describeScannerError null döner, mesaj kalmaz.
+      reportScanError(scanError);
     }
-  }, [capabilities.scanner, receive]);
+  }, [capabilities.scanner, receive, reportScanError]);
 
   const pickFile = useCallback(async (side: 'front' | 'back' = 'front') => {
     if (!capabilities.file) return;
     setStatus('acquiring');
     setError(null);
+    setErrorCode(null);
     try {
       const picked = await pickIdentityScanFile(side);
       if (picked == null) {
@@ -798,15 +849,16 @@ export function useIdentityScan({
       receive(picked, side);
     } catch (scanError) {
       setStatus('ready');
-      setError(scanError instanceof Error ? scanError.message : 'Kimlik dosyası açılamadı.');
+      reportScanError(scanError);
     }
-  }, [capabilities.file, receive]);
+  }, [capabilities.file, receive, reportScanError]);
 
   // R2-03 — sürükle-bırak: bırakılan görüntü doğrudan OCR akışına girer.
   const dropFile = useCallback(async (file: File, side: 'front' | 'back' = 'front') => {
     if (!capabilities.file) return;
     setStatus('acquiring');
     setError(null);
+    setErrorCode(null);
     try {
       const buffer = await file.arrayBuffer();
       let binary = '';
@@ -818,9 +870,53 @@ export function useIdentityScan({
       receive(await identityScanFromBytes(side, btoa(binary)), side);
     } catch (scanError) {
       setStatus('ready');
-      setError(scanError instanceof Error ? scanError.message : 'Kimlik dosyası okunamadı.');
+      reportScanError(scanError);
     }
-  }, [capabilities.file, receive]);
+  }, [capabilities.file, receive, reportScanError]);
+
+  // İş 4 — klasör izleme: Epson "klasöre tara" profilinin yazdığı klasörü
+  // izler; düşen görüntü mevcut receive() hattına girer (yeni parse YOK).
+  const startWatch = useCallback(async (side: 'front' | 'back' = 'front', folder?: string) => {
+    if (!capabilities.watch) return;
+    setError(null);
+    setErrorCode(null);
+    try {
+      setWatchStatus(await startIdentityWatch(side, folder));
+    } catch (watchError) {
+      reportScanError(watchError);
+    }
+  }, [capabilities.watch, reportScanError]);
+
+  const stopWatch = useCallback(async () => {
+    try {
+      setWatchStatus(await stopIdentityWatch());
+    } catch {
+      // Durdurma hatası parazit etmesin; bir sonraki durum sorgusu düzeltir.
+    }
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: () => void = () => undefined;
+    // Promise zinciri içinde çağır: masaüstü köprüsü yoksa (kısmen mock'lanmış
+    // test ortamları) hata zincire düşer ve sessizce yutulur.
+    void Promise.resolve()
+      .then(() =>
+        onIdentityWatchScan(
+          (result) => receive(result, result.side === 'back' ? 'back' : 'front'),
+          (errorPayload) => { reportScanError(errorPayload); },
+        ),
+      )
+      .then((unsubscribeFn) => {
+        if (disposed) unsubscribeFn();
+        else unsubscribe = unsubscribeFn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [receive, reportScanError]);
 
   const confirm = useCallback(() => {
     if (!result) return;
@@ -838,8 +934,11 @@ export function useIdentityScan({
     setPreviews({});
     setScanMeta(null);
     setError(null);
+    setErrorCode(null);
     setDiagnostic(null);
     setStatus(capabilities.scanner || capabilities.file ? 'ready' : 'unavailable');
+    // Klasör izleme oturumu bilinçli olarak durmaz: temizleme yalnız tarama
+    // sonuçlarını sıfırlar, izleme ayrı yaşam döngüsündedir.
   }, [capabilities.file, capabilities.scanner]);
 
   return useMemo(() => ({
@@ -848,14 +947,18 @@ export function useIdentityScan({
     result,
     previews,
     error,
+    errorCode,
     diagnostic,
     scanMeta,
     ocrNotice,
+    watchStatus,
     acquire,
     pickFile,
     dropFile,
+    startWatch,
+    stopWatch,
     confirm,
     clear,
     refreshCapabilities,
-  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, status]);
+  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, errorCode, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, startWatch, status, stopWatch, watchStatus]);
 }
