@@ -13,6 +13,9 @@ base64 = "0.22"
 aes-gcm = "0.10"
 keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 keyring-core = "1.0.0"
+# Klasör izleme (İş 4): Epson scan-to-folder hattı. Tauri store plugin yerine
+# doğrudan filesystem olay izleyici — watcher mevcut OCR hattını besler.
+notify = "6"
 rand = "0.8"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }

@@ -99,5 +99,6 @@ sızıntı uyarısı ver.
 - `docs/HANDOVER.md` — Detaylı teknisyen devir kılavuzu
 - `docs/PROJECT_HEALTH_AUDIT.md` — Sağlık denetimi + roadmap
 - `docs/DEV_RUNTIME_PROTOCOL.md` — Runtime protokolü
+- `docs/IDENTITY_SCANNER_RUNBOOK_DK_TR.md` — Kimlik tarayıcı saha runbook'u (Epson ET-3850 WIA + klasör izleme, DK+TR)
 - `docs/PRODUCTION_DESKTOP_RUNBOOK_TR.md` — Production deploy
 - `Makefile` — Tüm operasyon komutları

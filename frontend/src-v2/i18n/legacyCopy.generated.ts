@@ -415,6 +415,11 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "satır · incelemek için Detay": { en: "rows · open Detail to review", da: "rækker · gennemse med Detalje" },
   "Önce inceleme barından uygula veya vazgeç": { en: "Apply or discard in the review bar first", da: "Anvend eller annullér først i gennemgangsbaren" },
   "Ürün silinmiş olabilir veya bağlantı kesildi. Tekrar deneyebilir ya da listeyi yenileyebilirsiniz.": { en: "The product may have been deleted or the connection was lost. You can retry or refresh the list.", da: "Produktet er muligvis slettet, eller forbindelsen blev afbrudt. Du kan prøve igen eller opdatere listen." },
+  "Klasörden": { en: "From folder", da: "Fra mappe" },
+  "Klasör izleme açık": { en: "Folder watch active", da: "Mappeovervågning aktiv" },
+  "Durdur": { en: "Stop", da: "Stop" },
+  "Hata kodu:": { en: "Error code:", da: "Fejlkode:" },
+  "Epson tarayıcının klasöre tara profilinin yazdığı klasörü izler (varsayılan: Pictures\\SeroGuld-Scan)": { en: "Watches the folder the Epson scan-to-folder profile writes to (default: Pictures\\SeroGuld-Scan)", da: "Overvåger den mappe, Epsons skan-til-mappe-profil skriver i (standard: Pictures\\SeroGuld-Scan)" },
 
 };
 

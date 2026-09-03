@@ -8,15 +8,22 @@ vi.mock('@/lib/desktop', () => ({
   identityScanFromBytes: vi.fn(),
   discardIdentityScan: vi.fn(),
   writeUiDiagnostic: vi.fn(),
+  startIdentityWatch: vi.fn(),
+  stopIdentityWatch: vi.fn(),
+  onIdentityWatchScan: vi.fn(async () => () => undefined),
 }));
 
 import {
   acquireIdentityScan,
   getIdentityScannerCapabilities,
   identityScanFromBytes,
+  onIdentityWatchScan,
+  startIdentityWatch,
+  stopIdentityWatch,
   writeUiDiagnostic,
   type IdentityScanResult,
   type IdentityScannerCapabilities,
+  type IdentityScannerErrorPayload,
 } from '@/lib/desktop';
 import { useIdentityScan } from '../identityScan';
 import type { EditableCustomer } from '../types';
@@ -36,6 +43,7 @@ const TAURI_CAPABILITIES: IdentityScannerCapabilities = {
   wiaAcquisition: true,
   localOcr: true,
   imageFileFallback: true,
+  watchFolder: true,
   maxFileBytes: 10 * 1024 * 1024,
   acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
   ocrDanishAvailable: true,
@@ -63,6 +71,9 @@ const mockedCapabilities = vi.mocked(getIdentityScannerCapabilities);
 const mockedAcquire = vi.mocked(acquireIdentityScan);
 const mockedFromBytes = vi.mocked(identityScanFromBytes);
 const mockedWriteDiagnostic = vi.mocked(writeUiDiagnostic);
+const mockedStartWatch = vi.mocked(startIdentityWatch);
+const mockedStopWatch = vi.mocked(stopIdentityWatch);
+const mockedOnWatchScan = vi.mocked(onIdentityWatchScan);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,6 +87,7 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     expect(result.current.capabilities).toEqual({
       scanner: true,
       file: true,
+      watch: true,
       message: undefined,
       ocr: { danishAvailable: true, profileLanguage: 'da-DK', availableLanguages: ['da-DK', 'en-US'] },
     });
@@ -105,6 +117,78 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     });
     expect(result.current.status).toBe('ready');
     expect(result.current.error).toContain('cihaz mesgul');
+  });
+
+  it('SCAN_CANCELLED sessizdir — iptal hata degildir, mesaj ve kod kalmaz', async () => {
+    mockedAcquire.mockRejectedValueOnce({ code: 'SCAN_CANCELLED', message: 'Tarama iptal edildi.', retryable: true });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('ready');
+    expect(result.current.error).toBeNull();
+    expect(result.current.errorCode).toBeNull();
+  });
+
+  it('SCANNER_UNAVAILABLE ayrisir: saha metni + ekranda tesih kodu tasir', async () => {
+    // İş 4: exit 3 (cihaz yok) artik "iptal edildi" sanilmaz; kod gosterilir.
+    mockedAcquire.mockRejectedValueOnce({
+      code: 'SCANNER_UNAVAILABLE',
+      message: 'WIA tarayıcı hizmeti veya cihazı kullanılamıyor.',
+      retryable: true,
+    });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('ready');
+    expect(result.current.errorCode).toBe('SCANNER_UNAVAILABLE');
+    expect(result.current.error).toContain('ağda');
+    expect(result.current.error).toContain('WIA');
+  });
+
+  it('startWatch klasor izlemeyi acar; watch olayi mevcut receive hattina duser', async () => {
+    mockedStartWatch.mockResolvedValueOnce({ active: true, folder: 'C:\\Scan', side: 'front' });
+    let scanHandler: ((result: IdentityScanResult) => void) | undefined;
+    let errorHandler: ((error: IdentityScannerErrorPayload) => void) | undefined;
+    // Mount effect'i ilk cagriyi yapar: uygulamayi render'dan ONCE kur.
+    mockedOnWatchScan.mockImplementationOnce(async (onScan, onError) => {
+      scanHandler = onScan;
+      errorHandler = onError;
+      return () => undefined;
+    });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.startWatch('front');
+    });
+    expect(mockedStartWatch).toHaveBeenCalledWith('front', undefined);
+    expect(result.current.watchStatus).toEqual({ active: true, folder: 'C:\\Scan', side: 'front' });
+    // Izlenen klasore JPEG duserse identity-watch-scan payload'i ayni parse
+    // hattina girer (yeni parse yok) — source "watch", side on yuze duser.
+    await act(async () => {
+      scanHandler?.(scanResult({ source: 'watch' }));
+    });
+    expect(result.current.status).toBe('review');
+    expect(result.current.result?.documentType).toBe('passport');
+    // Watch hata olayi da tesih koduyla ayrisir.
+    await act(async () => {
+      errorHandler?.({ code: 'INVALID_IMAGE', message: 'Yalnızca geçerli JPG, PNG, TIFF veya BMP görüntüleri seçilebilir.', retryable: false });
+    });
+    expect(result.current.errorCode).toBe('INVALID_IMAGE');
+    expect(result.current.error).toContain('JPEG');
+  });
+
+  it('stopWatch izlemeyi kapatir ve durumu pasife cevirir', async () => {
+    mockedStopWatch.mockResolvedValueOnce({ active: false, folder: 'C:\\Scan', side: 'front' });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.stopWatch();
+    });
+    expect(result.current.watchStatus?.active).toBe(false);
   });
 
   it('dropFile goruntuyu base64 olarak byte akisina gonderir', async () => {
