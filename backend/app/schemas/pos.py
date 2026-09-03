@@ -643,6 +643,19 @@ class PosWorkspaceFinalizeRequest(AppBaseModel):
     purchase_vat_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
 
 
+class PosRepricingWarning(AppBaseModel):
+    """Finalize'da güncel fiyat matrisine oturmayan satır uyarısı.
+
+    Satır mevcut (dondurulmuş) tutarıyla kesinleşir; bu uyarı yalnız yanıtta
+    taşınır — satır tutarına, notes'a veya audit kaydına yazılmaz (idempotency
+    ve revision CAS etkilenmez).
+    """
+
+    row_key: str
+    label: str
+    reason: str  # 'rate_missing' — matris karşılığı yok
+
+
 class PosWorkspaceFinalizeResponse(AppBaseModel):
     session: PosSessionOutClerk
     document_sequence_no: int
@@ -652,6 +665,7 @@ class PosWorkspaceFinalizeResponse(AppBaseModel):
     uniconta_sync_status: str | None = None  # 'synced' | 'failed' | 'skipped' | None
     uniconta_invoice_number: str | None = None
     uniconta_sync_error: str | None = None
+    repricing_warnings: list[PosRepricingWarning] = []
 
 
 class PosWorkspaceOut(AppBaseModel):

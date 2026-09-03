@@ -4,6 +4,7 @@ import asyncio
 import json
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -388,3 +389,282 @@ def test_22b_quarter_row_prices_from_independent_22b_rate(monkeypatch) -> None:
         await engine.dispose()
 
     asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Finalize repricing uyarı sözleşmesi — matris dışı satırlar sessiz kalmaz
+# ---------------------------------------------------------------------------
+
+def _finalize_profile_json() -> str:
+    """99 karat KASITLI yok — 'gold:99' satırı matrise oturmasın."""
+    gold = {k: "2850.00" for k in ("14", "18", "21", "21.6", "22", "24")}
+    silver = {"999": "14.56", "925": "13.48", "830": "12.10"}
+    return json.dumps({"gold_rates_dkk": gold, "silver_rates_dkk": silver})
+
+
+async def _run_finalize_scenario(monkeypatch, lines_builder, body):
+    """Ortak finalize test iskeleti: profil enjekte et, uniconta/email no-op.
+
+    ``body(session, pos_session, finalize)`` — finalize asenkron callable'ı;
+    body içinde birden çok çağrı yapılabilir (ör. 409 idempotency testi).
+    """
+    from app.schemas.pos import PosWorkspaceFinalizeRequest
+    from app.services import pos_purchase_finalize
+    from app.services.pos_service import finalize_purchase_workspace
+
+    monkeypatch.setattr(
+        market_rate_profile,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            database_url="sqlite+aiosqlite:///test.db",
+            inventory_market_rate_profile_json=_finalize_profile_json(),
+        ),
+    )
+
+    async def _noop(*args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+    monkeypatch.setattr(pos_purchase_finalize, "_sync_uniconta", _noop)
+    monkeypatch.setattr(pos_purchase_finalize, "_send_afg_email_best_effort", _noop)
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with Session() as session:
+        clerk = User(email="finwarn-clerk@test.local", password_hash="x", name="C", role=RoleEnum.ADMIN)
+        customer = User(email="finwarn-cust@test.local", password_hash="x", name="K", role=RoleEnum.CUSTOMER)
+        session.add_all([clerk, customer])
+        await session.flush()
+        pos_session = PosSession(
+            session_code="FINWARN001",
+            display_token="display-finwarn",
+            clerk_user_id=clerk.id,
+            customer_id=customer.id,
+            trade_side=PosTradeSideEnum.BUY_FROM_CUSTOMER,
+            margin_percent_internal=Decimal("0.00"),
+            rate_source=PosRateSourceEnum.MANUAL,
+            live_rate_dkk=Decimal("2850.00"),
+            status=PosSessionStatusEnum.DRAFT,
+            visible_snapshot={},
+            notes=json.dumps({"kind": "purchase_workspace_v1", "workspace_revision": 1}),
+        )
+        session.add(pos_session)
+        await session.flush()
+        lines_builder(session, pos_session)
+        await session.commit()
+
+        async def finalize():
+            return await finalize_purchase_workspace(
+                session,
+                pos_session=pos_session,
+                payload=PosWorkspaceFinalizeRequest(),
+            )
+
+        await body(session, pos_session, finalize)
+
+    await engine.dispose()
+
+
+async def _first_line(session, pos_session) -> PosSessionLine | None:
+    return (
+        (
+            await session.execute(
+                select(PosSessionLine)
+                .where(PosSessionLine.pos_session_id == pos_session.id)
+                .order_by(PosSessionLine.line_no.asc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+def test_finalize_keeps_line_price_when_karat_key_missing_and_warns(monkeypatch) -> None:
+    """Matrise oturmayan satır donmuş değerinde KALIR ve yanıtta uyarı döner.
+
+    Koruma davranışı (rate 0 → satır eski tutarında) aynen sürer; eksik olan
+    görünürlüktü — artık ``repricing_warnings`` hangi satırın güncel oranla
+    fiyatlanamadığını söylüyor.
+    """
+
+    def lines(session, pos_session) -> None:
+        session.add(
+            PosSessionLine(
+                pos_session_id=pos_session.id,
+                line_no=1,
+                product_type=ProductTypeEnum.JEWELRY,
+                metal_type=MetalTypeEnum.YELLOW_GOLD,
+                weight_grams=Decimal("22.00"),
+                purity_karat="99K",
+                purity_percentage=Decimal("33.30"),
+                rate_dkk=Decimal("750.00"),
+                margin_percent_internal=Decimal("0.00"),
+                line_offer_dkk=Decimal("16500.00"),  # donmuş eski tutar
+                notes=json.dumps(
+                    {
+                        "source": "purchase_workspace",
+                        "row_key": "gold:99",
+                        "type_label": "99 karat (test)",
+                    }
+                ),
+            )
+        )
+
+    async def body(session, pos_session, finalize) -> None:
+        result = await finalize()
+        # Satır eski (dondurulmuş) tutarıyla kesinleşti — 0'a çekilmedi.
+        line = await _first_line(session, pos_session)
+        assert line is not None
+        assert line.line_offer_dkk == Decimal("16500.00")
+        assert line.rate_dkk == Decimal("750.00")
+        # Uyarı: hangi satır, neden.
+        assert len(result.repricing_warnings) == 1
+        warning = result.repricing_warnings[0]
+        assert warning.row_key == "gold:99"
+        assert warning.label == "99 karat (test)"
+        assert warning.reason == "rate_missing"
+        # Toplam donmuş tutardan geldi (korumalı satır sayesinde > 0).
+        assert result.session.final_offer_dkk == Decimal("16500.00")
+
+    asyncio.run(_run_finalize_scenario(monkeypatch, lines, body))
+
+
+def test_finalize_zero_total_lists_unpriced_rows_in_422(monkeypatch) -> None:
+    """Tüm satırlar matris dışı + donmuş tutar 0 → 422 satırları adlandırır.
+
+    Eski davranışta tek satırlık anlamsız 'Toplam teklif tutarı geçersiz'
+    dönüyordu; müşteri hangi satırın sorunlu olduğunu göremiyordu.
+    """
+    from fastapi import HTTPException
+    import pytest
+
+    def lines(session, pos_session) -> None:
+        session.add(
+            PosSessionLine(
+                pos_session_id=pos_session.id,
+                line_no=1,
+                product_type=ProductTypeEnum.JEWELRY,
+                metal_type=MetalTypeEnum.YELLOW_GOLD,
+                weight_grams=Decimal("10.00"),
+                purity_karat="99K",
+                purity_percentage=Decimal("33.30"),
+                rate_dkk=Decimal("0.00"),
+                margin_percent_internal=Decimal("0.00"),
+                line_offer_dkk=Decimal("0.00"),
+                notes=json.dumps(
+                    {"source": "purchase_workspace", "row_key": "gold:99", "type_label": "99 karat (test)"}
+                ),
+            )
+        )
+
+    async def body(session, pos_session, finalize) -> None:
+        with pytest.raises(HTTPException) as excinfo:
+            await finalize()
+        detail = str(excinfo.value.detail)
+        assert "99 karat (test)" in detail
+        assert "karşılık bulunamadı" in detail
+        assert detail != "Toplam teklif tutarı geçersiz"
+
+    asyncio.run(_run_finalize_scenario(monkeypatch, lines, body))
+
+
+def test_finalize_accepts_mixed_priced_and_unpriced_rows(monkeypatch) -> None:
+    """Tek satır fiyatlanamasa bile toplam > 0 ise finalize BAŞARILI döner.
+
+    Bug'ın en sık tetiklenme biçimi: satırların çoğu matrisli, biri değil →
+    tüm işlem bloklanmaz; uyarı listesi operatöre gider.
+    """
+
+    def lines(session, pos_session) -> None:
+        session.add_all(
+            [
+                PosSessionLine(
+                    pos_session_id=pos_session.id,
+                    line_no=1,
+                    product_type=ProductTypeEnum.JEWELRY,
+                    metal_type=MetalTypeEnum.YELLOW_GOLD,
+                    weight_grams=Decimal("10.00"),
+                    purity_karat="24K",
+                    purity_percentage=Decimal("99.90"),
+                    rate_dkk=Decimal("0.00"),
+                    margin_percent_internal=Decimal("0.00"),
+                    line_offer_dkk=Decimal("0.00"),
+                    notes=json.dumps({"source": "purchase_workspace", "row_key": "gold:24", "type_label": "24 karat"}),
+                ),
+                PosSessionLine(
+                    pos_session_id=pos_session.id,
+                    line_no=2,
+                    product_type=ProductTypeEnum.JEWELRY,
+                    metal_type=MetalTypeEnum.YELLOW_GOLD,
+                    weight_grams=Decimal("5.00"),
+                    purity_karat="99K",
+                    purity_percentage=Decimal("33.30"),
+                    rate_dkk=Decimal("0.00"),
+                    margin_percent_internal=Decimal("0.00"),
+                    line_offer_dkk=Decimal("1000.00"),  # donmuş eski tutar
+                    notes=json.dumps({"source": "purchase_workspace", "row_key": "gold:99", "type_label": "99 karat (test)"}),
+                ),
+            ]
+        )
+
+    async def body(session, pos_session, finalize) -> None:
+        result = await finalize()
+        # 24K canlı 2850×10 = 28500 + korunan donmuş 1000 = 29500.
+        assert result.session.final_offer_dkk == Decimal("29500.00")
+        assert len(result.repricing_warnings) == 1
+        assert result.repricing_warnings[0].row_key == "gold:99"
+        # Matrisli satırda uyarı yok (yalnız matris dışı satır uyarır).
+        assert all(w.row_key != "gold:24" for w in result.repricing_warnings)
+
+    asyncio.run(_run_finalize_scenario(monkeypatch, lines, body))
+
+
+def test_finalize_with_warnings_stays_idempotent(monkeypatch) -> None:
+    """Uyarılı finalize sonrası session CONFIRMED; ikinci finalize 409 atar.
+
+    ``repricing_warnings`` yalnız yanıtta taşınır — satır tutarına, notes'a
+    veya audit kaydına yazılmaz; idempotency/CAS sözleşmesi değişmez.
+    """
+    from fastapi import HTTPException
+    import pytest
+
+    def lines(session, pos_session) -> None:
+        session.add(
+            PosSessionLine(
+                pos_session_id=pos_session.id,
+                line_no=1,
+                product_type=ProductTypeEnum.JEWELRY,
+                metal_type=MetalTypeEnum.YELLOW_GOLD,
+                weight_grams=Decimal("10.00"),
+                purity_karat="99K",
+                purity_percentage=Decimal("33.30"),
+                rate_dkk=Decimal("200.00"),
+                margin_percent_internal=Decimal("0.00"),
+                line_offer_dkk=Decimal("2000.00"),
+                notes=json.dumps({"source": "purchase_workspace", "row_key": "gold:99", "type_label": "99 karat (test)"}),
+            )
+        )
+
+    async def body(session, pos_session, finalize) -> None:
+        first = await finalize()
+        assert first.session.final_offer_dkk == Decimal("2000.00")
+        assert len(first.repricing_warnings) == 1
+        frozen_total = first.session.final_offer_dkk
+
+        with pytest.raises(HTTPException) as excinfo:
+            await finalize()
+        assert excinfo.value.status_code == 409
+
+        refreshed = await session.get(PosSession, pos_session.id)
+        assert refreshed is not None
+        assert refreshed.status == PosSessionStatusEnum.CONFIRMED
+        assert refreshed.final_offer_dkk == frozen_total
+        # Satır tutarı ikinci çağrıda da değişmedi (uyarı yanıt-sade).
+        line = await _first_line(session, pos_session)
+        assert line is not None
+        assert line.line_offer_dkk == Decimal("2000.00")
+
+    asyncio.run(_run_finalize_scenario(monkeypatch, lines, body))
