@@ -1592,7 +1592,7 @@ export function useAlisMakeState(): AlisPageProps {
       ]);
       requestCriticalBackup();
       const docNumber = response?.document_number ? `#${response.document_number}` : 'Belge';
-      const ucStatus = (response as PosWorkspaceFinalizeResponse & { uniconta_sync_status?: string | null })?.uniconta_sync_status;
+      const ucStatus = response?.uniconta_sync_status;
       if (ucStatus === 'failed') {
         toast.warning(`${docNumber} kaydedildi`, 'Uniconta senkronizasyonu başarısız — daha sonra tekrar denenebilir.');
       } else if (ucStatus === 'synced') {
@@ -1600,9 +1600,21 @@ export function useAlisMakeState(): AlisPageProps {
       } else {
         toast.success(`${docNumber} kaydedildi`);
       }
+      // Matris dışı satırlar eski (dondurulmuş) tutarlarıyla kesinleşti —
+      // operatör hangi satırların güncel oranla fiyatlanamadığını görsün.
+      const repricingWarnings = response?.repricing_warnings ?? [];
+      if (repricingWarnings.length > 0) {
+        const shown = repricingWarnings.slice(0, 3).map((warning) => warning.label).join(', ');
+        const rest = repricingWarnings.length - Math.min(repricingWarnings.length, 3);
+        toast.warning(
+          `${repricingWarnings.length} satır güncel oranda fiyatlanamadı`,
+          `Matris eksik: ${shown}${rest > 0 ? ` (+${rest} satır)` : ''}. Bu satırlar eski tutarlarıyla kesinleştirildi.`,
+        );
+      }
     },
     onError: (error) => {
-      toast.error('Belge kaydedilemedi', error instanceof Error ? error.message : undefined);
+      const title = error instanceof ApiError && error.status === 422 ? 'Kesinleştirme doğrulaması başarısız' : 'Belge kaydedilemedi';
+      toast.error(title, localizeApiError(error));
     },
   });
 

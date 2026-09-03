@@ -330,11 +330,14 @@ def _workspace_market_rate_dkk(market_rates: PosWorkspaceMarketRates, row_key: s
         return quantize_2(market_rates.plet_dkk)
     if row_key.startswith("gold:"):
         key = row_key.split(":", 1)[1]
-        return quantize_2(market_rates.gold_rates_dkk.get(key))
+        # Matriste olmayan karat → None; quantize_2(None) InvalidOperation
+        # fırlatıp finalize'ı 500'e çeviriyordu. Eksik anahtar 0 döner —
+        # çağıran (finalize/workspace) rate<=0 yolunda satırı korur.
+        return quantize_2(market_rates.gold_rates_dkk.get(key) or Decimal("0"))
     definition = _silver_definition_by_row_key(row_key)
     if definition is not None:
         key = str(definition["lodighed"])
-        return quantize_2(market_rates.silver_rates_dkk.get(key))
+        return quantize_2(market_rates.silver_rates_dkk.get(key) or Decimal("0"))
     return Decimal("0.00")
 
 

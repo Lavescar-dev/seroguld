@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.models.enums import PosSessionStatusEnum, PosTradeSideEnum
 from app.models.pos_session import PosSession
 from app.models.pos_session_line import PosSessionLine
-from app.schemas.pos import PosWorkspaceFinalizeRequest, PosWorkspaceFinalizeResponse
+from app.schemas.pos import PosRepricingWarning, PosWorkspaceFinalizeRequest, PosWorkspaceFinalizeResponse
 from app.services.uniconta_service import sync_pos_document_to_uniconta
 
 LOGGER = logging.getLogger(__name__)
@@ -78,8 +78,10 @@ async def finalize_purchase_workspace(
     # dondur (rate × (1 − avance/100) × gram). Operatör oran editöründe bir değer
     # değiştirip satıra dokunmadan finalize etse bile belge güncel oranı kullanır —
     # donmuş/bayat tutarla kesinleşme (yanlış ödeme) olmaz. Matrise oturmayan
-    # (rate 0) satır mevcut değerinde kalır.
+    # (rate 0) satır mevcut değerinde kalır ve yanıtta repricing_warnings olarak
+    # döner — sessiz kalırsa toplam 0'a düştüğünde neden anlaşılmaz.
     finalize_market_rates = await core._workspace_market_rates_from_session(pos_session)
+    repricing_warnings: list[PosRepricingWarning] = []
     for line in pos_lines:
         meta = core._parse_workspace_line_meta(line.notes)
         row_key = str(meta.get("row_key") or core._infer_workspace_row_key(line) or "")
@@ -101,6 +103,20 @@ async def finalize_purchase_workspace(
             line.line_offer_dkk = core._workspace_row_line_total(
                 unit_price_dkk=unit, gram=core.quantize_2(core.to_decimal(line.weight_grams))
             )
+        else:
+            repricing_warnings.append(
+                PosRepricingWarning(
+                    row_key=row_key or kind,
+                    label=str(
+                        meta.get("type_label")
+                        or meta.get("label")
+                        or row_key
+                        or kind
+                        or f"satır {line.line_no}"
+                    ),
+                    reason="rate_missing",
+                )
+            )
     await session.flush()
 
     await core._sync_buy_session_summary_from_lines(session, pos_session=pos_session)
@@ -108,7 +124,15 @@ async def finalize_purchase_workspace(
         sum((core.to_decimal(line.line_offer_dkk or Decimal("0")) for line in pos_lines), Decimal("0.00"))
     )
     if target_total <= 0:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Toplam teklif tutarı geçersiz")
+        if repricing_warnings:
+            labels = ", ".join(w.label for w in repricing_warnings[:5])
+            detail = (
+                "Fiyat matrisinde karşılık bulunamadığı için satırlar fiyatlanamadı: "
+                f"{labels}. Oran editöründen ilgili karatı/metali kontrol edin."
+            )
+        else:
+            detail = "Toplam teklif tutarı geçersiz"
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
 
     workspace_note = core._parse_workspace_note_payload(pos_session.notes)
     if payload.purchase_vat_enabled is not None:
@@ -259,6 +283,7 @@ async def finalize_purchase_workspace(
             uniconta_sync_status=source_document.uniconta_sync_status,
             uniconta_invoice_number=source_document.uniconta_invoice_number,
             uniconta_sync_error=source_document.uniconta_sync_error,
+            repricing_warnings=repricing_warnings,
         )
 
     pos_document, _ = await core._ensure_pos_document(
@@ -318,6 +343,7 @@ async def finalize_purchase_workspace(
         uniconta_sync_status=pos_document.uniconta_sync_status,
         uniconta_invoice_number=pos_document.uniconta_invoice_number,
         uniconta_sync_error=pos_document.uniconta_sync_error,
+        repricing_warnings=repricing_warnings,
     )
 
 

@@ -28,6 +28,57 @@ export function localizeApiError(error: unknown): string {
   return 'İşlem tamamlanamadı. Lütfen tekrar deneyin.';
 }
 
+// Pydantic 422 doğrulama hataları `detail`'i NESNE LİSTESİ olarak döndürür
+// ({loc: ["body","postal_code"], msg: "...", type: "missing"}). Ham listeyi
+// kullanıcıya göstermek yerine okunur Türkçe maddelere çevirir.
+const DETAIL_FIELD_LABELS: Record<string, string> = {
+  reg_number: 'reg. nr',
+  account_number: 'kontonr',
+  postal_code: 'postnr',
+  cpr_number: 'CPR',
+  phone: 'telefon',
+  weight_grams: 'gram',
+  notes: 'not',
+};
+
+const DETAIL_TYPE_LABELS: Record<string, string> = {
+  missing: 'zorunlu alan',
+  string_too_short: 'uzunluk',
+  string_too_long: 'uzunluk',
+  value_error: 'geçersiz değer',
+  greater_than: 'geçersiz değer',
+  json_invalid: 'istek gövdesi okunamadı',
+};
+
+const DETAIL_MAX_ITEMS = 3;
+const DETAIL_MESSAGE_LIMIT = 240;
+
+function detailFieldName(loc: unknown): string {
+  if (!Array.isArray(loc)) return '';
+  const last = [...loc].reverse().find((part): part is string => typeof part === 'string' && part.length > 0);
+  return last ? (DETAIL_FIELD_LABELS[last] ?? last) : '';
+}
+
+export function formatDetailList(detail: unknown): string | null {
+  if (!Array.isArray(detail) || detail.length === 0) return null;
+
+  const items: string[] = [];
+  for (const entry of detail) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as { loc?: unknown; msg?: unknown; type?: unknown };
+    const field = detailFieldName(record.loc);
+    const type = typeof record.type === 'string' ? record.type : '';
+    const reason = DETAIL_TYPE_LABELS[type] ?? (typeof record.msg === 'string' && record.msg.trim() ? record.msg.trim() : 'geçersiz değer');
+    items.push(field ? `${field} ${reason}` : reason);
+  }
+  if (items.length === 0) return null;
+
+  const shown = items.slice(0, DETAIL_MAX_ITEMS);
+  const rest = items.length - shown.length;
+  const joined = shown.join('; ') + (rest > 0 ? ` (+${rest} madde)` : '');
+  return joined.length > DETAIL_MESSAGE_LIMIT ? `${joined.slice(0, DETAIL_MESSAGE_LIMIT)}…` : joined;
+}
+
 function toTransportError(error: unknown): TransportError {
   if (error instanceof TransportError) {
     return error;
@@ -159,16 +210,23 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
       } else if (
         payload?.detail &&
         typeof payload.detail === 'object' &&
+        !Array.isArray(payload.detail) &&
         'message' in payload.detail &&
         typeof payload.detail.message === 'string'
       ) {
         message = payload.detail.message;
+      } else {
+        const detailListMessage = formatDetailList(payload?.detail);
+        if (detailListMessage) message = detailListMessage;
       }
       if (typeof payload?.request_id === 'string') {
         requestId = payload.request_id;
       }
     } catch {
       if (rawBody.trim()) message = rawBody.trim().slice(0, 240);
+    }
+    if (response.status === 422 && message === '422 Unprocessable Entity') {
+      message = 'Gönderilen veriler doğrulanamadı (422).';
     }
     throw new ApiError(response.status, requestId ? `${message} (Kod: ${requestId})` : message, requestId, path);
   }

@@ -1156,12 +1156,22 @@ export interface PosWorkspace {
   summary: PosWorkspaceSummary;
 }
 
+export interface PosRepricingWarning {
+  row_key: string;
+  label: string;
+  reason: string;
+}
+
 export interface PosWorkspaceFinalizeResponse {
   session: PosSession;
   document_sequence_no: number;
   document_number: string;
   transaction_id: string;
   line_count: number;
+  uniconta_sync_status?: string | null;
+  uniconta_invoice_number?: string | null;
+  uniconta_sync_error?: string | null;
+  repricing_warnings?: PosRepricingWarning[];
 }
 
 export interface PosSavedPurchasePreviewRow {
