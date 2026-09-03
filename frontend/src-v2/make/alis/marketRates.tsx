@@ -38,8 +38,8 @@ export function parseDecimalValue(value: string | number | null | undefined) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-export function formatDecimalFixed(value: string | number | null | undefined) {
-  return parseDecimalValue(value).toFixed(2);
+export function formatDecimalFixed(value: string | number | null | undefined, places: 2 | 4 = 2) {
+  return parseDecimalValue(value).toFixed(places);
 }
 
 // R2-10 takip: altın karat anahtarını kullanıcı etiketine çevirir.
@@ -88,7 +88,8 @@ export function syncMarketRateState(
       formatDecimalFixed(overrides?.silver_rates_dkk?.[key] ?? current.silver_rates_dkk?.[key] ?? '0'),
     ]),
   ) as Record<string, string>;
-  const pletDkk = formatDecimalFixed(current.plet_dkk ?? '0.02');
+  // Plet 4 hane taşır (canlı ~0.02 DKK/g; "21 kr/kg" → 0.0210 ayrımı 2 hanede kaybolur).
+  const pletDkk = formatDecimalFixed(current.plet_dkk ?? '0.02', 4);
   return {
     ...current,
     eur_dkk_fx,
@@ -97,8 +98,10 @@ export function syncMarketRateState(
     gold_24k_dkk: goldRates['24'],
     silver_dkk: silverRates['999'],
     plet_dkk: pletDkk,
-    gold_bar_dkk: formatDecimalFixed(current.gold_bar_dkk ?? goldRates['24']),
-    silver_bar_dkk: formatDecimalFixed(current.silver_bar_dkk ?? silverRates['999']),
+    // Bar ≠ 24K hurda: bar alanı yoksa 24K/999'dan TÜRETİLMEZ; 0 kalır ve
+    // backend global profildeki gerçek bar fiyatına düşer (WP priser kaynağı).
+    gold_bar_dkk: formatDecimalFixed(current.gold_bar_dkk ?? '0'),
+    silver_bar_dkk: formatDecimalFixed(current.silver_bar_dkk ?? '0'),
     // Pt/Pd oranları workspace'te taşınır (ptpd satırlarının fiyat kaynağı);
     // 0 kalırsa backend profil değerine düşer.
     platinum_dkk: formatDecimalFixed(current.platinum_dkk ?? '0'),

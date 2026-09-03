@@ -9,11 +9,15 @@ from app.schemas.base import AppBaseModel
 from app.services.market_rate_profile import (
     GOLD_RATE_KEYS,
     SILVER_RATE_KEYS,
+    current_live_fields,
     get_effective_market_rate_profile,
     save_manual_market_rate_profile,
 )
 
 router = APIRouter()
+
+# WP priser tablosundan çekilebilen skaler metal alanları.
+SCALAR_PROFILE_KEYS = ("gold_bar_dkk", "silver_bar_dkk", "platinum_dkk", "palladium_dkk", "plet_dkk")
 
 
 class MarketRateMetaOut(AppBaseModel):
@@ -50,9 +54,13 @@ class MarketRateProfileOut(MarketRateProfileUpdateIn):
 
 @router.post("/refresh-from-wp")
 async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) -> dict:
-    """R2-06 — karat/gümüş fiyatlarını WP "Priser" sayfasından çekip global
-    profile uygular. Kaynak WP'dir; yalnız sayfada BULUNAN anahtarlar güncellenir,
-    kalanlar (Pt/Pd/EUR/bar/plet ve eksik karatlar) mevcut değerinde korunur.
+    """R2-06 — karat/gümüş/bar/Pt/Pd/plet fiyatlarını WP "Priser" sayfasından
+    çekip global profile uygular. Kaynak WP'dir; yalnız sayfada BULUNAN
+    anahtarlar güncellenir, kalanlar mevcut değerinde korunur.
+
+    WP'den Pt/Pd değeri geldiyse o alanın canlı (Stooq) oto bayrağı kapatılır —
+    işletmenin kendi sitesindeki değer Stooq default'unu maskılamasın. fx oto
+    akışı ve diğer alan bayrakları değişmez.
     """
     from app.services.market_rate_profile import get_manual_market_rate_profile
     from app.services.wp_priser_service import fetch_wp_priser_rates
@@ -77,10 +85,28 @@ async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) 
         if key in SILVER_RATE_KEYS:
             merged_silver[key] = value
             applied_silver[key] = value
-    if not applied_gold and not applied_silver:
+    applied_scalars: dict[str, str] = {}
+    for key in SCALAR_PROFILE_KEYS:
+        value = fetched.get(key)
+        if value:
+            applied_scalars[key] = str(value)
+    if not applied_gold and not applied_silver and not applied_scalars:
         raise HTTPException(status_code=422, detail="WP sayfasından profil anahtarına oturan fiyat çıkmadı.")
 
-    save_manual_market_rate_profile({**current, "gold_rates_dkk": merged_gold, "silver_rates_dkk": merged_silver})
+    payload = {**current, "gold_rates_dkk": merged_gold, "silver_rates_dkk": merged_silver}
+    payload.update(applied_scalars)
+    # Pt/Pd Stooq ezmesi: alan WP'den geldiyse canlı bayrağını kapat. fx dahil
+    # diğer alanlar anlık durumlarında korunur (tek save çağrısıyla kalıcılaşır).
+    live_fields = current_live_fields()
+    auto_fields_disabled: list[str] = []
+    for key in ("platinum_dkk", "palladium_dkk"):
+        if key in applied_scalars and live_fields.get(key):
+            live_fields[key] = False
+            auto_fields_disabled.append(key)
+    if auto_fields_disabled:
+        payload["live_fields"] = live_fields
+
+    save_manual_market_rate_profile(payload)
     from app.config import ROOT_ENV_FILE
     from app.utils.env_file import upsert_env_values
 
@@ -93,6 +119,8 @@ async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) 
         "ok": True,
         "applied_gold": applied_gold,
         "applied_silver": applied_silver,
+        "applied_scalars": applied_scalars,
+        "auto_fields_disabled": auto_fields_disabled,
         "fetched_at": fetched.get("fetched_at"),
         "page_title": fetched.get("page_title"),
     }

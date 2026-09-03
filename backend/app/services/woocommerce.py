@@ -4,7 +4,7 @@ import mimetypes
 import re
 import html
 import json
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from typing import Any
 
@@ -735,10 +735,13 @@ def compute_suggested_shop_price(product: Product) -> tuple[Decimal | None, str 
         if raw is None or purity <= 0:
             return None, "Gümüş oranı/saflığı eksik."
         rate = to_decimal(raw) * purity / Decimal("99.9")
-    elif metal == "platinum":
-        rate = to_decimal(rates.get("platinum_dkk") or 0)
-    elif metal == "palladium":
-        rate = to_decimal(rates.get("palladium_dkk") or 0)
+    elif metal in ("platinum", "palladium"):
+        rate = to_decimal(rates.get("platinum_dkk" if metal == "platinum" else "palladium_dkk") or 0)
+        # Spot fiyatı %100 saf metale göredir; alaşım ürün (ör. Pd %50)
+        # saflık oranıyla ölçeklenir. Saflık girilmemişse tam spot kalır.
+        purity = to_decimal(product.purity_percentage or 0)
+        if purity > 0:
+            rate = rate * purity / Decimal("100")
     if rate is None or rate <= 0:
         return None, "Bu metal için güncel oran yok."
     try:
@@ -796,7 +799,10 @@ def _build_metal_pricing_meta(product: Product, settings) -> list[dict[str, str]
     if (markup is None or markup <= 0) and min_price is None:
         return []
 
-    promille = int((purity * Decimal("10")).quantize(Decimal("1")))
+    # 99.99% → 999.9 promille; yuvarlama yukarı taşıp "g.1000" üretemesin:
+    # eklenti sözleşmesi üç hanedir (g.999 = en saf kabul). Aşağı yuvarlanır
+    # ve 999'da sıkıştırılır — saflık asla fazla bildirilmez.
+    promille = min(int((purity * Decimal("10")).quantize(Decimal("1"), rounding=ROUND_DOWN)), 999)
     meta: list[dict[str, str]] = [
         {"key": "_metal_type", "value": woo_metal},
         {"key": "_metal_weight", "value": str(weight)},

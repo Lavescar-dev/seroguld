@@ -107,7 +107,9 @@ def _build_profile(
         "palladium_dkk": str(_q(_positive(palladium_dkk, DEFAULT_PALLADIUM_DKK))),
         "gold_bar_dkk": str(_q(_positive(gold_bar_dkk, DEFAULT_GOLD_DKK))),
         "silver_bar_dkk": str(_q(_positive(silver_bar_dkk, DEFAULT_SILVER_DKK))),
-        "plet_dkk": str(_q(_positive(plet_dkk, DEFAULT_PLET_DKK))),
+        # Plet gram başına çok küçük fiyatlıdır (canlı ~0.02 DKK/g); 2 hane
+        # "21 kr/kg" → 0.0210 gibi ayrımları yutar → 4 hane taşınır.
+        "plet_dkk": str(_q(_positive(plet_dkk, DEFAULT_PLET_DKK), 4)),
     }
 
 
@@ -133,7 +135,7 @@ def _profile_from_payload(payload: Any) -> dict[str, Any]:
         raw_silver_eur = payload.get("silver_rates_eur") if isinstance(payload.get("silver_rates_eur"), dict) else {}
         raw_silver_dkk = _dkk_rates_from_legacy_eur(raw_silver_eur, fx, SILVER_RATE_KEYS)
         if plet_dkk is None and raw_silver_eur.get("800") is not None:
-            plet_dkk = _q(_positive(raw_silver_eur.get("800"), Decimal("0")) * fx)
+            plet_dkk = _q(_positive(raw_silver_eur.get("800"), Decimal("0")) * fx, 4)
 
     gold = {key: raw_gold_dkk.get(key, legacy["gold_rates_dkk"].get(key)) for key in GOLD_RATE_KEYS}
     silver = {key: raw_silver_dkk.get(key, legacy["silver_rates_dkk"].get(key)) for key in SILVER_RATE_KEYS}
@@ -174,6 +176,16 @@ def _enabled_auto_keys(settings: Any) -> tuple[str, ...]:
         "palladium_dkk": bool(getattr(settings, "market_rates_live_palladium_enabled", True)),
     }
     return tuple(key for key in AUTO_FIELD_KEYS if field_flags[key])
+
+
+def current_live_fields() -> dict[str, bool]:
+    """Env'deki master + alan bayraklarından etkin oto alan haritasını döndürür.
+
+    WP priser refresh'i Pt/Pd değeri geldiğinde ilgili alan bayrağını kapatır;
+    fx ve diğer alanların mevcut durumunu korumak için bu anlık görüntüyü okur.
+    """
+    enabled = _enabled_auto_keys(get_settings())
+    return {key: key in enabled for key in AUTO_FIELD_KEYS}
 
 
 def _auto_overlay(
