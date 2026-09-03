@@ -247,7 +247,10 @@ class AIService:
             rel = text.removeprefix("/media/").strip("/")
             return (self.media_root / rel).resolve()
         if text.startswith("/"):
-            return Path(text).expanduser().resolve()
+            candidate = Path(text).expanduser()
+            if candidate.exists():
+                return candidate.resolve()
+            return None
         # Windows'ta original_path/avif_path mutlak sürücü yolu (C:\...) olarak
         # saklanıyor; yukarıdaki dallara girmediğinden foto sessizce atlanıp
         # istek yalnız-metin gidiyordu. Var olan mutlak yolu doğrudan kabul et.
