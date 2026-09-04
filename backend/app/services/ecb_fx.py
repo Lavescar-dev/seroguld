@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable
@@ -9,6 +10,8 @@ from typing import Callable
 import httpx
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_EUR_DKK_FX = Decimal("7.45")
 
@@ -77,7 +80,8 @@ class EcbFxService:
             async with self._client_factory(timeout=self.timeout_seconds) as client:
                 response = await client.get(self.url, headers={"Accept": "text/csv"})
                 response.raise_for_status()
-        except Exception:
+        except Exception as exc:
+            logger.warning("ECB EUR/DKK kuru çekilemedi (varsayılan kur kullanılacak): %s", exc)
             return None
         parsed = self._parse_csv(response.text)
         if parsed is None:

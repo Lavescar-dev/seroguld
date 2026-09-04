@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
@@ -8,6 +9,8 @@ import httpx
 
 from app.config import get_settings
 from app.utils.helpers import quantize_2
+
+logger = logging.getLogger(__name__)
 
 _METAL_KEYS = ("gold", "silver", "platinum", "palladium")
 
@@ -87,7 +90,10 @@ class MetalsDevService:
                 response = await client.get(self.url, params=params, headers={"Accept": "application/json"})
                 response.raise_for_status()
                 payload = response.json()
-        except Exception:
+        except Exception as exc:
+            # Fallback sessiz iner ama kaynak düşüşü log'lansın — "fiyat neden
+            # güncel değil" sorusu cevapsız kalmasın.
+            logger.warning("metals.dev oranları çekilemedi (fallback kullanılacak): %s", exc)
             return None
         rates = self._parse_payload(payload)
         if rates is None:

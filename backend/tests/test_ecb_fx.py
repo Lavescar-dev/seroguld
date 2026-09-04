@@ -65,6 +65,26 @@ async def test_fetch_fx_returns_none_on_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_fx_logs_network_failure(caplog) -> None:
+    """Kaynak düşüşü sessiz None'a inmez — log'da iz kalır."""
+    _reset_cache()
+
+    def handler(request: httpx.Request):
+        raise httpx.ConnectError("ecb kapalı")
+
+    def factory(**kwargs):
+        kwargs.pop("timeout", None)
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    service = EcbFxService(client_factory=factory)
+    with caplog.at_level("WARNING", logger="app.services.ecb_fx"):
+        assert await service.fetch_fx() is None
+
+    assert any("ECB EUR/DKK kuru çekilemedi" in record.message for record in caplog.records)
+    _reset_cache()
+
+
+@pytest.mark.asyncio
 async def test_fetch_fx_rejects_garbage_csv() -> None:
     _reset_cache()
     service = EcbFxService(client_factory=_client_factory_for("not,a,sdmx\n1,2,3\n"))

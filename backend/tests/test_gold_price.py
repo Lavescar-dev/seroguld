@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from app.services.gold_price import GoldPriceService
@@ -100,3 +101,19 @@ async def test_one_failed_metal_does_not_break_the_others(monkeypatch):
     assert rates["platinum"] == Decimal("255.00")
     assert meta["platinum"]["source"] == "fallback"
     assert meta["platinum"]["stale"] is True
+
+
+@pytest.mark.asyncio
+async def test_stooq_failure_logs_and_returns_none(caplog):
+    """Stooq düşüşü sessiz fallback'e inmez — sembolle birlikte iz kalır."""
+
+    class FailingClient:
+        async def get(self, *_args, **_kwargs):
+            raise httpx.ConnectError("stooq yok")
+
+    service = GoldPriceService()
+    with caplog.at_level("WARNING", logger="app.services.gold_price"):
+        assert await service._fetch_stooq_close(FailingClient(), "xauusd") is None
+
+    records = [record for record in caplog.records if "Stooq xauusd kapanışı çekilemedi" in record.message]
+    assert records

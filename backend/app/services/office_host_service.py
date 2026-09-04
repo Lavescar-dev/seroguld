@@ -209,9 +209,14 @@ class CollaboraOfficeProvider:
             return self._discovery_actions
 
         settings = get_settings()
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{settings.office_runtime_url.rstrip('/')}/hosting/discovery")
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{settings.office_runtime_url.rstrip('/')}/hosting/discovery")
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            # Ham httpx hatası yerine dosyanın yerleşik RuntimeError sözleşmesi —
+            # çağıranlar (is_available/launch yolu) bunu okunur sebep sayar.
+            raise RuntimeError(f"Office runtime discovery'ye ulaşılamadı: {exc}") from exc
         root = ElementTree.fromstring(response.text)
         actions: dict[tuple[str, str], str] = {}
         for node in root.iter():

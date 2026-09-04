@@ -85,3 +85,28 @@ async def test_fetch_rates_survives_http_error(monkeypatch: pytest.MonkeyPatch) 
     service.api_key = "test-key"
     assert await service.fetch_rates() is None
     _reset_cache()
+
+
+def _client_factory_raising(exc: Exception):
+    def handler(request: httpx.Request):
+        raise exc
+
+    def factory(**kwargs):
+        kwargs.pop("timeout", None)
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    return factory
+
+
+@pytest.mark.asyncio
+async def test_fetch_rates_logs_network_failure(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    """Kaynak düşüşü sessiz None'a inmez — log'da iz kalır."""
+    _reset_cache()
+    service = MetalsDevService(client_factory=_client_factory_raising(httpx.ConnectError("dns çözülmedi")))
+    service.api_key = "test-key"
+
+    with caplog.at_level("WARNING", logger="app.services.metals_dev"):
+        assert await service.fetch_rates() is None
+
+    assert any("metals.dev oranları çekilemedi" in record.message for record in caplog.records)
+    _reset_cache()

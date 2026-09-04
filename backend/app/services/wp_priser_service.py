@@ -287,31 +287,37 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
     if settings.wp_app_username and settings.wp_app_password:
         auth = (settings.wp_app_username, settings.wp_app_password)
 
-    async with httpx.AsyncClient(timeout=20.0, auth=auth) as client:
-        candidates: list[dict[str, Any]] = []
-        for slug in (GOLD_PAGE_SLUG, SILVER_PAGE_SLUG):
-            response = await client.get(
-                f"{base}/wp-json/wp/v2/pages",
-                params={"slug": slug, "_fields": "id,title,content"},
-            )
-            response.raise_for_status()
-            pages = response.json()
-            if isinstance(pages, list):
-                candidates.extend(pages)
+    try:
+        async with httpx.AsyncClient(timeout=20.0, auth=auth) as client:
+            candidates: list[dict[str, Any]] = []
+            for slug in (GOLD_PAGE_SLUG, SILVER_PAGE_SLUG):
+                response = await client.get(
+                    f"{base}/wp-json/wp/v2/pages",
+                    params={"slug": slug, "_fields": "id,title,content"},
+                )
+                response.raise_for_status()
+                pages = response.json()
+                if isinstance(pages, list):
+                    candidates.extend(pages)
 
-        slug_parsed = [parse_priser_content(_rendered(p)) for p in candidates]
-        if not (
-            any(p["gold_rates_dkk"] for p in slug_parsed)
-            and any(p["silver_rates_dkk"] for p in slug_parsed)
-        ):
-            response = await client.get(
-                f"{base}/wp-json/wp/v2/pages",
-                params={"search": "priser", "per_page": 100, "_fields": "id,title,content"},
-            )
-            response.raise_for_status()
-            pages = response.json()
-            if isinstance(pages, list):
-                candidates.extend(pages)
+            slug_parsed = [parse_priser_content(_rendered(p)) for p in candidates]
+            if not (
+                any(p["gold_rates_dkk"] for p in slug_parsed)
+                and any(p["silver_rates_dkk"] for p in slug_parsed)
+            ):
+                response = await client.get(
+                    f"{base}/wp-json/wp/v2/pages",
+                    params={"search": "priser", "per_page": 100, "_fields": "id,title,content"},
+                )
+                response.raise_for_status()
+                pages = response.json()
+                if isinstance(pages, list):
+                    candidates.extend(pages)
+    except httpx.HTTPError as exc:
+        # Ağ/HTTP hatası yeniden fırlar (çağıran 502'ye çevirir); yalnızca iz
+        # bırakılır — kaynak düştüğü log'lardan görünebilsin.
+        LOGGER.warning("WP Priser sayfaları çekilemedi (%s): %s", base, exc)
+        raise
 
     if not candidates:
         raise ValueError("WP'de fiyat sayfası bulunamadı (guldpriser/soelvpriser slug'ları boş).")

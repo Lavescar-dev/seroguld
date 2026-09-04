@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -9,6 +10,8 @@ import httpx
 from app.config import get_settings
 from app.services.ecb_fx import DEFAULT_EUR_DKK_FX, EcbFxService
 from app.utils.helpers import quantize_2
+
+logger = logging.getLogger(__name__)
 
 
 class GoldPriceService:
@@ -148,7 +151,8 @@ class GoldPriceService:
         try:
             response = await client.get(self._STOOQ_CSV_URL.format(symbol=symbol))
             response.raise_for_status()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Stooq %s kapanışı çekilemedi (fallback kullanılacak): %s", symbol, exc)
             return None
         return self._parse_stooq_close(response.text)
 

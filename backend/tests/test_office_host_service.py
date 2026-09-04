@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import timedelta
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.api import v2
 from app.api import v2_office_runtime as runtime
 from app.schemas.document_artifact import DocumentArtifactPreviewOut
-from app.services.office_host_service import OfficeHostService, OnlyOfficeProvider
+from app.services import office_host_service as office_module
+from app.services.office_host_service import CollaboraOfficeProvider, OfficeHostService, OnlyOfficeProvider
 from app.utils.helpers import utc_now
 
 
@@ -172,3 +174,32 @@ async def test_onlyoffice_callback_ignores_older_save_id(monkeypatch):
 
     assert result == {"error": 0}
     assert applied is False
+
+
+@pytest.mark.asyncio
+async def test_collabora_discovery_network_error_becomes_runtime_error(monkeypatch):
+    """Discovery httpx hatası ham fırlamaz — dosyanın RuntimeError sözleşmesine çevrilir."""
+
+    class FailingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def get(self, *args, **kwargs):
+            raise httpx.ConnectError("runtime kapalı")
+
+    monkeypatch.setattr(office_module.httpx, "AsyncClient", FailingAsyncClient)
+    monkeypatch.setattr(
+        office_module,
+        "get_settings",
+        lambda: SimpleNamespace(office_runtime_url="http://office.invalid/"),
+    )
+
+    provider = CollaboraOfficeProvider()
+    with pytest.raises(RuntimeError, match="discovery'ye ulaşılamadı"):
+        await provider._load_discovery_actions()
