@@ -3901,10 +3901,16 @@ async fn discard_identity_scan() -> Result<bool, IdentityScannerError> {
 /// Klasör izlemenin platform kararı (saf, test edilebilir): Windows None
 /// (devam eder), diğerleri UNSUPPORTED_PLATFORM. Komut bu sonucu döndürür —
 /// Linux CI'sı komut sözleşmesini bu fonksiyon üzerinden mühürler.
+/// Dallar `#[cfg]` attribute'u ile ayrılır: `cfg!()` runtime dalı Windows
+/// derlemesinde `unsupported_platform()`'ı (non-Windows'a özgü) yine tip-
+/// denetlediği için Windows release'i düşer.
 fn identity_watch_start_platform_error() -> Option<IdentityScannerError> {
-    if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    {
         None
-    } else {
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
         Some(IdentityScannerError::unsupported_platform())
     }
 }
