@@ -1151,6 +1151,8 @@ function ucStatusLabel(document: PosSavedPurchaseListItem): string {
   if (status === 'synced') return document.uniconta_invoice_number ? `UC ${document.uniconta_invoice_number}` : 'UC senkron';
   if (status === 'failed') return 'UC HATA';
   if (status === 'skipped') return 'UC ATLANDI';
+  // Alış (AFG) belgeleri Uniconta senkron kapsamı dışında — hata değil.
+  if (status === 'not_applicable') return 'UC DIŞI';
   if (status === 'cancelled') return document.uniconta_credit_note_number ? `İptal · KN#${document.uniconta_credit_note_number}` : 'İptal edildi';
   return `UC ${status}`;
 }

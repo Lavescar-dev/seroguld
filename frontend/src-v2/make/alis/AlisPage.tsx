@@ -159,6 +159,17 @@ function UnicontaSyncBadge({
       </span>
     );
   }
+  if (status === 'not_applicable') {
+    // Alış (AFG) belgeleri Uniconta senkron kapsamı dışında — hata değil.
+    return (
+      <span
+        className="inline-flex items-center gap-1 bg-slate-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-500"
+        title="Alış belgeleri Uniconta'ya gönderilmez (satış modülü gelince satışta senkron çalışacak)"
+      >
+        UC DIŞI
+      </span>
+    );
+  }
   return (
     <span
       className="inline-flex items-center gap-1 bg-slate-200 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-slate-700"

@@ -402,11 +402,14 @@ def _finalize_profile_json() -> str:
     return json.dumps({"gold_rates_dkk": gold, "silver_rates_dkk": silver})
 
 
-async def _run_finalize_scenario(monkeypatch, lines_builder, body):
+async def _run_finalize_scenario(monkeypatch, lines_builder, body, mock_side_effects=True):
     """Ortak finalize test iskeleti: profil enjekte et, uniconta/email no-op.
 
     ``body(session, pos_session, finalize)`` — finalize asenkron callable'ı;
     body içinde birden çok çağrı yapılabilir (ör. 409 idempotency testi).
+    ``mock_side_effects=False`` → gerçek _sync_uniconta ('not_applicable'
+    yazar) ve _send_afg_email_best_effort (transport yoksa sessiz erken
+    çıkış) yolları çalışır.
     """
     from app.schemas.pos import PosWorkspaceFinalizeRequest
     from app.services import pos_purchase_finalize
@@ -425,8 +428,9 @@ async def _run_finalize_scenario(monkeypatch, lines_builder, body):
     async def _noop(*args, **kwargs):  # noqa: ANN002, ANN003
         return None
 
-    monkeypatch.setattr(pos_purchase_finalize, "_sync_uniconta", _noop)
-    monkeypatch.setattr(pos_purchase_finalize, "_send_afg_email_best_effort", _noop)
+    if mock_side_effects:
+        monkeypatch.setattr(pos_purchase_finalize, "_sync_uniconta", _noop)
+        monkeypatch.setattr(pos_purchase_finalize, "_send_afg_email_best_effort", _noop)
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -668,3 +672,64 @@ def test_finalize_with_warnings_stays_idempotent(monkeypatch) -> None:
         assert line.line_offer_dkk == Decimal("2000.00")
 
     asyncio.run(_run_finalize_scenario(monkeypatch, lines, body))
+
+
+def test_finalize_marks_uniconta_not_applicable_for_purchases(monkeypatch) -> None:
+    """Alış (AFG) finalize'ı Uniconta'ya DOKUNMAZ — durum 'not_applicable'.
+
+    Satış modülü eklenene dek alış belgeleri Uniconta senkron kapsamı dışında:
+    credential olsun bile otomatik fatura senkronu denenmez; durum
+    'failed'/'skipped' yerine 'not_applicable' yazılır (arayüzde hata rozeti
+    ve retry çıkmaz) ve karar PosDocumentAudit'e iz olarak düşer.
+    """
+
+    def lines(session, pos_session) -> None:
+        session.add(
+            PosSessionLine(
+                pos_session_id=pos_session.id,
+                line_no=1,
+                product_type=ProductTypeEnum.JEWELRY,
+                metal_type=MetalTypeEnum.YELLOW_GOLD,
+                weight_grams=Decimal("10.00"),
+                purity_karat="18",
+                purity_percentage=Decimal("75.00"),
+                rate_dkk=Decimal("2137.50"),
+                margin_percent_internal=Decimal("0.00"),
+                line_offer_dkk=Decimal("21375.00"),
+                notes=json.dumps(
+                    {
+                        "source": "purchase_workspace",
+                        "row_key": "gold:18",
+                        "type_label": "18 karat",
+                    }
+                ),
+            )
+        )
+
+    async def body(session, pos_session, finalize) -> None:
+        from app.models.pos_document import PosDocument
+        from app.models.pos_document_audit import PosDocumentAudit
+
+        result = await finalize()
+        assert result.uniconta_sync_status == "not_applicable"
+        assert result.uniconta_sync_error is None
+
+        # Belge kalıcısı da aynı — retry tetikleyen 'failed'/'skipped' yok.
+        document = await session.get(PosDocument, result.document_sequence_no)
+        assert document is not None
+        assert document.uniconta_sync_status == "not_applicable"
+        assert document.uniconta_sync_error is None
+
+        # Karar audit izi bıraktı.
+        audits = (
+            (
+                await session.execute(
+                    select(PosDocumentAudit).where(PosDocumentAudit.sequence_no == result.document_sequence_no)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any(a.action == "uniconta_auto_skipped" for a in audits)
+
+    asyncio.run(_run_finalize_scenario(monkeypatch, lines, body, mock_side_effects=False))

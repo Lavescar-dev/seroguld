@@ -453,6 +453,8 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Geçmiş sinyal yok": { en: "No historic signals", da: "Ingen historiske signaler" },
   "Vaka detayı yükleniyor": { en: "Loading case details", da: "Indlæser sagsdetaljer" },
   "Kararlar oturum operatörü adına kaydedilir; her işlem denetim kaydına işlenir.": { en: "Decisions are recorded under the session operator; every action is written to the audit log.", da: "Beslutninger registreres i sessionens operatørs navn; hver handling logføres i revisionsloggen." },
+  "UC DIŞI": { en: "UC N/A", da: "UC N/A" },
+  "Alış belgeleri Uniconta'ya gönderilmez (satış modülü gelince satışta senkron çalışacak)": { en: "Purchase documents are not sent to Uniconta (sync runs for sales once the sales module lands)", da: "Købsdokumenter sendes ikke til Uniconta (sync kører for salg når salgsmodulet kommer)" },
 
 };
 
