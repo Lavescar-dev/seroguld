@@ -102,6 +102,11 @@ class SettingsScreenOut(AppBaseModel):
     market_rates_live_palladium_enabled: bool = True
     # R1-17: WP Priser son cekim zamani (bilgi amacli, salt-okunur).
     wp_priser_last_fetch: str = ""
+    # AFG e-posta (wp-bridge köprüsü) — secret geri dönmez.
+    email_transport: str = "smtp"
+    wp_bridge_url: str = ""
+    wp_bridge_secret: str = ""
+    afg_email_enabled: bool = False
     firma_adi: str
     firma_cvr: str
     firma_telefon: str
@@ -124,6 +129,7 @@ class SettingsScreenUpdateIn(SettingsScreenOut):
     wp_app_password: str | None = None
     uniconta_password: str | None = None
     uniconta_api_key: str | None = None
+    wp_bridge_secret: str | None = None
 
 
 class UnicontaConfigOut(AppBaseModel):

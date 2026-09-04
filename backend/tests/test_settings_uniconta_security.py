@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+from fastapi import HTTPException
 
 from app.api import v2
 from app.config import Settings
@@ -20,6 +21,7 @@ SECRET_FIELDS = {
     "uniconta_password",
     "uniconta_api_key",
     "metals_dev_api_key",
+    "wp_bridge_secret",
 }
 
 
@@ -42,6 +44,10 @@ def _settings(**overrides: object) -> Settings:
         "uniconta_purchase_vat_code_0": "KøbBrugtmoms",
         "market_rates_live_enabled": False,
         "metals_dev_api_key": "metals-secret",
+        "email_transport": "smtp",
+        "wp_bridge_url": "",
+        "wp_bridge_secret": "wp-bridge-secret",
+        "afg_email_enabled": False,
     }
     defaults.update(overrides)
     return Settings(_env_file=None, **defaults)
@@ -142,6 +148,65 @@ async def test_blank_and_null_settings_secrets_preserve_existing_values(monkeypa
     assert response.openai_api_key == ""
     assert provider.clear_count == 1
     assert resets == [True]
+
+
+@pytest.mark.asyncio
+async def test_afg_email_settings_round_trip_and_secret_preservation(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+    monkeypatch.setattr(v2, "reset_uniconta_client", lambda: None)
+
+    payload = _settings_update_payload(
+        email_transport=" WP-Bridge ",
+        wp_bridge_url=" https://seroguld.dk/wp-json/seroguld/v1/send-afg-email ",
+        wp_bridge_secret=None,
+        afg_email_enabled=True,
+    )
+    response = await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert len(writes) == 1
+    assert writes[0]["EMAIL_TRANSPORT"] == "wp-bridge"
+    assert writes[0]["WP_BRIDGE_URL"] == "https://seroguld.dk/wp-json/seroguld/v1/send-afg-email"
+    assert writes[0]["AFG_EMAIL_ENABLED"] == "true"
+    # Gönderilmeyen köprü secret'ı mevcut değeri korur, .env'e dokunulmaz.
+    assert "WP_BRIDGE_SECRET" not in writes[0]
+    assert response.wp_bridge_secret == ""
+    assert "wp_bridge_secret" in response.secret_fields_configured
+    # Yanıt fake provider'ın (değişmemiş) settings'inden üretilir.
+    assert response.email_transport == "smtp"
+
+
+@pytest.mark.asyncio
+async def test_afg_email_transport_validation_rejects_unknown_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload(email_transport="sendgrid")
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    # Doğrulama yazmadan önce düşer.
+    assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_afg_email_bridge_url_requires_http_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload(wp_bridge_url="ftp://seroguld.dk/bridge")
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    assert writes == []
 
 
 def test_uniconta_config_uses_real_health_and_never_returns_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -23,6 +23,10 @@ const config: ApiConfig = {
   wp_site_url: '',
   wp_username: '',
   wp_app_password: '',
+  email_transport: 'smtp',
+  wp_bridge_url: '',
+  wp_bridge_secret: '',
+  afg_email_enabled: false,
   uniconta_api_url: 'https://api.uniconta.com',
   uniconta_username: '',
   uniconta_password: '',
@@ -114,6 +118,44 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
 
     expect(screen.getByDisplayValue('Købsmoms')).toBeInTheDocument();
     expect(screen.getByDisplayValue('KøbBrugtmoms')).toBeInTheDocument();
+  });
+
+  it('shows the AFG e-mail bridge card with transport select and toggle', () => {
+    const onUpdate = vi.fn();
+    render(
+      <SettingsWorkspace
+        variant={variant}
+        config={{
+          ...config,
+          email_transport: 'wp-bridge',
+          wp_bridge_url: 'https://seroguld.dk/wp-json/seroguld/v1/send-afg-email',
+          afg_email_enabled: false,
+        }}
+        saved={false}
+        isSaving={false}
+        confirmReset={false}
+        apiStatus={[]}
+        configuredCount={0}
+        onUpdate={onUpdate}
+        onSave={vi.fn()}
+        onReset={vi.fn()}
+        onExport={vi.fn()}
+        onImport={vi.fn()}
+        uiVariantSlot={null}
+        languageSlot={null}
+        monitorSlot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Entegrasyonlar/ }));
+    fireEvent.click(screen.getByRole('button', { name: /E-posta \(AFG\)/ }));
+
+    // Taşıyıcı seçimi ve köprü adresi kartta görünür.
+    expect(screen.getByDisplayValue('wp-bridge (önerilen — seroguld.dk köprüsü)')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('https://seroguld.dk/wp-json/seroguld/v1/send-afg-email')).toBeInTheDocument();
+    // Toggle bayrağı boolean günceller.
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(onUpdate).toHaveBeenCalledWith('afg_email_enabled', true);
   });
 
   it('shows the shared password change form in account and security', () => {

@@ -22,6 +22,10 @@ const DEFAULT_CONFIG: ApiConfig = {
   wp_site_url: 'https://seroguld.dk',
   wp_username: '',
   wp_app_password: '',
+  email_transport: 'smtp',
+  wp_bridge_url: '',
+  wp_bridge_secret: '',
+  afg_email_enabled: false,
   uniconta_api_url: 'https://api.uniconta.com',
   uniconta_username: '',
   uniconta_password: '',
@@ -57,6 +61,14 @@ export function buildSettingsApiStatus(config: ApiConfig) {
     { name: 'metals.dev', ok: hasSecret('metals_dev_api_key') },
     { name: 'WooCommerce', ok: hasSecret('woo_consumer_key') && hasSecret('woo_consumer_secret') },
     { name: 'WordPress', ok: hasSecret('wp_app_password') },
+    // AFG mail: wp-bridge için URL + secret, smtp için anahtar gerekmez.
+    {
+      name: 'E-posta (AFG)',
+      ok:
+        Boolean(config.afg_email_enabled) &&
+        (config.email_transport !== 'wp-bridge' ||
+          (Boolean(config.wp_bridge_url?.trim()) && hasSecret('wp_bridge_secret'))),
+    },
     { name: 'Uniconta', ok: Boolean(config.uniconta_username) && hasSecret('uniconta_password') },
   ];
 }

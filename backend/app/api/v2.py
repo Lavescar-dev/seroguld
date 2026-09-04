@@ -1170,6 +1170,7 @@ def _build_settings_screen_out() -> SettingsScreenOut:
             ("uniconta_password", settings.uniconta_password),
             ("uniconta_api_key", settings.uniconta_api_key),
             ("metals_dev_api_key", settings.metals_dev_api_key),
+            ("wp_bridge_secret", settings.wp_bridge_secret),
         )
         if str(value or "").strip()
     ]
@@ -1188,6 +1189,10 @@ def _build_settings_screen_out() -> SettingsScreenOut:
         wp_site_url=settings.wordpress_base_url,
         wp_username=settings.wp_app_username,
         wp_app_password="",
+        email_transport=(settings.email_transport or "smtp").strip().lower(),
+        wp_bridge_url=settings.wp_bridge_url,
+        wp_bridge_secret="",
+        afg_email_enabled=bool(settings.afg_email_enabled),
         uniconta_api_url=UNICONTA_WEB_API_BASE,
         uniconta_username=settings.uniconta_username,
         uniconta_password="",
@@ -1558,6 +1563,18 @@ async def put_settings_v2(
     payload: SettingsScreenUpdateIn,
     _: User = Depends(require_admin),
 ) -> SettingsScreenOut:
+    email_transport = (payload.email_transport or "smtp").strip().lower()
+    if email_transport not in ("wp-bridge", "smtp"):
+        raise HTTPException(
+            status_code=422,
+            detail="E-posta taşıyıcısı yalnızca 'wp-bridge' veya 'smtp' olabilir.",
+        )
+    wp_bridge_url = payload.wp_bridge_url.strip()
+    if wp_bridge_url and not (wp_bridge_url.startswith("http://") or wp_bridge_url.startswith("https://")):
+        raise HTTPException(
+            status_code=422,
+            detail="WP köprü adresi http:// veya https:// ile başlamalı.",
+        )
     updates = {
         "OPENAI_MODEL": payload.openai_model.strip() or "gpt-5.6-luna",
         "OPENAI_REASONING_EFFORT": payload.openai_reasoning_effort.strip() or "high",
@@ -1566,6 +1583,9 @@ async def put_settings_v2(
         "WOOCOMMERCE_BASE_URL": payload.woo_store_url.strip(),
         "WORDPRESS_BASE_URL": payload.wp_site_url.strip(),
         "WP_APP_USERNAME": payload.wp_username.strip(),
+        "EMAIL_TRANSPORT": email_transport,
+        "WP_BRIDGE_URL": wp_bridge_url,
+        "AFG_EMAIL_ENABLED": "true" if payload.afg_email_enabled else "false",
         "UNICONTA_API_URL": UNICONTA_WEB_API_BASE,
         "UNICONTA_USERNAME": payload.uniconta_username.strip(),
         "UNICONTA_COMPANY_ID": payload.uniconta_company_id.strip(),
@@ -1596,6 +1616,7 @@ async def put_settings_v2(
         "UNICONTA_PASSWORD": payload.uniconta_password,
         "UNICONTA_API_KEY": payload.uniconta_api_key,
         "METALS_DEV_API_KEY": payload.metals_dev_api_key,
+        "WP_BRIDGE_SECRET": payload.wp_bridge_secret,
     }
     updates.update(
         {

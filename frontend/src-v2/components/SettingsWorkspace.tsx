@@ -39,7 +39,7 @@ import { getLocale, t } from '@/lib/locale';
 type SettingsVariant = 'classic' | 'modern';
 type ConfigKey = keyof ApiConfig;
 type CategoryKey = 'appearance' | 'market' | 'integrations' | 'data';
-type IntegrationKey = 'openai' | 'opmc' | 'woocommerce' | 'wordpress' | 'uniconta';
+type IntegrationKey = 'openai' | 'opmc' | 'woocommerce' | 'wordpress' | 'email' | 'uniconta';
 
 type SettingsWorkspaceProps = {
   variant: SettingsVariant;
@@ -65,7 +65,7 @@ type FieldDefinition = {
   placeholder?: string;
   secret?: boolean;
   wide?: boolean;
-  type?: 'select';
+  type?: 'select' | 'toggle';
   options?: Array<{ value: string; label: string }>;
 };
 
@@ -86,6 +86,10 @@ const OPENAI_REASONING_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'high', label: 'high (önerilen)' },
   { value: 'xhigh', label: 'xhigh' },
   { value: 'max', label: 'max' },
+];
+const EMAIL_TRANSPORT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'wp-bridge', label: 'wp-bridge (önerilen — seroguld.dk köprüsü)' },
+  { value: 'smtp', label: 'smtp (yedek taşıyıcı)' },
 ];
 
 const CATEGORIES: Array<{ key: CategoryKey; label: string; description: string; icon: typeof Monitor }> = [
@@ -148,6 +152,17 @@ const INTEGRATIONS: Array<{
       { key: 'wp_site_url', label: 'Site URL', placeholder: 'https://seroguld.dk', wide: true },
       { key: 'wp_username', label: 'Kullanıcı adı', placeholder: 'admin' },
       { key: 'wp_app_password', label: 'Uygulama parolası', placeholder: 'xxxx xxxx xxxx xxxx', secret: true },
+    ],
+  },
+  {
+    key: 'email',
+    label: 'E-posta (AFG)',
+    description: 'Alış belgesi (AFG) e-postası — seroguld.dk WordPress köprüsü üzerinden.',
+    fields: [
+      { key: 'afg_email_enabled', label: 'AFG e-postası gönderilsin', type: 'toggle' },
+      { key: 'email_transport', label: 'Taşıyıcı', type: 'select', options: EMAIL_TRANSPORT_OPTIONS },
+      { key: 'wp_bridge_url', label: 'Köprü adresi', placeholder: 'https://seroguld.dk/wp-json/seroguld/v1/send-afg-email', wide: true },
+      { key: 'wp_bridge_secret', label: 'Köprü gizli anahtarı', placeholder: '64 haneli hex değer', secret: true, wide: true },
     ],
   },
   {
@@ -419,6 +434,12 @@ export function SettingsWorkspace({
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </select>
+      ) : field.type === 'toggle' ? (
+        <span className={`flex items-center justify-between gap-4 px-3.5 py-2.5 ${classic ? '' : 'rounded-xl'} border ${classic ? 'border-brand-200 bg-white' : 'border-slate-200 bg-white'}`}>
+          <span className={`text-xs ${Boolean(config[field.key]) ? 'text-slate-400' : 'font-semibold text-slate-700'}`}>Kapalı</span>
+          <input type="checkbox" checked={Boolean(config[field.key])} onChange={(event) => onUpdate(field.key, event.target.checked)} className="h-4 w-4 accent-blue-600" />
+          <span className={`text-xs ${Boolean(config[field.key]) ? 'font-semibold text-blue-700' : 'text-slate-400'}`}>Açık</span>
+        </span>
       ) : (
         <input value={String(config[field.key] ?? '')} placeholder={field.placeholder} onChange={(event) => onUpdate(field.key, event.target.value)} className={inputClass} />
       )}

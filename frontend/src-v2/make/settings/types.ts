@@ -13,6 +13,11 @@ export interface ApiConfig {
   wp_site_url: string;
   wp_username: string;
   wp_app_password: string;
+  // AFG e-posta (wp-bridge köprüsü) — secret geri dönmez, PUT'ta boş = koru.
+  email_transport: string;
+  wp_bridge_url: string;
+  wp_bridge_secret: string;
+  afg_email_enabled: boolean;
   uniconta_api_url: string;
   uniconta_username: string;
   uniconta_password: string;

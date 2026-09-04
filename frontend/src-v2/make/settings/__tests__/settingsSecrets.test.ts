@@ -19,6 +19,10 @@ function config(overrides: Partial<ApiConfig> = {}): ApiConfig {
     wp_site_url: 'https://seroguld.dk',
     wp_username: 'crm',
     wp_app_password: '',
+    email_transport: 'smtp',
+    wp_bridge_url: '',
+    wp_bridge_secret: '',
+    afg_email_enabled: false,
     uniconta_api_url: 'https://api.uniconta.com',
     uniconta_username: 'uniconta-user',
     uniconta_password: '',
@@ -63,8 +67,30 @@ describe('settings secret status', () => {
       { name: 'metals.dev', ok: false },
       { name: 'WooCommerce', ok: true },
       { name: 'WordPress', ok: true },
+      { name: 'E-posta (AFG)', ok: false },
       { name: 'Uniconta', ok: true },
     ]);
+  });
+
+  it('requires bridge URL + secret for wp-bridge but only the flag for smtp', () => {
+    // wp-bridge: URL/secret eksikken hazır sayılmaz.
+    expect(
+      buildSettingsApiStatus(config({ afg_email_enabled: true, email_transport: 'wp-bridge' })).find((item) => item.name === 'E-posta (AFG)')?.ok,
+    ).toBe(false);
+    expect(
+      buildSettingsApiStatus(
+        config({
+          afg_email_enabled: true,
+          email_transport: 'wp-bridge',
+          wp_bridge_url: 'https://seroguld.dk/wp-json/seroguld/v1/send-afg-email',
+          secret_fields_configured: ['wp_bridge_secret'],
+        }),
+      ).find((item) => item.name === 'E-posta (AFG)')?.ok,
+    ).toBe(true);
+    // smtp yedek taşıyıcısında köprü anahtarı gerekmez.
+    expect(
+      buildSettingsApiStatus(config({ afg_email_enabled: true, email_transport: 'smtp' })).find((item) => item.name === 'E-posta (AFG)')?.ok,
+    ).toBe(true);
   });
 
   it('marks OPMC ready from the URL alone and metals.dev from its secret', () => {
