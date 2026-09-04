@@ -3931,7 +3931,7 @@ dependencies = [
 
 [[package]]
 name = "seroguld_crm_desktop"
-version = "0.3.32"
+version = "0.3.33"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

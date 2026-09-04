@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.33] — 2026-09-04
+
+### Eklendi
+
+- **Kimlik tarayıcı klasör izleme:** Windows notify tabanlı izleme komutları eklendi — tarayıcının bıraktığı klasör yeni görüntü aldığında tarama otomatik tetiklenir; tarayıcı hata kodları arayüzde ayrışık gösterilir ve teşhis kodu yazılır. Epson network WIA kurulumu için DK+TR runbook (`docs/`) eklendi.
+- **WP Priser kapsamı genişledi:** çekim artık bar, platin, palladium ve plet satırlarını da okuyor; plet fiyatı 4 haneye taşındı, bar fiyatı için 24k fallback kaldırıldı (gerçek bar satırı yoksa fiyat yazılmaz). WP kaynaklı platin/palladium otomatik akışı kapatıldı — skaler ayarlar uygulanır. Dashboard ve envanter güncel oranları etkin market profilinden okur.
+- **Ayarlarda AFG e-posta köprüsü alanları** (DB destekli) eklendi.
+
+### Düzeltildi
+
+- **Alış finalize sağlamlaştırıldı:** matris dışı kalan satırlar finalize'da korunur ve uyarı döner (sessiz kayıp yok); API 422 doğrulama listeleri okunur Türkçe mesaja çevrilir; alış finalize Uniconta senkronu kapsam dışına alındı.
+- **Woo saflık normalizasyonu:** metal purity g.999'e clamp'lenir; platin/palladium saflık çarpanı düzeltildi.
+- **AI medya yolu:** POSIX mutlak yol `exists` denetimi — bulunmayan yol artık `None` döner (Windows yol denetimi yanlış pozitifi kalktı).
+- **Fiyat kaynağı düşüşleri loglanır** (sessiz eski değere dönüş yok); Office keşfi httpx koruması ile çökmez.
+- **AFG boş-satır görünümü iki makine serisi birleştirildi:** her iki yüzeyde de grid satırları boşken görünür; PDF 15 sabit slotu renkli bantlarıyla basar (0.3.32 şablon paritesi), Excel tarafında eski gizleme davranışı `hide_blank_rows` bayrağıyla geriye uyumluluk için korunur. Rebase çözümünde düşen 0.3.32 temizlikleri (Reg.nr./Kontonr. boş bırakma, Not alanına 'None' sızmaması) geri taşındı ve teste mühürlendi.
+- i18n kataloğuna opmc/ocr ve WP Priser çekme düğmesi anahtarları (33+) eklendi; CI Playwright smoke spec'leri modern arayüzle hizalandı.
+
+### Altyapı
+
+- İki makine serisi tek geçişte birleştirildi (rebase); `frontend`/`desktop` package-lock sürümleri paket sürümleriyle senkronlandı; git fetch refspec tüm branch'lere açıldı (diğer makine push'ları artık görünür).
+
 ## [0.3.32] — 2026-09-02
 
 ### Düzeltildi
