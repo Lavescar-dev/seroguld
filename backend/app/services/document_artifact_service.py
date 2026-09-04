@@ -1368,8 +1368,10 @@ def _apply_afg_summary_cells(
     payment_label = "Kontant" if payment_method == "cash" else "Overførsel"
     sheet["C40"] = payment_label
     sheet["D40"] = gross_amount_dkk
-    sheet["D41"] = "—" if payment_method == "cash" else (reg_number or "—")
-    sheet["D42"] = "—" if payment_method == "cash" else (account_number or "—")
+    # Şablon kuralı: boş bırakılır — '—' yerleşimi 0.3.32'de kaldırıldı
+    # (nakit veya eksik banka bilgisinde hücre boş kalır).
+    sheet["D41"] = None if payment_method == "cash" else (reg_number or None)
+    sheet["D42"] = None if payment_method == "cash" else (account_number or None)
     sheet["H38"] = net_amount_dkk
     sheet["H40"] = net_amount_dkk
     # R2-15: KDV yokken (varsayılan alış akışı) belgede "Moms 0,00" satırı
@@ -1385,7 +1387,11 @@ def _apply_afg_summary_cells(
         sheet["H42"] = None
     sheet["H43"] = gross_amount_dkk
     sheet["C44"] = "Not:"
-    sheet["D44"] = note or None
+    # Geçmiş üretimden sızan 'None' metni belgeye yazılmaz (0.3.32 temizliği).
+    cleaned_note = _clean_text(note)
+    if cleaned_note is not None and cleaned_note.lower() == "none":
+        cleaned_note = None
+    sheet["D44"] = cleaned_note
 
 
 def _write_afg_mer_pris(sheet, idx: int, avance_percent) -> None:

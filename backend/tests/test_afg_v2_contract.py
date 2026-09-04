@@ -524,3 +524,38 @@ def test_rebuild_clears_hidden_flags_from_older_files() -> None:
     out = reloaded["Afregningsbilag"]
     assert _visible_rows(out) == set(range(21, 38))
     reloaded.close()
+
+
+def test_summary_cells_blank_bank_fields_and_never_print_none_text() -> None:
+    workbook, sheet = _template_sheet()
+    core._apply_afg_summary_cells(
+        sheet,
+        net_amount_dkk=Decimal("6161.10"),
+        vat_amount_dkk=Decimal("0"),
+        gross_amount_dkk=Decimal("6161.10"),
+        payment_method="cash",
+        reg_number="5512",
+        account_number="0725397984",
+        note="None",
+    )
+    assert sheet["C40"].value == "Kontant"
+    # Şablon kuralı (0.3.32): nakit/eksik banka bilgisinde hücre BOŞ kalır.
+    assert sheet["D41"].value is None
+    assert sheet["D42"].value is None
+    # Geçmiş üretimden sızan 'None' metni belgeye yazılmaz.
+    assert sheet["D44"].value is None
+    core._apply_afg_summary_cells(
+        sheet,
+        net_amount_dkk=Decimal("6161.10"),
+        vat_amount_dkk=Decimal("0"),
+        gross_amount_dkk=Decimal("6161.10"),
+        payment_method="bank",
+        reg_number="5512",
+        account_number="0725397984",
+        note="Testnot",
+    )
+    assert sheet["C40"].value == "Overførsel"
+    assert sheet["D41"].value == "5512"
+    assert sheet["D42"].value == "0725397984"
+    assert sheet["D44"].value == "Testnot"
+    workbook.close()
