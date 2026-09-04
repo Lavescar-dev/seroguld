@@ -61,6 +61,7 @@ env \
   DATABASE_URL="${DATABASE_URL}" \
   INITIAL_ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL}" \
   INITIAL_ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD}" \
+  INITIAL_ADMIN_FORCE_PASSWORD_CHANGE=false \
   "${BACKEND_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/bootstrap-admin.py"
 
 pushd "${BACKEND_DIR}" >/dev/null

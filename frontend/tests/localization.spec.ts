@@ -14,7 +14,10 @@ for (const locale of ['tr', 'en', 'da'] as const) {
   });
 }
 
-test('public GDPR surface defaults to Danish', async ({ page }) => {
+// i18n `lng: 'tr'` ile başlar; public GDPR yüzeyi için ayrı bir locale init
+// yoktur (X1 'da' fallback yalnızca eksik anahtar durumundadır), dolayısıyla
+// public yüzey de operator default locale'iyle ('tr') render olur.
+test('public GDPR surface follows the default operator locale', async ({ page }) => {
   await page.goto('/#/gdpr/privacy');
-  await expect(page.locator('html')).toHaveAttribute('lang', 'da');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'tr');
 });

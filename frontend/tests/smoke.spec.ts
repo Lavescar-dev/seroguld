@@ -2,14 +2,17 @@ import { expect, test } from '@playwright/test';
 
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/#/login');
-  await expect(page.getByRole('heading', { name: /Desktop Sign In/i })).toBeVisible();
+  // Tarayıcıda modern login yüzeyi açılır (classic değil). Vite dev
+  // sunucusunda ilk boot uzun sürebilir (özellikle CI'da).
+  await expect(page.getByRole('heading', { name: /Masaüstü girişi/i })).toBeVisible({ timeout: 30_000 });
   await page.locator('input[type="password"]').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
 
-  // The login mutation navigates asynchronously.  Re-enter the hash route
-  // once the token-backed redirect has settled so a slow Vite/backend start
-  // cannot leave the smoke assertion on the public login route.
-  await expect(page).toHaveURL(/#\/$/, { timeout: 30_000 });
+  // The login mutation navigates asynchronously.  Modern shell defaults to
+  // the dashboard route after sign-in; re-enter the hash route once the
+  // token-backed redirect has settled so a slow Vite/backend start cannot
+  // leave the smoke assertion on the public login route.
+  await expect(page).toHaveURL(/#\/dashboard/, { timeout: 30_000 });
   await page.goto('/#/', { waitUntil: 'domcontentloaded' });
 
   const discoveryDismiss = page.getByRole('button', { name: 'Şimdi değil' });
@@ -25,29 +28,34 @@ async function login(page: import('@playwright/test').Page) {
 test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) => {
   const subjectName = `Smoke Request ${Date.now()}`;
 
+  // Public GDPR yüzeyi İngilizce yazılır ama i18n katmanı operator default
+  // locale'ine ('tr') çevirir — beklentiler çevrilmiş metinlerdir.
   await page.goto('/#/gdpr/request');
-  await expect(page.getByRole('heading', { name: /Data Request Center/i })).toBeVisible();
-  await page.getByLabel('Request type').selectOption('access_export');
+  await expect(page.getByRole('heading', { name: /Veri Talep Merkezi/i })).toBeVisible();
+  await page.getByLabel('Talep türü').selectOption('access_export');
   await page.getByLabel('Ad Soyad').fill(subjectName);
   await page.getByLabel('E-mail').fill('smoke.gdpr@seroguld.test');
   await page.getByLabel('Telefon').fill('+4500000000');
   await page.getByLabel(/Persondata ve privacy/i).check();
   await page.getByRole('button', { name: /Request oluştur/i }).click();
-  await expect(page.getByText('Request created')).toBeVisible();
+  await expect(page.getByText('İstek oluşturuldu')).toBeVisible();
 
   await login(page);
 
   await page.getByRole('button', { name: /^Yeni Alış(?: Başlat)?$/i }).first().click();
-  await expect(page.getByText(/Çalışma Dosyası|AFG SATIRLARI/i).first()).toBeVisible();
-  await expect(page.getByText(/Afregningsnr\.|AFG SATIRLARI/i).first()).toBeVisible();
+  // Modern AFG yüzeyi: sabit başlık + operasyon paneli açıklaması.
+  await expect(page.getByRole('heading', { name: 'Yeni alış çalışma alanı' })).toBeVisible();
+  await expect(page.getByText('müşteri bağlamını ve belge geçmişini')).toBeVisible();
 
   await page.goto('/#/depolama');
-  await expect(page.getByText('Depolama.xlsx').first()).toBeVisible();
+  await expect(page.getByText('Envanter ve Stok').first()).toBeVisible();
 
   await page.goto('/#/log');
-  await expect(page.getByText('Log Workbook').first()).toBeVisible();
+  await expect(page.getByText('Log ve melt akışı').first()).toBeVisible();
 
   await page.goto('/#/gdpr');
-  await expect(page.getByRole('heading', { name: /Veri Hakları ve Saklama Cockpit’i/i })).toBeVisible();
-  await expect(page.getByText(subjectName).first()).toBeVisible();
+  // Modern GDPR yüzeyi: talep kuyruğunda public formdan gelen smoke talebi
+  // "Pseudonymous subject" kimliğiyle listelenir.
+  await expect(page.getByRole('heading', { name: 'GDPR Merkezi' }).first()).toBeVisible();
+  await expect(page.getByText('Pseudonymous subject').first()).toBeVisible();
 });

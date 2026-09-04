@@ -5,10 +5,12 @@ const evidenceDir = process.env.PLAYWRIGHT_EVIDENCE_DIR || 'test-results/invento
 
 async function login(page: import('@playwright/test').Page) {
   await page.goto('/#/login');
-  await expect(page.getByRole('heading', { name: /Desktop Sign In/i })).toBeVisible();
+  // Tarayıcıda modern login yüzeyi açılır (classic değil). Vite dev
+  // sunucusunda ilk boot uzun sürebilir (özellikle CI'da).
+  await expect(page.getByRole('heading', { name: /Masaüstü girişi/i })).toBeVisible({ timeout: 30_000 });
   await page.locator('input[type="password"]').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
-  await expect(page).toHaveURL(/#\/$/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/#\/dashboard/, { timeout: 30_000 });
   await page.goto('/#/', { waitUntil: 'domcontentloaded' });
   const dismiss = page.getByRole('button', { name: 'Şimdi değil' });
   try {
@@ -41,7 +43,7 @@ test('inventory and log user-path evidence smoke', async ({ page }) => {
 
   const textFilter = page.locator('label').filter({ hasText: 'Metin Filtre' }).locator('input');
   await textFilter.fill('smoke-no-match');
-  await expect(page.getByText('Stok Yok')).toBeVisible();
+  await expect(page.getByText('Bu görünümde ürün yok')).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/02-depolama-filter-empty.png`, fullPage: true });
   await textFilter.fill('');
 
@@ -53,17 +55,20 @@ test('inventory and log user-path evidence smoke', async ({ page }) => {
   await page.getByRole('button', { name: 'Vazgeç', exact: true }).click();
 
   await page.getByRole('button', { name: 'Office', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Depolama workbook' })).toBeVisible();
+  await expect(page.getByText('Depolama.xlsx')).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/04-depolama-office.png`, fullPage: true });
 
   await page.goto('/#/log', { waitUntil: 'networkidle' });
-  await expect(page.getByText('Route ve Melt Yönetimi')).toBeVisible();
+  // Başlık metni banner <p>'de de geçer — tek eşleşme için h1'i hedefle.
+  await expect(page.getByRole('heading', { name: 'Log ve melt akışı' })).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/05-log-initial.png`, fullPage: true });
-  await page.getByRole('button', { name: 'Silver', exact: true }).click();
-  await expect(page.getByText('SILVER', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Gümüş', exact: true }).click();
+  // DataPill "Defter" etiketinin kardeş span'ı aktif sekmeyi gösterir.
+  await expect(page.getByText('Defter', { exact: true }).locator('xpath=following-sibling::span[1]')).toHaveText('Gümüş');
   await page.screenshot({ path: `${evidenceDir}/06-log-silver.png`, fullPage: true });
   await page.getByRole('button', { name: 'Office', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Log workbook' })).toBeVisible();
+  // Log workbook artifact adı yıl damgalıdır (örn. Log-2026.xlsx).
+  await expect(page.getByRole('heading', { name: /Log-\d{4}\.xlsx/ })).toBeVisible();
   await page.screenshot({ path: `${evidenceDir}/07-log-office.png`, fullPage: true });
 
   writeFileSync(`${evidenceDir}/console-errors.txt`, consoleErrors.length ? `${consoleErrors.join('\n')}\n` : 'none\n');

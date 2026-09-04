@@ -94,7 +94,10 @@ def main() -> int:
         os.environ["INITIAL_ADMIN_PASSWORD"] = args.password
     if args.name:
         os.environ["INITIAL_ADMIN_NAME"] = args.name
-    os.environ["INITIAL_ADMIN_FORCE_PASSWORD_CHANGE"] = "true"
+    # Kurtarma varsayılanı zorunlu ilk şifre değişimidir; ancak çağıran (örn.
+    # frontend smoke) bilinçli olarak INITIAL_ADMIN_FORCE_PASSWORD_CHANGE=false
+    # verdiyse ezilmesin — setdefault dış değere saygı duyar.
+    os.environ.setdefault("INITIAL_ADMIN_FORCE_PASSWORD_CHANGE", "true")
     sys.path.insert(0, str(BACKEND_DIR))
     return asyncio.run(bootstrap_admin())
 
