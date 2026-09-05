@@ -185,6 +185,112 @@ describe('MakeGdprPage execute/reject onay diyaloğu', () => {
   });
 });
 
+describe('MakeGdprPage karar paneli durum makinesi', () => {
+  const IDENTITY_PENDING_ITEM: GdprRequestListItem = { ...REQUEST_ITEM, status: 'identity_pending', verified_customer_id: null, verified_customer_name: null };
+  const IDENTITY_PENDING_DETAIL: GdprRequestDetail = {
+    ...IDENTITY_PENDING_ITEM,
+    message: null,
+    decision_reason: null,
+    request_meta: {},
+    match_candidates: [],
+    events: [],
+    latest_job: null,
+    export_download_path: null,
+    copy_tasks: [],
+  };
+
+  it('identity_pending talepte Execute/Enqueue/Approve kilitli, neden-disabled title görünür', () => {
+    renderPage({
+      requests: [IDENTITY_PENDING_ITEM],
+      selectedRequest: IDENTITY_PENDING_ITEM,
+      requestDetail: IDENTITY_PENDING_DETAIL,
+    });
+
+    expect(screen.getByRole('button', { name: 'Execute' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Enqueue' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Execute' })).toHaveAttribute('title', expect.stringContaining('approved/queued'));
+    expect(screen.getByRole('button', { name: 'Approve' })).toHaveAttribute('title', expect.stringContaining('müşteri doğrulanmalı'));
+  });
+
+  it('statü rozetleri ham enum yerine etiket haritasını kullanır', () => {
+    renderPage({
+      requests: [IDENTITY_PENDING_ITEM],
+      selectedRequest: IDENTITY_PENDING_ITEM,
+      requestDetail: IDENTITY_PENDING_DETAIL,
+    });
+
+    expect(screen.getAllByText('Kimlik doğrulaması bekliyor').length).toBeGreaterThan(0);
+  });
+
+  it('Pseudonymize Adayı kartı under_review filtresini tetikler', () => {
+    const props = renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: /Pseudonymize Adayı/ }));
+    expect(props.setStatusFilter).toHaveBeenCalledWith('under_review');
+  });
+
+  it('statü filtresinde under_review ve manual_action_required seçenekleri var', () => {
+    renderPage();
+
+    expect(screen.getByRole('option', { name: 'Under review' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Manual action required' })).toBeInTheDocument();
+  });
+
+  it('başarılı karardan sonra decisionReason sıfırlanır', async () => {
+    const props = renderPage();
+
+    const reasonBox = screen.getByPlaceholderText('Karar gerekçesi veya operatör notu');
+    fireEvent.change(reasonBox, { target: { value: 'müşteri telefonla aradı' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(props.onApprove).toHaveBeenCalledWith('req-1', 'müşteri telefonla aradı'));
+
+    // Reset sonrası reject diyaloğu "gerekçe yok" gösterir.
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(within(screen.getByRole('dialog')).getByText(/gerekçe yok/)).toBeInTheDocument();
+  });
+});
+
+describe('MakeGdprPage yeni talep paneli ve hata bandı', () => {
+  it('Yeni talep paneli açılır, doldurulunca onCreateRequest çağrılır ve form kapanır', async () => {
+    const onCreateRequest = vi.fn().mockResolvedValue({ reference_number: 'GDPR-2026-0500' });
+    const props = renderPage({ onCreateRequest });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Yeni talep' }));
+    fireEvent.change(screen.getByLabelText('Konu adı'), { target: { value: 'Mağaza Müşterisi' } });
+    fireEvent.change(screen.getByLabelText('E-posta'), { target: { value: 'magaza@example.dk' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Talebi oluştur' }));
+
+    await waitFor(() => expect(onCreateRequest).toHaveBeenCalledWith({
+      request_type: 'access_export',
+      subject_name: 'Mağaza Müşterisi',
+      subject_email: 'magaza@example.dk',
+      subject_phone: undefined,
+      message: undefined,
+    }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Talebi oluştur' })).not.toBeInTheDocument());
+    // Liste yenileme tetiklenir.
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalled());
+  }, 15000);
+
+  it('Konu adı 2 karakterden kısayken kayıt kilitli', () => {
+    renderPage({ onCreateRequest: vi.fn().mockResolvedValue({}) });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Yeni talep' }));
+    fireEvent.change(screen.getByLabelText('Konu adı'), { target: { value: 'A' } });
+    expect(screen.getByRole('button', { name: 'Talebi oluştur' })).toBeDisabled();
+  });
+
+  it('requests sorgusu hata verince hata bandı gösterilir, boş-liste metni değil', () => {
+    renderPage({ requests: [], requestsError: new Error('boom') });
+
+    expect(screen.getByText('Request listesi yüklenemedi.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Tekrar dene' })).toBeInTheDocument();
+    expect(screen.queryByText('Bu filtrede request yok.')).not.toBeInTheDocument();
+  });
+});
+
 describe('MakeGdprPage copy-task hattı', () => {
   it('copy_tasks listelenir; failed görev için gerekçeli PATCH yolu çağrılır', async () => {
     const props = renderPage();

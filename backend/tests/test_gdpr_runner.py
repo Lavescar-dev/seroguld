@@ -92,7 +92,11 @@ async def test_enqueue_and_runner_process_restriction_request_and_list_jobs() ->
         runner_job = await run_queued_gdpr_jobs(session)
         jobs = await list_gdpr_jobs(session)
 
-        assert request.status == "completed"
+        # Restriction is enforced only via the CRM flag today: the warning
+        # lands the request in manual_action_required instead of a misleading
+        # "completed" stamp (KVKK md.7 / GDPR Art.18 honesty).
+        assert request.status == "manual_action_required"
+        assert request.completed_at is None
         assert customer.gdpr_status == "restricted"
         assert runner_job.status == "completed"
         assert any(job.job_type == "objection_restriction" for job in jobs)

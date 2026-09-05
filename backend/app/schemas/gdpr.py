@@ -194,7 +194,10 @@ class GdprPublicRequestCreateIn(AppBaseModel):
     subject_email: str | None = Field(default=None, max_length=200)
     subject_phone: str | None = Field(default=None, max_length=30)
     message: str | None = Field(default=None, max_length=4000)
-    accepted_privacy: bool = True
+    # KVKK/GDPR consent proof: NO default. The old `bool = True` counted any
+    # client that silently omitted the field as consenting; consent must be
+    # explicitly asserted (False is still rejected by the service guard).
+    accepted_privacy: bool
     # Honeypot: real users never fill this hidden field; bots do. A non-empty
     # value makes the endpoint reject the submission without touching the DB.
     honeypot: str | None = Field(default=None, max_length=200)

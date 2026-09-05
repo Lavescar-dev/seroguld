@@ -204,6 +204,12 @@ export function useGdprMakeState() {
     selectedRequestId,
     setSelectedRequestId,
     requestDetail: detailQuery.data && detailQuery.data.id === selectedRequestId ? detailQuery.data : null,
+    // Hata/boş durum ayrımı: sorgu 500 dönüyorsa "Bu filtrede request yok."
+    // gibi yanıltıcı boş-liste metni yerine hata bandı + tekrar deneme.
+    overviewError: overviewQuery.error,
+    requestsError: requestsQuery.error,
+    bridgeError: bridgeConfigQuery.error,
+    isDetailLoading: detailQuery.isFetching,
     retentionPolicies: policiesQuery.data || [],
     processors: processorsQuery.data || [],
     jobs: jobsQuery.data || [],

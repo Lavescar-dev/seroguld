@@ -3,7 +3,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import secrets
+import time
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -64,6 +66,7 @@ from app.services.woocommerce import WooCommerceService
 from app.utils.helpers import utc_now
 from app.utils.security import decrypt_field
 
+logger = logging.getLogger(__name__)
 
 OPEN_REQUEST_STATUSES = {
     "submitted",
@@ -76,10 +79,43 @@ OPEN_REQUEST_STATUSES = {
     # Intermediate state: the Woo privacy sync failed BEFORE the CRM record
     # was mutated, so the request stays retryable instead of "failed".
     "pseudonymize_pending",
+    # Stuck/action-required requests are still open work for the cockpit:
+    # leaving them out made "Açık Request" undercount and let the retention
+    # scan open parallel reviews for the same customer.
+    "failed",
+    "manual_action_required",
 }
 COMPLETED_REQUEST_STATUSES = {"completed", "completed_with_warnings"}
 REQUEST_EXECUTABLE_STATUSES = {"approved", "queued"}
 REQUEST_RETRYABLE_STATUSES = {"failed", "pseudonymize_pending"}
+# Decision state machine: transitions outside these source sets are rejected
+# with 409 instead of silently reopening completed/rejected requests or
+# stamping decisions over a running job.
+REQUEST_VERIFIABLE_STATUSES = {
+    "submitted",
+    "identity_pending",
+    "verified",
+    "under_review",
+    "manual_action_required",
+    "failed",
+    "pseudonymize_pending",
+}
+REQUEST_APPROVABLE_STATUSES = {
+    "verified",
+    "under_review",
+    "approved",
+}
+REQUEST_REJECTABLE_STATUSES = {
+    "submitted",
+    "identity_pending",
+    "verified",
+    "under_review",
+    "approved",
+    "queued",
+    "manual_action_required",
+    "failed",
+    "pseudonymize_pending",
+}
 AUTOMATIC_JOB_TYPES = {"retention_scan", "gdpr_runner"}
 EXPORT_ARCHIVE_RETENTION_DAYS = 30
 TRACKING_TOKEN_RETENTION_DAYS = 90
@@ -611,10 +647,34 @@ async def list_gdpr_retention_policies(session: AsyncSession) -> list[GdprRetent
     ]
 
 
-async def _sync_processors(session: AsyncSession) -> list[GdprProcessorOut]:
+# Short-TTL cache around collect_runtime_readiness: every call runs SELECT
+# probes + 4 mkdir/tempfile WRITE probes + backup scans + office runtime
+# checks. The cockpit fires overview/processors (and /readyz) in parallel, so
+# an uncached overview computed the same result twice per page load.
+_READINESS_CACHE_TTL_SECONDS = 30.0
+_readiness_cache: dict[str, Any] = {}
+
+
+async def _collect_runtime_readiness_cached(force_refresh: bool = False) -> Any:
+    now = time.monotonic()
+    cached = _readiness_cache.get("value")
+    if (
+        not force_refresh
+        and cached is not None
+        and now - float(_readiness_cache.get("at", 0.0)) < _READINESS_CACHE_TTL_SECONDS
+    ):
+        return cached
+    readiness = await collect_runtime_readiness()
+    _readiness_cache["value"] = readiness
+    _readiness_cache["at"] = now
+    return readiness
+
+
+async def _sync_processors(session: AsyncSession, *, readiness: Any | None = None) -> list[GdprProcessorOut]:
     await ensure_gdpr_seed_data(session)
     settings = get_settings()
-    readiness = await collect_runtime_readiness()
+    if readiness is None:
+        readiness = await collect_runtime_readiness()
     readiness_by_name = {check.name: check for check in readiness.checks}
     processors = (await session.scalars(select(GdprProcessor).order_by(GdprProcessor.title.asc()))).all()
     now = utc_now()
@@ -669,12 +729,18 @@ async def _sync_processors(session: AsyncSession) -> list[GdprProcessorOut]:
             processor.endpoint_url = "https://api.openai.com/v1" if processor.configured else None
             processor.detail = "AI provider"
         elif processor.processor_key == "opmc":
-            # API anahtarı opsiyonel: modül yapım aşamasında ve anahtar hiçbir
-            # canlı çağrıda kullanılmıyor — URL doluluğu yeterli (Ayarlar kartıyla hizalı).
-            processor.configured = bool(settings.opmc_api_url.strip())
-            processor.status = "healthy" if processor.configured else "missing"
-            processor.endpoint_url = settings.opmc_api_url or None
-            processor.detail = "Anti-fraud/order data source"
+            # OPMC modülü canlı değil: webhook secret'ı doğrulayan bir alıcı
+            # yok, opmc_api_key hiçbir canlı çağrıda kullanılmıyor. Default URL
+            # her zaman dolu olduğundan doluluğa bakmak processor'u sahte
+            # "healthy" gösteriyordu — onlyoffice "retired" deseninde olduğu
+            # gibi dürüst bir planned durumu raporlanır.
+            processor.configured = False
+            processor.status = "planned"
+            processor.endpoint_url = None
+            processor.detail = (
+                "Anti-fraud processor plan aşamasında; webhook alıcısı ve API "
+                "entegrasyonu henüz canlıda değil."
+            )
         elif processor.processor_key == "uniconta":
             processor.configured = bool(
                 settings.uniconta_api_url.strip()
@@ -722,7 +788,7 @@ async def _sync_processors(session: AsyncSession) -> list[GdprProcessorOut]:
 
 
 async def get_gdpr_processors(session: AsyncSession) -> list[GdprProcessorOut]:
-    return await _sync_processors(session)
+    return await _sync_processors(session, readiness=await _collect_runtime_readiness_cached())
 
 
 async def _latest_job_timestamp(session: AsyncSession, job_type: str) -> Any:
@@ -744,11 +810,34 @@ async def _eligible_customer_master_retention_candidates(session: AsyncSession) 
 
     now = utc_now()
     eligible_cutoff = now - timedelta(days=policy.retention_days)
+    # The retention window is filtered SQL-side: the anchor is the max of the
+    # columns below (plus the latest transaction), so anchor <= cutoff holds
+    # exactly when every non-null column is past-due and no recent transaction
+    # exists. The Python loop still recomputes the anchor as the authoritative
+    # filter — the SQL predicate only shrinks the candidate table.
+    recent_transaction_exists = (
+        select(Transaction.id)
+        .where(
+            Transaction.customer_id == User.id,
+            Transaction.created_at > eligible_cutoff,
+        )
+        .exists()
+    )
     customers = (
         await session.scalars(
             select(User).where(
                 User.role == RoleEnum.CUSTOMER,
                 User.gdpr_status != "pseudonymized",
+                or_(User.updated_at.is_(None), User.updated_at <= eligible_cutoff),
+                User.created_at <= eligible_cutoff,
+                or_(User.last_gdpr_request_at.is_(None), User.last_gdpr_request_at <= eligible_cutoff),
+                ~recent_transaction_exists,
+                User.id.not_in(
+                    select(GdprRequest.verified_customer_id).where(
+                        GdprRequest.verified_customer_id.is_not(None),
+                        GdprRequest.status.in_(OPEN_REQUEST_STATUSES),
+                    )
+                ),
             )
         )
     ).all()
@@ -764,23 +853,9 @@ async def _eligible_customer_master_retention_candidates(session: AsyncSession) 
         )
     ).all()
     last_transaction_map = {customer_id: last_created_at for customer_id, last_created_at in transaction_rows}
-    open_request_customer_ids = {
-        customer_id
-        for customer_id in (
-            await session.scalars(
-                select(GdprRequest.verified_customer_id).where(
-                    GdprRequest.verified_customer_id.is_not(None),
-                    GdprRequest.status.in_(OPEN_REQUEST_STATUSES),
-                )
-            )
-        ).all()
-        if customer_id is not None
-    }
 
     eligible: list[tuple[User, Any]] = []
     for customer in customers:
-        if customer.id in open_request_customer_ids:
-            continue
         anchor = max(
             _coerce_utc_datetime(item)
             for item in (
@@ -891,6 +966,7 @@ async def run_retention_scan(session: AsyncSession) -> GdprJob:
 async def _purge_old_export_archives(session: AsyncSession) -> dict[str, Any]:
     cutoff = utc_now() - timedelta(days=EXPORT_ARCHIVE_RETENTION_DAYS)
     removed_files: list[str] = []
+    failed_purges: list[dict[str, str]] = []
     jobs = (
         await session.scalars(
             select(GdprJob).where(
@@ -911,12 +987,21 @@ async def _purge_old_export_archives(session: AsyncSession) -> dict[str, Any]:
             continue
         try:
             path.unlink()
-        except Exception:
+        except Exception as exc:
+            # A failed purge of a sensitive archive must be visible, not
+            # silently swallowed: log it and surface it in the runner audit
+            # job's result_json (admin-visible).
+            logger.warning("GDPR export purge failed: %s (%s)", path, exc)
+            failed_purges.append({"file": str(path), "error": str(exc)})
             continue
         removed_files.append(path.name)
         job.result_json = {**(job.result_json or {}), "file_purged": True, "file_path": "", "file_name": path.name}
     await session.flush()
-    return {"purged_export_archives": len(removed_files), "purged_export_files": removed_files}
+    return {
+        "purged_export_archives": len(removed_files),
+        "purged_export_files": removed_files,
+        "failed_purges": failed_purges,
+    }
 
 
 async def _cleanup_expired_tracking_tokens(session: AsyncSession) -> dict[str, Any]:
@@ -977,7 +1062,10 @@ async def get_gdpr_overview(session: AsyncSession) -> GdprOverviewOut:
         await session.scalar(
             select(func.count(GdprRequest.id)).where(
                 GdprRequest.status.in_(COMPLETED_REQUEST_STATUSES),
-                GdprRequest.created_at >= completion_window,
+                # Count by the actual completion stamp; the old created_at
+                # filter contradicted the metric name and counted requests
+                # that merely aged 30 days while still open.
+                GdprRequest.completed_at >= completion_window,
             )
         )
         or 0
@@ -989,8 +1077,10 @@ async def get_gdpr_overview(session: AsyncSession) -> GdprOverviewOut:
     last_scan_at = await _latest_job_timestamp(session, "retention_scan")
     last_run_at = await _latest_job_timestamp(session, "gdpr_runner")
 
-    processors = await _sync_processors(session)
-    readiness = await collect_runtime_readiness()
+    # Single readiness computation per overview request: it is passed down to
+    # the processor sync instead of being recomputed there a second time.
+    readiness = await _collect_runtime_readiness_cached()
+    processors = await _sync_processors(session, readiness=readiness)
     processor_warning_count = sum(1 for processor in processors if processor.status in {"degraded", "missing"})
 
     return GdprOverviewOut(
@@ -1127,7 +1217,13 @@ async def submit_public_gdpr_request(session: AsyncSession, payload: GdprPublicR
                     public_tracking_token=_tracking_token(),
                     public_tracking_token_expires_at=utc_now() + timedelta(days=90),
                     due_at=utc_now() + timedelta(days=30),
-                    request_meta={"accepted_privacy": True},
+                    # Consent evidence is derived from the actual payload, not
+                    # hardcoded True — the audit trail must not record consent
+                    # for submissions that did not carry it.
+                    request_meta={
+                        "accepted_privacy": bool(payload.accepted_privacy),
+                        "consented_at": utc_now().isoformat(),
+                    },
                 )
                 session.add(candidate)
                 await session.flush()
@@ -1185,11 +1281,19 @@ async def get_public_gdpr_request_status(session: AsyncSession, tracking_token: 
 
 
 async def verify_gdpr_request(session: AsyncSession, request: GdprRequest, *, customer_id: UUID, actor: User) -> GdprRequest:
+    if request.status not in REQUEST_VERIFIABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{request.status} durumundaki talep yeniden doğrulanamaz.",
+        )
     customer = await session.get(User, customer_id)
     if customer is None or customer.role != RoleEnum.CUSTOMER:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Müşteri bulunamadı.")
     request.verified_customer_id = customer.id
     request.status = "verified"
+    # Reopening clears the completion stamp: a verified request with a filled
+    # completed_at is an inconsistent audit record.
+    request.completed_at = None
     customer.last_gdpr_request_at = utc_now()
     await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
@@ -1206,10 +1310,19 @@ async def verify_gdpr_request(session: AsyncSession, request: GdprRequest, *, cu
 
 
 async def approve_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User, reason: str | None = None) -> GdprRequest:
+    if request.status not in REQUEST_APPROVABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{request.status} durumundaki talep onaylanamaz.",
+        )
     if request.request_type in {"access_export", "erasure_pseudonymize", "marketing_opt_out", "objection_restriction", "rectification"} and not request.verified_customer_id:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Önce müşteri doğrulanmalı.")
     request.status = "approved"
     request.decision_reason = reason
+    # Reopening for execution: "approved" with a filled completed_at (or a
+    # stale executed_at from a previous run) must not be representable.
+    request.completed_at = None
+    request.executed_at = None
     await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
         session,
@@ -1224,6 +1337,11 @@ async def approve_gdpr_request(session: AsyncSession, request: GdprRequest, *, a
 
 
 async def reject_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User, reason: str | None = None) -> GdprRequest:
+    if request.status not in REQUEST_REJECTABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{request.status} durumundaki talep reddedilemez.",
+        )
     request.status = "rejected"
     request.decision_reason = reason
     request.completed_at = utc_now()
@@ -1239,23 +1357,58 @@ async def reject_gdpr_request(session: AsyncSession, request: GdprRequest, *, ac
     return request
 
 
-def _customer_subject_json(user: User, identity: CustomerIdentityDocument | None) -> dict[str, Any]:
-    return {
-        "id": str(user.id),
-        "name": user.name,
-        "email": user.email,
-        "phone": user.phone,
-        "address": decrypt_field(user.address_encrypted),
-        "postal_code": user.postal_code,
-        "cpr_number": decrypt_field(user.cpr_number_encrypted),
-        "gdpr_status": user.gdpr_status,
-        "identity": {
-            "type": getattr(identity.identity_doc_type, "value", identity.identity_doc_type) if identity else None,
-            "number": decrypt_field(identity.identity_doc_number_encrypted) if identity else None,
-            "country": identity.identity_doc_country if identity else None,
-            "photo_refs": identity.identity_photo_refs if identity else [],
+def _customer_subject_json(user: User, identity: CustomerIdentityDocument | None) -> tuple[dict[str, Any], list[str]]:
+    # decrypt_field failures (corrupt/legacy ciphertext, binascii/InvalidTag)
+    # must not kill the whole export and surface str(exc) through the public
+    # tracking endpoint: each field degrades independently into a warning.
+    warnings: list[str] = []
+
+    def _safe_decrypt(field: str, value: Any) -> Any:
+        try:
+            return decrypt_field(value)
+        except Exception:
+            warnings.append(f"decrypt_failed:{field}")
+            return None
+
+    return (
+        {
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "phone": user.phone,
+            "address": _safe_decrypt("address", user.address_encrypted),
+            "postal_code": user.postal_code,
+            "cpr_number": _safe_decrypt("cpr_number", user.cpr_number_encrypted),
+            "gdpr_status": user.gdpr_status,
+            "identity": {
+                "type": getattr(identity.identity_doc_type, "value", identity.identity_doc_type) if identity else None,
+                "number": _safe_decrypt("identity_doc_number", identity.identity_doc_number_encrypted) if identity else None,
+                "country": identity.identity_doc_country if identity else None,
+                "photo_refs": identity.identity_photo_refs if identity else [],
+            },
         },
-    }
+        warnings,
+    )
+
+
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe_cell(value: Any) -> Any:
+    # CSV formula injection: customer-controlled values starting with =,+,-,@
+    # (or a tab/CR) would execute as formulas in the admin's spreadsheet.
+    # Plain negative numbers are system-generated amounts, not formulas, and
+    # stay untouched.
+    text = "" if value is None else str(value)
+    if not text.startswith(_CSV_FORMULA_PREFIXES):
+        return value
+    if text.startswith("-"):
+        try:
+            float(text)
+            return value
+        except ValueError:
+            pass
+    return f"'{text}"
 
 
 def _csv_text(fieldnames: list[str], rows: list[dict[str, Any]]) -> str:
@@ -1263,7 +1416,7 @@ def _csv_text(fieldnames: list[str], rows: list[dict[str, Any]]) -> str:
     writer = csv.DictWriter(payload, fieldnames=fieldnames)
     writer.writeheader()
     for row in rows:
-        writer.writerow(row)
+        writer.writerow({key: _csv_safe_cell(cell) for key, cell in row.items()})
     return payload.getvalue()
 
 
@@ -1284,7 +1437,7 @@ async def _build_export_archive(session: AsyncSession, customer: User, request: 
             .order_by(PosDocument.issued_at.desc(), PosDocument.sequence_no.desc())
         )
     ).all()
-    subject_json = _customer_subject_json(customer, identity)
+    subject_json, decrypt_warnings = _customer_subject_json(customer, identity)
     customer_csv = _csv_text(
         ["id", "name", "email", "phone", "address", "postal_code", "gdpr_status"],
         [
@@ -1348,7 +1501,13 @@ async def _build_export_archive(session: AsyncSession, customer: User, request: 
                 indent=2,
             ),
         )
-    return {"file_name": filename, "file_path": str(path)}
+    try:
+        # The archive carries decrypted CPR/identity data in plaintext; keep it
+        # owner-readable only on the shared document root.
+        path.chmod(0o600)
+    except OSError:  # pragma: no cover - platform dependent (Windows ACLs)
+        logger.warning("GDPR export archive chmod 0600 failed: %s", path)
+    return {"file_name": filename, "file_path": str(path), "warnings": list(decrypt_warnings)}
 
 
 async def _best_effort_sync_woo_privacy(
@@ -1438,7 +1597,19 @@ async def _execute_pseudonymize(session: AsyncSession, customer: User) -> dict[s
 async def _execute_restriction(session: AsyncSession, customer: User) -> dict[str, Any]:
     customer.gdpr_status = "restricted"
     await session.flush()
-    return {"warnings": [], "woo_sync": None}
+    # KVKK md.7 / GDPR Art.18 honesty: no sales/login/Woo flow consumes the
+    # "restricted" flag yet, so the CRM mutation alone does not restrict
+    # anything downstream. Recording a warning lands the request in
+    # manual_action_required (instead of a misleading "completed" stamp) and
+    # forces the operator to apply the restriction in the affected systems.
+    return {
+        "warnings": [
+            "CRM restriction flag applied, but no downstream system (POS, "
+            "WooCommerce, marketing) enforces restriction yet; apply the "
+            "restriction manually in the affected systems."
+        ],
+        "woo_sync": None,
+    }
 
 
 async def _execute_marketing_opt_out(session: AsyncSession, customer: User) -> dict[str, Any]:
@@ -1456,6 +1627,11 @@ async def _execute_marketing_opt_out(session: AsyncSession, customer: User) -> d
 
 
 async def enqueue_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User) -> GdprRequest:
+    # Serialize concurrent POST /execute|/enqueue on the request row (SQLite
+    # ignores FOR UPDATE and is single-writer anyway). refresh() also reloads
+    # the attributes, so the loser transaction sees the winner's terminal
+    # status / already-created job instead of enqueueing a duplicate one.
+    await session.refresh(request, with_for_update=True)
     if request.status not in {"approved", "queued"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="İstek önce approve edilmeli.")
     await ensure_gdpr_copy_tasks(session, request)
@@ -1472,16 +1648,29 @@ async def enqueue_gdpr_request(session: AsyncSession, request: GdprRequest, *, a
         return request
 
     request.status = "queued"
-    session.add(
-        GdprJob(
-            request_id=request.id,
-            job_type=request.request_type,
-            status="queued",
-            payload_json={"request_id": str(request.id), "queued_by": str(actor.id)},
-            result_json={},
-        )
-    )
-    await session.flush()
+    job_created = True
+    try:
+        # The candidate job is created INSIDE the savepoint so an
+        # IntegrityError from a concurrent worker (a partial unique index on
+        # request_id for queued/running jobs, when added) rolls back only the
+        # job row and degrades into the idempotent path below.
+        async with session.begin_nested():
+            session.add(
+                GdprJob(
+                    request_id=request.id,
+                    job_type=request.request_type,
+                    status="queued",
+                    payload_json={"request_id": str(request.id), "queued_by": str(actor.id)},
+                    result_json={},
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        job_created = False
+    if not job_created:
+        request.status = "queued"
+        await session.flush()
+        return request
     await _append_request_event(
         session,
         request_id=request.id,
@@ -1534,7 +1723,12 @@ async def _execute_request_job(
             customer = await session.get(User, request.verified_customer_id)
             if customer is None:
                 raise HTTPException(status_code=404, detail="Müşteri bulunamadı.")
-            result_json.update(await _build_export_archive(session, customer, request))
+            archive_result = await _build_export_archive(session, customer, request)
+            result_json.update(archive_result)
+            # Per-field decrypt failures degrade to warnings (also stored in
+            # result_json) instead of failing the whole export and leaking the
+            # raw error through the unauthenticated tracking endpoint.
+            warnings.extend(str(item) for item in archive_result.get("warnings") or [])
             for task in copy_tasks:
                 if task.task_key == "gdpr_export_archive":
                     _set_copy_task_status(
@@ -1660,7 +1854,12 @@ async def _execute_request_job(
             event_type="failed",
             actor_type=actor_type,
             actor_user_id=actor_user_id,
-            message=str(exc),
+            # The public tracking endpoint returns the latest event message
+            # unauthenticated; a raw str(exc) leaks decrypt/zip/HTTP details
+            # to anonymous visitors. Forensics live in the admin-only job
+            # result_json and the event payload instead.
+            message="GDPR request execution failed; administrators can inspect the job details.",
+            payload_json={"error": str(exc)},
         )
         raise
 

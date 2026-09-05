@@ -188,7 +188,9 @@ export function GdprPublicRequestPage() {
     subject_email: '',
     subject_phone: '',
     message: '',
-    accepted_privacy: true,
+    // Rıza varsayılan TRUE değil: kullanıcı kutuyu açıkça işaretlemeli
+    // (backend de artık alanı zorunlu bekliyor — KVKK rıza ispatı).
+    accepted_privacy: false,
   });
 
   const requestTypeOptions: Array<{ value: string; label: string }> = [
@@ -214,6 +216,32 @@ export function GdprPublicRequestPage() {
     return `${window.location.origin}${window.location.pathname}#/gdpr/request/${requestMutation.data.tracking_token}`;
   }, [requestMutation.data]);
 
+  // Takip linki 90 gün sonra expire oluyor ve müşteriye başka kanaldan
+  // iletilmiyor; kaybetmemesi için tek tıkla kopyalama yolu şart.
+  const [copiedTracking, setCopiedTracking] = useState(false);
+  const copyTrackingUrl = async () => {
+    if (!trackingUrl) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(trackingUrl);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = trackingUrl;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setCopiedTracking(true);
+      window.setTimeout(() => setCopiedTracking(false), 1800);
+    } catch {
+      // Pano izni yoksa link en azından anchor olarak görünür kalır.
+    }
+  };
+
   return (
     <PublicShell config={config} eyebrow={t('gdpr.public.request.eyebrow')} title={t('gdpr.public.request.title')}>
       <div className="space-y-6">
@@ -221,6 +249,9 @@ export function GdprPublicRequestPage() {
           {t('gdpr.public.request.intro')}
         </p>
 
+        {/* Başarı sonrası form gizlenir: eski veriler input'larda kalıp
+            yeniden submit spam'ine kapı açıyordu. */}
+        {!requestMutation.data ? (
         <form
           className="grid gap-4"
           onSubmit={(event) => {
@@ -281,6 +312,7 @@ export function GdprPublicRequestPage() {
               type="checkbox"
               checked={form.accepted_privacy}
               onChange={(event) => setForm((current) => ({ ...current, accepted_privacy: event.target.checked }))}
+              required
             />
             {t('gdpr.public.request.acceptedPrivacy')}
           </label>
@@ -299,6 +331,7 @@ export function GdprPublicRequestPage() {
             ) : null}
           </div>
         </form>
+        ) : null}
 
         {requestMutation.data ? (
           <div className="border border-emerald-300 bg-emerald-50 p-5 text-emerald-900">
@@ -306,10 +339,19 @@ export function GdprPublicRequestPage() {
             <p className="mt-2 text-sm">{t('gdpr.public.request.reference')}: <span style={monoStyle}>{requestMutation.data.reference_number}</span></p>
             <p className="mt-2 text-sm">{t('gdpr.public.request.due')}: {formatDate(requestMutation.data.due_at)}</p>
             {trackingUrl ? (
-              <a href={trackingUrl} className="mt-4 inline-flex items-center gap-2 border border-emerald-400 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700">
-                {t('gdpr.public.request.openTracking')}
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <a href={trackingUrl} className="inline-flex items-center gap-2 border border-emerald-400 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700">
+                  {t('gdpr.public.request.openTracking')}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void copyTrackingUrl()}
+                  className="inline-flex items-center gap-2 border border-emerald-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700"
+                >
+                  {copiedTracking ? 'Kopyalandı' : 'Takip linkini kopyala'}
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}

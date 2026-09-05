@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,6 +13,8 @@ import {
   Trash2,
 } from 'lucide-react';
 
+import { getActiveLocale } from '@/i18n';
+import { translateVisibleCopy } from '@/i18n/copy';
 import { ApiError, downloadAuthedDocument, localizeApiError } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { useToast } from '@/lib/toast';
@@ -21,6 +23,7 @@ import {
   GDPR_COPY_COMPLETION_STATES,
   GDPR_COPY_REASON_REQUIRED_STATES,
   gdprCopyTaskStatusLabel,
+  gdprRequestStatusLabel,
   gdprRequestTypeLabel,
 } from './types';
 import type {
@@ -33,6 +36,52 @@ import type {
 } from './types';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
+
+// lib/format.ts:4-6 copy() deseni — çağrı yerinde explicit çeviri. Katalogda
+// exact karşılığı olmayan diziler Turkish fallback'te kalır (i18n_pending).
+function copy(value: string): string {
+  return translateVisibleCopy(value, getActiveLocale());
+}
+
+// Backend: app/services/gdpr_service.py karar durum makinesi — butonlar
+// yalnız izin verilen kaynak statülerinde aktif; neden-disabled title'da.
+const REQUEST_VERIFIABLE_STATUSES: ReadonlyArray<string> = [
+  'submitted',
+  'identity_pending',
+  'verified',
+  'under_review',
+  'manual_action_required',
+  'failed',
+  'pseudonymize_pending',
+];
+const REQUEST_APPROVABLE_STATUSES: ReadonlyArray<string> = ['verified', 'under_review', 'approved'];
+const REQUEST_REJECTABLE_STATUSES: ReadonlyArray<string> = [
+  'submitted',
+  'identity_pending',
+  'verified',
+  'under_review',
+  'approved',
+  'queued',
+  'manual_action_required',
+  'failed',
+  'pseudonymize_pending',
+];
+const REQUEST_EXECUTABLE_STATUSES: ReadonlyArray<string> = ['approved', 'queued'];
+
+const CLOSED_REQUEST_STATUSES: ReadonlyArray<string> = ['completed', 'completed_with_warnings', 'rejected'];
+
+function dueMeta(status: string | null | undefined, dueAt?: string | null): { className: string; suffix: string } | null {
+  if (!dueAt) return null;
+  const due = new Date(dueAt);
+  if (Number.isNaN(due.getTime())) return null;
+  if (status !== null && status !== undefined && CLOSED_REQUEST_STATUSES.includes(status)) {
+    return { className: 'text-brand-400', suffix: '' };
+  }
+  const diffMs = due.getTime() - Date.now();
+  if (diffMs < 0) return { className: 'text-rose-700', suffix: ' · gecikti' };
+  if (diffMs < 7 * 24 * 60 * 60 * 1000) return { className: 'text-amber-700', suffix: ' · yaklaşan SLA' };
+  return { className: 'text-brand-500', suffix: '' };
+}
 
 type GdprPageProps = {
   overview: {
@@ -88,6 +137,12 @@ type GdprPageProps = {
   clearCustomerFilter: () => void;
   isLoading: boolean;
   isRefreshing: boolean;
+  // Hata/boş durum ayrımı (useGdprMakeState): sorgu hatası "boş liste" gibi
+  // görünmesin; opsiyonel — testler sade props ile render edebilir.
+  overviewError?: Error | null;
+  requestsError?: Error | null;
+  bridgeError?: Error | null;
+  isDetailLoading?: boolean;
   activeMutation: boolean;
   onRefresh: () => void;
   onVerify: (requestId: string, customerId: string) => Promise<unknown>;
@@ -95,6 +150,17 @@ type GdprPageProps = {
   onReject: (requestId: string, reason?: string) => Promise<unknown>;
   onEnqueue: (requestId: string) => Promise<unknown>;
   onExecute: (requestId: string) => Promise<unknown>;
+  // Mağaza/telefonda gelen talebin CRM'e girilmesi (bulgu: classic'te talep
+  // oluşturma yok). Uç hâlâ public request endpoint'i — kanal public_page
+  // görünür; admin ucu backend sahipliğinde (notes).
+  onCreateRequest?: (payload: {
+    request_type: string;
+    subject_name: string;
+    subject_email?: string;
+    subject_phone?: string;
+    message?: string;
+  }) => Promise<unknown>;
+  isCreatingRequest?: boolean;
   onUpdatePolicy: (payload: {
     policyKey: string;
     title?: string;
@@ -119,14 +185,29 @@ const COPY_TASK_TARGET_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'failed', label: 'Başarısız' },
 ];
 
-function overviewCard(label: string, value: string | number, tone: string) {
-  return (
-    <div className={`border px-4 py-3 ${tone}`}>
+function overviewCard(label: string, value: string | number, tone: string, onClick?: () => void) {
+  const content = (
+    <>
       <p className="text-[10px] font-black uppercase tracking-[0.24em]">{label}</p>
       <p className="mt-2 text-2xl font-black" style={monoStyle}>
         {value}
       </p>
-    </div>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title="under_review filtresine geç"
+        className={`border px-4 py-3 text-left transition hover:opacity-90 ${tone}`}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className={`border px-4 py-3 ${tone}`}>{content}</div>
   );
 }
 
@@ -226,6 +307,10 @@ export function MakeGdprPage({
   clearCustomerFilter,
   isLoading,
   isRefreshing,
+  overviewError,
+  requestsError,
+  bridgeError,
+  isDetailLoading,
   activeMutation,
   onRefresh,
   onVerify,
@@ -235,6 +320,8 @@ export function MakeGdprPage({
   onExecute,
   onUpdatePolicy,
   onUpdateCopyTask,
+  onCreateRequest,
+  isCreatingRequest,
 }: GdprPageProps) {
   const toast = useToast();
   const [decisionReason, setDecisionReason] = useState('');
@@ -244,6 +331,45 @@ export function MakeGdprPage({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
   const [confirmRefInput, setConfirmRefInput] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createDraft, setCreateDraft] = useState({
+    request_type: 'access_export',
+    subject_name: '',
+    subject_email: '',
+    subject_phone: '',
+    message: '',
+  });
+
+  const createDraftValid = createDraft.subject_name.trim().length >= 2;
+
+  // Mağaza/telefonda gelen talebi CRM'e gir: mevcut useGdprCreateRequest
+  // mutation'ı üzerinden (public uç) açılır, sonra liste yenilenir.
+  const runCreateRequest = async () => {
+    if (!onCreateRequest || !createDraftValid) return;
+    setPendingAction('create-request');
+    try {
+      const result = (await onCreateRequest({
+        request_type: createDraft.request_type,
+        subject_name: createDraft.subject_name.trim(),
+        subject_email: createDraft.subject_email.trim() || undefined,
+        subject_phone: createDraft.subject_phone.trim() || undefined,
+        message: createDraft.message.trim() || undefined,
+      })) as { reference_number?: string } | undefined;
+      toast.success('Talep oluşturuldu', result?.reference_number || undefined);
+      setCreateDraft({ request_type: 'access_export', subject_name: '', subject_email: '', subject_phone: '', message: '' });
+      setShowCreateForm(false);
+      await onRefresh();
+    } catch (error) {
+      toast.error('Talep oluşturulamadı', localizeApiError(error));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // Sol listeden talep değişince eski karar gerekçesi yeni talebe taşınmasın.
+  useEffect(() => {
+    setDecisionReason('');
+  }, [selectedRequestId]);
 
   const policyState = (policy: GdprRetentionPolicy) =>
     policyDrafts[policy.policy_key] || {
@@ -299,16 +425,32 @@ export function MakeGdprPage({
       }, 1800);
     } catch (error) {
       console.error('Copy failed', error);
-      toast.error('Pano kopyalanamadı', 'Metin panoya yazılamadı; tarayıcı izinlerini kontrol edin.');
+      toast.error(copy('Pano kopyalanamadı'), 'Metin panoya yazılamadı; tarayıcı izinlerini kontrol edin.');
     }
   };
 
-  const runAction = async (key: string, action: () => Promise<unknown>) => {
+  const runAction = async (key: string, action: () => Promise<unknown>, successMessage?: string) => {
     setPendingAction(key);
     try {
       await action();
+      // Kalıcı işlemlerde sessizlik riskli: başarıda da geri bildirim ver.
+      if (successMessage) toast.success(successMessage);
     } catch (error) {
       toast.error('İşlem başarısız', localizeApiError(error));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // Export indirme: purge yüzünden silinmiş dosyanın 404'ü dahil sessiz
+  // yutuluyordu; runAction benzeri sarmalayıcı + disabled/spinner.
+  const runExportDownload = async () => {
+    if (!requestDetail?.export_download_path) return;
+    setPendingAction('export-download');
+    try {
+      await downloadAuthedDocument(requestDetail.export_download_path, `${requestDetail.reference_number}.zip`);
+    } catch (error) {
+      toast.error('Export indirilemedi', localizeApiError(error));
     } finally {
       setPendingAction(null);
     }
@@ -333,10 +475,38 @@ export function MakeGdprPage({
     const { kind, request } = confirmAction;
     setConfirmAction(null);
     setConfirmRefInput('');
-    await runAction(kind, () =>
-      kind === 'execute' ? onExecute(request.id) : onReject(request.id, decisionReason),
+    await runAction(
+      kind,
+      async () => {
+        if (kind === 'execute') {
+          await onExecute(request.id);
+          toast.success('İstek yürütüldü');
+        } else {
+          await onReject(request.id, decisionReason);
+          toast.success('İstek reddedildi');
+          setDecisionReason('');
+        }
+      },
     );
   };
+
+  // Karar paneli gating'i: backend durum makinesiyle aynı kaynak kümeleri —
+  // kural dışı buton disabled + neden-disabled title'da.
+  const detailStatus = requestDetail?.status ?? null;
+  const hasVerifiedCustomer = Boolean(requestDetail?.verified_customer_id);
+  const canVerify = detailStatus !== null && REQUEST_VERIFIABLE_STATUSES.includes(detailStatus);
+  const canApprove =
+    detailStatus !== null && REQUEST_APPROVABLE_STATUSES.includes(detailStatus) && hasVerifiedCustomer;
+  const canReject = detailStatus !== null && REQUEST_REJECTABLE_STATUSES.includes(detailStatus);
+  const canEnqueue = detailStatus !== null && REQUEST_EXECUTABLE_STATUSES.includes(detailStatus);
+  const verifyHint = canVerify ? undefined : `${detailStatus ?? ''} durumundaki talep doğrulanamaz`;
+  const approveHint = !hasVerifiedCustomer
+    ? 'Önce müşteri doğrulanmalı'
+    : canApprove
+      ? undefined
+      : `${detailStatus ?? ''} durumundaki talep onaylanamaz`;
+  const rejectHint = canReject ? undefined : `${detailStatus ?? ''} durumundaki talep reddedilemez`;
+  const enqueueHint = canEnqueue ? undefined : 'Yalnız approved/queued talepler kuyruğa alınabilir';
 
   // Copy-task override: manual_action_required / failed / takılı pending-running
   // görevlerin gerekçeli kurtarılması. Uç henüz yayında değilse (404) buton
@@ -382,12 +552,30 @@ export function MakeGdprPage({
       </div>
 
       <div className="space-y-6 px-6 py-6">
+        {overviewError ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <span>Özet verisi yüklenemedi; kartlar eksik görünüyor.</span>
+            <button
+              type="button"
+              onClick={() => void onRefresh()}
+              className="inline-flex items-center gap-2 border border-rose-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 hover:bg-rose-100"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Tekrar dene
+            </button>
+          </div>
+        ) : null}
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {overviewCard('Açık Request', overview?.open_request_count ?? '—', 'border-brand-300 bg-white text-brand-900')}
           {overviewCard('Yaklaşan SLA', overview?.due_soon_count ?? '—', 'border-sky-300 bg-sky-50 text-sky-800')}
           {overviewCard('Geciken', overview?.overdue_count ?? '—', 'border-amber-300 bg-amber-50 text-amber-800')}
           {overviewCard('Tamamlanan 30g', overview?.completed_30d_count ?? '—', 'border-emerald-300 bg-emerald-50 text-emerald-800')}
-          {overviewCard('Pseudonymize Adayı', overview?.eligible_pseudonymize_count ?? '—', 'border-rose-300 bg-rose-50 text-rose-800')}
+          {overviewCard(
+            'Pseudonymize Adayı',
+            overview?.eligible_pseudonymize_count ?? '—',
+            'border-rose-300 bg-rose-50 text-rose-800',
+            () => setStatusFilter('under_review'),
+          )}
           {overviewCard('GDPR Lock Ürün', overview?.locked_product_count ?? '—', 'border-brand-300 bg-brand-50 text-brand-800')}
           {overviewCard('Queued Job', overview?.queued_job_count ?? '—', 'border-sky-300 bg-sky-50 text-sky-800')}
           {overviewCard('Failed Job', overview?.failed_job_count ?? '—', 'border-rose-300 bg-rose-50 text-rose-800')}
@@ -420,10 +608,12 @@ export function MakeGdprPage({
                 >
                   <option value="all">Tüm statüler</option>
                   <option value="identity_pending">Identity pending</option>
+                  <option value="under_review">Under review</option>
                   <option value="verified">Verified</option>
                   <option value="approved">Approved</option>
                   <option value="queued">Queued</option>
                   <option value="executing">Executing</option>
+                  <option value="manual_action_required">Manual action required</option>
                   <option value="completed">Completed</option>
                   <option value="completed_with_warnings">Completed with warnings</option>
                   <option value="rejected">Rejected</option>
@@ -439,8 +629,79 @@ export function MakeGdprPage({
                     Customer filtresi aktif
                   </button>
                 ) : null}
+                {onCreateRequest ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateForm((current) => !current)}
+                    className="inline-flex items-center gap-2 border border-brand-700 bg-brand-900 px-3 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-800"
+                  >
+                    {showCreateForm ? 'Vazgeç' : copy('Yeni talep')}
+                  </button>
+                ) : null}
               </div>
             </div>
+
+            {showCreateForm && onCreateRequest ? (
+              <div className="grid gap-3 border-b border-brand-200 bg-brand-50 px-4 py-4">
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-brand-500">Yeni talep (mağaza / telefon)</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="grid gap-1 text-xs font-black uppercase tracking-widest text-brand-600">
+                    Talep tipi
+                    <select
+                      value={createDraft.request_type}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, request_type: event.target.value }))}
+                      className="border border-brand-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-brand-900 outline-none focus:border-brand-700"
+                    >
+                      {(['access_export', 'erasure_pseudonymize', 'rectification', 'objection_restriction', 'marketing_opt_out', 'cookie_privacy_contact'] as const).map((type) => (
+                        <option key={type} value={type}>{gdprRequestTypeLabel(type)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-xs font-black uppercase tracking-widest text-brand-600">
+                    {copy('Konu adı')}
+                    <input
+                      value={createDraft.subject_name}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, subject_name: event.target.value }))}
+                      className="border border-brand-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-brand-900 outline-none focus:border-brand-700"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs font-black uppercase tracking-widest text-brand-600">
+                    E-posta
+                    <input
+                      type="email"
+                      value={createDraft.subject_email}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, subject_email: event.target.value }))}
+                      className="border border-brand-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-brand-900 outline-none focus:border-brand-700"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs font-black uppercase tracking-widest text-brand-600">
+                    Telefon
+                    <input
+                      value={createDraft.subject_phone}
+                      onChange={(event) => setCreateDraft((current) => ({ ...current, subject_phone: event.target.value }))}
+                      className="border border-brand-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-brand-900 outline-none focus:border-brand-700"
+                    />
+                  </label>
+                </div>
+                <textarea
+                  value={createDraft.message}
+                  onChange={(event) => setCreateDraft((current) => ({ ...current, message: event.target.value }))}
+                  placeholder="Talep notu (opsiyonel)"
+                  className="min-h-[72px] border border-brand-300 bg-white px-3 py-2 text-sm text-brand-900 outline-none focus:border-brand-700"
+                />
+                <div>
+                  <button
+                    type="button"
+                    disabled={!createDraftValid || pendingAction === 'create-request' || isCreatingRequest}
+                    title={createDraftValid ? undefined : 'Konu adı en az 2 karakter olmalı'}
+                    onClick={() => void runCreateRequest()}
+                    className="inline-flex items-center gap-2 border border-brand-700 bg-brand-900 px-3 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-800 disabled:opacity-60"
+                  >
+                    {pendingAction === 'create-request' || isCreatingRequest ? copy('İşleniyor') : 'Talebi oluştur'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid min-h-[560px] xl:grid-cols-[320px_minmax(0,1fr)]">
               <div className="border-r border-brand-200">
@@ -449,7 +710,20 @@ export function MakeGdprPage({
                     <div className="px-4 py-6 text-sm text-brand-500">GDPR queue yükleniyor…</div>
                   ) : null}
                   {!isLoading && !requests.length ? (
-                    <div className="px-4 py-6 text-sm text-brand-500">Bu filtrede request yok.</div>
+                    requestsError ? (
+                      <div className="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-rose-700">
+                        <span>Request listesi yüklenemedi.</span>
+                        <button
+                          type="button"
+                          onClick={() => void onRefresh()}
+                          className="border border-rose-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 hover:bg-rose-100"
+                        >
+                          Tekrar dene
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="px-4 py-6 text-sm text-brand-500">Bu filtrede request yok.</div>
+                    )
                   ) : null}
                   {requests.map((item) => {
                     const active = item.id === selectedRequestId;
@@ -474,14 +748,20 @@ export function MakeGdprPage({
                               {item.subject_email || item.subject_phone || item.channel}
                             </p>
                           </div>
-                          <span className={`border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${requestStatusTone(item.status)}`}>
-                            {item.status}
+                          <span className={`border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${requestStatusTone(item.status)}`} title={item.status}>
+                            {gdprRequestStatusLabel(item.status)}
                           </span>
                         </div>
                         <div className={`mt-3 flex items-center justify-between text-xs ${active ? 'text-brand-300' : 'text-brand-500'}`}>
                           <span>{gdprRequestTypeLabel(item.request_type)}</span>
                           <span style={monoStyle}>{formatDate(item.submitted_at)}</span>
                         </div>
+                        {item.due_at ? (
+                          <div className={`mt-1 text-right text-[11px] ${dueMeta(item.status, item.due_at)?.className || (active ? 'text-brand-300' : 'text-brand-400')}`} style={monoStyle}>
+                            SLA {formatDate(item.due_at)}
+                            {dueMeta(item.status, item.due_at)?.suffix || ''}
+                          </div>
+                        ) : null}
                       </button>
                     );
                   })}
@@ -501,17 +781,27 @@ export function MakeGdprPage({
                         {requestDetail.message ? <p className="mt-3 text-sm leading-6 text-brand-700">{requestDetail.message}</p> : null}
                       </div>
                       <div className="space-y-2">
-                        <div className={`inline-flex border px-3 py-2 text-xs font-black uppercase tracking-widest ${requestStatusTone(requestDetail.status)}`}>
-                          {requestDetail.status}
+                        <div className={`inline-flex border px-3 py-2 text-xs font-black uppercase tracking-widest ${requestStatusTone(requestDetail.status)}`} title={requestDetail.status}>
+                          {gdprRequestStatusLabel(requestDetail.status)}
                         </div>
+                        {requestDetail.due_at ? (
+                          <p
+                            className={`text-[11px] font-black uppercase tracking-widest ${dueMeta(requestDetail.status, requestDetail.due_at)?.className || 'text-brand-500'}`}
+                            style={monoStyle}
+                          >
+                            SLA {formatDate(requestDetail.due_at)}
+                            {dueMeta(requestDetail.status, requestDetail.due_at)?.suffix || ''}
+                          </p>
+                        ) : null}
                         {requestDetail.export_download_path ? (
                           <button
                             type="button"
-                            onClick={() => void downloadAuthedDocument(requestDetail.export_download_path!, `${requestDetail.reference_number}.zip`)}
-                            className="flex w-full items-center justify-center gap-2 border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700"
+                            disabled={pendingAction === 'export-download'}
+                            onClick={() => void runExportDownload()}
+                            className="flex w-full items-center justify-center gap-2 border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700 disabled:opacity-60"
                           >
-                            <Download className="h-3.5 w-3.5" />
-                            Export indir
+                            <Download className={`h-3.5 w-3.5 ${pendingAction === 'export-download' ? 'animate-pulse' : ''}`} />
+                            {pendingAction === 'export-download' ? copy('İşleniyor') : 'Export indir'}
                           </button>
                         ) : null}
                       </div>
@@ -534,8 +824,14 @@ export function MakeGdprPage({
                                 <button
                                   key={candidate.id}
                                   type="button"
-                                  disabled={activeMutation || pendingAction !== null}
-                                  onClick={() => void runAction(`verify:${candidate.id}`, () => onVerify(requestDetail.id, candidate.id))}
+                                  disabled={activeMutation || pendingAction !== null || !canVerify}
+                                  title={verifyHint}
+                                  onClick={() =>
+                                    void runAction(`verify:${candidate.id}`, async () => {
+                                      await onVerify(requestDetail.id, candidate.id);
+                                      toast.success('Müşteri doğrulandı');
+                                    })
+                                  }
                                   className="flex items-center justify-between border border-brand-300 bg-white px-3 py-2 text-left hover:border-brand-700 hover:bg-brand-100 disabled:opacity-60"
                                 >
                                   <div>
@@ -543,7 +839,7 @@ export function MakeGdprPage({
                                     <p className="text-xs text-brand-500">{candidate.email || candidate.phone || candidate.cpr_number_masked || '-'}</p>
                                   </div>
                                   <span className="text-xs font-black uppercase tracking-widest text-brand-500">
-                                    {pendingAction === `verify:${candidate.id}` ? 'İşleniyor...' : 'Verify'}
+                                    {pendingAction === `verify:${candidate.id}` ? copy('İşleniyor') : 'Verify'}
                                   </span>
                                 </button>
                               ))}
@@ -562,39 +858,49 @@ export function MakeGdprPage({
                           <div className="mt-3 flex flex-wrap gap-2">
                             <button
                               type="button"
-                              disabled={activeMutation || pendingAction !== null}
-                              onClick={() => void runAction('approve', () => onApprove(requestDetail.id, decisionReason))}
+                              disabled={activeMutation || pendingAction !== null || !canApprove}
+                              title={approveHint}
+                              onClick={() =>
+                                void runAction('approve', async () => {
+                                  await onApprove(requestDetail.id, decisionReason);
+                                  toast.success('Karar onaylandı');
+                                  setDecisionReason('');
+                                })
+                              }
                               className="inline-flex items-center gap-2 border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-sky-700 disabled:opacity-60"
                             >
                               <ShieldCheck className="h-3.5 w-3.5" />
-                              {pendingAction === 'approve' ? 'İşleniyor...' : 'Approve'}
+                              {pendingAction === 'approve' ? copy('İşleniyor') : 'Approve'}
                             </button>
                             <button
                               type="button"
-                              disabled={activeMutation || pendingAction !== null}
+                              disabled={activeMutation || pendingAction !== null || !canReject}
+                              title={rejectHint}
                               onClick={() => openConfirm('reject')}
                               className="inline-flex items-center gap-2 border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-rose-700 disabled:opacity-60"
                             >
                               <ShieldX className="h-3.5 w-3.5" />
-                              {pendingAction === 'reject' ? 'İşleniyor...' : 'Reject'}
+                              {pendingAction === 'reject' ? copy('İşleniyor') : 'Reject'}
                             </button>
                             <button
                               type="button"
-                              disabled={activeMutation || pendingAction !== null}
+                              disabled={activeMutation || pendingAction !== null || !canEnqueue}
+                              title={enqueueHint}
                               onClick={() => void runAction('enqueue', () => onEnqueue(requestDetail.id))}
                               className="inline-flex items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 disabled:opacity-60"
                             >
                               <Clock3 className="h-3.5 w-3.5" />
-                              {pendingAction === 'enqueue' ? 'İşleniyor...' : 'Enqueue'}
+                              {pendingAction === 'enqueue' ? copy('İşleniyor') : 'Enqueue'}
                             </button>
                             <button
                               type="button"
-                              disabled={activeMutation || pendingAction !== null}
+                              disabled={activeMutation || pendingAction !== null || !canEnqueue}
+                              title={enqueueHint}
                               onClick={() => openConfirm('execute')}
                               className="inline-flex items-center gap-2 border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700 disabled:opacity-60"
                             >
                               <CheckCircle2 className="h-3.5 w-3.5" />
-                              {pendingAction === 'execute' ? 'İşleniyor...' : 'Execute'}
+                              {pendingAction === 'execute' ? copy('İşleniyor') : 'Execute'}
                             </button>
                           </div>
                           {requestDetail.latest_job ? (
@@ -654,6 +960,14 @@ export function MakeGdprPage({
                       </div>
                     </div>
                   </div>
+                ) : selectedRequest && isDetailLoading ? (
+                  // Detay fetch'i sürerken yanlışlıkla "seçim yapın"
+                  // placeholder'ı yerine iskelet göster.
+                  <div className="space-y-3 p-5" aria-busy="true">
+                    <div className="h-6 w-48 animate-pulse bg-brand-100" />
+                    <div className="h-4 w-72 animate-pulse bg-brand-100" />
+                    <div className="h-40 w-full animate-pulse bg-brand-100" />
+                  </div>
                 ) : (
                   <div className="flex h-full min-h-[560px] items-center justify-center text-sm text-brand-400">
                     İncelemek için soldan bir GDPR request seçin.
@@ -704,28 +1018,28 @@ export function MakeGdprPage({
                         onClick={() => void copyText('privacy-url', bridgeConfig.privacy_policy_url)}
                         className="border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
                       >
-                        {copiedKey === 'privacy-url' ? 'Kopyalandı' : 'Copy Privacy URL'}
+                        {copiedKey === 'privacy-url' ? copy('Kopyalandı') : 'Copy Privacy URL'}
                       </button>
                       <button
                         type="button"
                         onClick={() => void copyText('cookies-url', bridgeConfig.cookies_url)}
                         className="border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
                       >
-                        {copiedKey === 'cookies-url' ? 'Kopyalandı' : 'Copy Cookies URL'}
+                        {copiedKey === 'cookies-url' ? copy('Kopyalandı') : 'Copy Cookies URL'}
                       </button>
                       <button
                         type="button"
                         onClick={() => void copyText('request-url', bridgeConfig.privacy_request_url)}
                         className="border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
                       >
-                        {copiedKey === 'request-url' ? 'Kopyalandı' : 'Copy Request Center URL'}
+                        {copiedKey === 'request-url' ? copy('Kopyalandı') : 'Copy Request Center URL'}
                       </button>
                       <button
                         type="button"
                         onClick={() => void copyText('cookie-config-url', bridgeConfig.cookie_config_url)}
                         className="border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
                       >
-                        {copiedKey === 'cookie-config-url' ? 'Kopyalandı' : 'Copy Cookie Config URL'}
+                        {copiedKey === 'cookie-config-url' ? copy('Kopyalandı') : 'Copy Cookie Config URL'}
                       </button>
                     </div>
                     <div className="border border-brand-200 bg-white p-3">
@@ -738,10 +1052,12 @@ export function MakeGdprPage({
                         onClick={() => void copyText('footer-snippet', wordpressSnippet)}
                         className="mt-3 border border-brand-300 bg-brand-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
                       >
-                        {copiedKey === 'footer-snippet' ? 'Kopyalandı' : 'Copy Footer Snippet'}
+                        {copiedKey === 'footer-snippet' ? copy('Kopyalandı') : 'Copy Footer Snippet'}
                       </button>
                     </div>
                   </>
+                ) : bridgeError ? (
+                  <p className="text-sm text-rose-700">Bridge yapılandırması yüklenemedi; Yenile ile tekrar deneyin.</p>
                 ) : (
                   <p className="text-sm text-brand-500">Public link bilgileri yükleniyor…</p>
                 )}
@@ -813,6 +1129,11 @@ export function MakeGdprPage({
             <div className="grid gap-3 p-4">
               {retentionPolicies.map((policy) => {
                 const draft = policyState(policy);
+                // Geçersiz girişte sessiz fallback yerine inline hata + kilitli
+                // Kaydet (backend şema sınırı 1-3650).
+                const parsedRetentionDays = Number.parseInt(draft.retention_days, 10);
+                const retentionDaysInvalid =
+                  !Number.isInteger(parsedRetentionDays) || parsedRetentionDays < 1 || parsedRetentionDays > 3650;
                 return (
                   <div key={policy.id} className="border border-brand-200 bg-brand-50 p-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -835,18 +1156,27 @@ export function MakeGdprPage({
                       </label>
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-[140px_180px_auto]">
-                      <input
-                        type="number"
-                        min={1}
-                        value={draft.retention_days}
-                        onChange={(event) =>
-                          setPolicyDrafts((current) => ({
-                            ...current,
-                            [policy.policy_key]: { ...draft, retention_days: event.target.value },
-                          }))
-                        }
-                        className="border border-brand-300 bg-white px-3 py-2 text-sm text-brand-900 outline-none focus:border-brand-700"
-                      />
+                      <div className="grid gap-1">
+                        <input
+                          type="number"
+                          min={1}
+                          max={3650}
+                          value={draft.retention_days}
+                          aria-label={`Retention gün · ${policy.policy_key}`}
+                          onChange={(event) =>
+                            setPolicyDrafts((current) => ({
+                              ...current,
+                              [policy.policy_key]: { ...draft, retention_days: event.target.value },
+                            }))
+                          }
+                          className={`border bg-white px-3 py-2 text-sm text-brand-900 outline-none focus:border-brand-700 ${
+                            retentionDaysInvalid ? 'border-rose-400' : 'border-brand-300'
+                          }`}
+                        />
+                        {retentionDaysInvalid ? (
+                          <p className="text-[11px] font-semibold text-rose-700">Geçersiz gün değeri (1-3650 arası tam sayı girin).</p>
+                        ) : null}
+                      </div>
                       <input
                         type="text"
                         value={draft.action}
@@ -860,21 +1190,25 @@ export function MakeGdprPage({
                       />
                       <button
                         type="button"
-                        disabled={activeMutation || pendingAction !== null}
+                        disabled={activeMutation || pendingAction !== null || retentionDaysInvalid}
+                        title={retentionDaysInvalid ? 'Geçersiz retention gün değeri' : undefined}
                         onClick={() =>
-                          void runAction(`policy:${policy.policy_key}`, () =>
-                            onUpdatePolicy({
-                              policyKey: policy.policy_key,
-                              retention_days: Number.parseInt(draft.retention_days, 10) || policy.retention_days,
-                              action: draft.action,
-                              is_enabled: draft.is_enabled,
-                            }),
+                          void runAction(
+                            `policy:${policy.policy_key}`,
+                            () =>
+                              onUpdatePolicy({
+                                policyKey: policy.policy_key,
+                                retention_days: parsedRetentionDays,
+                                action: draft.action,
+                                is_enabled: draft.is_enabled,
+                              }),
+                            'Retention policy güncellendi',
                           )
                         }
                         className="inline-flex items-center justify-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100 disabled:opacity-60"
                       >
                         <Clock3 className="h-3.5 w-3.5" />
-                        {pendingAction === `policy:${policy.policy_key}` ? 'İşleniyor...' : 'Kaydet'}
+                        {pendingAction === `policy:${policy.policy_key}` ? copy('İşleniyor') : 'Kaydet'}
                       </button>
                     </div>
                     <p className="mt-2 text-[11px] text-brand-500">Son güncelleme: {formatDate(policy.updated_at)}</p>

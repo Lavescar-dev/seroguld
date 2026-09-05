@@ -353,7 +353,10 @@ def test_admin_run_endpoint_executes_queue_with_cleanup_and_retention_scan() -> 
 
         async with factory() as session:
             refreshed = await session.get(GdprRequest, request.id)
-            assert refreshed.status == "completed"
+            # objection_restriction: CRM flag yazılır ama downstream kısıt
+            # uygulanmadığı için manual_action_required beklenir ("completed"
+            # değil) — bkz. gdpr_service._execute_restriction.
+            assert refreshed.status == "manual_action_required"
             refreshed_expired = await session.get(GdprRequest, expired.id)
             assert refreshed_expired.public_tracking_token == f"expired-{expired.id}"
 
