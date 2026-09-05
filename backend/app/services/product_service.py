@@ -515,6 +515,15 @@ async def update_product(
     *,
     commit: bool = True,
 ) -> ProductOut:
+    # Terminal durum sözleşmesi SERVİS katmanında: PUT (products.py) yanında
+    # legacy PATCH ve v2 PATCH de aynı korumadan geçer — satılmış/eritilmiş
+    # ürünün alış fiyatı, gram, not gibi alanları artık hiçbir uçla değiştirilemez.
+    if product.status in {ProductStatusEnum.SOLD, ProductStatusEnum.MELTED}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Terminal durumdaki ürün güncellenemez",
+        )
+
     if payload.expected_updated_at is not None and product.updated_at is not None:
         # Tolerans yok — milisaniye farkı bile başka bir kullanıcı güncellemesidir.
         expected = payload.expected_updated_at
@@ -756,17 +765,43 @@ async def update_status(
         "status": current_status,
         "sale_price_dkk": product.sale_price_dkk,
         "melt_reason": product.melt_reason,
+        "is_published_to_site": product.is_published_to_site,
+        "published_at": product.published_at,
     }
 
     product.status = new_status
 
+    # FOR_SALE'den çıkış (ve terminal durumlara iniş) Woo yayın bayraklarını
+    # temizler: fiziksel olarak eritilen/satılan ürün sitede 'satışta' kalmamalı.
+    # Woo tarafındaki yayının kaldırılması unpublish ucuna/kuyruğa devredilir —
+    # durum geçişi senkron HTTP çağrısıyla ağa bağlanmaz.
+    woo_unpublish_flags_cleared = False
+    if product.is_published_to_site and (
+        current_status == ProductStatusEnum.FOR_SALE
+        or new_status in {ProductStatusEnum.SOLD, ProductStatusEnum.MELTED}
+    ):
+        product.is_published_to_site = False
+        product.published_at = None
+        woo_unpublish_flags_cleared = True
+
     if new_status == ProductStatusEnum.SOLD:
         if payload.sale_price_dkk is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Satış fiyatı zorunlu")
+        if payload.sale_price_dkk <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Satış fiyatı sıfırdan büyük olmalı",
+            )
         product.sale_price_dkk = quantize_2(payload.sale_price_dkk)
         product.sale_date = utc_now()
         product.buyer_customer_id = payload.buyer_customer_id
-        product.profit_dkk = quantize_2(to_decimal(product.sale_price_dkk) - to_decimal(product.purchase_price_dkk))
+        # Maliyet bilinmiyorsa kâr muhasebesi uydurmasın: profit NULL kalır
+        # (to_decimal(None)='0' ile satış fiyatının tamamı kâr yazılıyordu).
+        product.profit_dkk = (
+            quantize_2(to_decimal(product.sale_price_dkk) - to_decimal(product.purchase_price_dkk))
+            if product.purchase_price_dkk is not None
+            else None
+        )
     elif new_status == ProductStatusEnum.MELTED:
         if not payload.melt_reason:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Eritme nedeni zorunlu")
@@ -795,7 +830,14 @@ async def update_status(
             "status": product.status,
             "sale_price_dkk": product.sale_price_dkk,
             "melt_reason": product.melt_reason,
+            "is_published_to_site": product.is_published_to_site,
+            "published_at": product.published_at,
         },
+        notes=(
+            "Woo yayın bayrakları temizlendi (durum geçişi); Woo tarafı için unpublish gerekebilir"
+            if woo_unpublish_flags_cleared
+            else None
+        ),
     )
 
     if commit:

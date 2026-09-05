@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from math import ceil
@@ -8,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -66,6 +68,22 @@ from app.services.woocommerce import WooCommerceService, missing_required_seo_fi
 from app.utils.helpers import quantize_2, utc_now
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+async def _sync_projection_best_effort(db: AsyncSession, *, admin) -> None:
+    """Stok/foto yazımı kalıcılaştıktan sonra workbook projeksiyonunu tazeler.
+
+    Senkron hatası birincil mutasyonu geri alamaz: yalnız loglanır, artifact
+    bir sonraki workbook üretiminde (template kuruluyken) yakalanır."""
+    from app.api.v2_inventory import sync_inventory_projection_guarded
+
+    try:
+        await sync_inventory_projection_guarded(db, admin=admin)
+        await db.commit()
+    except Exception:  # noqa: BLE001
+        await db.rollback()
+        logger.warning("Depolama workbook projeksiyon senkronu tamamlanamadı", exc_info=True)
 
 # Backward-compat exports for existing tests and internal imports.
 _parse_wc_datetime = parse_wc_datetime
@@ -270,7 +288,10 @@ async def import_woocommerce_live_products(
                     skipped += 1
                     continue
 
-                existing.reference_number = reference_number
+                # auto_link_by_sku tam bu alanla eşlediğinden operatörün
+                # düzelttiği referans her importta ezilmesin: yalnız boşsa yaz.
+                if not (existing.reference_number or "").strip():
+                    existing.reference_number = reference_number
                 existing.product_type = product_type
                 existing.metal_type = metal_type
                 existing.weight_grams = weight_grams
@@ -386,9 +407,31 @@ async def import_woocommerce_live_products(
             await db.commit()
             created += 1
             imported_product_ids.append(str(product.id))
-        except Exception as exc:
+        except HTTPException as exc:
             await db.rollback()
-            errors.append(f"wc_id={wc_id}: {exc}")
+            errors.append(f"wc_id={wc_id}: {exc.detail if isinstance(exc.detail, str) else 'Woo isteği başarısız'}")
+        except IntegrityError:
+            await db.rollback()
+            logger.exception("Woo canlı import: ürün kaydedilemedi (wc_id=%s)", wc_id)
+            errors.append(f"wc_id={wc_id}: kayıt kaydedilemedi (veritabanı çakışması)")
+        except Exception:
+            # Ham exception metni (DB bağlantı detayı dahil) istemciye sızmasın;
+            # tam iz sunucu günlüğünde.
+            await db.rollback()
+            logger.exception("Woo canlı import: ürün işlenemedi (wc_id=%s)", wc_id)
+            errors.append(f"wc_id={wc_id}: ürün işlenemedi (ayrıntı sunucu günlüğünde)")
+
+    # Per-item commit hatalarının tamamı yukarıda loglandı; yanıtta errors[:25]
+    # kırpımı yüzünden hiçbir hata sessiz kalmaz.
+    if len(errors) > 25:
+        logger.warning(
+            "Woo canlı import: %d hata yanıtın 25'lik sınırını aştı, kırpıldı (tamamı günlükte)",
+            len(errors) - 25,
+        )
+
+    # Woo import stok yazdı: workbook projeksiyonunu tazele (kalıcı mutasyonu
+    # bozmamak için best-effort).
+    await _sync_projection_best_effort(db, admin=admin)
 
     return ProductWooImportResponse(
         fetched=len(wc_items),
@@ -657,9 +700,8 @@ async def put_product(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ) -> ProductOut:
+    # Terminal durum guard'ı update_product servis katmanında (üç uç tek sözleşme).
     product = await get_product_or_404(db, product_id)
-    if product.status in {ProductStatusEnum.SOLD, ProductStatusEnum.MELTED}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Terminal durumdaki ürün güncellenemez")
     return await update_product(db, product, payload, admin.id)
 
 
@@ -698,6 +740,7 @@ async def upload_photos(
         )
     )
     await db.commit()
+    await _sync_projection_best_effort(db, admin=admin)
     updated = await get_product_or_404(db, product.id)
     return to_product_out(updated)
 
@@ -729,6 +772,7 @@ async def reorder_product_photos(
         )
     )
     await db.commit()
+    await _sync_projection_best_effort(db, admin=admin)
     updated = await get_product_or_404(db, product.id)
     return to_product_out(updated)
 
@@ -756,6 +800,7 @@ async def delete_photo(
         )
     )
     await db.commit()
+    await _sync_projection_best_effort(db, admin=admin)
     updated = await get_product_or_404(db, product.id)
     return to_product_out(updated)
 

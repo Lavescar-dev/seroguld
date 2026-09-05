@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Iterable
@@ -11,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_admin
-from app.config import ROOT_ENV_FILE, get_settings
 from app.database import get_db
 from app.models.enums import MetalTypeEnum, ProductStatusEnum
 from app.models.product import Product
@@ -24,7 +24,11 @@ from app.schemas.inventory import (
 )
 from app.schemas.product import ProductCreate, ProductOut, ProductUpdate
 from app.services.pos_value_helpers import display_metal_type, display_product_type
-from app.services.market_rate_profile import get_effective_market_rate_profile_cached
+from app.services.market_rate_profile import (
+    get_effective_market_rate_profile_cached,
+    get_manual_market_rate_profile,
+    save_manual_market_rate_profile,
+)
 from app.services.product_service import (
     ACTIVE_STATUSES,
     create_product,
@@ -34,10 +38,10 @@ from app.services.product_service import (
     update_product,
     visible_product_clause,
 )
-from app.utils.env_file import upsert_env_values
 from app.utils.helpers import quantize_2, to_decimal
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _get_market_prices(market_profile: dict[str, object] | None = None) -> InventoryMarketPricesOut:
@@ -264,19 +268,55 @@ async def get_inventory_market_prices(_: object = Depends(require_admin)) -> Inv
 @router.put("/market-prices", response_model=InventoryMarketPricesOut)
 async def put_inventory_market_prices(
     payload: InventoryMarketPricesUpdate,
+    db: AsyncSession | None = Depends(get_db),
     _: object = Depends(require_admin),
 ) -> InventoryMarketPricesOut:
-    upsert_env_values(
-        ROOT_ENV_FILE,
-        {
-            "INVENTORY_MARKET_GOLD_DKK": str(quantize_2(payload.gold)),
-            "INVENTORY_MARKET_SILVER_DKK": str(quantize_2(payload.silver)),
-            "INVENTORY_MARKET_PLATINUM_DKK": str(quantize_2(payload.platinum)),
-            "INVENTORY_MARKET_PALLADIUM_DKK": str(quantize_2(payload.palladium)),
-        },
-    )
-    get_settings.cache_clear()
-    return _get_market_prices()
+    """Depolama ekranının 4 skalerini ETKİN profil yazım yoluna bağlar.
+
+    Yalnız env skalerlerini upsert etmek yetmezdi: INVENTORY_MARKET_RATE_PROFILE_JSON
+    mevcutken etkin profil JSON'dan okunduğu için kayıt 'güncellendi' dönüyor ama
+    bir sonraki GET eski JSON değerini getiriyordu — sessiz yazım kaybı. Artık
+    mevcut manuel profilin üstüne 4 skaler uygulanır ve drawer ile AYNI tek
+    yazı yolu (save_manual_market_rate_profile) üzerinden kalıcılaştırılır; env
+    skalerleri de o yolun içinde güncel kalır.
+
+    ``db=None`` doğrudan çağrılarda (workbook import köprüsü) projeksiyon
+    senkronu atlanır; o yol kendi ensure_inventory_artifact çağrısıyla
+    çalışır."""
+    previous = _get_market_prices()
+    merged = dict(get_manual_market_rate_profile())
+    # Profil sözleşmesinde 24K/gümüş değerleri matrisin "24"/"999" anahtarlarından
+    # türetilir (gold_24k_dkk = gold_rates_dkk["24"]); bu yüzden skalerleri
+    # doğrudan matris anahtarlarına yazıyoruz.
+    merged["gold_rates_dkk"] = {**merged.get("gold_rates_dkk", {}), "24": str(quantize_2(payload.gold))}
+    merged["silver_rates_dkk"] = {**merged.get("silver_rates_dkk", {}), "999": str(quantize_2(payload.silver))}
+    merged["platinum_dkk"] = str(quantize_2(payload.platinum))
+    merged["palladium_dkk"] = str(quantize_2(payload.palladium))
+    save_manual_market_rate_profile(merged)
+    updated = _get_market_prices()
+    # Eski→yeni izi: bu değerler spot KPI, Woo satış fiyatı, workbook K4-K7 ve
+    # POS hesaplarını besler; değişen anahtarlar denetlenebilir olmalı.
+    for field, old, new in (
+        ("gold", previous.gold, updated.gold),
+        ("silver", previous.silver, updated.silver),
+        ("platinum", previous.platinum, updated.platinum),
+        ("palladium", previous.palladium, updated.palladium),
+    ):
+        if old != new:
+            logger.info("Piyasa fiyatı güncellendi: %s %s -> %s", field, old, new)
+    if db is not None:
+        # Workbook K4-K7 projeksiyonu: env yazımı kalıcı olduğundan senkron
+        # hatası yanıtı 500'e çevirmez, yalnız loglanır (v2 ucu strict +
+        # env snapshot/restore sözleşmesiyle sarar).
+        from app.api.v2_inventory import sync_inventory_projection_guarded
+
+        try:
+            await sync_inventory_projection_guarded(db, admin=_)
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            await db.rollback()
+            logger.warning("Fiyat güncellemesi sonrası depolama projeksiyon senkronu tamamlanamadı", exc_info=True)
+    return updated
 
 
 @router.get("/workspace", response_model=InventoryWorkspaceOut)
@@ -408,8 +448,19 @@ async def patch_inventory_product(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ) -> ProductOut:
-    product = await get_product_or_404(db, product_id)
-    return await update_product(db, product, payload, admin.id)
+    from app.api.v2_inventory import sync_inventory_projection_guarded
+
+    # v2 kardeşiyle aynı atomik sözleşme: ürün mutasyonu ve workbook projeksiyonu
+    # tek transaction'da — senkron patlarsa ürün yarım durumda kalmaz.
+    try:
+        product = await get_product_or_404(db, product_id, commit_gdpr_changes=False)
+        updated = await update_product(db, product, payload, admin.id, commit=False)
+        await sync_inventory_projection_guarded(db, admin=admin)
+        await db.commit()
+        return updated
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.post("/products", response_model=ProductOut)
@@ -418,7 +469,16 @@ async def post_inventory_product(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ) -> ProductOut:
-    return await create_product(db, payload, admin.id)
+    from app.api.v2_inventory import sync_inventory_projection_guarded
+
+    try:
+        created = await create_product(db, payload, admin.id, commit=False)
+        await sync_inventory_projection_guarded(db, admin=admin)
+        await db.commit()
+        return created
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.delete("/products/{product_id}", status_code=204, response_class=Response)
@@ -427,6 +487,14 @@ async def delete_inventory_product(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ) -> Response:
-    product = await get_product_or_404(db, product_id)
-    await soft_delete_product(db, product, admin.id)
+    from app.api.v2_inventory import sync_inventory_projection_guarded
+
+    try:
+        product = await get_product_or_404(db, product_id, commit_gdpr_changes=False)
+        await soft_delete_product(db, product, admin.id, commit=False)
+        await sync_inventory_projection_guarded(db, admin=admin)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return Response(status_code=204)
