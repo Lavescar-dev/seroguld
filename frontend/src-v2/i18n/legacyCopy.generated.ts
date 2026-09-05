@@ -509,6 +509,8 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Excel'den İçe Aktar": { en: "Import from Excel", da: "Importér fra Excel" },
   "Bu sekmede görünen / filtrelenen toplam": { en: "Shown in this tab / filtered total", da: "Vist i dette faneblad / filtreret i alt" },
   "Sipariş bulunamadı": { en: "No orders found", da: "Ingen ordrer fundet" },
+  "Ayarlar yüklenemedi": { en: "Could not load settings", da: "Indstillinger kunne ikke indlæses" },
+  "Üretim yapılandırması sunucudan okunamadı. Ayarlar güvenli kilitte: kaydetme, sıfırlama ve içe aktarma, mevcut değerler okunana kadar devre dışıdır.": { en: "Production configuration could not be read from the server. Settings are safely locked: saving, resetting and importing are disabled until the current values are read.", da: "Produktionskonfigurationen kunne ikke læses fra serveren. Indstillingerne er sikret låst: gem, nulstil og import er deaktiveret, indtil de aktuelle værdier er læst." },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {
