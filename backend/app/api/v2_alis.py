@@ -457,22 +457,45 @@ async def post_alis_workspace_finalize_v2(
     admin: User = Depends(require_admin),
 ) -> PosWorkspaceFinalizeResponse:
     pos_session = await get_pos_session_or_404(db, session_id)
+    # finalize_purchase_workspace belgeyi KENDİ commit'iyle kalıcılaştırır;
+    # bu noktadan sonra istemciye 500 dönerse retry 409 'zaten kesinleşmiş'
+    # verir. Bu yüzden finalize audit kaydı belge commit'inden HEMEN sonra
+    # yazılır (Bogføringslovgivning izi artifact/render arızasına kurban
+    # edilemez), Office artifact senkronu ise best-effort'a alınır.
     response = await finalize_purchase_workspace(db, pos_session=pos_session, payload=payload)
-    detail = await get_legacy_pos_document_detail(sequence_no=response.document_sequence_no, db=db, _=admin)
-    await sync_afg_document_artifact(db, detail)
-    await _log_pos_audit(
-        db,
-        action="finalize",
-        actor=admin,
-        sequence_no=response.document_sequence_no,
-        pos_session_id=session_id,
-        payload={
-            "document_number": response.document_number,
-            "uniconta_sync_status": getattr(response, "uniconta_sync_status", None),
-        },
-        request=request,
-    )
-    await db.commit()
+    try:
+        await _log_pos_audit(
+            db,
+            action="finalize",
+            actor=admin,
+            sequence_no=response.document_sequence_no,
+            pos_session_id=session_id,
+            payload={
+                "document_number": response.document_number,
+                "uniconta_sync_status": getattr(response, "uniconta_sync_status", None),
+            },
+            request=request,
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001 — audit başarısızlığı finalize yanıtını düşürmesin
+        logging.getLogger(__name__).exception(
+            "finalize audit kaydı yazılamadı (seq=%s, session=%s)",
+            response.document_sequence_no,
+            session_id,
+        )
+        await db.rollback()
+
+    try:
+        detail = await get_legacy_pos_document_detail(sequence_no=response.document_sequence_no, db=db, _=admin)
+        await sync_afg_document_artifact(db, detail)
+        await db.commit()
+    except Exception:  # noqa: BLE001 — belge kesinleşti; xlsm projeksiyonu retry edilebilir
+        logging.getLogger(__name__).exception(
+            "finalize artifact senkronu başarısız — belge kalıcı, projeksiyon "
+            "artifact/retry ucuyla yenilenebilir (seq=%s)",
+            response.document_sequence_no,
+        )
+        await db.rollback()
     return response
 
 
@@ -604,6 +627,7 @@ class AlisDocumentLinkCustomerIn(AppBaseModel):
 
 @router.post("/alis/documents/auto-link-customers")
 async def post_alis_documents_auto_link_customers_v2(
+    limit: int = Query(default=500, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> dict:
@@ -613,6 +637,11 @@ async def post_alis_documents_auto_link_customers_v2(
     anında yapılır. Bu araç sonradan eklenen müşteriler için e-posta (birebir)
     → ad+telefon (normalize) sırasıyla yeniden dener. TEK aday varsa bağlar;
     birden çok aday = belirsiz, hiç aday = eşleşmedi — ikisi de elle bırakılır.
+
+    Performans: transactions ve pos_sessions eşleşen belgeler için TEKER
+    sorguda (in_) toplanır — eski belge-başına 2N+2 sorgu deseni ve uzun
+    yazım penceresi kalktı. Yanıt eşlenen (sequence_no, customer_id)
+    listesini de taşır; operatör denetimi kolaylaşır.
     """
     from sqlalchemy import select as _select
 
@@ -627,6 +656,8 @@ async def post_alis_documents_auto_link_customers_v2(
             .join(_PosSession, _PosSession.id == PosDocument.pos_session_id)
             .where(PosDocument.uniconta_sync_status == "historical")
             .where(_PosSession.customer_id.is_(None))
+            .order_by(PosDocument.sequence_no.asc())
+            .limit(limit)
         )
     ).all()
     customers = (await db.scalars(_select(User).where(User.role == _RoleEnum.CUSTOMER))).all()
@@ -641,32 +672,54 @@ async def post_alis_documents_auto_link_customers_v2(
         if name and phone:
             by_name_phone.setdefault((name, phone), []).append(customer)
 
-    linked = ambiguous = unmatched = 0
+    ambiguous = sum(
+        1
+        for document in documents
+        if _auto_link_candidate_count(document, by_email, by_name_phone, _normalise_phone) > 1
+    )
+    # Tek adaylı belgeler önce toplanır; DB işi toplu yapılır.
+    single_matches: list[tuple[PosDocument, User]] = []
+    unmatched = 0
     for document in documents:
-        candidates: list[User] = []
+        candidate_count = _auto_link_candidate_count(document, by_email, by_name_phone, _normalise_phone)
+        if candidate_count == 0:
+            unmatched += 1
+            continue
+        if candidate_count > 1:
+            continue
         email = (document.customer_email or "").strip().lower()
         if email and email in by_email:
-            candidates = by_email[email]
+            customer = by_email[email][0]
         else:
             name = " ".join((document.customer_name or "").split()).casefold()
             phone = _normalise_phone(document.customer_phone)
-            if name and phone:
-                candidates = by_name_phone.get((name, phone), [])
-        if len(candidates) != 1:
-            if len(candidates) > 1:
-                ambiguous += 1
-            else:
-                unmatched += 1
-            continue
-        customer = candidates[0]
-        transactions = (
+            customer = by_name_phone[(name, phone)][0]
+        single_matches.append((document, customer))
+
+    transactions_map: dict[int, list[_Transaction]] = {}
+    sessions_map: dict[UUID, _PosSession] = {}
+    if single_matches:
+        matched_sequence_numbers = [document.sequence_no for document, _ in single_matches]
+        matched_session_ids = {document.pos_session_id for document, _ in single_matches}
+        matched_transactions = (
             await db.scalars(
-                _select(_Transaction).where(_Transaction.pos_document_sequence_no == document.sequence_no)
+                _select(_Transaction).where(_Transaction.pos_document_sequence_no.in_(matched_sequence_numbers))
             )
         ).all()
-        for txn in transactions:
+        for txn in matched_transactions:
+            if txn.pos_document_sequence_no is not None:
+                transactions_map.setdefault(txn.pos_document_sequence_no, []).append(txn)
+        matched_sessions = (
+            await db.scalars(_select(_PosSession).where(_PosSession.id.in_(matched_session_ids)))
+        ).all()
+        sessions_map = {session.id: session for session in matched_sessions}
+
+    linked = 0
+    matches: list[dict[str, str]] = []
+    for document, customer in single_matches:
+        for txn in transactions_map.get(document.sequence_no, []):
             txn.customer_id = customer.id
-        pos_session = await db.get(_PosSession, document.pos_session_id)
+        pos_session = sessions_map.get(document.pos_session_id)
         if pos_session is not None:
             pos_session.customer_id = customer.id
         db.add(
@@ -680,9 +733,34 @@ async def post_alis_documents_auto_link_customers_v2(
                 note=f"Toplu ön eşleştirme: {customer.name}",
             )
         )
+        matches.append({"sequence_no": str(document.sequence_no), "customer_id": str(customer.id)})
         linked += 1
     await db.commit()
-    return {"ok": True, "scanned": len(documents), "linked": linked, "ambiguous": ambiguous, "unmatched": unmatched}
+    return {
+        "ok": True,
+        "scanned": len(documents),
+        "linked": linked,
+        "ambiguous": ambiguous,
+        "unmatched": unmatched,
+        "matches": matches,
+    }
+
+
+def _auto_link_candidate_count(
+    document: PosDocument,
+    by_email: dict[str, list[User]],
+    by_name_phone: dict[tuple[str, str], list[User]],
+    normalise_phone,
+) -> int:
+    """Belgenin otomatik eşleştirme aday sayısı (0 = eşleşmedi, 1 = bağlanır, >1 = belirsiz)."""
+    email = (document.customer_email or "").strip().lower()
+    if email and email in by_email:
+        return len(by_email[email])
+    name = " ".join((document.customer_name or "").split()).casefold()
+    phone = normalise_phone(document.customer_phone)
+    if name and phone:
+        return len(by_name_phone.get((name, phone), []))
+    return 0
 
 
 @router.post("/alis/documents/{sequence_no}/link-customer")

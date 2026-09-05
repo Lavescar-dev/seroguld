@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatKaratLabel, syncMarketRateState } from '../marketRates';
+import { formatKaratLabel, normalizeTextInput, parseDecimalValue, syncMarketRateState } from '../marketRates';
 import type { PosWorkspaceMarketRates } from '@/types';
 
 const current: PosWorkspaceMarketRates = {
@@ -75,6 +75,32 @@ describe('syncMarketRateState (DKK-only sözleşme)', () => {
     expect(next.gold_bar_dkk).toBe('873.00');
     expect(next.silver_bar_dkk).toBe('13.10');
     expect(next.plet_dkk).toBe('0.0200');
+  });
+
+  it('plet override lands in plet_dkk AND feeds the silver_matrix preview (silver:5)', () => {
+    // '800' backend gümüş profilinde yok; Plet girişinin tek gerçek hedefi
+    // plet_dkk skaleridir — kayıt + AFG satır önizlemesi aynı kaynaktan beslenir.
+    const next = syncMarketRateState(current, { plet_dkk: '0.021' });
+    expect(next.plet_dkk).toBe('0.0210');
+    expect(next.silver_matrix.find((row) => row.row_key === 'silver:5')?.dkk_per_gram).toBe('0.0210');
+  });
+});
+
+describe('normalizeTextInput / parseDecimalValue (Avrupa sayı biçimleri)', () => {
+  it('Danca binlik ayraçlı giriş çözümlenir: 6.392,10 -> 6392.10', () => {
+    expect(normalizeTextInput('6.392,10')).toBe('6392.10');
+    expect(parseDecimalValue('6.392,10')).toBe(6392.1);
+  });
+
+  it('son ayraç ondalıktır; öncekiler binliktir', () => {
+    expect(normalizeTextInput('1,5')).toBe('1.5');
+    expect(normalizeTextInput('1 234,5')).toBe('1234.5');
+    expect(normalizeTextInput('12.5')).toBe('12.5');
+  });
+
+  it('düz sayı ve negatif temizliği korunur', () => {
+    expect(normalizeTextInput('1234')).toBe('1234');
+    expect(normalizeTextInput('-5,5')).toBe('5.5');
   });
 });
 

@@ -1,6 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 import { formatNumber } from '@/lib/format';
 import type { PosWorkspaceMarketRates } from '@/types';
 
@@ -24,13 +25,28 @@ export const SILVER_MATRIX_ROWS = [
 
 const GOLD_RATE_ORDER = ['8', '14', '18', '21', '21.6', '22', '22b', '24'] as const;
 const SILVER_RATE_ORDER = ['999', '925', '830', '800'] as const;
-type MatrixRateDrafts = { fx: string; gold: Record<string, string>; silver: Record<string, string> };
+// Plet ('800') backend profilde gümüş anahtarı olarak yoktur; girişler plet_dkk
+// skalerine gider (aynı bulgu zinciri: MarketRates 'Plet' satırı ölü kontroldü).
+const PLET_SILVER_KEY = '800';
+const PLET_RATE_PRECISION = 4;
 
 export function normalizeTextInput(value: string): string {
-  // Virgül -> nokta + işaret (minus) karakterini kaldır.
+  // Binlik ayraç normalizasyonu (son ayraç ondalık kuralı) + virgül -> nokta
+  // + işaret (minus) karakterini kaldır.
+  // '6.392,10' -> '6392.10', '1,5' -> '1.5', '1 234,5' -> '1234.5'.
   // Alış akışında negatif gram/oran anlamlı değil; kullanıcı UI'da '-' yazsa bile
   // state'e sayısal olarak yazılır, downstream hesaplar pozitif/sıfır olur.
-  return value.replace(',', '.').replace(/-/g, '');
+  let text = value.replace(/\s/g, '').replace(/-/g, '');
+  const lastComma = text.lastIndexOf(',');
+  const lastDot = text.lastIndexOf('.');
+  const lastSeparator = Math.max(lastComma, lastDot);
+  if (lastSeparator !== -1) {
+    // Son ayraç ondalıktır; önündeki tüm ayraçlar binliktir.
+    const integerPart = text.slice(0, lastSeparator).replace(/[.,]/g, '');
+    const fractionPart = text.slice(lastSeparator + 1).replace(/[.,]/g, '');
+    text = `${integerPart}.${fractionPart}`;
+  }
+  return text;
 }
 
 export function parseDecimalValue(value: string | number | null | undefined) {
@@ -48,25 +64,9 @@ export function formatKaratLabel(karat: string): string {
   return karat === '22b' ? '22K-2' : `${karat}K`;
 }
 
-function formatRatePlaceholder(value: string | number | null | undefined) {
-  const text = String(value ?? '').trim();
-  if (!text || parseDecimalValue(text) === 0) {
-    return '0.00';
-  }
-  return text;
-}
-
-function buildEmptyMatrixRateDrafts(): MatrixRateDrafts {
-  return {
-    fx: '',
-    gold: Object.fromEntries(GOLD_RATE_ORDER.map((key) => [key, ''])) as Record<string, string>,
-    silver: Object.fromEntries(SILVER_RATE_ORDER.map((key) => [key, ''])) as Record<string, string>,
-  };
-}
-
 export function syncMarketRateState(
   current: PosWorkspaceMarketRates,
-  overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_24k_dkk' | 'gold_rates_dkk' | 'silver_rates_dkk'>>,
+  overrides?: Partial<Pick<PosWorkspaceMarketRates, 'eur_dkk_fx' | 'gold_24k_dkk' | 'gold_rates_dkk' | 'silver_rates_dkk' | 'plet_dkk'>>,
 ): PosWorkspaceMarketRates {
   const eur_dkk_fx = normalizeTextInput(String(overrides?.eur_dkk_fx ?? current.eur_dkk_fx ?? '7.45'));
   // CANLI TEK KAYNAK — altın per-karat BAĞIMSIZ: her karat elle girilir; hiçbir
@@ -89,7 +89,9 @@ export function syncMarketRateState(
     ]),
   ) as Record<string, string>;
   // Plet 4 hane taşır (canlı ~0.02 DKK/g; "21 kr/kg" → 0.0210 ayrımı 2 hanede kaybolur).
-  const pletDkk = formatDecimalFixed(current.plet_dkk ?? '0.02', 4);
+  // Plet override'ı doğrudan plet_dkk skalerine yazılır: backend profilde '800'
+  // gümüş anahtarı yoktur; Plet satırının tek gerçek hedefi plet_dkk'dir.
+  const pletDkk = formatDecimalFixed(overrides?.plet_dkk ?? current.plet_dkk ?? '0.02', 4);
   return {
     ...current,
     eur_dkk_fx,
@@ -141,14 +143,9 @@ export function MarketRatesEditor({
 }) {
   const panelId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [activeRateField, setActiveRateField] = useState<string | null>(null);
-  const [rateDrafts, setRateDrafts] = useState<MatrixRateDrafts>(() => buildEmptyMatrixRateDrafts());
-
-  useEffect(() => {
-    if (!activeRateField) {
-      setRateDrafts(buildEmptyMatrixRateDrafts());
-    }
-  }, [activeRateField, marketRates]);
+  // Commit reddi görünürlüğü: ≤0 oran sessizce yutulmaz; bant mesajı gösterilir
+  // ve input (CommittedNumericInput) kendiliğinden kayıtlı değere geri döner.
+  const [rateError, setRateError] = useState<string | null>(null);
 
   useEffect(() => {
     if (priceOpen) {
@@ -215,50 +212,37 @@ export function MarketRatesEditor({
       ? 'flex flex-wrap items-center justify-between gap-3 border-t border-brand-800 pt-3'
       : 'flex flex-wrap items-center justify-between gap-3 border-t border-brand-200 pt-3';
 
-  const updateGoldRate = (rateKey: string, value: string) => {
-    setRateDrafts((current) => ({
-      ...current,
-      gold: {
-        ...current.gold,
-        [rateKey]: value,
-      },
-    }));
-  };
-
-  const updateSilverRate = (rateKey: string, value: string) => {
-    setRateDrafts((current) => ({
-      ...current,
-      silver: {
-        ...current.silver,
-        [rateKey]: value,
-      },
-    }));
-  };
-
   const commitGoldRate = (rateKey: string, value: string) => {
-    if (parseDecimalValue(value) <= 0) return false;
+    if (parseDecimalValue(value) <= 0) {
+      setRateError('Oran sıfırdan büyük bir sayı olmalı — giriş uygulanmadı.');
+      return;
+    }
+    setRateError(null);
     setMarketRates((current) => syncMarketRateState(current, {
       gold_rates_dkk: { ...current.gold_rates_dkk, [rateKey]: value },
     }));
-    return true;
   };
 
   const commitSilverRate = (rateKey: string, value: string) => {
-    if (parseDecimalValue(value) <= 0) return false;
-    setMarketRates((current) => syncMarketRateState(current, {
-      silver_rates_dkk: { ...current.silver_rates_dkk, [rateKey]: value },
-    }));
-    return true;
-  };
-
-  const updateFx = (value: string) => {
-    setRateDrafts((current) => ({ ...current, fx: value }));
+    if (parseDecimalValue(value) <= 0) {
+      setRateError('Oran sıfırdan büyük bir sayı olmalı — giriş uygulanmadı.');
+      return;
+    }
+    setRateError(null);
+    // Plet ('800') profilde gümüş anahtarı olmadığı için plet_dkk'ye yazılır;
+    // böylece kayıt VE AFG satır önizlemesi aynı kaynaktan beslenir.
+    setMarketRates((current) => syncMarketRateState(current, rateKey === PLET_SILVER_KEY
+      ? { plet_dkk: value }
+      : { silver_rates_dkk: { ...current.silver_rates_dkk, [rateKey]: value } }));
   };
 
   const commitFx = (value: string) => {
-    if (parseDecimalValue(value) <= 0) return false;
+    if (parseDecimalValue(value) <= 0) {
+      setRateError('Kur sıfırdan büyük bir sayı olmalı — giriş uygulanmadı.');
+      return;
+    }
+    setRateError(null);
     setMarketRates((current) => syncMarketRateState(current, { eur_dkk_fx: value }));
-    return true;
   };
 
   return (
@@ -328,18 +312,11 @@ export function MarketRatesEditor({
                   <label htmlFor={`${panelId}-fx`} className="sr-only">
                     EUR / DKK FX
                   </label>
-                  <input
+                  <CommittedNumericInput
                     id={`${panelId}-fx`}
-                    type="text"
-                    value={activeRateField === 'fx' ? rateDrafts.fx : marketRates.eur_dkk_fx}
-                    onFocus={() => {
-                      setActiveRateField('fx');
-                      setRateDrafts((current) => ({ ...current, fx: current.fx || marketRates.eur_dkk_fx }));
-                    }}
-                    onChange={(event) => updateFx(event.target.value)}
-                    onBlur={(event) => {
-                      if (commitFx(event.currentTarget.value)) setActiveRateField(null);
-                    }}
+                    value={marketRates.eur_dkk_fx}
+                    rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+                    onCommit={(_, canonical) => commitFx(canonical)}
                     className={fieldInputClassName}
                   />
                   <span className={unitClassName}>FX</span>
@@ -368,19 +345,11 @@ export function MarketRatesEditor({
                           <label htmlFor={`${panelId}-gold-${row.key}`} className="sr-only">
                             {row.label} Gold DKK / G
                           </label>
-                          <input
+                          <CommittedNumericInput
                             id={`${panelId}-gold-${row.key}`}
-                            type="text"
-                            value={activeRateField === `gold:${row.key}` ? rateDrafts.gold[row.key] ?? '' : marketRates.gold_rates_dkk?.[row.key] ?? ''}
-                            placeholder={formatRatePlaceholder(marketRates.gold_rates_dkk?.[row.key])}
-                            onChange={(event) => updateGoldRate(row.key, event.target.value)}
-                            onFocus={() => {
-                              setActiveRateField(`gold:${row.key}`);
-                              setRateDrafts((current) => ({ ...current, gold: { ...current.gold, [row.key]: current.gold[row.key] || marketRates.gold_rates_dkk?.[row.key] || '' } }));
-                            }}
-                            onBlur={(event) => {
-                              if (commitGoldRate(row.key, event.currentTarget.value)) setActiveRateField(null);
-                            }}
+                            value={marketRates.gold_rates_dkk?.[row.key] ?? ''}
+                            rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: 2 }}
+                            onCommit={(_, canonical) => commitGoldRate(row.key, canonical)}
                             className={fieldInputClassName}
                             aria-label={`${row.label} Gold DKK / G`}
                           />
@@ -412,19 +381,11 @@ export function MarketRatesEditor({
                           <label htmlFor={`${panelId}-silver-${row.key}`} className="sr-only">
                             {row.label} DKK / G
                           </label>
-                          <input
+                          <CommittedNumericInput
                             id={`${panelId}-silver-${row.key}`}
-                            type="text"
-                            value={activeRateField === `silver:${row.key}` ? rateDrafts.silver[row.key] ?? '' : marketRates.silver_rates_dkk?.[row.key] ?? ''}
-                            placeholder={formatRatePlaceholder(marketRates.silver_rates_dkk?.[row.key])}
-                            onChange={(event) => updateSilverRate(row.key, event.target.value)}
-                            onFocus={() => {
-                              setActiveRateField(`silver:${row.key}`);
-                              setRateDrafts((current) => ({ ...current, silver: { ...current.silver, [row.key]: current.silver[row.key] || marketRates.silver_rates_dkk?.[row.key] || '' } }));
-                            }}
-                            onBlur={(event) => {
-                              if (commitSilverRate(row.key, event.currentTarget.value)) setActiveRateField(null);
-                            }}
+                            value={row.key === PLET_SILVER_KEY ? marketRates.plet_dkk ?? '' : marketRates.silver_rates_dkk?.[row.key] ?? ''}
+                            rules={{ kind: 'decimal', required: true, allowNegative: false, min: 0, precision: row.key === PLET_SILVER_KEY ? PLET_RATE_PRECISION : 2 }}
+                            onCommit={(_, canonical) => commitSilverRate(row.key, canonical)}
                             className={fieldInputClassName}
                             aria-label={`${row.label} DKK / G`}
                           />
@@ -436,6 +397,14 @@ export function MarketRatesEditor({
                 </div>
               </div>
             </div>
+            {rateError ? (
+              <div
+                role="alert"
+                className="flex items-center gap-2 rounded-sm border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"
+              >
+                {rateError}
+              </div>
+            ) : null}
             <div className={footerClassName}>
               <p className={sectionMetaClassName}>Değerler anında uygulanır. Bu buton yalnız paneli kapatır.</p>
               <button

@@ -18,6 +18,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  ReceiptText,
   RefreshCcw,
   Save,
   Search,
@@ -51,7 +52,7 @@ import { CustomerAlisSummaryStrip } from './CustomerAlisSummaryStrip';
 import { CustomerEditorTable, CustomerInfoTable } from './customerEditors';
 import { SelectedCustomerBar } from './SelectedCustomerBar';
 import { resolveCustomerPanelView } from './customerPanelState';
-import { AfregningsSheetEditor } from './sheetEditors';
+import { AfregningsSheetEditor, InvoiceGoldSheetEditor, InvoiceMiscSheetEditor } from './sheetEditors';
 import { RelinkCustomerModal } from './RelinkCustomerModal';
 import type {
   CompanionMode,
@@ -203,6 +204,9 @@ type SavedPurchaseListActionProps = {
   onCancelUnicontaInvoice: (item: PosSavedPurchaseListItem) => void;
   cancelPendingSequenceNo: number | null;
   actionPendingSequenceNo: number | null;
+  // R2-17: relink modalı layout sahibinde (StartWorkspaceView) yaşar; tablo ve
+  // kart aksiyonları yalnız belgeyi yükseltir.
+  onRelinkDocument: (item: PosSavedPurchaseListItem) => void;
 };
 
 type SavedPurchaseListRendererProps = SavedPurchaseListActionProps & {
@@ -214,7 +218,9 @@ type SavedPurchaseListRendererProps = SavedPurchaseListActionProps & {
   onToggleSort?: (key: SavedPurchaseSortKey) => void;
 };
 
-type StartWorkspaceViewProps = SavedPurchaseListRendererProps & {
+// relink state'i StartWorkspaceView'ın KENDİNE aittir (layout değişiminden
+// etkilenmesin diye) — parent'tan onRelinkDocument beklemez.
+type StartWorkspaceViewProps = Omit<SavedPurchaseListRendererProps, 'onRelinkDocument'> & {
   draftWorkspace: PosWorkspace | null;
   onResumeDraft: () => void;
   purchaseSearchTerm: string;
@@ -241,6 +247,7 @@ export type AlisPageProps = {
   onDeleteDetail: () => void;
   onExportDetail: () => void;
   onPrintDetail: () => void;
+  onDownloadDetailThermalReceipt?: () => void;
   onOpenDetailExcelPreview: () => void;
   detailActionPending: boolean;
   detailError: string | null;
@@ -274,6 +281,7 @@ export type AlisPageProps = {
   customerSearchTerm: string;
   setCustomerSearchTerm: Dispatch<SetStateAction<string>>;
   candidateCustomers: CustomerOut[];
+  customerSearchError?: string | null;
   newCustomer: EditableCustomer;
   setNewCustomer: Dispatch<SetStateAction<EditableCustomer>>;
   onSelectExistingCustomer: (customerId: string) => void;
@@ -358,6 +366,7 @@ export function AlisPage(props: AlisPageProps) {
     onDeleteDetail,
     onExportDetail,
     onPrintDetail,
+    onDownloadDetailThermalReceipt,
     onOpenDetailExcelPreview,
     detailActionPending,
     detailError,
@@ -391,6 +400,7 @@ export function AlisPage(props: AlisPageProps) {
     customerSearchTerm,
     setCustomerSearchTerm,
     candidateCustomers,
+    customerSearchError,
     newCustomer,
     setNewCustomer,
     onSelectExistingCustomer,
@@ -473,6 +483,7 @@ export function AlisPage(props: AlisPageProps) {
           onDelete={onDeleteDetail}
           onExport={onExportDetail}
           onPrint={onPrintDetail}
+          onDownloadThermalReceipt={onDownloadDetailThermalReceipt}
           onPreview={onOpenDetailExcelPreview}
           actionPending={detailActionPending}
         />
@@ -496,7 +507,8 @@ export function AlisPage(props: AlisPageProps) {
             <button
               type="button"
               onClick={onStartBlankWorkspace}
-              className="flex shrink-0 items-center justify-center gap-2 border border-brand-900 bg-brand-800 px-5 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-900"
+              disabled={startPending}
+              className="flex shrink-0 items-center justify-center gap-2 border border-brand-900 bg-brand-800 px-5 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-brand-900 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Plus className="h-4 w-4" />
               {startPending ? 'Hazırlanıyor...' : 'Yeni Alış Başlat'}
@@ -513,6 +525,7 @@ export function AlisPage(props: AlisPageProps) {
           customerSearchTerm={customerSearchTerm}
           setCustomerSearchTerm={setCustomerSearchTerm}
           candidateCustomers={candidateCustomers}
+          customerSearchError={customerSearchError}
           newCustomer={newCustomer}
           setNewCustomer={setNewCustomer}
           onSelectExistingCustomer={onSelectExistingCustomer}
@@ -616,6 +629,7 @@ function ActiveWorkspaceView(props: {
   customerSearchTerm: string;
   setCustomerSearchTerm: Dispatch<SetStateAction<string>>;
   candidateCustomers: CustomerOut[];
+  customerSearchError?: string | null;
   newCustomer: EditableCustomer;
   setNewCustomer: Dispatch<SetStateAction<EditableCustomer>>;
   onSelectExistingCustomer: (customerId: string) => void;
@@ -688,6 +702,7 @@ function ActiveWorkspaceView(props: {
     customerSearchTerm,
     setCustomerSearchTerm,
     candidateCustomers,
+    customerSearchError,
     newCustomer,
     setNewCustomer,
     onSelectExistingCustomer,
@@ -714,6 +729,16 @@ function ActiveWorkspaceView(props: {
     setActiveWorkspaceView,
     numbering,
     onUpdateNumbering,
+    invoiceGoldMode,
+    invoiceGoldRows,
+    invoiceGoldFooterLines,
+    onUpdateInvoiceGoldRow,
+    onUpdateInvoiceGoldFooterLine,
+    onResetInvoiceGoldToAuto,
+    invoiceMiscMode,
+    invoiceMiscRows,
+    onUpdateInvoiceMiscRow,
+    onResetInvoiceMiscToAuto,
     bankInfo,
     setBankInfo,
     marketRates,
@@ -721,6 +746,7 @@ function ActiveWorkspaceView(props: {
     afgNote,
     setAfgNote,
     purchaseVatEnabled,
+    setPurchaseVatEnabled,
     calculators,
     setCalculators,
     paymentMethod,
@@ -961,6 +987,17 @@ function ActiveWorkspaceView(props: {
                     {purchaseVatEnabled ? (
                       <p className="mono text-[11px] font-black uppercase tracking-wider text-brand-800">KDV (tarihsel belge): {formatMoney(liveVatAmount)} DKK</p>
                     ) : null}
+                    {/* Tarihsel belge KDV anahtarı — hook + autosave + finalize
+                        payload'ında canlı; operatör buradan tetikler. */}
+                    <label className="mt-2 flex cursor-pointer items-center gap-2 text-[10px] font-black uppercase tracking-widest text-brand-500">
+                      <input
+                        type="checkbox"
+                        checked={purchaseVatEnabled}
+                        onChange={(event) => setPurchaseVatEnabled(event.target.checked)}
+                        className="h-3.5 w-3.5 accent-brand-700"
+                      />
+                      Alış KDV&apos;si uygula (%25)
+                    </label>
                     <p className="mono text-sm font-black uppercase tracking-wider text-emerald-800">Ödenecek: {formatMoney(liveGrossAmount)} DKK</p>
                     <label className="mt-3 block text-[10px] font-black uppercase tracking-widest text-brand-500">
                       AFG notu
@@ -1094,7 +1131,12 @@ function ActiveWorkspaceView(props: {
                         </button>
                       </div>
                       <div className="max-h-56 overflow-y-auto">
-                        {candidateCustomers.length === 0 ? (
+                        {customerSearchError ? (
+                          <div className="px-4 py-4 text-center">
+                            <p className="text-xs font-semibold text-rose-700">Müşteri araması başarısız — sonuçlar eksik olabilir</p>
+                            <p className="mt-1 text-[11px] text-rose-500">{customerSearchError}</p>
+                          </div>
+                        ) : candidateCustomers.length === 0 ? (
                           <p className="px-4 py-8 text-center text-xs text-brand-400">Kayıtlı müşteri bulunamadı</p>
                         ) : (
                           <table className="w-full border-collapse">
@@ -1103,10 +1145,11 @@ function ActiveWorkspaceView(props: {
                                 <tr
                                   key={customer.id}
                                   onClick={() => {
+                                    if (customerSelecting) return;
                                     setReplacingCustomer(false);
                                     onSelectExistingCustomer(customer.id);
                                   }}
-                                  className={`cursor-pointer border-b border-brand-100 transition-colors hover:bg-brand-50 ${index % 2 === 0 ? 'bg-white' : 'bg-brand-50/40'}`}
+                                  className={`border-b border-brand-100 transition-colors hover:bg-brand-50 ${index % 2 === 0 ? 'bg-white' : 'bg-brand-50/40'} ${customerSelecting ? 'pointer-events-none opacity-60' : 'cursor-pointer'}`}
                                 >
                                   <td className="px-3 py-2.5 text-xs font-bold text-brand-900">{customer.name}</td>
                                   <td className="mono px-3 py-2.5 text-xs text-brand-600">{customer.cpr_number_masked || '-'}</td>
@@ -1116,6 +1159,20 @@ function ActiveWorkspaceView(props: {
                             </tbody>
                           </table>
                         )}
+                      </div>
+                      {/* Çıkmaz akış kırıcı: listede yoksa yeni müşteri formuna tek tıkla geç. */}
+                      <div className="border-t border-brand-200 px-4 py-2 text-right">
+                        <button
+                          type="button"
+                          disabled={customerSelecting}
+                          onClick={() => {
+                            setReplacingCustomer(false);
+                            setCustomerMode('new');
+                          }}
+                          className="text-xs font-semibold text-brand-600 underline decoration-dotted hover:text-brand-900 disabled:opacity-50"
+                        >
+                          Listede yok mu? Yeni müşteri oluştur →
+                        </button>
                       </div>
                     </div>
                   ) : customerPanelView === 'create-new' ? (
@@ -1208,10 +1265,138 @@ function ActiveWorkspaceView(props: {
             paymentMethod={paymentMethod}
             setPaymentMethod={setPaymentMethod}
           />
+
+          {/* Fatura companion editörleri — state + autosave + finalize payload'ında
+              canlı; buradan düzenlenebilir. Manuel moda düşüldüğünde uyarı bandı
+              ve Reset to Auto erişimi görünür. */}
+          <InvoiceCompanionsSection
+            customerName={customerForm.name}
+            documentDate={workspace.session.updated_at}
+            invoiceNumber={numbering.invoice_number_next}
+            marketRates={marketRates}
+            invoiceGoldMode={invoiceGoldMode}
+            invoiceGoldRows={invoiceGoldRows}
+            invoiceGoldFooterLines={invoiceGoldFooterLines}
+            onUpdateInvoiceGoldRow={onUpdateInvoiceGoldRow}
+            onUpdateInvoiceGoldFooterLine={onUpdateInvoiceGoldFooterLine}
+            onResetInvoiceGoldToAuto={onResetInvoiceGoldToAuto}
+            invoiceMiscMode={invoiceMiscMode}
+            invoiceMiscRows={invoiceMiscRows}
+            onUpdateInvoiceMiscRow={onUpdateInvoiceMiscRow}
+            onResetInvoiceMiscToAuto={onResetInvoiceMiscToAuto}
+          />
         </>
       ) : (
         <WorkspaceExcelSurface workspaceId={workspace.session.id} />
       )}
+    </div>
+  );
+}
+
+// Fatura companion yüzeyi: klasik 'system' görünümünde AfregningsSheetEditor'ın
+// altında katlanabilir bölüm. Manuel mod uyarısı + Reset to Auto erişimi tek yerde.
+function InvoiceCompanionsSection({
+  customerName,
+  documentDate,
+  invoiceNumber,
+  marketRates,
+  invoiceGoldMode,
+  invoiceGoldRows,
+  invoiceGoldFooterLines,
+  onUpdateInvoiceGoldRow,
+  onUpdateInvoiceGoldFooterLine,
+  onResetInvoiceGoldToAuto,
+  invoiceMiscMode,
+  invoiceMiscRows,
+  onUpdateInvoiceMiscRow,
+  onResetInvoiceMiscToAuto,
+}: {
+  customerName: string;
+  documentDate: string;
+  invoiceNumber: string;
+  marketRates: PosWorkspaceMarketRates;
+  invoiceGoldMode: CompanionMode;
+  invoiceGoldRows: EditableInvoiceGoldRow[];
+  invoiceGoldFooterLines: string[];
+  onUpdateInvoiceGoldRow: (rowKey: string, field: 'code' | 'fineness' | 'gram', value: string) => void;
+  onUpdateInvoiceGoldFooterLine: (index: number, value: string) => void;
+  onResetInvoiceGoldToAuto: () => void;
+  invoiceMiscMode: CompanionMode;
+  invoiceMiscRows: EditableInvoiceMiscRow[];
+  onUpdateInvoiceMiscRow: (rowKey: string, field: 'text' | 'quantity' | 'unit_price_dkk', value: string) => void;
+  onResetInvoiceMiscToAuto: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const manualModes = [invoiceGoldMode, invoiceMiscMode].filter((mode) => mode === 'manual').length;
+  return (
+    <div className="border-t-2 border-brand-300">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between bg-brand-800 px-4 py-2 text-left"
+      >
+        <span className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-brand-300">
+          Fatura Companion (Guld &amp; Sølv / Diverse)
+          {manualModes > 0 ? (
+            <span className="border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-900">
+              {manualModes} bölüm manuel modda
+            </span>
+          ) : null}
+        </span>
+        <span className="text-xs font-bold text-brand-300">{open ? '▲ Kapat' : '▼ Aç'}</span>
+      </button>
+      {open ? (
+        <div className="space-y-2 bg-stone-100 py-2">
+          {manualModes > 0 ? (
+            <div className="mx-4 flex flex-wrap items-center justify-between gap-2 border border-amber-300 bg-amber-50 px-3 py-2">
+              <p className="text-xs font-bold text-amber-900">
+                Fatura companion bölümü manuel override modunda — AFG core satırları bunu otomatik ezmez.
+              </p>
+              <div className="flex gap-2">
+                {invoiceGoldMode === 'manual' ? (
+                  <button
+                    type="button"
+                    onClick={onResetInvoiceGoldToAuto}
+                    className="border border-brand-300 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
+                  >
+                    Guld &amp; Sølv → Auto
+                  </button>
+                ) : null}
+                {invoiceMiscMode === 'manual' ? (
+                  <button
+                    type="button"
+                    onClick={onResetInvoiceMiscToAuto}
+                    className="border border-brand-300 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
+                  >
+                    Diverse → Auto
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <InvoiceGoldSheetEditor
+            customerName={customerName}
+            documentDate={documentDate}
+            invoiceNumber={invoiceNumber}
+            marketRates={marketRates}
+            rows={invoiceGoldRows}
+            footerLines={invoiceGoldFooterLines}
+            mode={invoiceGoldMode}
+            onResetToAuto={onResetInvoiceGoldToAuto}
+            onUpdateRow={onUpdateInvoiceGoldRow}
+            onUpdateFooterLine={onUpdateInvoiceGoldFooterLine}
+          />
+          <InvoiceMiscSheetEditor
+            customerName={customerName}
+            documentDate={documentDate}
+            invoiceNumber={invoiceNumber}
+            rows={invoiceMiscRows}
+            mode={invoiceMiscMode}
+            onResetToAuto={onResetInvoiceMiscToAuto}
+            onUpdateRow={onUpdateInvoiceMiscRow}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1324,6 +1509,13 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
   const [amountMin, setAmountMin] = useState('');
   const [amountMax, setAmountMax] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // R2-17: relink state'i layout'a DEĞİL buraya taşındı — ResizeObserver tablo↔kart
+  // geçişinde açık modalın sessizce unmount olması engellenir ve kart görünümü de
+  // aynı aksiyona erişir.
+  const [relinkDocument, setRelinkDocument] = useState<PosSavedPurchaseListItem | null>(null);
+  // B5: toplu eşleştirme isteği sürerken buton kilitli — ikinci tık ikinci tam
+  // tarama + ikinci invalidation dalgası başlatmasın.
+  const [autoLinkPending, setAutoLinkPending] = useState(false);
 
   const toggleSort = (key: SavedPurchaseSortKey) => {
     setSortConfig((current) => {
@@ -1521,8 +1713,10 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
           <div className="mb-2 flex justify-end">
             <button
               type="button"
+              disabled={autoLinkPending}
               onClick={() => {
                 void (async () => {
+                  setAutoLinkPending(true);
                   try {
                     const result = await apiRequest<{ scanned: number; linked: number; ambiguous: number; unmatched: number }>(
                       '/api/v2/alis/documents/auto-link-customers',
@@ -1537,15 +1731,24 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
                     await queryClient.invalidateQueries({ queryKey: ['customers'] });
                   } catch (error) {
                     toast.error('Toplu eşleştirme çalıştırılamadı.', localizeApiError(error));
+                  } finally {
+                    setAutoLinkPending(false);
                   }
                 })();
               }}
-              className="border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-50"
+              className="inline-flex items-center gap-1.5 border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-50 disabled:cursor-wait disabled:opacity-60"
               title="Bağlantısız tarihsel belgeleri e-posta → ad+telefon ile müşterilere bağlamayı dener; tek aday varsa bağlar"
             >
-              Tarihsel belgeleri otomatik eşle
+              {autoLinkPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {autoLinkPending ? 'Eşleştiriliyor...' : 'Tarihsel belgeleri otomatik eşle'}
             </button>
           </div>
+          {hasExtraFilters ? (
+            <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] font-bold text-amber-800" role="note">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              Bitiş tarihi ve tutar filtreleri yalnız yüklü ilk 120 kayıt üzerinde (client-side) çalışır — daha eski dönem için tarih filtresini tek gün olarak kullanın.
+            </div>
+          ) : null}
           {savedPurchaseLayout === 'cards' ? (
             <SavedPurchaseCardList
               documents={filteredAndSorted}
@@ -1565,6 +1768,7 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
               onCancelUnicontaInvoice={onCancelUnicontaInvoice}
               cancelPendingSequenceNo={cancelPendingSequenceNo}
               actionPendingSequenceNo={actionPendingSequenceNo}
+              onRelinkDocument={setRelinkDocument}
             />
           ) : (
             <SavedPurchaseTable
@@ -1585,11 +1789,13 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
               onCancelUnicontaInvoice={onCancelUnicontaInvoice}
               cancelPendingSequenceNo={cancelPendingSequenceNo}
               actionPendingSequenceNo={actionPendingSequenceNo}
+              onRelinkDocument={setRelinkDocument}
               sortConfig={sortConfig}
               onToggleSort={toggleSort}
             />
           )}
         </div>
+        {relinkDocument ? <RelinkCustomerModal document={relinkDocument} onClose={() => setRelinkDocument(null)} /> : null}
       </div>
     </div>
   );
@@ -1613,11 +1819,10 @@ function SavedPurchaseTable({
   onCancelUnicontaInvoice,
   cancelPendingSequenceNo,
   actionPendingSequenceNo,
+  onRelinkDocument,
   sortConfig,
   onToggleSort,
 }: SavedPurchaseListRendererProps) {
-  // R2-17: tarihsel belgeyi doğru müşteriye elle bağlama
-  const [relinkDocument, setRelinkDocument] = useState<PosSavedPurchaseListItem | null>(null);
   const sortArrow = (key: SavedPurchaseSortKey) => {
     if (!sortConfig || sortConfig.key !== key) return '↕';
     return sortConfig.direction === 'asc' ? '↑' : '↓';
@@ -1628,7 +1833,6 @@ function SavedPurchaseTable({
       : 'cursor-pointer select-none hover:bg-brand-200';
   return (
     <>
-    {relinkDocument ? <RelinkCustomerModal document={relinkDocument} onClose={() => setRelinkDocument(null)} /> : null}
     <table className="w-full border-collapse">
       <thead>
         <tr className="border-b-2 border-brand-400">
@@ -1854,11 +2058,14 @@ function SavedPurchaseTable({
                   </button>
                   <button
                     type="button"
-                    disabled={!document.customer_id}
-                    onClick={() => onStartFromCustomer(document)}
+                    disabled={actionPendingSequenceNo === document.sequence_no}
+                    onClick={() => {
+                      if (document.customer_id) onStartFromCustomer(document);
+                      else onRelinkDocument(document);
+                    }}
                     className="flex h-5 w-5 items-center justify-center border border-transparent text-amber-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-800 disabled:cursor-not-allowed disabled:opacity-35"
-                    title="Müşteriyle Yeni Alış Başlat"
-                    aria-label="Müşteriyle Yeni Alış Başlat"
+                    title={document.customer_id ? 'Müşteriyle Yeni Alış Başlat' : 'Müşteri bağlantısı yok — önce belgeyi müşteriye bağlayın'}
+                    aria-label={document.customer_id ? 'Müşteriyle Yeni Alış Başlat' : 'Belgeyi müşteriye bağla'}
                   >
                     <UserPlus className="h-3 w-3" />
                   </button>
@@ -1917,7 +2124,7 @@ function SavedPurchaseTable({
                   {document.uniconta_sync_status === 'historical' ? (
                     <button
                       type="button"
-                      onClick={() => setRelinkDocument(document)}
+                      onClick={() => onRelinkDocument(document)}
                       className="flex h-5 w-5 items-center justify-center border border-transparent text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-900"
                       title="Belgeyi müşteriye bağla (tarihsel içe aktarma)"
                       aria-label="Belgeyi müşteriye bağla"
@@ -1962,6 +2169,7 @@ function SavedPurchaseCardList({
   onCancelUnicontaInvoice,
   cancelPendingSequenceNo,
   actionPendingSequenceNo,
+  onRelinkDocument,
 }: SavedPurchaseListRendererProps) {
   if (listError) {
     return (
@@ -2082,6 +2290,7 @@ function SavedPurchaseCardList({
                 onCancelUnicontaInvoice={onCancelUnicontaInvoice}
                 cancelPendingSequenceNo={cancelPendingSequenceNo}
                 actionPendingSequenceNo={actionPendingSequenceNo}
+                onRelinkDocument={onRelinkDocument}
               />
             </div>
           </article>
@@ -2162,6 +2371,7 @@ function SavedPurchaseCardActions({
   onCancelUnicontaInvoice,
   cancelPendingSequenceNo,
   actionPendingSequenceNo,
+  onRelinkDocument,
 }: SavedPurchaseListActionProps & {
   document: PosSavedPurchaseListItem;
 }) {
@@ -2209,13 +2419,27 @@ function SavedPurchaseCardActions({
       </button>
       <button
         type="button"
-        disabled={!document.customer_id}
-        onClick={() => onStartFromCustomer(document)}
-        className="inline-flex items-center justify-center gap-1.5 border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-amber-700 transition hover:border-amber-400 hover:bg-amber-100 hover:text-amber-800 disabled:cursor-not-allowed disabled:opacity-35"
+        onClick={() => {
+          if (document.customer_id) onStartFromCustomer(document);
+          else onRelinkDocument(document);
+        }}
+        className="inline-flex items-center justify-center gap-1.5 border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-amber-700 transition hover:border-amber-400 hover:bg-amber-100 hover:text-amber-800"
+        title={document.customer_id ? 'Bu müşteriyle yeni alış başlat' : 'Müşteri bağlantısı yok — önce belgeyi müşteriye bağlayın'}
       >
         <UserPlus className="h-3.5 w-3.5" />
-        Yeni Alış
+        {document.customer_id ? 'Yeni Alış' : 'Müşteriye Bağla'}
       </button>
+      {document.uniconta_sync_status === 'historical' ? (
+        <button
+          type="button"
+          onClick={() => onRelinkDocument(document)}
+          className="inline-flex items-center justify-center gap-1.5 border border-emerald-300 bg-emerald-50 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-100 hover:text-emerald-800"
+          title="Belgeyi müşteriye bağla (tarihsel içe aktarma)"
+        >
+          <Link2 className="h-3.5 w-3.5" />
+          Bağla
+        </button>
+      ) : null}
       <button
         type="button"
         disabled={isEditDisabled}
@@ -2391,6 +2615,7 @@ function SavedPurchaseDetailModal({
   onPreview,
   onExport,
   onPrint,
+  onDownloadThermalReceipt,
   actionPending,
 }: {
   source: PosSavedPurchaseListItem | null;
@@ -2404,6 +2629,7 @@ function SavedPurchaseDetailModal({
   onPreview: () => void;
   onExport: () => void;
   onPrint: () => void;
+  onDownloadThermalReceipt?: () => void;
   actionPending: boolean;
 }) {
   const documentWorkbookName = buildDocumentWorkbookName(source?.document_number);
@@ -2641,11 +2867,22 @@ function SavedPurchaseDetailModal({
                   type="button"
                   onClick={onPrint}
                   className="flex h-8 w-8 items-center justify-center border border-transparent text-blue-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800"
-                  title="Yazdır"
-                  aria-label="Yazdır"
+                  title="Fişi yazdır (HTML)"
+                  aria-label="Fişi yazdır"
                 >
                   <Printer className="h-4 w-4" />
                 </button>
+                {onDownloadThermalReceipt ? (
+                  <button
+                    type="button"
+                    onClick={onDownloadThermalReceipt}
+                    className="flex h-8 w-8 items-center justify-center border border-transparent text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800"
+                    title="Termal fiş indir (ESC/POS 80mm — yazıcı yazılımı porta gönderir)"
+                    aria-label="Termal fiş indir"
+                  >
+                    <ReceiptText className="h-4 w-4" />
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={onClose}

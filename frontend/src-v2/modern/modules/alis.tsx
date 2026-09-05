@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  ReceiptText,
   RefreshCcw,
   Repeat2,
   Search,
@@ -52,6 +53,7 @@ const customerFields: Array<{ key: keyof EditableCustomer; label: string; type?:
   { key: 'cpr_number', label: 'CPR nr.' },
   { key: 'identity_doc_number', label: 'Kimlik / Pasaport' },
   { key: 'identity_doc_type', label: 'Belge türü' },
+  { key: 'identity_doc_country', label: 'Belge ülkesi' },
   { key: 'phone', label: 'Telefon' },
   { key: 'email', label: 'E-posta', type: 'email' },
   { key: 'address', label: 'Adres' },
@@ -168,10 +170,9 @@ export function ModernAlisModule({
   }, [state.goldRows, state.silverRows]);
 
   function startBlankWorkspace() {
-    if (workspace || state.draftWorkspace) {
-      const confirmed = window.confirm('Mevcut Alış taslağı açık. Yeni boş alış başlatmak mevcut taslağı geride bırakabilir. Devam edilsin mi?');
-      if (!confirmed) return;
-    }
+    // Onay diyaloğu hook tarafındaki startWorkspaceGuarded'dan gelir — tüm
+    // "yeni alış başlat" yolları (boş, müşteriden, Ctrl+N) aynı kaynaktan geçer;
+    // burada ikinci bir window.confirm açmak çift diyalog üretirdi.
     state.onStartBlankWorkspace();
   }
 
@@ -316,6 +317,7 @@ export function ModernAlisModule({
                 onPreview={state.onOpenDetailExcelPreview}
                 onExport={state.onExportDetail}
                 onPrint={state.onPrintDetail}
+                onThermalReceipt={state.onDownloadDetailThermalReceipt}
                 actionPending={state.detailActionPending}
                 onRetry={state.onRetryDetail}
               />
@@ -404,10 +406,12 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
     ...extraSilverRows,
   ];
   // R2-10 takip / roadmap madde 2: sabit grid backend karat eşleşmesi yüzünden
-  // 22b taşımaz; 22K-2 burada dropdown'a suni gizli satır olarak sunulur.
-  // Seçilince boş (gram 0) quarter-extra satırı (karat '22b') oluşturulur.
+  // 22b taşımaz; 22K-2 dropdown'a 'add:' önekli suni satır olarak sunulur.
+  // Seçim AlisLedger'ın 'add:' dalına düşer ve onAddPresetRow GERÇEK boş
+  // quarter-extra satırını (karat '22b') oluşturur — eski 'extra:add-22b'
+  // anahtarı onUpdateExtraRow'da no-op olduğundan hayalet satır üretiyordu.
   if (!extraAll.some((row) => row.metal === 'gold' && row.karat === '22b')) {
-    goldRows.push({ key: 'extra:add-22b', name: '22K-2', type: 'Altın', purity: '91.67', karat: '22', lodighed: '916', unitPrice: state.marketRates.gold_rates_dkk?.['22b'] || '0', gram: '0', avance: '0', total: '0' });
+    goldRows.push({ key: 'add:22b', name: '22K-2', type: 'Altın', purity: '91.67', karat: '22', lodighed: '916', unitPrice: state.marketRates.gold_rates_dkk?.['22b'] || '0', gram: '0', avance: '0', total: '0' });
   }
   const totalGram = [...goldRows, ...silverRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
   const totalOffer = [...goldRows, ...silverRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.total), 0);
@@ -455,8 +459,8 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
             <div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-text-soft">AFG satırları</p><p className="mt-1 text-sm text-sg-text-soft">Gram ve avance alanlarını düzenleyin; fiyatlar oranlardan hesaplanır.</p></div>
             <button type="button" onClick={() => onOpenTool('calculator')} className={shellButtonClass('ghost')}><Calculator className="h-4 w-4" />Kniv beregner</button>
           </div>
-          <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'gram', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateGoldRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'avance_percent', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateGoldRow(key, 'avance_percent', value))} onAddPresetRow={() => state.onAddExtraRows([{ kind: 'quarter', metal: 'gold', karat: '22b', label: '22K-2', gram: 0, allowEmptyGram: true }])} layoutMode={layoutMode} />
-          <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'gram', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateSilverRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'avance_percent', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateSilverRow(key, 'avance_percent', value))} layoutMode={layoutMode} />
+          <AlisLedger title="Altın" tone="gold" rows={goldRows} expanded={expandedGroups.has('gold')} onToggle={() => onToggleGroup('gold')} onGramChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'gram', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateGoldRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'avance_percent', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateGoldRow(key, 'avance_percent', value))} onAddPresetRow={() => state.onAddExtraRows([{ kind: 'quarter', metal: 'gold', karat: '22b', label: '22K-2', gram: 0, allowEmptyGram: true }])} onDeleteExtraRow={state.onDeleteExtraRow} layoutMode={layoutMode} />
+          <AlisLedger title="Gümüş" tone="silver" rows={silverRows} expanded={expandedGroups.has('silver')} onToggle={() => onToggleGroup('silver')} onGramChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'gram', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'gram', value) : state.onUpdateSilverRow(key, 'gram', value))} onAvanceChange={(key, value) => (key.startsWith('extra:') ? state.onUpdateExtraRow(key, 'avance_percent', value) : key.startsWith('bar:') ? state.onUpdateBarRow(key, 'avance_percent', value) : state.onUpdateSilverRow(key, 'avance_percent', value))} onDeleteExtraRow={state.onDeleteExtraRow} layoutMode={layoutMode} />
           <AlisLedger title="Platin / Palladium" tone="silver" rows={ptpdRows} expanded={expandedGroups.has('ptpd')} onToggle={() => onToggleGroup('ptpd')} onGramChange={(key, value) => state.onUpdatePtPdRow(key, 'gram', value)} onAvanceChange={(key, value) => state.onUpdatePtPdRow(key, 'avance_percent', value)} layoutMode={layoutMode} />
 
           {/* Belgenin resmî alt bloğu — klasik AFG sheet'iyle aynı içerik:
@@ -519,7 +523,7 @@ function AlisInspector({ state, workspace, hasSelectedCustomer, displayBridge, d
   );
 }
 
-function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAvanceChange, layoutMode, onAddPresetRow }: { title: string; tone: 'gold' | 'silver'; rows: ModernAlisRow[]; expanded: boolean; onToggle: () => void; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void; layoutMode: AlisLayoutMode; onAddPresetRow?: (preset: string) => void }) {
+function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAvanceChange, layoutMode, onAddPresetRow, onDeleteExtraRow }: { title: string; tone: 'gold' | 'silver'; rows: ModernAlisRow[]; expanded: boolean; onToggle: () => void; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void; layoutMode: AlisLayoutMode; onAddPresetRow?: (preset: string) => void; onDeleteExtraRow?: (rowKey: string) => void }) {
   const [revealedRows, setRevealedRows] = useState<Set<string>>(() => new Set());
   const totalGram = rows.reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
   const activeRows = rows.filter((row) => parseDecimalValue(row.gram) > 0).length;
@@ -529,22 +533,26 @@ function AlisLedger({ title, tone, rows, expanded, onToggle, onGramChange, onAva
   return (
     <section className="border-b border-sg-border last:border-b-0">
       <button type="button" onClick={onToggle} aria-expanded={expanded} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-sg-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sg-accent/50"><span className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${tone === 'gold' ? 'bg-sg-amber' : 'bg-slate-400'}`} /><span className="text-sm font-semibold text-sg-text">{title}</span><span className="text-xs text-sg-text-soft">{activeRows} aktif · {formatNumber(totalGram, ' g')}</span></span><ChevronDown className={`h-4 w-4 text-sg-text-soft transition ${expanded ? 'rotate-180' : ''}`} /></button>
-      {expanded ? <div className="px-4 pb-3"><div className="flex flex-wrap items-center justify-between gap-2 border-y border-sg-border-soft py-2"><div className={`min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Mer pris</span><span className={wide ? 'text-right' : undefined}>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span className="text-right">Toplam</span> : null}</div>{hiddenRows.length > 0 ? <label className="w-36 shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft"><span className="sr-only">Satır ekle</span><select aria-label={`${title} satırı ekle`} value="" onChange={(event) => { const key = event.target.value; if (!key) return; if (key.startsWith('add:')) { onAddPresetRow?.(key.slice(4)); return; } setRevealedRows((current) => new Set(current).add(key)); }} className="w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-xs font-semibold normal-case tracking-normal text-sg-text"><option value="">+ Satır ekle</option>{hiddenRows.map((row) => <option key={row.key} value={row.key}>{row.name}</option>)}</select></label> : wide ? <span className="w-36 shrink-0" aria-hidden="true" /> : null}</div><div className="divide-y divide-sg-border-soft">{visibleRows.length > 0 ? visibleRows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} />) : <p className="py-4 text-sm text-sg-text-soft">Aktif satır yok. Yukarıdan bir satır ekleyin.</p>}</div></div> : null}
+      {expanded ? <div className="px-4 pb-3"><div className="flex flex-wrap items-center justify-between gap-2 border-y border-sg-border-soft py-2"><div className={`min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft ${wide ? 'grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] gap-3' : 'grid grid-cols-[minmax(0,1fr)_84px_92px_minmax(160px,200px)] gap-3'}`}><span>Malzeme</span><span>Gram</span><span>Mer pris</span><span className={wide ? 'text-right' : undefined}>{wide ? 'Birim fiyat' : 'Hesap'}</span>{wide ? <span className="text-right">Toplam</span> : null}</div>{hiddenRows.length > 0 ? <label className="w-36 shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft"><span className="sr-only">Satır ekle</span><select aria-label={`${title} satırı ekle`} value="" onChange={(event) => { const key = event.target.value; if (!key) return; if (key.startsWith('add:')) { onAddPresetRow?.(key.slice(4)); return; } setRevealedRows((current) => new Set(current).add(key)); }} className="w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2 py-1.5 text-xs font-semibold normal-case tracking-normal text-sg-text"><option value="">+ Satır ekle</option>{hiddenRows.map((row) => <option key={row.key} value={row.key}>{row.name}</option>)}</select></label> : wide ? <span className="w-36 shrink-0" aria-hidden="true" /> : null}</div><div className="divide-y divide-sg-border-soft">{visibleRows.length > 0 ? visibleRows.map((row) => <AlisLedgerRow key={row.key} row={row} wide={wide} onGramChange={onGramChange} onAvanceChange={onAvanceChange} onDelete={row.key.startsWith('extra:') && onDeleteExtraRow ? () => onDeleteExtraRow(row.key) : undefined} />) : <p className="py-4 text-sm text-sg-text-soft">Aktif satır yok. Yukarıdan bir satır ekleyin.</p>}</div></div> : null}
     </section>
   );
 }
 
-function AlisLedgerRow({ row, wide, onGramChange, onAvanceChange }: { row: ModernAlisRow; wide: boolean; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void }) {
+function AlisLedgerRow({ row, wide, onGramChange, onAvanceChange, onDelete }: { row: ModernAlisRow; wide: boolean; onGramChange: (key: string, value: string) => void; onAvanceChange: (key: string, value: string) => void; onDelete?: () => void }) {
   const inputClass = 'w-full rounded-sg-sm border border-sg-border bg-sg-surface px-2.5 py-2 text-sm text-sg-text outline-none transition focus:border-sg-accent focus:ring-2 focus:ring-sg-accent/15';
+  // Sil butonu yalnız dinamik extra satırlarında (Çeyrek/Kniv/22K-2) — sabit
+  // karat/bar satırları backend tanımlıdır, silinemez. gram=0 update hook'ta
+  // reddedildiğinden silme yolu burasıdır.
+  const deleteButton = onDelete ? <button type="button" onClick={onDelete} title={`${row.name} satırını sil`} aria-label={`${row.name} satırını sil`} className="inline-flex h-7 w-7 items-center justify-center rounded-sg-sm text-sg-red transition hover:bg-sg-red-soft"><Trash2 className="h-3.5 w-3.5" /></button> : null;
   if (!wide) {
-    return <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_100px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p><p className="mt-2 text-xs text-sg-text-soft">Birim {formatMoney(row.unitPrice)}</p></div><div className="text-right"><p className="text-sm font-semibold text-sg-text">{formatMoney(row.total)}</p><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Gram<CommittedNumericInput value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className={inputClass} /></label><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Mer pris<CommittedNumericInput value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className={inputClass} /></label></div></div>;
+    return <div className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_100px]"><div className="min-w-0 flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p><p className="mt-2 text-xs text-sg-text-soft">Birim {formatMoney(row.unitPrice)}</p></div>{deleteButton}</div><div className="text-right"><p className="text-sm font-semibold text-sg-text">{formatMoney(row.total)}</p><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Gram<CommittedNumericInput value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className={inputClass} /></label><label className="mt-2 block text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-sg-text-soft">Mer pris<CommittedNumericInput value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className={inputClass} /></label></div></div>;
   }
-  return <div className="grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px] items-center gap-3 py-2.5 pr-[152px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 truncate text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><CommittedNumericInput aria-label={`${row.name} gram`} value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className={inputClass} /><CommittedNumericInput aria-label={`${row.name} avance`} value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className={inputClass} /><span className="text-right text-sm text-sg-text-soft">{formatMoney(row.unitPrice)}</span><span className="text-right text-sm font-semibold text-sg-text">{formatMoney(row.total)}</span></div>;
+  return <div className="grid grid-cols-[minmax(0,1.4fr)_88px_96px_120px_132px_auto] items-center gap-3 py-2.5 pr-[152px]"><div className="min-w-0"><p className="truncate text-sm font-semibold text-sg-text">{row.name}</p><p className="mt-1 truncate text-xs text-sg-text-soft">{row.type} · {row.karat}K · {row.lodighed} · {row.purity || '—'}%</p></div><CommittedNumericInput aria-label={`${row.name} gram`} value={row.gram} rules={{ kind: 'decimal', required: false, allowNegative: false, min: 0, precision: 3 }} onCommit={(_, canonical) => onGramChange(row.key, canonical)} className={inputClass} /><CommittedNumericInput aria-label={`${row.name} avance`} value={row.avance} rules={{ kind: 'decimal', required: false, allowNegative: true, precision: 2 }} onCommit={(_, canonical) => onAvanceChange(row.key, canonical)} className={inputClass} /><span className="text-right text-sm text-sg-text-soft">{formatMoney(row.unitPrice)}</span><span className="text-right text-sm font-semibold text-sg-text">{formatMoney(row.total)}</span>{deleteButton}</div>;
 }
 
 function AlisHistory({ state, documents, filters, onChange, onReset }: { state: ModernAlisState; documents: PosSavedPurchaseListItem[]; filters: ModernAlisListFilters; onChange: (next: Partial<ModernAlisListFilters>) => void; onReset: () => void }) {
   const total = documents.reduce((sum, document) => sum + parseDecimalValue(document.gross_amount_dkk), 0);
-  return <section className="border-y border-sg-border py-4"><div className="flex flex-wrap items-center justify-between gap-4 rounded-sg-lg border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Belge geçmişi</p><h2 className="mt-1 text-xl font-bold text-sg-text">Alış kayıtları</h2></div><dl className="flex overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface shadow-sm"><div className="min-w-24 px-4 py-2"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Kayıt</dt><dd className="mt-1 text-sm font-bold text-sg-text">{documents.length} belge</dd></div><div className="min-w-36 border-l border-sg-border px-4 py-2 text-right"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Toplam</dt><dd className="mt-1 whitespace-nowrap text-sm font-bold text-sg-text">{formatMoney(String(total))}</dd></div></dl></div><div className="mt-4"><PurchaseFilters state={state} filters={filters} onChange={onChange} onReset={onReset} /></div><DocumentList state={state} documents={documents} /></section>;
+  return <section className="border-y border-sg-border py-4"><div className="flex flex-wrap items-center justify-between gap-4 rounded-sg-lg border border-sg-border bg-sg-surface-soft px-4 py-3"><div><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Belge geçmişi</p><h2 className="mt-1 text-xl font-bold text-sg-text">Alış kayıtları</h2></div><dl className="flex overflow-hidden rounded-sg-md border border-sg-border bg-sg-surface shadow-sm"><div className="min-w-24 px-4 py-2"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Kayıt</dt><dd className="mt-1 text-sm font-bold text-sg-text">{documents.length} belge</dd></div><div className="min-w-36 border-l border-sg-border px-4 py-2 text-right"><dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Toplam</dt><dd className="mt-1 whitespace-nowrap text-sm font-bold text-sg-text">{formatMoney(String(total))}</dd></div></dl></div>{state.listError ? <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-sg-md border border-sg-red bg-sg-red-soft px-4 py-2.5 text-sm"><span className="font-semibold text-sg-red">Alış listesi yüklenemedi — liste eksik olabilir.</span><button type="button" onClick={state.onRetryDocuments} className={shellButtonClass('secondary')}><RefreshCcw className="h-4 w-4" />Tekrar dene</button></div> : null}<div className="mt-4"><PurchaseFilters state={state} filters={filters} onChange={onChange} onReset={onReset} /></div><DocumentList state={state} documents={documents} /></section>;
 }
 
 function AlisToolDrawer({ tool, state, hasSelectedCustomer, filters, onFilterChange, onFilterReset, unsupportedControls, onClose }: { tool: Exclude<ModernAlisTool, null>; state: ModernAlisState; hasSelectedCustomer: boolean; filters: ModernAlisListFilters; onFilterChange: (next: Partial<ModernAlisListFilters>) => void; onFilterReset: () => void; unsupportedControls: UnsupportedControlDescriptor[]; onClose: () => void }) {
@@ -680,7 +688,12 @@ function SearchExistingPanel({ state, onPick }: { state: ModernAlisState; onPick
         <input autoFocus value={state.customerSearchTerm} onChange={(event) => state.setCustomerSearchTerm(event.target.value)} placeholder="İsim, CPR, telefon..." className="w-full bg-transparent text-sm text-sg-text outline-none" />
       </div>
       <div className="mt-3 max-h-64 overflow-y-auto rounded-sg-md border border-sg-border bg-sg-surface">
-        {state.candidateCustomers.length === 0 ? (
+        {state.customerSearchError ? (
+          <div className="px-4 py-6 text-center">
+            <p className="text-sm font-semibold text-sg-red">Müşteri araması başarısız — sonuçlar eksik olabilir</p>
+            <p className="mt-1 text-xs text-sg-text-soft">{state.customerSearchError}</p>
+          </div>
+        ) : state.candidateCustomers.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-sg-text-soft">Kayıtlı müşteri bulunamadı.</p>
         ) : (
           state.candidateCustomers.map((customer) => (
@@ -863,12 +876,19 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
           <span className="block font-semibold uppercase tracking-[0.14em]">Ödeme</span>
           <span className="mt-1 block text-sm font-semibold text-sg-text">Bankoverførsel</span>
         </div>
-        {state.purchaseVatEnabled ? (
-          <div className="rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm font-semibold text-sg-text">
-            <span className="block">%25 alış KDV'si (tarihsel belge)</span>
+        {/* Tarihsel belge KDV anahtarı — yalnız görüntü değil, operatör tetikler. */}
+        <label className="flex cursor-pointer items-start gap-2 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text">
+          <input
+            type="checkbox"
+            checked={state.purchaseVatEnabled}
+            onChange={(event) => state.setPurchaseVatEnabled(event.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-sg-accent"
+          />
+          <span>
+            <span className="block font-semibold">%25 alış KDV&apos;si (tarihsel belge)</span>
             <span className="mt-0.5 block text-[11px] font-normal text-sg-text-soft">Yeni alışlarda KDV uygulanmaz; net tutar ödenir.</span>
-          </div>
-        ) : null}
+          </span>
+        </label>
       </div>
       <ModernRatesPanel state={state} />
       <div className="mt-4 grid gap-3 xl:grid-cols-2">
@@ -878,7 +898,10 @@ function WorkspaceControls({ state }: { state: ModernAlisViewModel['state'] }) {
           rows={state.calculators.gold_rows}
           targets={GOLD_MATRIX_ROWS.map((row) => ({ value: `gold:${row.key}`, label: row.label }))}
           setCalculators={state.setCalculators}
-          onApply={(rowKey, total) => state.onUpdateGoldRow(rowKey, 'gram', total)}
+          // KnivCalculators ile aynı yönlendirici: 'gold:22b' sabit gridde
+          // olmadığından hook 22K-2 extra satırına yazar; onUpdateGoldRow
+          // no-op olur ve Aktar sonucu sessizce yutulurdu.
+          onApply={(rowKey, total) => state.onApplyGoldCalculatorTarget(rowKey, total)}
         />
         <ModernCalculatorPanel
           title="Beregner"
@@ -1214,7 +1237,7 @@ function DocumentActions({ state, document }: { state: ModernAlisViewModel['stat
   );
 }
 
-function ModernDetailModal({ source, detail, loading, error, onClose, onEdit, onDelete, onPreview, onExport, onPrint, actionPending, onRetry }: { source: PosSavedPurchaseListItem | null; detail: PosDocumentDetail | null; loading: boolean; error?: string | null; onClose: () => void; onEdit: () => void; onDelete: () => void; onPreview: () => void; onExport: () => void; onPrint: () => void; actionPending: boolean; onRetry?: () => void }) {
+function ModernDetailModal({ source, detail, loading, error, onClose, onEdit, onDelete, onPreview, onExport, onPrint, onThermalReceipt, actionPending, onRetry }: { source: PosSavedPurchaseListItem | null; detail: PosDocumentDetail | null; loading: boolean; error?: string | null; onClose: () => void; onEdit: () => void; onDelete: () => void; onPreview: () => void; onExport: () => void; onPrint: () => void; onThermalReceipt?: () => void; actionPending: boolean; onRetry?: () => void }) {
   const address = [detail?.customer_address, detail?.customer_city || source?.customer_city, detail?.customer_postal_code || source?.customer_postal_code].filter(Boolean).join(', ');
   // Veri minimizasyonu (klasikle aynı): modalda tam CPR gösterilmez; yalnız
   // doğum tarihi bölümü (ilk 6 hane) ya da maskeli değer.
@@ -1227,6 +1250,7 @@ function ModernDetailModal({ source, detail, loading, error, onClose, onEdit, on
       <button type="button" onClick={onPreview} className={shellButtonClass('secondary')}><FileSpreadsheet className="h-4 w-4" />Office</button>
       <button type="button" onClick={onExport} className={shellButtonClass('secondary')}><Download className="h-4 w-4" />Dışa aktar</button>
       <button type="button" onClick={onPrint} className={shellButtonClass('secondary')}><Printer className="h-4 w-4" />Yazdır</button>
+      {onThermalReceipt ? <button type="button" onClick={onThermalReceipt} title="Termal fiş indir (ESC/POS 80mm — yazıcı yazılımı porta gönderir)" className={shellButtonClass('secondary')}><ReceiptText className="h-4 w-4" />Fiş (termal)</button> : null}
       <button type="button" onClick={onDelete} disabled={!detail.can_delete || actionPending} className={shellButtonClass('danger')}><Trash2 className="h-4 w-4" />Sil</button>
       <button type="button" onClick={onEdit} disabled={!detail.can_edit || actionPending} className={shellButtonClass('primary')}><Pencil className="h-4 w-4" />Düzenle</button>
     </div>

@@ -49,6 +49,7 @@ export function CustomerInfoTable({
     { label: 'CPR nr.', key: 'cpr_number', mono: true, type: 'text' },
     { label: 'Kørekort / Pas', key: 'identity_doc_number', mono: true, type: 'text' },
     { label: 'Belge türü', key: 'identity_doc_type', type: 'text' },
+    { label: 'Belge ülkesi', key: 'identity_doc_country', mono: true, type: 'text' },
     { label: 'Tlf.', key: 'phone', mono: true, type: 'text' },
     { label: 'E-mail', key: 'email', type: 'email' },
     { label: 'Adresse', key: 'address', type: 'text' },
@@ -355,6 +356,8 @@ export function CustomerEditorTable({
     { label: 'CPR nr. *', key: 'cpr_number', placeholder: '120385-????', mono: true },
     { label: 'Kørekort / Pas', key: 'identity_doc_number', placeholder: 'Belge No', mono: true },
     { label: 'Belge türü', key: 'identity_doc_type', placeholder: 'Belge türünü seçin' },
+    // OCR yanlış/boş okursa operatörün düzeltme yolu: 3 harflik ülke kodu (DNK).
+    { label: 'Belge ülkesi', key: 'identity_doc_country', placeholder: 'DNK', mono: true },
     { label: 'Adresse', key: 'address', placeholder: 'Sokak, No.' },
     { label: 'Postnr.', key: 'postal_code', placeholder: '0000', mono: true },
     { label: 'Şehir / By', key: 'city', placeholder: 'Şehir' },
@@ -466,7 +469,7 @@ export function CustomerEditorTable({
           <div className="border-b border-emerald-300 bg-emerald-50 px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Okunan alanları inceleyin</p>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
-              {Object.entries(identity.result.fields).filter(([field]) => field !== 'identity_doc_country').map(([field, parsed]) => parsed ? (
+              {Object.entries(identity.result.fields).map(([field, parsed]) => parsed ? (
                 <p key={field} className="text-xs text-emerald-900"><strong>{identityFieldLabel(field as IdentityFieldName)}:</strong> {parsed.value} <span className={parsed.review === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p>
               ) : null)}
             </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createAlisTransitionBlocker, createLogTransitionBlocker, createOfficeTransitionBlocker } from '@/modern/adapters';
+import { createAlisTransitionBlocker, createLogTransitionBlocker, createModernAlisViewModel, createOfficeTransitionBlocker } from '@/modern/adapters';
 import { buildLogStats, buildSelectedDocumentModel, createModernLogViewModel, pureSuffixLabel, pureUnitLabel } from '@/modern/adapters/log';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
 import type { LogPageProps } from '@/make/log/LogPage';
@@ -201,6 +201,24 @@ describe('modern transition blockers', () => {
     const blocker = createOfficeTransitionBlocker(buildOfficeState({ isLivePreviewDirty: true, isLivePreviewSyncing: true, hasExternalUpdate: true }), { isDirty: true });
     expect(blocker?.when).toBe(true);
     expect(blocker?.reasons.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('modern alis view model phase', () => {
+  it('listError with an OPEN workspace stays ready — workbench must not unmount', () => {
+    // Kasiyer satır girerken geçmiş listesi isteği fail olursa phase 'error'a
+    // düşerse tüm giriş yüzeyi (satırlar, Kaydet/İptal) boşalır; müşteri
+    // ekranı veriyi göstermeye devam ederken kasiyer ekranı gider.
+    const state = buildAlisState({ listError: 'ağ hatası', documents: [] });
+    const viewModel = createModernAlisViewModel(state);
+    expect(viewModel.phase).toBe('ready');
+    expect(state.workspace).not.toBeNull();
+  });
+
+  it('listError without a workspace still surfaces the error phase', () => {
+    const state = buildAlisState({ listError: 'ağ hatası', workspace: null, documents: [] });
+    const viewModel = createModernAlisViewModel(state);
+    expect(viewModel.phase).toBe('error');
   });
 });
 

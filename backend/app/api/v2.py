@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-import httpx
 import io
 import json
 import logging
@@ -20,7 +19,7 @@ from jose import JWTError, jwt
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.afg import (
@@ -213,6 +212,7 @@ from app.services.uniconta_service import (
     reset_uniconta_client,
 )
 from app.services.pos_document_service import format_document_number
+from app.services.postcode_service import lookup_danish_postal_code
 from app.services.product_service import get_product_or_404, to_product_out, update_product, update_status
 from app.services.pos_service import create_pos_session
 from app.schemas.pos import PosSessionCreate
@@ -223,6 +223,9 @@ from app.utils.security import decrypt_field, mask_cpr
 router = APIRouter()
 router.include_router(inventory_router)
 logger = logging.getLogger(__name__)
+# Ayarlar/backup mutasyon denetimi: app.log'a _SecretRedactionFilter ile düşer.
+# Yalnız ANAHTAR ADLARI loglanır — değerler asla.
+audit_logger = logging.getLogger("app.audit")
 
 MONTH_NAMES_TR = ["Oca", "Sub", "Mar", "Nis", "May", "Haz", "Tem", "Agu", "Eyl", "Eki", "Kas", "Ara"]
 CAT_COLORS = {
@@ -253,50 +256,24 @@ def _normalize_postal_lookup_code(value: str) -> str:
     return "".join(ch for ch in (value or "") if ch.isdigit())[:4]
 
 
-def _first_named_item(value) -> str | None:
-    if isinstance(value, list) and value:
-        first = value[0]
-        if isinstance(first, dict):
-            name = str(first.get("navn") or "").strip()
-            return name or None
-        name = str(first or "").strip()
-        return name or None
-    if isinstance(value, dict):
-        name = str(value.get("navn") or "").strip()
-        return name or None
-    text = str(value or "").strip()
-    return text or None
-
-
 async def _lookup_danish_postal_code(postal_code: str) -> PosPostalLookupOut:
+    """Danish postcode lookup — tek yol DanishPostcodeService.
+
+    Servis; 24 saat cache (upstream rate-limit koruması), KDS fallback ve
+    geniş except + OFFLINE sözleşmesini sağlar. Önceki buradaki cache'siz
+    kopya, dataforsyningen 5xx/bozuk JSON'da raise_for_status/json hatalarını
+    ham 500 olarak sızdırıyordu — kopya silindi; uçlar bu sarmalayıcıyı
+    kullanır (v2_alis postal-lookup dahil).
+    """
     normalized = _normalize_postal_lookup_code(postal_code)
     if len(normalized) != 4:
         raise HTTPException(status_code=422, detail="Postnr. 4 rakam olmalı.")
-
-    url = f"https://api.dataforsyningen.dk/postnumre/{normalized}"
     try:
-        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
-            response = await client.get(url, headers={"Accept": "application/json"})
-    except httpx.HTTPError:
-        return PosPostalLookupOut(postal_code=normalized, found=False, available=False)
+        return await lookup_danish_postal_code(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Postnr. 4 rakam olmalı.") from exc
 
-    if response.status_code == 404:
-        return PosPostalLookupOut(postal_code=normalized, found=False, available=True)
 
-    response.raise_for_status()
-    payload = response.json() if response.content else {}
-    postal_district = str(payload.get("navn") or "").strip() or None
-    municipality_name = _first_named_item(payload.get("kommuner"))
-    region_name = _first_named_item(payload.get("regioner"))
-
-    return PosPostalLookupOut(
-        postal_code=normalized,
-        found=bool(postal_district),
-        available=True,
-        postal_district=postal_district,
-        municipality_name=municipality_name,
-        region_name=region_name,
-    )
 BACKEND_STARTED_AT = utc_now()
 DESKTOP_SESSION_FILE = ROOT_ENV_FILE.parent / ".run" / "desktop-dev-session.json"
 
@@ -726,6 +703,18 @@ async def _apply_office_session_content(
 
 
 def _verify_onlyoffice_callback_token(request: Request, payload: dict) -> None:
+    """ONLYOFFICE callback doğrulaması — token ZORUNLU, claim bağlama kontrollü.
+
+    Eski 'if not raw_token: return' bypass'ı katmanı fiilen dekoratif
+    yapıyordu (token yoksa hiçbir doğrulama yapılmıyordu). Şimdi:
+    - token yoksa 401,
+    - çözülen JWT secret boşsa 401 (production/desktop ayrımı olmadan —
+      boş anahtarla HS256 doğrulaması güvenli değildir),
+    - imzalı claim'ler ile gövde alanları (status/url/userdata/key)
+      uyuşmuyorsa 401 — çalınan token'la başka içerik apply edilemez.
+    OnlyOffice DS standardı: tüm callback gövdesi 'payload' claim'i olarak
+    imzalanır; o yoksa en üst seviye claim'ler karşılaştırılır.
+    """
     settings = get_settings()
     header_value = request.headers.get("authorization", "").strip()
     raw_token = ""
@@ -734,15 +723,25 @@ def _verify_onlyoffice_callback_token(request: Request, payload: dict) -> None:
     elif isinstance(payload.get("token"), str):
         raw_token = str(payload["token"]).strip()
     if not raw_token:
-        return
-    try:
-        jwt.decode(
-            raw_token,
-            resolve_desktop_onlyoffice_jwt_secret(settings.onlyoffice_jwt_secret),
-            algorithms=["HS256"],
+        raise HTTPException(status_code=401, detail="ONLYOFFICE callback token zorunlu")
+    secret = resolve_desktop_onlyoffice_jwt_secret(settings.onlyoffice_jwt_secret)
+    if not str(secret).strip():
+        raise HTTPException(
+            status_code=401,
+            detail="ONLYOFFICE callback doğrulaması yapılandırılmadı (JWT secret boş)",
         )
+    try:
+        claims = jwt.decode(raw_token, secret, algorithms=["HS256"])
     except JWTError as exc:
         raise HTTPException(status_code=401, detail="ONLYOFFICE callback token geçersiz") from exc
+
+    signed = claims.get("payload") if isinstance(claims.get("payload"), dict) else claims
+    for field in ("status", "url", "userdata", "key"):
+        if field in signed and field in payload and payload[field] != signed[field]:
+            raise HTTPException(
+                status_code=401,
+                detail="ONLYOFFICE callback gövdesi imzalı claim ile uyuşmuyor",
+            )
 
 
 async def _office_preview_for_kind(
@@ -906,6 +905,29 @@ def _default_artifact_year(year: int | None) -> int:
     return year or utc_now().year
 
 
+def _last_six_month_bounds(now: datetime | None = None) -> list[tuple[datetime, datetime]]:
+    """Son 6 takvim ayının (içinde bulunulan ay dahil) UTC başlangıç/bitiş sınırları.
+
+    Dashboard dönem toplamları artık SQL agregasyonuyla hesaplandığından ay
+    pencereleri Python tarafında hesaplanıp CASE sütunlarına bağlanır —
+    defterin tamamı belleğe alınmadan (strftime/to_char'e gerek kalmadan,
+    SQLite/PostgreSQL taşınabilir).
+    """
+    reference = now or utc_now()
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    year, month = reference.year, reference.month
+    bounds: list[tuple[datetime, datetime]] = []
+    for _ in range(6):
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        end = datetime(next_year, next_month, 1, tzinfo=timezone.utc)
+        bounds.append((start, end))
+        year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+    bounds.reverse()
+    return bounds
+
+
 async def _build_alis_saved_purchase_items(
     db: AsyncSession,
     *,
@@ -940,7 +962,6 @@ async def _build_alis_saved_purchase_items(
                 User.address_encrypted,
                 User.postal_code,
                 User.cpr_number_encrypted,
-                CustomerIdentityDocument.identity_doc_number_encrypted,
                 PosDocument.uniconta_sync_status,
                 PosDocument.uniconta_invoice_number,
                 PosDocument.uniconta_sync_error,
@@ -959,14 +980,11 @@ async def _build_alis_saved_purchase_items(
         address_encrypted,
         postal_code,
         cpr_encrypted,
-        identity_encrypted,
         uc_status,
         uc_invoice_no,
         uc_error,
     ) in extra_rows:
         cpr_masked = None
-        cpr_plain = None
-        identity_plain = None
         address = None
         if address_encrypted:
             try:
@@ -974,27 +992,19 @@ async def _build_alis_saved_purchase_items(
             except Exception:
                 address = None
         if cpr_encrypted:
-            try:
-                cpr_plain = decrypt_field(cpr_encrypted)
-            except Exception:
-                cpr_plain = None
+            # PII minimizasyonu: liste yalnız MASKELİ CPR taşır; ham cpr ve
+            # kimlik belge numarası decrypt edilip yanıtlanmaz. Tam değere
+            # ihtiyaç tek belge detayında (/alis/documents/{seq}) karşılanır.
             try:
                 cpr_masked = mask_cpr(decrypt_field(cpr_encrypted))
             except Exception:
                 cpr_masked = None
-        if identity_encrypted:
-            try:
-                identity_plain = decrypt_field(identity_encrypted)
-            except Exception:
-                identity_plain = None
         extra_map[int(sequence_no)] = {
             "customer_id": str(customer_id) if customer_id else None,
             "address": address,
             "payment_method": extract_purchase_payment_method(notes),
             "postal_code": postal_code,
             "cpr_masked": cpr_masked,
-            "cpr": cpr_plain,
-            "identity_doc_number": identity_plain,
             "uniconta_sync_status": uc_status,
             "uniconta_invoice_number": uc_invoice_no,
             "uniconta_sync_error": uc_error,
@@ -1048,9 +1058,7 @@ async def _build_alis_saved_purchase_items(
             customer_email=item.customer_email,
             customer_address=extra_map.get(item.sequence_no, {}).get("address"),
             customer_postal_code=extra_map.get(item.sequence_no, {}).get("postal_code"),
-            customer_cpr=extra_map.get(item.sequence_no, {}).get("cpr"),
             customer_cpr_masked=extra_map.get(item.sequence_no, {}).get("cpr_masked"),
-            customer_identity_doc_number=extra_map.get(item.sequence_no, {}).get("identity_doc_number"),
             gross_amount_dkk=item.gross_amount_dkk,
             total_weight_grams=item.total_weight_grams,
             line_count=item.line_count,
@@ -1395,16 +1403,66 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
     inventory_workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
     log_workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
 
-    purchase_rows = (
+    # Performans: dönem toplamları SQL agregasyonuyla (tek satır, CASE sütunları);
+    # son alışlar ayrı limit 6 sorgu — PURCHASE_RECEIPT tablosunun tamamı
+    # artık her 60 sn'lik poll'da belleğe alınmıyor.
+    month_bounds = _last_six_month_bounds()
+    purchase_period_row = (
+        await db.execute(
+            select(
+                func.count(PosDocument.sequence_no),
+                func.coalesce(func.sum(PosDocument.gross_amount_dkk), 0.0),
+                *[
+                    func.coalesce(
+                        func.sum(case((PosDocument.issued_at >= start, 1), else_=0)),
+                        0,
+                    )
+                    for start, _ in month_bounds
+                ],
+                *[
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (
+                                    and_(
+                                        PosDocument.issued_at >= start,
+                                        PosDocument.issued_at < end,
+                                    ),
+                                    PosDocument.gross_amount_dkk,
+                                ),
+                                else_=0.0,
+                            )
+                        ),
+                        0.0,
+                    )
+                    for start, end in month_bounds
+                ],
+            )
+            .where(PosDocument.document_type == PosDocumentTypeEnum.PURCHASE_RECEIPT)
+        )
+    ).one()
+    alis_sayisi = int(purchase_period_row[0] or 0)
+    alis_toplam_kr = _to_float(purchase_period_row[1])
+    monthly_counts = purchase_period_row[2 : 2 + len(month_bounds)]
+    monthly_sums = purchase_period_row[2 + len(month_bounds) :]
+    aylik_alis = [
+        DashboardMonthlyPurchasePointOut(
+            ay=f"{MONTH_NAMES_TR[start.month - 1]} {str(start.year)[-2:]}",
+            adet=int(count or 0),
+            kr=_to_float(total),
+        )
+        for (start, _), count, total in zip(month_bounds, monthly_counts, monthly_sums)
+    ]
+
+    recent_purchase_rows = (
         await db.execute(
             select(PosDocument, PosSession)
             .join(PosSession, PosSession.id == PosDocument.pos_session_id)
             .where(PosDocument.document_type == PosDocumentTypeEnum.PURCHASE_RECEIPT)
             .order_by(PosDocument.issued_at.desc(), PosDocument.sequence_no.desc())
+            .limit(6)
         )
     ).all()
-    alis_sayisi = len(purchase_rows)
-    alis_toplam_kr = sum(_to_float(document.gross_amount_dkk) for document, _ in purchase_rows)
     son_alislar = [
         DashboardRecentPurchaseOut(
             id=str(document.sequence_no),
@@ -1414,25 +1472,8 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
             total=_to_float(document.gross_amount_dkk),
             paymentMethod=extract_purchase_payment_method(document.notes or pos_session.notes),
         )
-        for document, pos_session in purchase_rows[:6]
+        for document, pos_session in recent_purchase_rows
     ]
-
-    monthly_map: dict[str, dict[str, float | int]] = defaultdict(lambda: {"adet": 0, "kr": 0.0})
-    for document, _ in purchase_rows:
-        month_key = document.issued_at.strftime("%Y-%m")
-        monthly_map[month_key]["adet"] = int(monthly_map[month_key]["adet"]) + 1
-        monthly_map[month_key]["kr"] = float(monthly_map[month_key]["kr"]) + _to_float(document.gross_amount_dkk)
-
-    aylik_alis = []
-    for month_key in sorted(monthly_map.keys())[-6:]:
-        year, month = month_key.split("-")
-        aylik_alis.append(
-            DashboardMonthlyPurchasePointOut(
-                ay=f"{MONTH_NAMES_TR[int(month) - 1]} {year[-2:]}",
-                adet=int(monthly_map[month_key]["adet"]),
-                kr=float(monthly_map[month_key]["kr"]),
-            )
-        )
 
     total_customers = int(
         await db.scalar(select(func.count(User.id)).where(User.role == RoleEnum.CUSTOMER, User.is_active.is_(True))) or 0
@@ -1484,9 +1525,12 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
     opmc_belirsiz = 0
     opmc_manuel = 0
     try:
+        # per_page dahil frontend /opmc/orders çağrısıyla AYNI parametreler:
+        # antifraud cache anahtarı 'd={days};p={per_page}' olduğundan farklı
+        # per_page aynı 30 günlük Woo taramasını ikinci bir girdide tekrarlıyordu.
         opmc_orders = await get_legacy_antifraud_recent_orders(
             days=30,
-            per_page=50,
+            per_page=40,
             include_notes=False,
             notes_per_order=5,
             detail_mode=False,
@@ -1503,13 +1547,15 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
     except Exception:
         logger.exception("OPMC dashboard özeti alınamadı — risk sayaçları 0 gösteriliyor")
 
-    invoice_rows = (
+    # Fatura toplamları da limitsiz tablo yüklemeden SQL agregasyonuna taşındı.
+    invoice_count, invoice_total_kr = (
         await db.execute(
-            select(PosDocument)
-            .where(PosDocument.document_type == PosDocumentTypeEnum.SALE_INVOICE)
-            .order_by(PosDocument.issued_at.desc(), PosDocument.sequence_no.desc())
+            select(
+                func.count(PosDocument.sequence_no),
+                func.coalesce(func.sum(PosDocument.gross_amount_dkk), 0.0),
+            ).where(PosDocument.document_type == PosDocumentTypeEnum.SALE_INVOICE)
         )
-    ).scalars().all()
+    ).one()
 
     return DashboardScreenOut(
         alisSayisi=alis_sayisi,
@@ -1539,8 +1585,8 @@ async def _build_dashboard_screen(db: AsyncSession, admin: User) -> DashboardScr
         opmcDusuk=opmc_dusuk,
         opmcBelirsiz=opmc_belirsiz,
         opmcManuel=opmc_manuel,
-        faturaAdedi=len(invoice_rows),
-        faturaToplamKr=sum(_to_float(document.gross_amount_dkk) for document in invoice_rows),
+        faturaAdedi=int(invoice_count or 0),
+        faturaToplamKr=_to_float(invoice_total_kr),
     )
 
 
@@ -1855,7 +1901,7 @@ def _preview_settings_env_parse(updates: dict[str, str]) -> None:
 @router.put("/settings", response_model=SettingsScreenOut)
 async def put_settings_v2(
     payload: SettingsScreenUpdateIn,
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ) -> SettingsScreenOut:
     field_errors: dict[str, str] = {}
 
@@ -1966,6 +2012,14 @@ async def put_settings_v2(
     upsert_env_values(ROOT_ENV_FILE, updates)
     get_settings.cache_clear()
     reset_uniconta_client()
+    # Denetim izi: fiyat hatası/entegrasyon kesintisi sonrası "kim hangi
+    # anahtarı ne zaman değiştirdi" sorusu cevaplanabilsin. Değerler ASLA
+    # loglanmaz; yalnız yazılan anahtar adları.
+    audit_logger.info(
+        "settings.update actor=%s keys=%s",
+        getattr(admin, "email", None),
+        ",".join(sorted(updates)),
+    )
     return _build_settings_screen_out()
 
 

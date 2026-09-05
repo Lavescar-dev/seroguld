@@ -244,16 +244,20 @@ class AfgMeltLotCreateRequest(AppBaseModel):
 
 
 class AfgMeltLotUpdateRequest(AppBaseModel):
+    # Tutar/sayı sınırları: negatif maliyet/saflık lot kartı PDF'ini (vergi
+    # muhasebesi çıktısı) ve cost/bridge metriklerini bozar; exchange_rate_dkk=0
+    # estimated_sale_value'yu çökertir. API sözleşmesi DB ile hizalanır
+    # (None = "değiştirme"; nullable=False kolonlara None yazılmaz).
     sent_date: date | None = None
     purchased_from_date: date | None = None
-    after_pure_gold_grams: Decimal | None = None
-    insurance_dkk: Decimal | None = None
-    shipping_dkk: Decimal | None = None
-    refining_dkk: Decimal | None = None
+    after_pure_gold_grams: Decimal | None = Field(default=None, ge=0)
+    insurance_dkk: Decimal | None = Field(default=None, ge=0)
+    shipping_dkk: Decimal | None = Field(default=None, ge=0)
+    refining_dkk: Decimal | None = Field(default=None, ge=0)
     sale_date: date | None = None
-    quote_eur: Decimal | None = None
-    exchange_rate_dkk: Decimal | None = None
-    payout_total_dkk: Decimal | None = None
+    quote_eur: Decimal | None = Field(default=None, ge=0)
+    exchange_rate_dkk: Decimal | None = Field(default=None, gt=0)
+    payout_total_dkk: Decimal | None = Field(default=None, ge=0)
     notes: str | None = Field(default=None, max_length=1000)
     # Optimistic concurrency
     expected_updated_at: datetime | None = None

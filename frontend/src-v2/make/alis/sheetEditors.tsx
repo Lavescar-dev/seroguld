@@ -140,6 +140,16 @@ export function AfregningsSheetEditor({
   paymentMethod: PaymentMethod;
   setPaymentMethod: Dispatch<SetStateAction<PaymentMethod>>;
 }) {
+  // # numaralandırması RENDER SIRASINA göre koşar: guld satırları → guld barre
+  // → sølv barre → sølv satırları → platin/palladium. Eski formüller (gold+silver
+  // +index) her bar grubunda sıfırdan başlıyor ve mükerrer/atlamalı # üretiyordu;
+  // AFG'ye yazılan type_code ile # karışınca operatörün satır eşlemesi bozuluyordu.
+  const goldBarCount = barRows.filter((row) => row.bar_type === 'gold').length;
+  const silverBarCount = barRows.filter((row) => row.bar_type === 'silver').length;
+  const goldBarNumberingBase = goldRows.length;
+  const silverBarNumberingBase = goldBarNumberingBase + goldBarCount;
+  const silverNumberingBase = silverBarNumberingBase + silverBarCount;
+  const ptpdNumberingBase = silverNumberingBase + silverRows.length;
   return (
     <>
       <div>
@@ -245,7 +255,7 @@ export function AfregningsSheetEditor({
                   className={`border-b transition-colors ${hasGram ? (isGold ? 'border-amber-200 border-l-4 border-l-amber-500' : 'border-slate-200 border-l-4 border-l-slate-500') : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
                   style={{ background: hasGram ? (isGold ? '#fffbeb' : '#f8fafc') : '#ffffff' }}
                 >
-                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + silverRows.length + index + 1}</td>
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldBarNumberingBase + index + 1}</td>
                   <td className="border border-brand-300 px-2 py-2.5 text-center">
                     <span className={`mono px-2 py-0.5 text-xs font-black ${isGold ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-700'}`}>{isGold ? '6' : '7'}</span>
                   </td>
@@ -300,7 +310,7 @@ export function AfregningsSheetEditor({
                   className={`border-b transition-colors ${hasGram ? (isGold ? 'border-amber-200 border-l-4 border-l-amber-500' : 'border-slate-200 border-l-4 border-l-slate-500') : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
                   style={{ background: hasGram ? (isGold ? '#fffbeb' : '#f8fafc') : '#ffffff' }}
                 >
-                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + silverRows.length + index + 1}</td>
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{silverBarNumberingBase + index + 1}</td>
                   <td className="border border-brand-300 px-2 py-2.5 text-center">
                     <span className={`mono px-2 py-0.5 text-xs font-black ${isGold ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-700'}`}>{isGold ? '6' : '7'}</span>
                   </td>
@@ -354,7 +364,7 @@ export function AfregningsSheetEditor({
                   className={`border-b transition-colors ${hasGram ? 'border-slate-200 border-l-4 border-l-slate-400' : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
                   style={{ background: hasGram ? '#f8fafc' : '#ffffff' }}
                 >
-                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + index + 1}</td>
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{silverNumberingBase + index + 1}</td>
                   <td className="border border-brand-300 px-2 py-2.5 text-center">
                     <span className="mono bg-slate-200 px-2 py-0.5 text-xs font-black text-slate-700">{row.type_code}</span>
                   </td>
@@ -409,7 +419,7 @@ export function AfregningsSheetEditor({
                   className={`border-b transition-colors ${hasGram ? 'border-zinc-200 border-l-4 border-l-zinc-500' : 'border-brand-100 border-l-4 border-l-transparent opacity-55 hover:opacity-90'}`}
                   style={{ background: hasGram ? '#fafafa' : '#ffffff' }}
                 >
-                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{goldRows.length + silverRows.length + barRows.length + index + 1}</td>
+                  <td className="mono border border-brand-300 px-2 py-2.5 text-center text-xs font-bold text-brand-400">{ptpdNumberingBase + index + 1}</td>
                   <td className="border border-brand-300 px-2 py-2.5 text-center">
                     <span className="mono bg-zinc-200 px-2 py-0.5 text-xs font-black text-zinc-700">{isPlatinum ? '8' : '9'}</span>
                   </td>

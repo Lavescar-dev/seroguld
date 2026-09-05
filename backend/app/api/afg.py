@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, timedelta
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete as sa_delete
@@ -46,6 +47,8 @@ from app.services.product_service import get_product_or_404, update_product, upd
 from app.utils.helpers import quantize_2, to_decimal, utc_now
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 SPLIT_GROUPS: list[tuple[AfgClassification, str]] = [
     ("jewelry_cleaning", "Takı / Cleaning"),
@@ -417,6 +420,7 @@ async def _log_lot_history(
     lot_id: UUID | None,
     action: str,
     actor: User | None = None,
+    actor_id=None,
     old_value: dict | None = None,
     new_value: dict | None = None,
     notes: str | None = None,
@@ -426,7 +430,7 @@ async def _log_lot_history(
         action=action,
         old_value=old_value,
         new_value=new_value,
-        performed_by=(actor.id if actor else None),
+        performed_by=(actor.id if actor else actor_id),
         performed_by_email=(actor.email if actor else None),
         notes=notes,
     )
@@ -574,19 +578,36 @@ async def create_afg_melt_lot(
     db.add(lot)
     await db.flush()
 
-    # Eritme kuyruğundaki bağlanmamış transaction line'ları bu lot'a otomatik bağla
-    attach_stmt = (
-        select(TransactionLine.id)
-        .join(Product, Product.id == TransactionLine.product_id)
-        .where(
-            Product.status == ProductStatusEnum.MELTED,
-            TransactionLine.melt_lot_id.is_(None),
-            (Product.metal_type == MetalTypeEnum.SILVER)
-            if payload.metal_bucket == "silver"
-            else (Product.metal_type != MetalTypeEnum.SILVER),
+    # Eritme kuyruğundaki bağlanmamış satırlar bu lot'a bağlanır — ama yalnız
+    # before_* toplamlarının hesaplandığı AYNI satır kümesiyle (aynı
+    # workspace penceresi). Eski "tüm zamanlardan MELTED" attach'i, lot
+    # kartının kaydettiği before_*/line_count ile gerçek bağlı içeriği
+    # kalıcı olarak saptırıyordu.
+    queue_line_ids = [
+        line.id
+        for document in bucket.documents
+        for line in document.lines
+        if _map_destination_to_state(line.operation_destination, line.product_status) == "melted"
+    ]
+    line_ids: list = []
+    if queue_line_ids:
+        attach_stmt = (
+            select(TransactionLine.id)
+            .where(
+                TransactionLine.id.in_(queue_line_ids),
+                TransactionLine.melt_lot_id.is_(None),
+            )
+            # Eşzamanlı iki create'te ikinci lotun kuyruğu ikinci kez
+            # saymasını zorlaştırır (PostgreSQL satır kilidi; SQLite no-op).
+            .with_for_update()
         )
-    )
-    line_ids = list((await db.execute(attach_stmt)).scalars().all())
+        line_ids = list((await db.execute(attach_stmt)).scalars().all())
+    if line_ids:
+        await db.execute(
+            TransactionLine.__table__.update()
+            .where(TransactionLine.id.in_(line_ids))
+            .values(melt_lot_id=lot.id)
+        )
     if line_ids:
         await db.execute(
             TransactionLine.__table__.update()
@@ -675,7 +696,17 @@ async def update_afg_melt_lot(
     for field_name, value in payload.model_dump(exclude_unset=True).items():
         if field_name == "expected_updated_at":
             continue
-        if value is None and field_name in {"sent_date", "exchange_rate_dkk"}:
+        # None atlama seti TÜM nullable=False kolonları kapsar: {"insurance_dkk": null}
+        # gövdesi setattr None yapıp commit'te IntegrityError (ham 500)
+        # üretmesin; None "değiştirme" anlamına gelir.
+        if value is None and field_name in {
+            "sent_date",
+            "exchange_rate_dkk",
+            "after_pure_gold_grams",
+            "insurance_dkk",
+            "shipping_dkk",
+            "refining_dkk",
+        }:
             continue
         setattr(lot, field_name, value)
 
@@ -859,28 +890,41 @@ async def list_afg_melt_lot_lines(
     stmt = (
         select(TransactionLine, Transaction, PosDocument, PosSession, User)
         .join(Transaction, Transaction.id == TransactionLine.transaction_id)
-        .join(PosDocument, PosDocument.sequence_no == Transaction.pos_document_sequence_no)
-        .join(PosSession, PosSession.id == PosDocument.pos_session_id)
+        # PosDocument.outerjoin: transaction.pos_document_sequence_no nullable —
+        # INNER JOIN belgesiz melt satırlarını listeden düşürüp line_count ile
+        # çelişiyordu.
+        .outerjoin(PosDocument, PosDocument.sequence_no == Transaction.pos_document_sequence_no)
+        .outerjoin(PosSession, PosSession.id == PosDocument.pos_session_id)
         .outerjoin(User, User.id == PosSession.customer_id)
         .where(TransactionLine.melt_lot_id == lot_id)
         .order_by(PosDocument.sequence_no.asc(), TransactionLine.line_no.asc())
     )
     rows = (await db.execute(stmt)).all()
-    return [
-        AfgMeltLotLineOut(
-            line_id=line.id,
-            document_sequence_no=doc.sequence_no,
-            document_number=getattr(doc, "document_number", "") or "",
-            line_no=line.line_no,
-            weight_grams=line.weight_grams,
-            pure_gold_grams=line.pure_gold_grams,
-            line_total_dkk=line.line_total_dkk,
-            customer_name=getattr(customer, "name", None) if customer else None,
-            product_number=line.product_number,
-            reference_number=line.reference_number,
+    items: list[AfgMeltLotLineOut] = []
+    for line, _tx, doc, _sess, customer in rows:
+        # Belge numarası: PosDocument'ta 'document_number' kolonu YOKTUR —
+        # format_document_number (legacy_document_number/sequence) tek kaynaktır.
+        document_number = format_document_number(doc) if doc is not None else ""
+        # Müşteri adı canlı User'dan değil, belgenin donmuş snapshot'ından:
+        # tarihsel/müşterisiz kayıtlarda boş kalmaz ve belgeyle tutarlıdır.
+        customer_name = (doc.customer_name if doc is not None else None) or (
+            getattr(customer, "name", None) if customer is not None else None
         )
-        for line, _tx, doc, _sess, customer in rows
-    ]
+        items.append(
+            AfgMeltLotLineOut(
+                line_id=line.id,
+                document_sequence_no=(doc.sequence_no if doc is not None else 0),
+                document_number=document_number,
+                line_no=line.line_no,
+                weight_grams=line.weight_grams,
+                pure_gold_grams=line.pure_gold_grams,
+                line_total_dkk=line.line_total_dkk,
+                customer_name=customer_name,
+                product_number=line.product_number,
+                reference_number=line.reference_number,
+            )
+        )
+    return items
 
 
 @router.get("/workspace", response_model=AfgWorkspaceOut)
@@ -977,8 +1021,19 @@ async def apply_afg_route_requests_safe(
                 detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
                 failures.append((line_id, detail))
         except Exception as exc:  # noqa: BLE001
+            # Ham exception metni (SQLAlchemy/DB sürücü detayları) istemciye
+            # sızmaz: tam iz sunucu log'unda, istemcide sabit mesaj + opak
+            # korelasyon id döner.
+            correlation_id = uuid4().hex[:12]
+            logger.exception(
+                "afg route apply beklenmeyen hata (line_ids=%s, corr=%s)",
+                [str(lid) for lid in req.line_ids],
+                correlation_id,
+            )
             for line_id in req.line_ids:
-                failures.append((line_id, str(exc)))
+                failures.append(
+                    (line_id, f"Satır uygulanamadı (bkz. destek — kayıt {correlation_id}).")
+                )
 
     # build aggregate AfgRouteResponse
     processed: list[UUID] = []
@@ -1164,6 +1219,26 @@ async def apply_afg_route_requests(
             line.product_id = linked_product.id
             line.product_number = linked_product.product_number
             line.reference_number = linked_product.reference_number
+
+            # Satır daha önce eritmeye gidip bir lota bağlandıysa ve rotası
+            # şimdi inventory/undecided'a çevrildiyse melt_lot_id temizlenir;
+            # aksi halde lot kartı ve PDF'i artık stoktaki satırları eritme
+            # lotu olarak basmaya devam eder. 'line_detached' geçmişi izi
+            # (Bogføringsloven §10) bırakılır.
+            if payload.destination != "melt" and line.melt_lot_id is not None:
+                previous_lot_id = line.melt_lot_id
+                line.melt_lot_id = None
+                await _log_lot_history(
+                    db,
+                    lot_id=previous_lot_id,
+                    action="line_detached",
+                    actor_id=actor_id,
+                    new_value={
+                        "transaction_line_id": str(line.id),
+                        "new_destination": payload.destination,
+                        "reason": "route_reversed",
+                    },
+                )
 
             # M3 — Eğer satır eritmeye gidiyorsa ve aynı metal bucket için açık bir
             # draft lot varsa otomatik bağla. Yoksa orphan kalır (sonraki create_afg_melt_lot

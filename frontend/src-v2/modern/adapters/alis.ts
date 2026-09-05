@@ -49,9 +49,13 @@ export function createModernAlisViewModel(
 
   return {
     state,
+    // listError workspace açıkken workbench'i (satır girişi) unmount ETMEZ —
+    // hata yalnız Geçmiş sekmesinde inline band olarak gösterilir. Aksi halde
+    // liste isteği fail olunca kasiyerin giriş yüzeyi boşalırken müşteri
+    // ekranı veriyi göstermeye devam eder (iki ekran ayrışır).
     phase: !workspace && state.draftWorkspace
         ? 'draft'
-        : state.listError
+        : !workspace && state.listError
           ? 'error'
           : !workspace && state.listLoading && documents.length === 0
             ? 'loading'

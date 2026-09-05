@@ -1,5 +1,5 @@
 import { type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { getAccessToken, getCurrentUser } from '@/lib/auth';
@@ -919,6 +919,9 @@ export function useAlisMakeState(): AlisPageProps {
       apiRequest<PosSavedPurchaseListItem[]>(
         `/api/v2/alis/list?limit=120${purchaseSearchTerm.trim() ? `&q=${encodeURIComponent(purchaseSearchTerm.trim())}` : ''}${purchaseDate ? `&date=${encodeURIComponent(purchaseDate)}` : ''}`,
       ),
+    // woocommerce modülündeki repo deseni: her tuş vuruşunda tablo 'yükleniyor'a
+    // düşmesin; önceki veri sonucu gelene kadar görünür kalır.
+    placeholderData: keepPreviousData,
   });
 
   const detailDocumentQuery = useQuery({
@@ -2112,8 +2115,26 @@ export function useAlisMakeState(): AlisPageProps {
     return customersQuery.data?.length ? customersQuery.data : localFiltered;
   }, [customerSearchTerm, customersQuery.data, recentCustomersQuery.data?.items]);
 
+  // Tüm "yeni alış başlat" yolları (boş başlat, müşteriden başlat, Ctrl+N) tek
+  // kapıdan geçer: sürmekte olan istek varsa ikinci oturum açılmaz, açık
+  // taslak varsa onaysız düşürülmez (POS çift-gönderim koruması).
+  async function startWorkspaceGuarded(payload: Record<string, unknown>) {
+    if (openWorkspaceMutation.isPending) return;
+    if (workspace || draftWorkspace) {
+      const ok = await confirm({
+        title: 'Açık Alış taslağı var',
+        message: 'Yeni alış başlatmak mevcut taslağı ekrandan düşürür; taslak sunucuda kalır ve kayıt panelinden geri açılabilir. Devam edilsin mi?',
+        confirmText: 'Yeni alış başlat',
+        cancelText: 'Vazgeç',
+        variant: 'warning',
+      });
+      if (ok !== true) return;
+    }
+    openWorkspaceMutation.mutate(payload);
+  }
+
   function handleStartBlankWorkspace() {
-    openWorkspaceMutation.mutate({
+    void startWorkspaceGuarded({
       payment_method: 'bank',
       force_new_session: true,
     });
@@ -2169,10 +2190,12 @@ export function useAlisMakeState(): AlisPageProps {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace, workspace?.customer.customer_id, finalizeMutation.isPending, cancelMutation.isPending, openWorkspaceMutation.isPending]);
+  }, [workspace, workspace?.customer.customer_id, draftWorkspace, finalizeMutation.isPending, cancelMutation.isPending, openWorkspaceMutation.isPending]);
 
   function handleSelectExistingCustomer(customerId: string) {
-    if (!workspace?.session.id || !customerId) return;
+    // handleDetachCustomer ile aynı koruma: sürmekte olan seçim varken ikinci
+    // mutate base_revision çakışması (409) üretir.
+    if (!workspace?.session.id || !customerId || selectCustomerMutation.isPending) return;
     selectCustomerMutation.mutate({
       customer_id: customerId,
     });
@@ -2530,7 +2553,7 @@ export function useAlisMakeState(): AlisPageProps {
 
   function handleStartFromCustomer(item: PosSavedPurchaseListItem) {
     if (!item.customer_id) return;
-    openWorkspaceMutation.mutate({
+    void startWorkspaceGuarded({
       customer_id: item.customer_id,
       payment_method: 'bank',
       force_new_session: true,
@@ -2837,6 +2860,17 @@ export function useAlisMakeState(): AlisPageProps {
         },
       );
     },
+    // ESC/POS 80mm termal fiş: raw bytes dosya olarak indirilir (Tauri host
+    // tarafı / yazıcı yazılımı porta gönderir); web'de indirme fallback'i.
+    onDownloadDetailThermalReceipt: () => {
+      if (!detailDocumentQuery.data) return;
+      void downloadAuthedDocument(
+        `/api/v2/alis/documents/${detailDocumentQuery.data.sequence_no}/receipt-thermal`,
+        `afg-${detailDocumentQuery.data.sequence_no}-thermal.escpos`,
+      ).catch((error: unknown) => {
+        toast.error('Termal fiş indirilemedi', localizeApiError(error));
+      });
+    },
     onOpenDetailExcelPreview: () => {
       if (!detailDocumentQuery.data) return;
       setDetailPurchase(null);
@@ -2882,6 +2916,13 @@ export function useAlisMakeState(): AlisPageProps {
     customerSearchTerm,
     setCustomerSearchTerm,
     candidateCustomers,
+    // Arama/yakın müşteri isteği fail olursa panel 'bulunamadı' DEMESİN —
+    // kasiyer mevcut müşteriyi olmaymış sanıp duplike kayıt oluşturur.
+    customerSearchError: customersQuery.error
+      ? localizeApiError(customersQuery.error)
+      : recentCustomersQuery.error
+        ? localizeApiError(recentCustomersQuery.error)
+        : null,
     newCustomer,
     setNewCustomer: setNewCustomerFromUi,
     onSelectExistingCustomer: handleSelectExistingCustomer,
@@ -2942,6 +2983,10 @@ export function useAlisMakeState(): AlisPageProps {
     onOpenWorkspaceExcelPreview: handleOpenWorkspaceExcelPreview,
     onCancelWorkspace: cancelWorkspaceWithConfirm,
     onFinalizeWorkspace: async () => {
+      // Flush + 400ms retry penceresinde ikinci tık ikinci flush + ikinci POST
+      // üretir (ikincisi 409/404 ile 'Belge kaydedilemedi' yanıltır). Ref,
+      // finalizeMutation.onSettled içinde geri alınır.
+      if (finalizeInFlightRef.current) return;
       finalizeInFlightRef.current = true;
       try {
         await flushPendingWorkspaceSync();
