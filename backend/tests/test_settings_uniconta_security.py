@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -123,7 +125,7 @@ async def test_blank_and_null_settings_secrets_preserve_existing_values(monkeypa
         market_rates_live_platinum_enabled=False,
         metals_dev_api_key="  ",
     )
-    response = await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+    response = await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert len(writes) == 1
     assert not (set(writes[0]) & {
@@ -165,7 +167,7 @@ async def test_afg_email_settings_round_trip_and_secret_preservation(monkeypatch
         wp_bridge_secret=None,
         afg_email_enabled=True,
     )
-    response = await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+    response = await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert len(writes) == 1
     assert writes[0]["EMAIL_TRANSPORT"] == "wp-bridge"
@@ -188,7 +190,7 @@ async def test_afg_email_transport_validation_rejects_unknown_values(monkeypatch
 
     payload = _settings_update_payload(email_transport="sendgrid")
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     # Doğrulama yazmadan önce düşer.
@@ -204,7 +206,7 @@ async def test_afg_email_bridge_url_requires_http_scheme(monkeypatch: pytest.Mon
 
     payload = _settings_update_payload(wp_bridge_url="ftp://seroguld.dk/bridge")
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     assert writes == []
@@ -374,7 +376,7 @@ async def test_settings_numeric_fields_normalize_before_write(monkeypatch: pytes
         # Nokta binlik ayracı ("4.096" → 4096); virgül ondalıktır ("4,096" 422 döner).
         openai_max_tokens=" 4.096 ",
     )
-    await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+    await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert len(writes) == 1
     assert writes[0]["INVENTORY_MARKET_GOLD_DKK"] == "2850.50"
@@ -397,7 +399,7 @@ async def test_settings_invalid_market_value_rejects_before_write(
 
     payload = _settings_update_payload(market_gold=bad_value)
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     detail = excinfo.value.detail
@@ -420,7 +422,7 @@ async def test_settings_openai_max_tokens_must_be_positive_integer(
 
     payload = _settings_update_payload(openai_max_tokens=bad_tokens)
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     detail = excinfo.value.detail
@@ -438,7 +440,7 @@ async def test_settings_reasoning_effort_must_be_in_catalog(monkeypatch: pytest.
 
     payload = _settings_update_payload(openai_reasoning_effort="ultra")
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     detail = excinfo.value.detail
@@ -460,7 +462,7 @@ async def test_settings_url_fields_require_http_scheme(monkeypatch: pytest.Monke
         woo_store_url="https://seroguld.dk",
     )
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     detail = excinfo.value.detail
@@ -486,7 +488,7 @@ async def test_settings_preview_parses_merged_env_with_existing_content(
     monkeypatch.setattr(v2, "reset_uniconta_client", lambda: None)
 
     payload = _settings_update_payload(market_gold="2850")
-    await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+    await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     # Mevcut env içeriğiyle birleşik parse geçti; yazma tek seferde yapıldı.
     assert len(writes) == 1
@@ -508,7 +510,7 @@ async def test_settings_corrupt_existing_env_blocks_write_and_leaves_no_temp(
 
     payload = _settings_update_payload()
     with pytest.raises(HTTPException) as excinfo:
-        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+        await v2.put_settings_v2(payload=payload, admin=None)  # type: ignore[arg-type]
 
     assert excinfo.value.status_code == 422
     detail = excinfo.value.detail
@@ -517,3 +519,40 @@ async def test_settings_corrupt_existing_env_blocks_write_and_leaves_no_temp(
     assert writes == []
     # Önizleme geçici dosyası temizlendi; .env yanında artık yok.
     assert list(env_file.parent.glob(".runtime.env.settings-preview-*")) == []
+
+
+@pytest.mark.asyncio
+async def test_settings_update_leaves_audit_trail_with_key_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Denetim izi: kim hangi anahtarları ne zaman değiştirdi sorulabilmeli.
+
+    app.audit kaydı yalnız aktör e-postası ve YAZILAN ANAHTAR ADLARINI taşır —
+    secret/tutar değerleri asla loglanmaz.
+    """
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+    monkeypatch.setattr(v2, "reset_uniconta_client", lambda: None)
+
+    payload = _settings_update_payload(
+        market_gold="2851",
+        openai_api_key="sk-super-secret-value",
+    )
+    actor = SimpleNamespace(email="audit-admin@test.local")
+
+    with caplog.at_level(logging.INFO, logger="app.audit"):
+        await v2.put_settings_v2(payload=payload, admin=actor)  # type: ignore[arg-type]
+
+    records = [record for record in caplog.records if record.name == "app.audit"]
+    assert records, "settings.update denetim kaydı yazılmalı"
+    message = records[0].getMessage()
+    assert "settings.update" in message
+    assert "audit-admin@test.local" in message
+    assert "INVENTORY_MARKET_GOLD_DKK" in message
+    # Anahtar ADI loglanır; değeri asla.
+    assert "OPENAI_API_KEY" in message
+    assert "sk-super-secret-value" not in message
+    assert "2851" not in message

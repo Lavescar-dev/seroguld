@@ -497,3 +497,202 @@ async def test_office_log_preview_uses_key_year_for_workspace_projection(monkeyp
 
 async def _async_true(_kind: str) -> bool:
     return True
+
+
+@pytest.mark.asyncio
+async def test_route_reversal_detaches_melt_lot_and_writes_line_detached_history():
+    """Rota melt→inventory geri alınırsa satırın melt_lot_id'si temizlenmeli.
+
+    Eski davranış: inventory/undecided dalı melt_lot_id'ye dokunmuyordu; lot
+    kartı ve PDF'i artık stoktaki satırları eritme lotu olarak basmaya devam
+    ediyordu. Fix: detach + 'line_detached' lot geçmişi kaydı.
+    """
+    engine = _fk_enforced_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with Session() as session:
+        admin, customer = _seed_users()
+        session.add_all([admin, customer])
+        await session.flush()
+        lines = await _seed_session_chain(
+            session, admin=admin, customer=customer, session_code="DETACH1", line_count=1
+        )
+        product = Product(
+            product_number="DET02",
+            display_name="Detach test gold",
+            product_type=ProductTypeEnum.JEWELRY,
+            metal_type=MetalTypeEnum.YELLOW_GOLD,
+            weight_grams=Decimal("15.00"),
+            purity_karat="22K",
+            purity_percentage=Decimal("91.70"),
+            pure_gold_grams=Decimal("13.76"),
+            unit_count=1,
+            total_weight_grams=Decimal("15.00"),
+            purchase_date=utc_now().date(),
+            purchase_price_dkk=Decimal("8787.14"),
+            gold_rate_at_purchase=Decimal("859.48"),
+            commission=Decimal("0.00"),
+            seller_customer_id=customer.id,
+            gdpr_release_date=utc_now() + timedelta(days=14),
+            is_gdpr_locked=False,
+            status=ProductStatusEnum.IN_INVENTORY,
+            operation_destination="melt",
+        )
+        session.add(product)
+        await session.flush()
+        lines[0].product_id = product.id
+        await session.commit()
+
+        lot = await create_afg_melt_lot(
+            session,
+            payload=AfgMeltLotCreateRequest(metal_bucket="gold", notes="ayrılma testi"),
+            actor=admin,
+        )
+        lot_id = UUID(str(lot.id))
+        assert lot.line_count == 1, "kuyruktaki satır lota bağlanmış olmalı"
+        test_line_id = lines[0].id
+        admin_id = admin.id
+
+    # Gerçek API akışı gibi YENİ session ile devam: create_afg_melt_lot
+    # attach'i core UPDATE ile yaptığından eski ORM kimlik haritası bayat
+    # melt_lot_id=None görebilir.
+    async with Session() as session:
+        # Eritme kuyruğundaki satır stok rotasına geri alınıyor.
+        await apply_afg_route_requests(
+            db=session,
+            route_requests=[
+                AfgRouteRequest(
+                    line_ids=[test_line_id],
+                    destination="inventory",
+                    classification="standard",
+                )
+            ],
+            actor_id=admin_id,
+        )
+
+        reloaded = (
+            await session.execute(select(TransactionLine).where(TransactionLine.id == test_line_id))
+        ).scalar_one()
+        assert reloaded.melt_lot_id is None, "stoktaki satır lota bağlı kalmamalı"
+
+        detached = (
+            await session.execute(
+                select(AfgMeltLotHistory).where(
+                    AfgMeltLotHistory.lot_id == lot_id,
+                    AfgMeltLotHistory.action == "line_detached",
+                )
+            )
+        ).scalars().all()
+        assert len(detached) == 1
+        assert detached[0].new_value is not None
+        assert detached[0].new_value.get("transaction_line_id") == str(test_line_id)
+        assert detached[0].new_value.get("new_destination") == "inventory"
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_apply_afg_route_requests_safe_masks_internal_exception_details():
+    """Generic except dalı ham exception metnini (DB/constraint detayları)
+    istemciye sızmaz: sabit mesaj + korelasyon id döner, tam iz sunucu
+    log'una logger.exception ile yazılır."""
+    engine = _fk_enforced_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with Session() as session:
+        admin, customer = _seed_users()
+        session.add_all([admin, customer])
+        await session.flush()
+        lines = await _seed_session_chain(
+            session, admin=admin, customer=customer, session_code="SAFELEAK1", line_count=1
+        )
+        await session.commit()
+
+        from app.api import afg as afg_module
+
+        real_create = afg_module.create_product_service
+
+        async def leaking_create(*args, **kwargs):
+            raise RuntimeError(
+                "test: (sqlite3.IntegrityError) UNIQUE constraint failed: product.product_number"
+            )
+
+        afg_module.create_product_service = leaking_create
+        try:
+            response, failures = await apply_afg_route_requests_safe(
+                db=session,
+                route_requests=[
+                    AfgRouteRequest(
+                        line_ids=[lines[0].id],
+                        destination="inventory",
+                        classification="standard",
+                    )
+                ],
+                actor_id=admin.id,
+            )
+        finally:
+            afg_module.create_product_service = real_create
+
+        assert response.processed_line_ids == []
+        assert [line_id for line_id, _ in failures] == [lines[0].id]
+        for _, message in failures:
+            assert "IntegrityError" not in message
+            assert "UNIQUE constraint" not in message
+            assert "Satır uygulanamadı" in message
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_melt_lot_update_null_is_noop_and_negative_amounts_rejected():
+    """Lot update API sözleşmesi: {'insurance_dkk': null} alanı DEĞİŞTİRMEZ
+    (nullable=False kolona None yazıp commit'te IntegrityError/500 yerine);
+    negatif tutar ve sıfır kur şema kapısında reddedilir."""
+    import pydantic
+
+    from app.api.afg import update_afg_melt_lot
+    from app.schemas.afg import AfgMeltLotUpdateRequest
+
+    engine = _fk_enforced_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with Session() as session:
+        admin, _customer = _seed_users()
+        session.add(admin)
+        lot = AfgMeltLot(
+            metal_bucket="gold",
+            sent_date=utc_now().date(),
+            insurance_dkk=Decimal("120.00"),
+            exchange_rate_dkk=Decimal("7.45"),
+        )
+        session.add(lot)
+        await session.commit()
+        lot_id = UUID(str(lot.id))
+
+        updated = await update_afg_melt_lot(
+            session,
+            lot_id=lot_id,
+            payload=AfgMeltLotUpdateRequest(notes="null contract", insurance_dkk=None),
+            actor=admin,
+        )
+        assert updated.insurance_dkk == Decimal("120.00"), (
+            "None 'değiştirme' anlamına gelir; mevcut tutar korunmalı"
+        )
+        assert updated.notes == "null contract"
+
+    await engine.dispose()
+
+    for bad in (
+        {"insurance_dkk": Decimal("-500")},
+        {"after_pure_gold_grams": Decimal("-3")},
+        {"shipping_dkk": Decimal("-1")},
+        {"exchange_rate_dkk": Decimal("0")},
+    ):
+        with pytest.raises(pydantic.ValidationError):
+            AfgMeltLotUpdateRequest(**bad)

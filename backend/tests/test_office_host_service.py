@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
+from jose import jwt as jose_jwt
 
 from app.api import v2
 from app.api import v2_office_runtime as runtime
@@ -203,3 +205,68 @@ async def test_collabora_discovery_network_error_becomes_runtime_error(monkeypat
     provider = CollaboraOfficeProvider()
     with pytest.raises(RuntimeError, match="discovery'ye ulaşılamadı"):
         await provider._load_discovery_actions()
+
+
+# --- ONLYOFFICE callback token doğrulaması (token zorunlu + claim bağı) -----
+
+
+def _callback_request(authorization: str | None) -> SimpleNamespace:
+    headers = {"authorization": authorization} if authorization is not None else {}
+    return SimpleNamespace(headers=headers)
+
+
+def _signed_callback(secret: str, claims: dict) -> str:
+    return jose_jwt.encode({"payload": claims}, secret, algorithm="HS256")
+
+
+@pytest.fixture
+def onlyoffice_secret(monkeypatch: pytest.MonkeyPatch) -> str:
+    secret = "onlyoffice-test-secret-0123456789abcdef"
+    monkeypatch.setattr(v2, "get_settings", lambda: SimpleNamespace(onlyoffice_jwt_secret=secret))
+    monkeypatch.setattr(v2, "resolve_desktop_onlyoffice_jwt_secret", lambda configured: configured)
+    return secret
+
+
+def test_onlyoffice_callback_without_token_is_rejected(onlyoffice_secret: str) -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        v2._verify_onlyoffice_callback_token(_callback_request(None), {"status": 2})
+    assert excinfo.value.status_code == 401
+
+
+def test_onlyoffice_callback_with_empty_secret_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(v2, "get_settings", lambda: SimpleNamespace(onlyoffice_jwt_secret=""))
+    monkeypatch.setattr(v2, "resolve_desktop_onlyoffice_jwt_secret", lambda configured: configured)
+    token = _signed_callback("", {"status": 2})
+    with pytest.raises(HTTPException) as excinfo:
+        v2._verify_onlyoffice_callback_token(_callback_request(f"Bearer {token}"), {"status": 2})
+    assert excinfo.value.status_code == 401
+
+
+def test_onlyoffice_callback_with_bad_signature_is_rejected(onlyoffice_secret: str) -> None:
+    body = {"status": 2, "url": "http://onlyoffice.test/dl.xlsx"}
+    forged = _signed_callback("totally-different-secret-value-123456", body)
+    with pytest.raises(HTTPException) as excinfo:
+        v2._verify_onlyoffice_callback_token(_callback_request(f"Bearer {forged}"), body)
+    assert excinfo.value.status_code == 401
+
+
+def test_onlyoffice_callback_body_must_match_signed_claims(onlyoffice_secret: str) -> None:
+    """Çalınan/yeniden kullanılan token'la gövde url'i değiştirilemez."""
+    signed = _signed_callback(onlyoffice_secret, {"status": 2, "url": "http://onlyoffice.test/real.xlsx"})
+    with pytest.raises(HTTPException) as excinfo:
+        v2._verify_onlyoffice_callback_token(
+            _callback_request(f"Bearer {signed}"),
+            {"status": 2, "url": "http://attacker.test/evil.xlsx"},
+        )
+    assert excinfo.value.status_code == 401
+
+
+def test_onlyoffice_callback_valid_signed_body_passes(onlyoffice_secret: str) -> None:
+    body = {
+        "status": 2,
+        "url": "http://onlyoffice.test/dl.xlsx",
+        "userdata": "alis-workspace:draft-1:3",
+        "key": "doc-key",
+    }
+    token = _signed_callback(onlyoffice_secret, body)
+    v2._verify_onlyoffice_callback_token(_callback_request(f"Bearer {token}"), body)
