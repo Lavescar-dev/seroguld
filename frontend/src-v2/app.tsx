@@ -185,6 +185,17 @@ function RequireAuth() {
   return <Outlet />;
 }
 
+/**
+ * /settings route guard'ı — ayarlar yalnız admin rolüne açıktır (backend
+ * require_admin paritesinde). Yetkisiz rol sessizce panele döndürülür.
+ */
+function RequireAdminRoute({ children }: { children: ReactNode }) {
+  if (getCurrentUser()?.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
 function ShellLayout() {
   return <AppShell />;
 }
@@ -337,7 +348,12 @@ const router = createHashRouter([
           { path: '/opmc/:id', element: renderLazyPage(<OpmcDetailPage />) },
           { path: '/woocommerce', element: renderLazyPage(<WooCommercePage />) },
           { path: '/uniconta', element: renderLazyPage(<UnicontaPage />) },
-          { path: '/settings', element: renderLazyPage(<SettingsPage />) },
+          {
+            path: '/settings',
+            element: (
+              <RequireAdminRoute>{renderLazyPage(<SettingsPage />)}</RequireAdminRoute>
+            ),
+          },
           { path: '/reports', element: renderLazyPage(<ReportsPage />) },
           { path: '/pos', element: <Navigate to="/" replace /> },
           { path: '/afg', element: <Navigate to="/log" replace /> },

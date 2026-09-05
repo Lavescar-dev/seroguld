@@ -46,7 +46,6 @@ type SettingsWorkspaceProps = {
   config: ApiConfig;
   saved: boolean;
   isSaving: boolean;
-  confirmReset: boolean;
   apiStatus: Array<{ name: string; ok: boolean }>;
   configuredCount: number;
   onUpdate: (key: ConfigKey, value: string | boolean) => void;
@@ -392,7 +391,6 @@ export function SettingsWorkspace({
   config,
   saved,
   isSaving,
-  confirmReset,
   apiStatus,
   configuredCount,
   onUpdate,
@@ -685,8 +683,9 @@ export function SettingsWorkspace({
             <span className={saved ? 'font-semibold text-emerald-700' : 'text-slate-500'}>{isSaving ? 'Değişiklikler kaydediliyor' : saved ? 'Değişiklikler kaydedildi' : 'Ayarlar kaydedilmeye hazır'}</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={onReset} disabled={isSaving} className={`inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${confirmReset ? 'border border-red-300 bg-red-50 text-red-700' : classic ? 'border border-brand-300 text-brand-700 hover:bg-brand-50' : 'rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-              <RotateCcw className="h-4 w-4" /> {confirmReset ? 'Sıfırlamayı onayla' : 'Sıfırla'}
+            {/* Sıfırlama onayı useConfirm diyaloğunda sorulur (hook tarafında). */}
+            <button type="button" onClick={onReset} disabled={isSaving} className={`inline-flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${classic ? 'border border-brand-300 text-brand-700 hover:bg-brand-50' : 'rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+              <RotateCcw className="h-4 w-4" /> Sıfırla
             </button>
             <button type="button" onClick={onSave} disabled={isSaving} className={`inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white transition disabled:opacity-70 ${classic ? 'bg-brand-800 hover:bg-brand-900' : 'rounded-lg bg-blue-600 hover:bg-blue-700'}`}>
               <Save className="h-4 w-4" /> {isSaving ? 'Kaydediliyor' : 'Değişiklikleri kaydet'}

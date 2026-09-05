@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import httpx
 import io
 import json
 import logging
 import os
+from pathlib import Path
+import re
+import tempfile
 from types import SimpleNamespace
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, WebSocket
@@ -65,7 +69,7 @@ from app.api.products import (
     update_ai_describe as legacy_update_ai_describe,
     upload_photos as legacy_upload_photos,
 )
-from app.config import ROOT_ENV_FILE, get_settings, resolve_desktop_onlyoffice_jwt_secret
+from app.config import ROOT_ENV_FILE, Settings, get_settings, resolve_desktop_onlyoffice_jwt_secret
 from app.database import get_db
 from app.models.customer_identity import CustomerIdentityDocument
 from app.models.enums import PosDocumentTypeEnum, PosSessionStatusEnum, PosTradeSideEnum, RoleEnum
@@ -212,7 +216,7 @@ from app.services.pos_document_service import format_document_number
 from app.services.product_service import get_product_or_404, to_product_out, update_product, update_status
 from app.services.pos_service import create_pos_session
 from app.schemas.pos import PosSessionCreate
-from app.utils.env_file import upsert_env_values
+from app.utils.env_file import ENV_ASSIGNMENT_RE, _quote_env_value, upsert_env_values
 from app.utils.helpers import utc_now
 from app.utils.security import decrypt_field, mask_cpr
 
@@ -1577,30 +1581,342 @@ async def get_settings_v2(
     return _build_settings_screen_out()
 
 
+# --- PUT /settings doğrulama yardımcıları -----------------------------------
+# HIGH fix: bu endpoint .env'e YAZMADAN ÖNCE her alanı normalize eder ve
+# birleşik yapılandırmanın TAM pydantic parse'ını geçici dosya üzerinde dener.
+# Doğrulama düşerse upsert_env_values HİÇ çağrılmaz; aksi halde bozuk bir
+# sayısal değer .env'e kalıcı yazılır ve backend her açılışta 500 ile çöker.
+
+SETTINGS_REASONING_EFFORT_OPTIONS: tuple[str, ...] = ("none", "low", "medium", "high", "xhigh", "max")
+
+# Env anahtarı -> Settings alan adı. Önizleme parse'ında yeni değerler init
+# kwargs olarak geçilir (pydantic-settings önceliği: init > env var > dosya);
+# böylece süreç ortamındaki bayat değerler yeni değerleri maskelemez.
+_SETTINGS_ENV_KEY_TO_FIELD: dict[str, str] = {
+    "OPENAI_MODEL": "openai_model",
+    "OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
+    "OPENAI_MAX_TOKENS": "openai_max_tokens",
+    "OPMC_API_URL": "opmc_api_url",
+    "WOOCOMMERCE_BASE_URL": "woocommerce_base_url",
+    "WORDPRESS_BASE_URL": "wordpress_base_url",
+    "WP_APP_USERNAME": "wp_app_username",
+    "EMAIL_TRANSPORT": "email_transport",
+    "WP_BRIDGE_URL": "wp_bridge_url",
+    "AFG_EMAIL_ENABLED": "afg_email_enabled",
+    "UNICONTA_API_URL": "uniconta_api_url",
+    "UNICONTA_USERNAME": "uniconta_username",
+    "UNICONTA_COMPANY_ID": "uniconta_company_id",
+    "UNICONTA_PURCHASE_VAT_CODE_25": "uniconta_purchase_vat_code_25",
+    "UNICONTA_PURCHASE_VAT_CODE_0": "uniconta_purchase_vat_code_0",
+    "INVENTORY_MARKET_GOLD_DKK": "inventory_market_gold_dkk",
+    "INVENTORY_MARKET_SILVER_DKK": "inventory_market_silver_dkk",
+    "INVENTORY_MARKET_PLATINUM_DKK": "inventory_market_platinum_dkk",
+    "INVENTORY_MARKET_PALLADIUM_DKK": "inventory_market_palladium_dkk",
+    "MARKET_RATES_LIVE_ENABLED": "market_rates_live_enabled",
+    "MARKET_RATES_LIVE_FX_ENABLED": "market_rates_live_fx_enabled",
+    "MARKET_RATES_LIVE_PLATINUM_ENABLED": "market_rates_live_platinum_enabled",
+    "MARKET_RATES_LIVE_PALLADIUM_ENABLED": "market_rates_live_palladium_enabled",
+    "INVOICE_SELLER_NAME": "invoice_seller_name",
+    "INVOICE_SELLER_CVR": "invoice_seller_cvr",
+    "INVOICE_SELLER_PHONE": "invoice_seller_phone",
+    "INVOICE_SELLER_EMAIL": "invoice_seller_email",
+    "INVOICE_SELLER_ADDRESS_LINE1": "invoice_seller_address_line1",
+    "OPENAI_API_KEY": "openai_api_key",
+    "OPMC_API_KEY": "opmc_api_key",
+    "OPMC_WEBHOOK_SECRET": "opmc_webhook_secret",
+    "WOOCOMMERCE_CONSUMER_KEY": "woocommerce_consumer_key",
+    "WOOCOMMERCE_CONSUMER_SECRET": "woocommerce_consumer_secret",
+    "WOOCOMMERCE_WEBHOOK_SECRET": "woocommerce_webhook_secret",
+    "WP_APP_PASSWORD": "wp_app_password",
+    "UNICONTA_PASSWORD": "uniconta_password",
+    "UNICONTA_API_KEY": "uniconta_api_key",
+    "METALS_DEV_API_KEY": "metals_dev_api_key",
+    "WP_BRIDGE_SECRET": "wp_bridge_secret",
+}
+_DECIMAL_SETTINGS_FIELDS = frozenset({
+    "inventory_market_gold_dkk",
+    "inventory_market_silver_dkk",
+    "inventory_market_platinum_dkk",
+    "inventory_market_palladium_dkk",
+})
+_INT_SETTINGS_FIELDS = frozenset({"openai_max_tokens"})
+_BOOL_SETTINGS_FIELDS = frozenset({
+    "afg_email_enabled",
+    "market_rates_live_enabled",
+    "market_rates_live_fx_enabled",
+    "market_rates_live_platinum_enabled",
+    "market_rates_live_palladium_enabled",
+})
+# Settings alan adı -> istek gövdesindeki payload alan adı (422 "fields" anahtarları).
+_SETTINGS_FIELD_ERROR_KEYS: dict[str, str] = {
+    "inventory_market_gold_dkk": "market_gold",
+    "inventory_market_silver_dkk": "market_silver",
+    "inventory_market_platinum_dkk": "market_platin",
+    "inventory_market_palladium_dkk": "market_palladyum",
+}
+
+# Boşluk/tırnak binlik ayraçları (da-DK "1 234,5") — ondalık ayracı DEĞİL.
+_NUMERIC_THOUSANDS_SPACE_RE = re.compile(r"[\s\u00a0\u202f\u2009'\u2019]")
+
+
+def _add_settings_field_error(field_errors: dict[str, str], field: str, message: str) -> None:
+    field_errors.setdefault(field, message)
+
+
+def _normalize_numeric_text(raw: str | None) -> str:
+    """Virgül/nokta ondalık ve binlik ayraçlarını nokta-ondalık kanonikine çevirir.
+
+    Danca (da-DK) yazımı: virgül yalnız ondalık ayracı, nokta binlik ayracıdır.
+    İki ayraç bir aradaysa SONUNCUSU ondalıktır ("2.850,50" / "1,234.56").
+    Tek nokta kuralı: yalnız rakam.nokta.üç rakam deseninde binlik sayılır
+    ("2.850" -> 2850); "8.5" gibi kısa kuyruklu değerler ondalık kalır.
+    """
+    value = (raw or "").strip()
+    value = _NUMERIC_THOUSANDS_SPACE_RE.sub("", value)
+    if not value:
+        return ""
+    has_comma = "," in value
+    has_dot = "." in value
+    if has_comma and has_dot:
+        decimal_char = "," if value.rfind(",") > value.rfind(".") else "."
+        thousands_char = "." if decimal_char == "," else ","
+        value = value.replace(thousands_char, "").replace(decimal_char, ".")
+    elif has_comma:
+        value = value.replace(",", "") if value.count(",") > 1 else value.replace(",", ".")
+    elif has_dot:
+        if value.count(".") > 1 or re.fullmatch(r"\d{1,3}\.\d{3}", value):
+            value = value.replace(".", "")
+    return value
+
+
+def _parse_decimal_setting(
+    field_errors: dict[str, str],
+    field: str,
+    label: str,
+    raw: str | None,
+    *,
+    default: str,
+) -> Decimal:
+    normalized = _normalize_numeric_text(raw)
+    if not normalized:
+        return Decimal(default)
+    try:
+        value = Decimal(normalized)
+    except InvalidOperation:
+        _add_settings_field_error(field_errors, field, f"{label} geçerli bir sayı olmalı (örn. 2850,50).")
+        return Decimal(default)
+    if not value.is_finite() or value <= 0:
+        _add_settings_field_error(field_errors, field, f"{label} sıfırdan büyük bir sayı olmalı.")
+        return Decimal(default)
+    return value
+
+
+def _parse_positive_int_setting(
+    field_errors: dict[str, str],
+    field: str,
+    label: str,
+    raw: str | None,
+    *,
+    default: int,
+) -> int:
+    normalized = _normalize_numeric_text(raw)
+    if not normalized:
+        return default
+    try:
+        value = Decimal(normalized)
+    except InvalidOperation:
+        _add_settings_field_error(field_errors, field, f"{label} geçerli bir sayı olmalı (örn. 4096).")
+        return default
+    if value != value.to_integral_value():
+        _add_settings_field_error(field_errors, field, f"{label} tam sayı olmalı.")
+        return default
+    integral = int(value)
+    if integral < 1:
+        _add_settings_field_error(field_errors, field, f"{label} en az 1 olmalı.")
+        return default
+    return integral
+
+
+def _validate_http_url(field_errors: dict[str, str], field: str, label: str, raw: str | None) -> str:
+    candidate = (raw or "").strip().rstrip("/")
+    if not candidate:
+        return ""
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or any(ch.isspace() for ch in candidate):
+        _add_settings_field_error(field_errors, field, f"{label} http:// veya https:// ile başlamalı.")
+        return ""
+    return candidate
+
+
+def _validate_settings_enum(
+    field_errors: dict[str, str],
+    field: str,
+    label: str,
+    raw: str | None,
+    allowed: tuple[str, ...],
+    *,
+    default: str,
+) -> str:
+    candidate = (raw or "").strip().lower()
+    if not candidate:
+        return default
+    if candidate not in allowed:
+        _add_settings_field_error(
+            field_errors,
+            field,
+            f"{label} şunlardan biri olmalı: {', '.join(allowed)}.",
+        )
+        return default
+    return candidate
+
+
+def _merged_env_content(updates: dict[str, str]) -> str:
+    """Mevcut .env içeriğini verilen anahtarlarla birleştirip metin üretir.
+
+    upsert_env_values'un SALT-OKUNUR karşılığıdır: dosyaya YAZMAZ ve süreç
+    ortamına (os.environ) dokunmaz — yazma yalnız doğrulama geçildikten sonra
+    gerçek upsert_env_values çağrısıyla yapılır.
+    """
+    lines = (
+        ROOT_ENV_FILE.read_text(encoding="utf-8-sig").splitlines()
+        if ROOT_ENV_FILE.exists()
+        else []
+    )
+    key_to_idx: dict[str, int] = {}
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        matched = ENV_ASSIGNMENT_RE.match(line)
+        if matched:
+            key_to_idx[matched.group(1)] = idx
+    for key, value in updates.items():
+        rendered = f"{key}={_quote_env_value(value)}"
+        if key in key_to_idx:
+            lines[key_to_idx[key]] = rendered
+        else:
+            lines.append(rendered)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _settings_parse_overrides(updates: dict[str, str]) -> dict[str, object]:
+    overrides: dict[str, object] = {}
+    for key, value in updates.items():
+        field = _SETTINGS_ENV_KEY_TO_FIELD.get(key)
+        if field is None:
+            continue
+        if field in _DECIMAL_SETTINGS_FIELDS:
+            overrides[field] = Decimal(value)
+        elif field in _INT_SETTINGS_FIELDS:
+            overrides[field] = int(value)
+        elif field in _BOOL_SETTINGS_FIELDS:
+            overrides[field] = value.strip().lower() == "true"
+        else:
+            overrides[field] = value
+    return overrides
+
+
+def _preview_settings_env_parse(updates: dict[str, str]) -> None:
+    """Birleşik .env içeriğini GEÇİCİ dosyada tam pydantic parse'ından geçirir.
+
+    Parse başarısızsa upsert yapılmadan alan bazlı 422 döner; gerçek .env
+    dosyası hiçbir koşulda bozulmaz.
+    """
+    content = _merged_env_content(updates)
+    overrides = _settings_parse_overrides(updates)
+    handle_fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{ROOT_ENV_FILE.name}.settings-preview-",
+        suffix=".env",
+        dir=str(ROOT_ENV_FILE.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        Settings(_env_file=str(tmp_path), **overrides)
+    except ValidationError as exc:
+        fields: dict[str, str] = {}
+        for error in exc.errors():
+            loc = error.get("loc") or ("genel",)
+            settings_field = str(loc[0])
+            payload_field = _SETTINGS_FIELD_ERROR_KEYS.get(settings_field, settings_field)
+            fields.setdefault(payload_field, str(error.get("msg") or "geçersiz değer"))
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Birleşik yapılandırma doğrulaması geçemedi; .env güncellenmedi.",
+                "fields": fields,
+            },
+        ) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 @router.put("/settings", response_model=SettingsScreenOut)
 async def put_settings_v2(
     payload: SettingsScreenUpdateIn,
     _: User = Depends(require_admin),
 ) -> SettingsScreenOut:
-    email_transport = (payload.email_transport or "smtp").strip().lower()
-    if email_transport not in ("wp-bridge", "smtp"):
+    field_errors: dict[str, str] = {}
+
+    email_transport = _validate_settings_enum(
+        field_errors,
+        "email_transport",
+        "E-posta taşıyıcısı",
+        payload.email_transport,
+        ("wp-bridge", "smtp"),
+        default="smtp",
+    )
+    openai_reasoning_effort = _validate_settings_enum(
+        field_errors,
+        "openai_reasoning_effort",
+        "Reasoning effort",
+        payload.openai_reasoning_effort,
+        SETTINGS_REASONING_EFFORT_OPTIONS,
+        default="high",
+    )
+    openai_max_tokens = _parse_positive_int_setting(
+        field_errors,
+        "openai_max_tokens",
+        "Maksimum token",
+        payload.openai_max_tokens,
+        default=4096,
+    )
+    opmc_api_url = _validate_http_url(field_errors, "opmc_api_url", "OPMC API adresi", payload.opmc_api_url)
+    woo_store_url = _validate_http_url(
+        field_errors, "woo_store_url", "WooCommerce mağaza adresi", payload.woo_store_url
+    )
+    wp_site_url = _validate_http_url(field_errors, "wp_site_url", "WordPress site adresi", payload.wp_site_url)
+    wp_bridge_url = _validate_http_url(field_errors, "wp_bridge_url", "WP köprü adresi", payload.wp_bridge_url)
+    market_gold = _parse_decimal_setting(
+        field_errors, "market_gold", "Altın oranı", payload.market_gold, default="2850"
+    )
+    market_silver = _parse_decimal_setting(
+        field_errors, "market_silver", "Gümüş oranı", payload.market_silver, default="8.5"
+    )
+    market_platin = _parse_decimal_setting(
+        field_errors, "market_platin", "Platin oranı", payload.market_platin, default="280"
+    )
+    market_palladyum = _parse_decimal_setting(
+        field_errors, "market_palladyum", "Palladyum oranı", payload.market_palladyum, default="335"
+    )
+
+    if field_errors:
         raise HTTPException(
             status_code=422,
-            detail="E-posta taşıyıcısı yalnızca 'wp-bridge' veya 'smtp' olabilir.",
+            detail={
+                "message": "Ayarlar doğrulanamadı; hiçbir değer kaydedilmedi.",
+                "fields": field_errors,
+            },
         )
-    wp_bridge_url = payload.wp_bridge_url.strip()
-    if wp_bridge_url and not (wp_bridge_url.startswith("http://") or wp_bridge_url.startswith("https://")):
-        raise HTTPException(
-            status_code=422,
-            detail="WP köprü adresi http:// veya https:// ile başlamalı.",
-        )
+
     updates = {
         "OPENAI_MODEL": payload.openai_model.strip() or "gpt-5.6-luna",
-        "OPENAI_REASONING_EFFORT": payload.openai_reasoning_effort.strip() or "high",
-        "OPENAI_MAX_TOKENS": payload.openai_max_tokens.strip() or "4096",
-        "OPMC_API_URL": payload.opmc_api_url.strip(),
-        "WOOCOMMERCE_BASE_URL": payload.woo_store_url.strip(),
-        "WORDPRESS_BASE_URL": payload.wp_site_url.strip(),
+        "OPENAI_REASONING_EFFORT": openai_reasoning_effort,
+        "OPENAI_MAX_TOKENS": str(openai_max_tokens),
+        "OPMC_API_URL": opmc_api_url,
+        "WOOCOMMERCE_BASE_URL": woo_store_url,
+        "WORDPRESS_BASE_URL": wp_site_url,
         "WP_APP_USERNAME": payload.wp_username.strip(),
         "EMAIL_TRANSPORT": email_transport,
         "WP_BRIDGE_URL": wp_bridge_url,
@@ -1610,10 +1926,10 @@ async def put_settings_v2(
         "UNICONTA_COMPANY_ID": payload.uniconta_company_id.strip(),
         "UNICONTA_PURCHASE_VAT_CODE_25": payload.uniconta_purchase_vat_code_25.strip() or "Købsmoms",
         "UNICONTA_PURCHASE_VAT_CODE_0": payload.uniconta_purchase_vat_code_0.strip() or "KøbBrugtmoms",
-        "INVENTORY_MARKET_GOLD_DKK": payload.market_gold.strip() or "2850",
-        "INVENTORY_MARKET_SILVER_DKK": payload.market_silver.strip() or "8.5",
-        "INVENTORY_MARKET_PLATINUM_DKK": payload.market_platin.strip() or "280",
-        "INVENTORY_MARKET_PALLADIUM_DKK": payload.market_palladyum.strip() or "335",
+        "INVENTORY_MARKET_GOLD_DKK": str(market_gold),
+        "INVENTORY_MARKET_SILVER_DKK": str(market_silver),
+        "INVENTORY_MARKET_PLATINUM_DKK": str(market_platin),
+        "INVENTORY_MARKET_PALLADIUM_DKK": str(market_palladyum),
         "MARKET_RATES_LIVE_ENABLED": "true" if payload.market_rates_live_enabled else "false",
         "MARKET_RATES_LIVE_FX_ENABLED": "true" if payload.market_rates_live_fx_enabled else "false",
         "MARKET_RATES_LIVE_PLATINUM_ENABLED": "true" if payload.market_rates_live_platinum_enabled else "false",
@@ -1644,6 +1960,9 @@ async def put_settings_v2(
             if value is not None and value.strip()
         }
     )
+    # Tam parse kapısı: birleşik yapılandırma pydantic'te geçemiyorsa .env'e
+    # dokunulmaz (alan bazlı 422 döner).
+    _preview_settings_env_parse(updates)
     upsert_env_values(ROOT_ENV_FILE, updates)
     get_settings.cache_clear()
     reset_uniconta_client()

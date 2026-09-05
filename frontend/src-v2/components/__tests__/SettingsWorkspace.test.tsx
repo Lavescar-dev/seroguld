@@ -66,7 +66,6 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
         }}
         saved={false}
         isSaving={false}
-        confirmReset={false}
         apiStatus={[]}
         configuredCount={0}
         onUpdate={onUpdate}
@@ -98,7 +97,6 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
         config={config}
         saved={false}
         isSaving={false}
-        confirmReset={false}
         apiStatus={[]}
         configuredCount={0}
         onUpdate={vi.fn()}
@@ -133,7 +131,6 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
         }}
         saved={false}
         isSaving={false}
-        confirmReset={false}
         apiStatus={[]}
         configuredCount={0}
         onUpdate={onUpdate}
@@ -165,7 +162,6 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
         config={config}
         saved={false}
         isSaving={false}
-        confirmReset={false}
         apiStatus={[]}
         configuredCount={0}
         onUpdate={vi.fn()}

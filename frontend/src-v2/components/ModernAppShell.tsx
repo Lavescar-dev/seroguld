@@ -23,6 +23,7 @@ import { GlobalMarketRatesDrawer, toTopbarValue, useGlobalMarketRates } from './
 import { LanguageSelector } from '@/i18n';
 import { useAppTranslation } from '@/i18n';
 import { SessionLogoutControl } from '@/components/SessionLogoutControl';
+import { getCurrentUser } from '@/lib/auth';
 
 import type { ReturnTypeOfRootMakeState } from './modernShellTypes';
 
@@ -126,7 +127,10 @@ export function ModernAppShell({ state }: { state: ReturnTypeOfRootMakeState }) 
         label: t('navigation.compliance'),
         items: [
           item('/gdpr', 'GDPR Merkezi', 'Privacy merkezi', ShieldCheck),
-          item('/settings', t('navigation.settings'), 'Platform ve görünüm', Settings),
+          // A11 köprüsü: /settings route guard'ı admin gerektiriyor; menü de rolle paralel.
+          ...(getCurrentUser()?.role === 'admin'
+            ? [item('/settings', t('navigation.settings'), 'Platform ve görünüm', Settings)]
+            : []),
         ],
       },
     ];

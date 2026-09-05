@@ -31,6 +31,7 @@ import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
 import { SessionLogoutControl } from '@/components/SessionLogoutControl';
 
 import type { OfficeDockState, RuntimeDiagnosticsState, SidebarStats } from './useRootMakeState';
+import { getCurrentUser } from '@/lib/auth';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 
@@ -302,7 +303,7 @@ export function MakeRoot({
             Harici & Sistem
           </p>
         </div>
-        {navItem('/settings', <Settings className="h-4 w-4" />, 'Ayarlar', 'API & Sistem Ayarlari')}
+        {getCurrentUser()?.role === 'admin' ? navItem('/settings', <Settings className="h-4 w-4" />, 'Ayarlar', 'API & Sistem Ayarlari') : null}
 
         <div className="mt-auto space-y-3 px-3 pb-2 pt-6">
           {stats.finguld > 0 || stats.finsolv > 0 ? (

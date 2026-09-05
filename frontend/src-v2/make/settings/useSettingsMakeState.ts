@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useBlocker } from 'react-router-dom';
 
-import { apiRequest } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmDialog';
+import { apiRequest, localizeApiError } from '@/lib/api';
 import { requestCriticalBackup } from '@/lib/backup';
 import { useToast } from '@/lib/toast';
 
 import type { ApiConfig } from './types';
 
-const DEFAULT_CONFIG: ApiConfig = {
+export const DEFAULT_CONFIG: ApiConfig = {
   openai_api_key: '',
   openai_model: 'gpt-5.6-luna',
   openai_reasoning_effort: 'high',
@@ -50,6 +52,16 @@ const DEFAULT_CONFIG: ApiConfig = {
   firma_adres: '',
 };
 
+// Sunucu konfigi ile form konfigini alan bazlı karşılaştırır (kirli takibi).
+// String normalizasyonu boolean/dizi alanları da kapsar.
+export function isSettingsConfigDirty(server: ApiConfig, draft: ApiConfig): boolean {
+  const keys = new Set([...Object.keys(server), ...Object.keys(draft)] as (keyof ApiConfig)[]);
+  for (const key of keys) {
+    if (String(draft[key] ?? '') !== String(server[key] ?? '')) return true;
+  }
+  return false;
+}
+
 export function buildSettingsApiStatus(config: ApiConfig) {
   const configuredSecrets = new Set(config.secret_fields_configured ?? []);
   const hasSecret = (field: keyof ApiConfig) => Boolean(config[field]) || configuredSecrets.has(String(field));
@@ -75,6 +87,7 @@ export function buildSettingsApiStatus(config: ApiConfig) {
 
 export function useSettingsMakeState() {
   const toast = useToast();
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const settingsQuery = useQuery({
     queryKey: ['settings-v2'],
@@ -88,9 +101,15 @@ export function useSettingsMakeState() {
       }),
   });
 
+  // HIGH fix: yükleme başarısızsa default konfigle sessizce devam etmek,
+  // Kaydet/Sıfırla/İçe aktar'ın ÜRETİM ayarlarını kalıcı ezmesine yol açıyordu.
+  // Artık yazma yolu yalnız sunucudan gerçek konfig başarıyla okunduğunda açılır.
+  const isReady = settingsQuery.isSuccess;
+  const isLoading = settingsQuery.isPending;
+  const isError = settingsQuery.isError;
+
   const [config, setConfig] = useState<ApiConfig>(DEFAULT_CONFIG);
   const [saved, setSaved] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     if (settingsQuery.data) {
@@ -98,10 +117,14 @@ export function useSettingsMakeState() {
     }
   }, [settingsQuery.data]);
 
+  const isDirty = useMemo(
+    () => (settingsQuery.data ? isSettingsConfigDirty(settingsQuery.data, config) : false),
+    [settingsQuery.data, config],
+  );
+
   const update = (key: keyof ApiConfig, value: string | boolean) => {
     setConfig((current) => ({ ...current, [key]: value }) as ApiConfig);
     setSaved(false);
-    setConfirmReset(false);
   };
 
   const markSaved = () => {
@@ -110,6 +133,7 @@ export function useSettingsMakeState() {
   };
 
   const handleSave = () => {
+    if (!isReady) return;
     saveMutation.mutate(config, {
       onSuccess: (nextConfig) => {
         setConfig(nextConfig);
@@ -126,17 +150,23 @@ export function useSettingsMakeState() {
     });
   };
 
-  const handleReset = () => {
-    if (!confirmReset) {
-      setConfirmReset(true);
-      return;
-    }
+  const handleReset = async () => {
+    if (!isReady) return;
+    // Sıfırlama ÜRETİM değerlerini ezer; onay useConfirm diyaloğuna taşındı.
+    const confirmed = await confirm({
+      title: 'Ayarlar fabrika değerlerine döndürülsün mü?',
+      message:
+        'Entegrasyon, piyasa oranı ve firma bilgileri varsayılanlarla değiştirilecek. Kayıtlı gizli anahtarlar korunur; bu işlem geri alınamaz.',
+      confirmText: 'Sıfırla',
+      cancelText: 'Vazgeç',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     saveMutation.mutate({ ...DEFAULT_CONFIG }, {
       onSuccess: (nextConfig) => {
         setConfig(nextConfig);
         queryClient.setQueryData(['settings-v2'], nextConfig);
         void queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
-        setConfirmReset(false);
         markSaved();
         requestCriticalBackup();
       },
@@ -147,6 +177,7 @@ export function useSettingsMakeState() {
   };
 
   const handleExport = () => {
+    if (!isReady) return;
     const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -156,7 +187,19 @@ export function useSettingsMakeState() {
     URL.revokeObjectURL(url);
   };
 
-  const handleImport = () => {
+  const handleImport = async () => {
+    if (!isReady) return;
+    if (isDirty) {
+      // İçe aktarma formdaki kaydedilmemiş değişikliklerin üzerine yazar.
+      const confirmed = await confirm({
+        title: 'Kaydedilmemiş değişiklikler silinecek',
+        message: 'İçe aktarılan dosya formdaki mevcut değerlerin üzerine yazar. Devam edilsin mi?',
+        confirmText: 'Devam et',
+        cancelText: 'Vazgeç',
+        variant: 'warning',
+      });
+      if (!confirmed) return;
+    }
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
@@ -172,8 +215,12 @@ export function useSettingsMakeState() {
           saveMutation.mutate(merged, {
             onSuccess: (nextConfig) => {
               setConfig(nextConfig);
+              queryClient.setQueryData(['settings-v2'], nextConfig);
               markSaved();
               requestCriticalBackup();
+            },
+            onError: (error) => {
+              toast.error('Ayarlar içe aktarılamadı', error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.');
             },
           });
         } catch {
@@ -185,19 +232,52 @@ export function useSettingsMakeState() {
     input.click();
   };
 
+  // Kaydedilmemiş değişiklikle sayfadan ayrılma onayı (react-router blocker).
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      isReady && isDirty && currentLocation.pathname !== nextLocation.pathname,
+  );
+
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return undefined;
+    const { proceed, reset } = blocker;
+    let active = true;
+    void confirm({
+      title: 'Kaydedilmemiş değişiklikler var',
+      message: 'Ayarlar sayfasından ayrılırsanız yaptığınız değişiklikler kaybolur. Ayrılsın mı?',
+      confirmText: 'Değişiklikleri bırak',
+      cancelText: 'Kal',
+      variant: 'warning',
+    }).then((result) => {
+      if (!active) return;
+      if (result) proceed();
+      else reset();
+    });
+    return () => {
+      active = false;
+    };
+  }, [blocker, confirm]);
+
   const apiStatus = buildSettingsApiStatus(config);
 
   return {
     config,
     saved,
     isSaving: saveMutation.isPending,
-    confirmReset,
     apiStatus,
     configuredCount: apiStatus.filter((item) => item.ok).length,
+    isLoading,
+    isError,
+    isReady,
+    isDirty,
+    loadErrorMessage: isError ? localizeApiError(settingsQuery.error) : '',
     onUpdate: update,
     onSave: handleSave,
     onReset: handleReset,
     onExport: handleExport,
     onImport: handleImport,
+    onRetryLoad: () => {
+      void settingsQuery.refetch();
+    },
   };
 }

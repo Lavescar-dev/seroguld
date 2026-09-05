@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -337,3 +338,182 @@ async def test_uniconta_api_key_without_password_is_not_configured(monkeypatch: 
     assert response.connectionStatus == "bagli_degil"
     assert response.configured is False
     assert writes == []
+
+
+# --- PUT /settings doğrulama kapısı (env bozulmasın) ------------------------
+
+
+def test_normalize_numeric_text_handles_danish_formats() -> None:
+    assert v2._normalize_numeric_text(" 2.850,50 ") == "2850.50"
+    assert v2._normalize_numeric_text("1 234,5") == "1234.5"
+    assert v2._normalize_numeric_text("8,5") == "8.5"
+    assert v2._normalize_numeric_text("8.5") == "8.5"
+    # Tek nokta + tam 3 kuyruk → Danca binlik ayracı.
+    assert v2._normalize_numeric_text("2.850") == "2850"
+    assert v2._normalize_numeric_text("1,234.56") == "1234.56"
+    # Danca'da virgül yalnız ondalıktır; "4,096" = 4.096 (AB-ingiliz binlik DEĞİL).
+    assert v2._normalize_numeric_text("4,096") == "4.096"
+    assert v2._normalize_numeric_text("1,234,567") == "1234567"
+    assert v2._normalize_numeric_text("") == ""
+    assert v2._normalize_numeric_text(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_settings_numeric_fields_normalize_before_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+    monkeypatch.setattr(v2, "reset_uniconta_client", lambda: None)
+
+    payload = _settings_update_payload(
+        market_gold=" 2.850,50 ",
+        market_silver="8,5",
+        market_platin=" 280 ",
+        market_palladyum="1 234,5",
+        # Nokta binlik ayracı ("4.096" → 4096); virgül ondalıktır ("4,096" 422 döner).
+        openai_max_tokens=" 4.096 ",
+    )
+    await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert len(writes) == 1
+    assert writes[0]["INVENTORY_MARKET_GOLD_DKK"] == "2850.50"
+    assert writes[0]["INVENTORY_MARKET_SILVER_DKK"] == "8.5"
+    assert writes[0]["INVENTORY_MARKET_PLATINUM_DKK"] == "280"
+    assert writes[0]["INVENTORY_MARKET_PALLADIUM_DKK"] == "1234.5"
+    assert writes[0]["OPENAI_MAX_TOKENS"] == "4096"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_value", ["abc", "-5", "0", "12,3.4,5"])
+async def test_settings_invalid_market_value_rejects_before_write(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_value: str,
+) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload(market_gold=bad_value)
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    detail = excinfo.value.detail
+    assert isinstance(detail, dict)
+    assert "market_gold" in detail["fields"]
+    # Doğrulama yazmadan önce düşer — .env asla bozulmaz.
+    assert writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_tokens", ["4.5", "0", "-3", "abc"])
+async def test_settings_openai_max_tokens_must_be_positive_integer(
+    monkeypatch: pytest.MonkeyPatch,
+    bad_tokens: str,
+) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload(openai_max_tokens=bad_tokens)
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    detail = excinfo.value.detail
+    assert isinstance(detail, dict)
+    assert "openai_max_tokens" in detail["fields"]
+    assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_settings_reasoning_effort_must_be_in_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload(openai_reasoning_effort="ultra")
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    detail = excinfo.value.detail
+    assert isinstance(detail, dict)
+    assert "openai_reasoning_effort" in detail["fields"]
+    assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_settings_url_fields_require_http_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload(
+        opmc_api_url="api.opmc.dk/v1",
+        wp_site_url="javascript:alert(1)",
+        woo_store_url="https://seroguld.dk",
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    detail = excinfo.value.detail
+    assert isinstance(detail, dict)
+    assert "opmc_api_url" in detail["fields"]
+    assert "wp_site_url" in detail["fields"]
+    assert "woo_store_url" not in detail["fields"]
+    assert writes == []
+
+
+@pytest.mark.asyncio
+async def test_settings_preview_parses_merged_env_with_existing_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text("OPENAI_TIMEOUT_SECONDS=25.0\n", encoding="utf-8")
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "ROOT_ENV_FILE", env_file)
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+    monkeypatch.setattr(v2, "reset_uniconta_client", lambda: None)
+
+    payload = _settings_update_payload(market_gold="2850")
+    await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    # Mevcut env içeriğiyle birleşik parse geçti; yazma tek seferde yapıldı.
+    assert len(writes) == 1
+    assert writes[0]["INVENTORY_MARKET_GOLD_DKK"] == "2850"
+
+
+@pytest.mark.asyncio
+async def test_settings_corrupt_existing_env_blocks_write_and_leaves_no_temp(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text("OPENAI_TIMEOUT_SECONDS=not-a-number\n", encoding="utf-8")
+    provider = _SettingsProvider(_settings())
+    writes: list[dict[str, str]] = []
+    monkeypatch.setattr(v2, "ROOT_ENV_FILE", env_file)
+    monkeypatch.setattr(v2, "get_settings", provider)
+    monkeypatch.setattr(v2, "upsert_env_values", lambda _path, updates: writes.append(updates))
+
+    payload = _settings_update_payload()
+    with pytest.raises(HTTPException) as excinfo:
+        await v2.put_settings_v2(payload=payload, _=None)  # type: ignore[arg-type]
+
+    assert excinfo.value.status_code == 422
+    detail = excinfo.value.detail
+    assert isinstance(detail, dict)
+    assert "openai_timeout_seconds" in detail["fields"]
+    assert writes == []
+    # Önizleme geçici dosyası temizlendi; .env yanında artık yok.
+    assert list(env_file.parent.glob(".runtime.env.settings-preview-*")) == []
