@@ -66,6 +66,7 @@ async def test_onlyoffice_callback_downloads_workbook_and_applies(monkeypatch):
 
     class FakeResponse:
         content = b"workbook-bytes"
+        headers = {"content-length": str(len(b"workbook-bytes"))}
 
         def raise_for_status(self) -> None:
             return None
@@ -107,6 +108,16 @@ async def test_onlyoffice_callback_downloads_workbook_and_applies(monkeypatch):
         assert payload["status"] == 2
         assert payload["url"] == "http://onlyoffice.test/download.xlsx"
 
+    # İndirme allowlist'i yapılandırılmış ONLYOFFICE host'una kilitli; test
+    # ortamında host eşleşmesini stub settings ile sağlıyoruz.
+    monkeypatch.setattr(
+        runtime,
+        "get_settings",
+        lambda: SimpleNamespace(
+            onlyoffice_runtime_url="http://onlyoffice.test:8082",
+            onlyoffice_callback_base_url="http://onlyoffice-callback.test:8100",
+        ),
+    )
     monkeypatch.setattr(runtime, "_office_artifact_record_or_404", fake_office_artifact_record_or_404)
     monkeypatch.setattr(runtime, "_apply_office_session_content", fake_apply_office_session_content)
     monkeypatch.setattr(runtime, "_verify_onlyoffice_callback_token", fake_verify_onlyoffice_callback_token)
@@ -175,6 +186,159 @@ async def test_onlyoffice_callback_ignores_older_save_id(monkeypatch):
         runtime.office_host_service._sessions.pop(entry.access_token, None)
 
     assert result == {"error": 0}
+    assert applied is False
+
+
+def test_onlyoffice_download_host_allowlist(monkeypatch):
+    monkeypatch.setattr(
+        runtime,
+        "get_settings",
+        lambda: SimpleNamespace(
+            onlyoffice_runtime_url="http://onlyoffice.test:8082",
+            onlyoffice_callback_base_url="http://onlyoffice-callback.test:8100",
+        ),
+    )
+    assert runtime._onlyoffice_download_host_allowed("http://onlyoffice.test/download.xlsx")
+    assert runtime._onlyoffice_download_host_allowed("https://onlyoffice-callback.test/x.xlsx")
+    assert not runtime._onlyoffice_download_host_allowed("http://169.254.169.254/latest/meta-data")
+    assert not runtime._onlyoffice_download_host_allowed("file:///etc/passwd")
+    assert not runtime._onlyoffice_download_host_allowed("http://onlyoffice.test.evil.example/x.xlsx")
+
+    # Yapılandırma boşken yalnız şema+host varlığı beklenir (JWT ana savunma).
+    monkeypatch.setattr(
+        runtime,
+        "get_settings",
+        lambda: SimpleNamespace(onlyoffice_runtime_url="", onlyoffice_callback_base_url=""),
+    )
+    assert runtime._onlyoffice_download_host_allowed("http://any-configured-host.test/x.xlsx")
+
+
+@pytest.mark.asyncio
+async def test_onlyoffice_callback_rejects_foreign_download_host(monkeypatch):
+    """SSRF savunması: allowlist dışı URL apply akışına hiç girmemeli."""
+
+    preview = DocumentArtifactPreviewOut(
+        title="1003.xlsm",
+        download_path="/api/v2/office/mock-download",
+        import_supported=True,
+    )
+    entry = runtime.office_host_service.create_session(
+        kind="alis-workspace",
+        key="draft-1003",
+        preview=preview,
+        can_write=True,
+    )
+    applied = False
+    downloaded = False
+
+    class FakeRequest:
+        async def json(self) -> dict[str, object]:
+            return {"status": 2, "url": "http://169.254.169.254/latest/meta-data"}
+
+    class FakeDb:
+        async def commit(self) -> None:
+            raise AssertionError("apply olmadan commit yapılmamalı")
+
+        async def rollback(self) -> None:
+            raise AssertionError("işlem başlamadan rollback yapılmamalı")
+
+    async def fake_office_artifact_record_or_404(db, access_token: str):
+        return entry, SimpleNamespace()
+
+    async def fake_apply_office_session_content(db, *, entry, workbook_bytes: bytes) -> None:
+        nonlocal applied
+        applied = True
+
+    class FailingAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            nonlocal downloaded
+            downloaded = True
+            return self
+
+        async def __aexit__(self, *exc_info) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        runtime,
+        "get_settings",
+        lambda: SimpleNamespace(
+            onlyoffice_runtime_url="http://onlyoffice.test:8082",
+            onlyoffice_callback_base_url="",
+        ),
+    )
+    monkeypatch.setattr(runtime, "_office_artifact_record_or_404", fake_office_artifact_record_or_404)
+    monkeypatch.setattr(runtime, "_apply_office_session_content", fake_apply_office_session_content)
+    monkeypatch.setattr(runtime, "_verify_onlyoffice_callback_token", lambda request, payload: None)
+    monkeypatch.setattr(runtime.httpx, "AsyncClient", FailingAsyncClient)
+
+    try:
+        result = await runtime.post_onlyoffice_callback_v2(entry.access_token, FakeRequest(), FakeDb())
+    finally:
+        runtime.office_host_service._sessions.pop(entry.access_token, None)
+
+    assert result == {"error": 1}
+    assert downloaded is False
+    assert applied is False
+
+
+@pytest.mark.asyncio
+async def test_onlyoffice_callback_survives_malformed_body_and_status(monkeypatch):
+    """Bozuk gövde 500 değil DS hata sözleşmesiyle; geçersiz status apply tetiklemez."""
+
+    preview = DocumentArtifactPreviewOut(
+        title="1003.xlsm",
+        download_path="/api/v2/office/mock-download",
+        import_supported=True,
+    )
+    entry = runtime.office_host_service.create_session(
+        kind="alis-workspace",
+        key="draft-1003",
+        preview=preview,
+        can_write=True,
+    )
+    applied = False
+
+    class BrokenJsonRequest:
+        async def json(self) -> dict[str, object]:
+            raise ValueError("bozuk gövde")
+
+    class InvalidStatusRequest:
+        async def json(self) -> dict[str, object]:
+            return {"status": "iki", "url": "http://onlyoffice.test/x.xlsx"}
+
+    class FakeDb:
+        async def commit(self) -> None:
+            raise AssertionError("apply olmadan commit yapılmamalı")
+
+        async def rollback(self) -> None:
+            raise AssertionError("işlem başlamadan rollback yapılmamalı")
+
+    async def fake_office_artifact_record_or_404(db, access_token: str):
+        return entry, SimpleNamespace()
+
+    async def fake_apply_office_session_content(db, *, entry, workbook_bytes: bytes) -> None:
+        nonlocal applied
+        applied = True
+
+    monkeypatch.setattr(runtime, "_office_artifact_record_or_404", fake_office_artifact_record_or_404)
+    monkeypatch.setattr(runtime, "_apply_office_session_content", fake_apply_office_session_content)
+    monkeypatch.setattr(runtime, "_verify_onlyoffice_callback_token", lambda request, payload: None)
+
+    try:
+        broken_result = await runtime.post_onlyoffice_callback_v2(
+            entry.access_token, BrokenJsonRequest(), FakeDb()
+        )
+        invalid_status_result = await runtime.post_onlyoffice_callback_v2(
+            entry.access_token, InvalidStatusRequest(), FakeDb()
+        )
+    finally:
+        runtime.office_host_service._sessions.pop(entry.access_token, None)
+
+    assert broken_result == {"error": 1}
+    assert invalid_status_result == {"error": 0}
     assert applied is False
 
 

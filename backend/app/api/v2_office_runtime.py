@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -20,6 +22,7 @@ from app.api.v2 import (
     _resolve_office_access_token,
     _verify_onlyoffice_callback_token,
 )
+from app.config import get_settings
 from app.database import get_db
 from app.models.enums import PosSessionStatusEnum
 from app.models.user import User
@@ -31,6 +34,7 @@ from app.schemas.document_artifact import (
     OfficeRuntimeStatusOut,
 )
 from app.schemas.pos import PosSessionDisplayOut
+from app.services.document_artifact_edit import artifact_mutation_lock
 from app.services.document_artifact_service import (
     artifact_absolute_path,
     build_afg_document_preview,
@@ -50,6 +54,38 @@ from app.utils.helpers import utc_now
 
 router = APIRouter()
 
+_logger = logging.getLogger(__name__)
+
+# ONLYOFFICE Document Server geri çağrısıyla indirilebilecek en büyük workbook.
+_MAX_CALLBACK_DOWNLOAD_BYTES = 64 * 1024 * 1024
+
+
+def _onlyoffice_download_host_allowed(url: str) -> bool:
+    """Callback indirme URL'sini yalnız yapılandırılmış ONLYOFFICE sunucusuyla sınırla.
+
+    Document Server, callback gövdesindeki ``url`` alanını kendisi üretir; ama
+    alan imzalı claim ile eşleşse bile savunma katmanı olarak kaynağın ONLYOFFICE
+    kurulumunun kendisi olduğunu zorluyoruz (SSRF: apply akışına keyfi URL
+    verilemez).  Yapılandırma boşsa (yalnız geliştirme ortamı) şema+host
+    kontrolü ile yetinulur; asıl savunma zorunlu JWT doğrulamasıdır.
+    """
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    settings = get_settings()
+    allowed_hosts = {
+        host.lower()
+        for host in (
+            urlparse(settings.onlyoffice_runtime_url).hostname,
+            urlparse(settings.onlyoffice_callback_base_url).hostname,
+        )
+        if host
+    }
+    if not allowed_hosts:
+        return True
+    return parsed.hostname.lower() in allowed_hosts
+
 
 @router.get("/office-documents/{kind}/{key}/launch", response_model=OfficeDocumentLaunchOut)
 async def get_office_document_launch_v2(
@@ -65,6 +101,7 @@ async def get_office_document_launch_v2(
     except Exception as exc:
         provider_launch = None
         office_reason = str(exc)
+        _logger.warning("Office provider launch başarısız, fallback yüzeyine düşüldü", exc_info=True)
     else:
         office_reason = provider_launch.office_reason
 
@@ -202,8 +239,11 @@ async def put_office_wopi_file_contents_v2(
         return Response(status_code=409)
 
     content = await request.body()
-    workspace = await _apply_office_session_content(db, entry=entry, workbook_bytes=content)
-    await db.commit()
+    # Grid PATCH ile aynı sözleşmeyi paylaş: revision kontrolü ve apply tek
+    # artifact kilidi altında, yoksa WOPI yazması grid düzenlemesini ezebilir.
+    async with artifact_mutation_lock(entry.kind, entry.key):
+        workspace = await _apply_office_session_content(db, entry=entry, workbook_bytes=content)
+        await db.commit()
 
     record = await get_artifact_record(db, entry.artifact_key or "")
     office_host_service.update_after_save(
@@ -231,7 +271,12 @@ async def post_onlyoffice_callback_v2(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     entry, _ = await _office_artifact_record_or_404(db, access_token)
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except Exception:
+        # Bozuk gövde 500 değil, Document Server'ın anladığı hata sözleşmesi.
+        _logger.warning("ONLYOFFICE callback gövdesi ayrıştırılamadı", exc_info=True)
+        return {"error": 1}
     _verify_onlyoffice_callback_token(request, payload)
     save_id: int | None = None
     raw_userdata = str(payload.get("userdata") or "").strip()
@@ -241,7 +286,12 @@ async def post_onlyoffice_callback_v2(
         except (TypeError, ValueError):
             save_id = None
 
-    status = int(payload.get("status") or 0)
+    try:
+        status = int(payload.get("status") or 0)
+    except (TypeError, ValueError):
+        # Kayıt olayı taşımayan/bozuk status yalnız onaylanır; apply denenmez.
+        _logger.warning("ONLYOFFICE callback status alanı geçersiz; apply atlandı")
+        return {"error": 0}
     if not entry.can_write or status not in {2, 6}:
         return {"error": 0}
 
@@ -259,35 +309,52 @@ async def post_onlyoffice_callback_v2(
         if not download_url:
             office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback URL eksik")
             return {"error": 1}
+        if not _onlyoffice_download_host_allowed(download_url):
+            # SSRF savunması: apply akışına yalnız ONLYOFFICE sunucusunun
+            # kendisi kaynak olabilir (bkz. _onlyoffice_download_host_allowed).
+            _logger.warning("ONLYOFFICE callback allowlist dışı indirme URL'si reddedildi")
+            office_host_service.mark_sync_error(
+                access_token,
+                "ONLYOFFICE callback URL yalnız yapılandırılmış ONLYOFFICE sunucusuna izin verir",
+            )
+            return {"error": 1}
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.get(download_url)
                 response.raise_for_status()
+                declared_length = response.headers.get("content-length")
+                if declared_length and declared_length.isdigit() and int(declared_length) > _MAX_CALLBACK_DOWNLOAD_BYTES:
+                    raise ValueError("ONLYOFFICE indirmesi boyut sınırını aşıyor")
                 workbook_bytes = response.content
+                if len(workbook_bytes) > _MAX_CALLBACK_DOWNLOAD_BYTES:
+                    raise ValueError("ONLYOFFICE indirmesi boyut sınırını aşıyor")
 
-            workspace = await _apply_office_session_content(db, entry=entry, workbook_bytes=workbook_bytes)
-            await db.commit()
+            async with artifact_mutation_lock(entry.kind, entry.key):
+                workspace = await _apply_office_session_content(db, entry=entry, workbook_bytes=workbook_bytes)
+                await db.commit()
 
-            record = await get_artifact_record(db, entry.artifact_key or "")
-            office_host_service.update_after_save(
-                access_token,
-                updated_at=record.updated_at if record else utc_now(),
-                revision=getattr(record, "revision", None) if record else None,
-                save_id=save_id,
-                workspace_revision=getattr(workspace, "workspace_revision", None),
-            )
+                record = await get_artifact_record(db, entry.artifact_key or "")
+                office_host_service.update_after_save(
+                    access_token,
+                    updated_at=record.updated_at if record else utc_now(),
+                    revision=getattr(record, "revision", None) if record else None,
+                    save_id=save_id,
+                    workspace_revision=getattr(workspace, "workspace_revision", None),
+                )
             return {"error": 0}
         except HTTPException as exc:
             await db.rollback()
             detail = str(exc.detail) if exc.detail is not None else "ONLYOFFICE callback reddedildi"
             office_host_service.mark_sync_rejected(access_token, detail)
+            _logger.warning("ONLYOFFICE callback apply reddedildi: %s", detail)
             # A rejected domain apply must be visible to OnlyOffice; returning
             # success here made a stale deletion look saved until the next reload.
             return {"error": 1}
         except Exception:
             await db.rollback()
             office_host_service.mark_sync_error(access_token, "ONLYOFFICE callback apply başarısız oldu")
+            _logger.exception("ONLYOFFICE callback apply başarısız oldu")
             return {"error": 1}
 
 
@@ -340,39 +407,47 @@ async def get_excel_preview_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> DocumentArtifactPreviewOut:
+    # Yalnız anahtar dönüşümleri 400 "geçersiz anahtar" sözleşmesine girer;
+    # derin iş mantığından kaçan ValueError istemci hatası değil sunucu
+    # hatasıdır ve geniş except ile maskelenmemelidir.
+    resolved_key: UUID | int
     try:
         if kind == "alis-workspace":
-            session_id = UUID(key)
-            pos_session = await get_pos_session_or_404(db, session_id)
-            workspace = await build_purchase_workspace(db, pos_session=pos_session)
-            artifact = await get_artifact_record(db, f"alis.workspace.{session_id}")
-            preview = build_afg_workspace_preview(workspace, artifact=artifact)
-            if pos_session.status != PosSessionStatusEnum.DRAFT:
-                preview = preview.model_copy(
-                    update={
-                        "import_supported": False,
-                        "external_edit_supported": False,
-                        "editable_cells": [],
-                    }
-                )
-            return preview
-        if kind == "alis-document":
-            sequence_no = int(key)
-            detail = await get_legacy_pos_document_detail(sequence_no=sequence_no, db=db, _=admin)
-            artifact = await get_artifact_record(db, f"alis.document.{sequence_no}")
-            return build_afg_document_preview(detail, artifact=artifact)
-        if kind == "depolama":
-            workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
-            artifact = await get_artifact_record(db, "depolama.live")
-            return build_inventory_preview(workspace, artifact=artifact)
-        if kind == "log":
-            year = _default_artifact_year(int(key))
-            workspace = await build_log_workspace(db, q=None, limit=200)
-            artifact = await get_artifact_record(db, f"log.live.{year}")
-            return build_log_preview(workspace, year=year, artifact=artifact)
+            resolved_key = UUID(key)
+        elif kind == "alis-document":
+            resolved_key = int(key)
+        elif kind == "log":
+            resolved_key = _default_artifact_year(int(key))
+        elif kind != "depolama":
+            raise HTTPException(status_code=404, detail="Excel preview bulunamadı")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Geçersiz Excel preview anahtarı") from exc
-    raise HTTPException(status_code=404, detail="Excel preview bulunamadı")
+
+    if kind == "alis-workspace":
+        pos_session = await get_pos_session_or_404(db, resolved_key)
+        workspace = await build_purchase_workspace(db, pos_session=pos_session)
+        artifact = await get_artifact_record(db, f"alis.workspace.{resolved_key}")
+        preview = build_afg_workspace_preview(workspace, artifact=artifact)
+        if pos_session.status != PosSessionStatusEnum.DRAFT:
+            preview = preview.model_copy(
+                update={
+                    "import_supported": False,
+                    "external_edit_supported": False,
+                    "editable_cells": [],
+                }
+            )
+        return preview
+    if kind == "alis-document":
+        detail = await get_legacy_pos_document_detail(sequence_no=resolved_key, db=db, _=admin)
+        artifact = await get_artifact_record(db, f"alis.document.{resolved_key}")
+        return build_afg_document_preview(detail, artifact=artifact)
+    if kind == "depolama":
+        workspace = await get_legacy_inventory_workspace(q=None, db=db, _=admin)
+        artifact = await get_artifact_record(db, "depolama.live")
+        return build_inventory_preview(workspace, artifact=artifact)
+    workspace = await build_log_workspace(db, q=None, limit=200)
+    artifact = await get_artifact_record(db, f"log.live.{resolved_key}")
+    return build_log_preview(workspace, year=resolved_key, artifact=artifact)
 
 
 @router.get("/display/{display_token}", response_model=PosSessionDisplayOut)

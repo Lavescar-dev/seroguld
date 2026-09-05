@@ -47,6 +47,8 @@ vi.mock('@/lib/desktop', () => ({
   pickDocumentImportFile: pickDocumentImportFileMock,
 }));
 
+import { flushPendingSaves, PendingSaveError } from '@/lib/saveCoordinator';
+
 import { useExcelPreviewState } from '../useExcelPreviewState';
 
 const PREVIEW_URL = '/api/v2/excel-preview/alis-workspace/WS-1';
@@ -387,6 +389,75 @@ describe('useExcelPreviewState', () => {
   });
 
   describe('ice aktarim', () => {
+    it('basarili ice aktarim cellEdits temizler: eski duzenlemeler diff e karismaz', async () => {
+      mockApiRoutes();
+      const state = renderExcelState();
+      await waitFor(() => expect(state.result.current.workbook).not.toBeNull());
+
+      act(() => {
+        state.result.current.onCellChange('Sayfa1', 'B2', '42');
+      });
+      expect(state.result.current.dirtyCount).toBe(1);
+
+      const pickedFile = new File(['import'], 'degisiklik.xlsx', { type: XLSX_MIME });
+      await act(async () => {
+        await state.result.current.onImportFile(pickedFile);
+      });
+
+      await waitFor(() => expect(state.result.current.reconcilePreview).not.toBeNull());
+      // İçe aktarılan dosya gönderim kaynağıdır; hücre düzenlemeleri sıfırlanır.
+      expect(state.result.current.dirtyCount).toBe(0);
+      expect(state.result.current.pendingImportFileName).toBe('degisiklik.xlsx');
+    });
+
+    it('editable false veya blocking_errors dolu preview da apply engellenir', async () => {
+      mockApiRoutes({
+        reconcilePreview: {
+          editable: false,
+          changes: [{ sheet: 'Sayfa1', cell_ref: 'B2', label: 'Miktar', old_value: '10', new_value: '42' }],
+          warnings: [],
+          blocking_errors: ['Tamamlanmış belge düzenlenemez'],
+        },
+      });
+      const state = renderExcelState();
+      await waitFor(() => expect(state.result.current.workbook).not.toBeNull());
+
+      const pickedFile = new File(['import'], 'degisiklik.xlsx', { type: XLSX_MIME });
+      await act(async () => {
+        await state.result.current.onImportFile(pickedFile);
+      });
+      await waitFor(() => expect(state.result.current.reconcilePreview).not.toBeNull());
+
+      await act(async () => {
+        await state.result.current.onApplyChanges();
+      });
+
+      expect(callsTo('/reconcile-apply')).toHaveLength(0);
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        'Değişiklikler uygulanamadı',
+        'Tamamlanmış belge düzenlenemez',
+      );
+    });
+
+    it('kirli hücre varken pending save handler close akışını reddeder', async () => {
+      mockApiRoutes();
+      const state = renderExcelState();
+      await waitFor(() => expect(state.result.current.workbook).not.toBeNull());
+
+      // Temiz durumda flush sorunsuz tamamlanır.
+      await expect(flushPendingSaves()).resolves.toBeUndefined();
+
+      act(() => {
+        state.result.current.onCellChange('Sayfa1', 'B2', '42');
+      });
+
+      // make/excel'de otomatik kayıt yok: kirli durum close akışını
+      // karar diyaloğuna düşürür.
+      await expect(flushPendingSaves()).rejects.toBeInstanceOf(PendingSaveError);
+
+      state.unmount();
+    });
+
     it('onImportFromDialog tauri olmadan islem yapmaz', async () => {
       mockApiRoutes();
       const state = renderExcelState();

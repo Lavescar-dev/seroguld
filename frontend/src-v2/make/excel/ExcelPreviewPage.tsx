@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, ExternalLink, FileSpreadsheet, Save, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+import { t, useLocale, type Locale } from '@/lib/locale';
+import { useToast } from '@/lib/toast';
 import type { DocumentArtifactPreview, DocumentArtifactReconcilePreview } from '@/types';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
@@ -19,6 +21,8 @@ export interface ExcelPreviewPageProps {
   reconcilePreview: DocumentArtifactReconcilePreview | null;
   isPreviewingChanges: boolean;
   isApplyingChanges: boolean;
+  isImporting: boolean;
+  pendingImportFileName: string | null;
   useNativeImportDialog: boolean;
   onExport: () => void;
   onImportFromDialog: () => void;
@@ -26,6 +30,7 @@ export interface ExcelPreviewPageProps {
   onCellChange: (sheetName: string, cellRef: string, value: string) => void;
   onPreviewChanges: () => void;
   onApplyChanges: () => void;
+  onCancelPreview: () => void;
 }
 
 export interface ExcelWorkbookCellPreview {
@@ -55,21 +60,21 @@ function formatDateTime(value?: string | null) {
   return parsed.toLocaleString(document.documentElement.lang);
 }
 
-function formatVersionKind(value?: string | null) {
-  if (!value) return 'Hazır';
-  if (value === 'draft') return 'Taslak';
-  if (value === 'final') return 'Final';
-  if (value === 'live') return 'Canlı';
-  if (value === 'snapshot') return 'Arşiv';
+function formatVersionKind(value?: string | null, locale?: Locale) {
+  if (!value) return t('workbook.version.ready', locale);
+  if (value === 'draft') return t('workbook.version.draft', locale);
+  if (value === 'final') return t('workbook.version.final', locale);
+  if (value === 'live') return t('workbook.version.live', locale);
+  if (value === 'snapshot') return t('workbook.version.snapshot', locale);
   return value;
 }
 
-function formatKindLabel(kind: string) {
-  if (kind === 'depolama') return 'Depolama Workbook';
-  if (kind === 'log') return 'Log Workbook';
-  if (kind === 'alis-workspace') return 'AFG Taslak';
-  if (kind === 'alis-document') return 'AFG Belgesi';
-  return 'Excel Belgesi';
+function formatKindLabel(kind: string, locale?: Locale) {
+  if (kind === 'depolama') return t('workbook.kind.inventory', locale);
+  if (kind === 'log') return t('workbook.kind.log', locale);
+  if (kind === 'alis-workspace') return t('workbook.kind.draft', locale);
+  if (kind === 'alis-document') return t('workbook.kind.document', locale);
+  return t('workbook.kind.fallback', locale);
 }
 
 function formatModuleLabel(route?: string | null) {
@@ -92,6 +97,8 @@ export function MakeExcelPreviewPage({
   reconcilePreview,
   isPreviewingChanges,
   isApplyingChanges,
+  isImporting,
+  pendingImportFileName,
   useNativeImportDialog,
   onExport,
   onImportFromDialog,
@@ -99,7 +106,10 @@ export function MakeExcelPreviewPage({
   onCellChange,
   onPreviewChanges,
   onApplyChanges,
+  onCancelPreview,
 }: ExcelPreviewPageProps) {
+  const locale = useLocale();
+  const toast = useToast();
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -111,21 +121,59 @@ export function MakeExcelPreviewPage({
   );
   const rowCount = activeSheet?.rows.length || 0;
   const moduleLabel = formatModuleLabel(preview?.module_route);
-  const versionLabel = formatVersionKind(preview?.artifact?.version_kind);
-  const kindLabel = formatKindLabel(kind);
+  const versionLabel = formatVersionKind(preview?.artifact?.version_kind, locale);
+  const kindLabel = formatKindLabel(kind, locale);
+  const previewBlocked = Boolean(
+    reconcilePreview
+      && (reconcilePreview.editable === false || (reconcilePreview.blocking_errors?.length ?? 0) > 0),
+  );
+
+  // Kirli hücreler yalnız React state'inde yaşar; tüm çıkış yollarında
+  // (modül linki, tarayıcı yenileme/kapanma) uyarısız kayıp olmasın.
+  useEffect(() => {
+    if (dirtyCount === 0) return undefined;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [dirtyCount]);
+
+  const confirmLeaveWithDirtyEdits = () => {
+    if (dirtyCount === 0) return true;
+    return window.confirm(
+      'Kaydedilmemiş hücre düzenlemeleri var; sayfadan ayrılırsanız bu düzenlemeler silinir. Ayrılmak istiyor musunuz?',
+    );
+  };
 
   return (
     <div
       className={`min-h-screen bg-stone-100 text-brand-950 ${dragActive && isEditable ? 'ring-4 ring-inset ring-brand-400' : ''}`}
       style={sansStyle}
-      onDragOver={(event) => { if (!isEditable) return; event.preventDefault(); setDragActive(true); }}
+      onDragOver={(event) => {
+        // Salt-okunur sayfada bile varsayılan davranış engellenir: WebView
+        // bırakılan .xlsx dosyasına navigate olup SPA durumunu kaybedemez.
+        event.preventDefault();
+        if (!isEditable) return;
+        setDragActive(true);
+      }}
       onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false); }}
       onDrop={(event) => {
-        if (!isEditable) return;
         event.preventDefault();
         setDragActive(false);
-        const file = Array.from(event.dataTransfer?.files || []).find((f) => /\.(xlsx|xlsm)$/i.test(f.name));
-        if (file) onImportFile(file);
+        if (!isEditable) return;
+        const dropped = Array.from(event.dataTransfer?.files || []);
+        const file = dropped.find((f) => /\.(xlsx|xlsm)$/i.test(f.name));
+        if (file) {
+          onImportFile(file);
+          return;
+        }
+        if (dropped.length > 0) {
+          // Uzantı uyarısız yutma yerine görünür geri bildirim.
+          toast.warning('Yalnız .xlsx ve .xlsm dosyaları içe aktarılabilir.');
+        }
       }}
     >
       <div className="border-b border-brand-300 bg-white px-6 py-4 shadow-sm">
@@ -144,7 +192,7 @@ export function MakeExcelPreviewPage({
                   isEditable ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-brand-300 bg-white text-brand-600'
                 }`}
               >
-                {isEditable ? 'Düzenlenebilir Taslak' : 'Salt okunur'}
+                {isEditable ? t('workbook.editable', locale) : t('workbook.readonly', locale)}
               </span>
               <span className="mono text-xs uppercase tracking-widest text-brand-400" style={monoStyle}>
                 {kind} / {artifactKey}
@@ -158,6 +206,9 @@ export function MakeExcelPreviewPage({
             {preview?.module_route ? (
               <Link
                 to={preview.module_route}
+                onClick={(event) => {
+                  if (!confirmLeaveWithDirtyEdits()) event.preventDefault();
+                }}
                 className="inline-flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-50"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
@@ -175,10 +226,11 @@ export function MakeExcelPreviewPage({
                     }
                     importInputRef.current?.click();
                   }}
-                  className="inline-flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-50"
+                  disabled={isImporting || isPreviewingChanges || isApplyingChanges}
+                  className="inline-flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Upload className="h-3.5 w-3.5" />
-                  İçe Aktar
+                  {isImporting ? 'İçe aktarılıyor…' : 'İçe Aktar'}
                 </button>
                 <button
                   type="button"
@@ -192,7 +244,8 @@ export function MakeExcelPreviewPage({
                 <button
                   type="button"
                   onClick={onApplyChanges}
-                  disabled={!reconcilePreview?.changes.length || isApplyingChanges}
+                  disabled={!reconcilePreview?.changes.length || isApplyingChanges || previewBlocked}
+                  title={previewBlocked ? 'Bu önizleme uygulanabilir durumda değil (yetki veya engelleyici hata).' : undefined}
                   className="inline-flex items-center gap-2 border border-emerald-800 bg-emerald-800 px-4 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Save className="h-3.5 w-3.5" />
@@ -207,7 +260,7 @@ export function MakeExcelPreviewPage({
               className="inline-flex items-center gap-2 border border-brand-900 bg-brand-900 px-4 py-2 text-xs font-black uppercase tracking-widest text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Download className="h-3.5 w-3.5" />
-              Dışa Aktar
+              {t('workbook.export', locale)}
             </button>
             <input
               ref={importInputRef}
@@ -254,11 +307,11 @@ export function MakeExcelPreviewPage({
       <div className="px-6 py-5">
         {isLoading ? (
           <div className="border border-brand-200 bg-white px-6 py-12 text-center text-sm font-medium text-brand-600">
-            Workbook önizlemesi hazırlanıyor...
+            {t('workbook.loading', locale)}
           </div>
         ) : isError || !preview ? (
           <div className="border border-rose-200 bg-rose-50 px-6 py-12 text-center text-sm font-medium text-rose-700">
-            Excel önizlemesi yüklenemedi.
+            {t('workbook.error', locale)}
           </div>
         ) : (
           <div className="space-y-4">
@@ -269,16 +322,38 @@ export function MakeExcelPreviewPage({
                   <p className="mt-1 text-sm text-amber-900">Sadece iş alanları düzenlenir. Formül ve sabit referans hücreleri korunur.</p>
                 </div>
                 <span className="border border-amber-300 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-widest text-amber-800">
-                  {dirtyCount} kirli hücre
+                  {dirtyCount} {t('workbook.dirty', locale)}
                 </span>
               </div>
             ) : null}
 
             {reconcilePreview ? (
               <div className="border border-brand-300 bg-white shadow-sm">
-                <div className="border-b border-brand-200 bg-brand-50 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand-200 bg-brand-50 px-4 py-3">
                   <h2 className="text-sm font-black uppercase tracking-widest text-brand-800">Diff Önizleme</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="border border-brand-200 bg-white px-2 py-1 text-[11px] font-bold text-brand-600">
+                      {pendingImportFileName
+                        ? `İçe aktarılan dosya: ${pendingImportFileName}`
+                        : 'Kaynak: hücre düzenlemeleri'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={onCancelPreview}
+                      className="border border-brand-300 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-50"
+                    >
+                      {t('workbook.cancel', locale)}
+                    </button>
+                  </div>
                 </div>
+                {previewBlocked ? (
+                  <div className="border-b border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">
+                    Bu değişiklik seti şu anda uygulanamıyor
+                    {(reconcilePreview.blocking_errors?.length ?? 0) > 0
+                      ? `: ${reconcilePreview.blocking_errors!.join(' ')}`
+                      : ' (belge düzenlenebilir durumda değil).'}
+                  </div>
+                ) : null}
                 <div className="space-y-3 px-4 py-4">
                   {reconcilePreview.warnings.map((warning) => (
                     <div key={warning} className="border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -316,10 +391,10 @@ export function MakeExcelPreviewPage({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="border border-brand-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-widest text-brand-600">
-                  {sheets.length} sheet
+                  {sheets.length} {t('workbook.sheet', locale)}
                 </span>
                 <span className="border border-brand-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-widest text-brand-600">
-                  {rowCount} satır
+                  {rowCount} {t('workbook.rows', locale)}
                 </span>
               </div>
             </div>
@@ -389,14 +464,17 @@ export function MakeExcelPreviewPage({
                                 {cell.editable && isEditable ? (
                                   cell.inputKind === 'payment_method' ? (
                                     <select
+                                      aria-label={cell.label || cell.cellRef}
                                       value={cell.value}
                                       onChange={(event) => onCellChange(activeSheet.name, cell.cellRef, event.target.value)}
                                       className="w-full border-0 bg-transparent px-1 py-0.5 text-sm font-bold text-brand-900 outline-none"
                                     >
-                                      <option value="Overførsel">Overførsel</option>
+                                      <option value="Kontant">{t('workbook.payment.cash', locale)}</option>
+                                      <option value="Overførsel">{t('workbook.payment.bank', locale)}</option>
                                     </select>
                                   ) : (
                                     <input
+                                      aria-label={cell.label || cell.cellRef}
                                       value={cell.value}
                                       onChange={(event) => onCellChange(activeSheet.name, cell.cellRef, event.target.value)}
                                       className="w-full border-0 bg-transparent px-1 py-0.5 text-sm font-bold text-brand-900 outline-none"
@@ -416,7 +494,7 @@ export function MakeExcelPreviewPage({
               </div>
             ) : (
               <div className="border border-brand-200 bg-white px-6 py-12 text-center text-sm font-medium text-brand-600">
-                Bu workbook için gösterilecek sheet bulunamadı.
+                {t('workbook.noSheets', locale)}
               </div>
             )}
           </div>

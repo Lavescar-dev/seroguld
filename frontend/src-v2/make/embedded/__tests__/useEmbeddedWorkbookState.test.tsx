@@ -421,4 +421,29 @@ describe('useEmbeddedWorkbookState onExport', () => {
     );
     expect(mockedExportBytes).not.toHaveBeenCalled();
   });
+
+  it('dışa aktarma hatası sessiz yutulmaz: hata mesajı yüzeye taşınır', async () => {
+    // download_path hem grid hem export tarafından kullanılır; ilk indirme
+    // (grid yüklemesi) başarılı, export indirmesi başarısız olur.
+    let downloadCalls = 0;
+    apiRequestMock.mockImplementation((path: unknown, options?: ApiRequestOptions) => {
+      const target = String(path);
+      if (target.startsWith('/api/v2/excel-preview/')) return previewPayload;
+      if (options?.method === 'PATCH') return appliedPatch;
+      downloadCalls += 1;
+      if (downloadCalls === 1) return workbookBlob;
+      return Promise.reject(new Error('indirme başarısız'));
+    });
+
+    const { result } = renderWorkbookHook();
+    await waitFor(() => expect(result.current.sheets.length).toBe(1));
+
+    await act(async () => {
+      await result.current.onExport();
+    });
+
+    expect(result.current.excelMessage).toContain('indirme başarısız');
+    expect(mockedExportBytes).not.toHaveBeenCalled();
+    expect(mockedDownload).not.toHaveBeenCalled();
+  });
 });

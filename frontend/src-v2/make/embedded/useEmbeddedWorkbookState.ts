@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { ApiError, apiRequest, buildApiUrl, downloadAuthedDocument } from '@/lib/api';
+import { ApiError, apiRequest, buildApiUrl, downloadAuthedDocument, localizeApiError } from '@/lib/api';
 import {
   type ExcelBridgeStatus,
   closeManagedExcelSession,
@@ -13,6 +13,7 @@ import {
   probeExcelComAvailability,
 } from '@/lib/desktop';
 import { getLocale, t } from '@/lib/locale';
+import { useToast } from '@/lib/toast';
 import { isPendingSaveDiscarded, registerPendingSaveHandler } from '@/lib/saveCoordinator';
 import type {
   DocumentArtifactCellError,
@@ -81,6 +82,7 @@ export function useEmbeddedWorkbookState(
   artifactKey: string,
 ): EmbeddedWorkbookSurfaceProps {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [cellEdits, setCellEdits] = useState<Record<string, string>>({});
   const [cellErrors, setCellErrors] = useState<Record<string, EmbeddedCellError>>({});
   const [saveState, setSaveState] = useState<EmbeddedSaveState>('idle');
@@ -95,6 +97,7 @@ export function useEmbeddedWorkbookState(
   const savePromiseRef = useRef<Promise<void> | null>(null);
   const flushRef = useRef<() => Promise<void>>(async () => undefined);
   const excelSessionRef = useRef<ExcelBridgeSession | null>(null);
+  const exportInFlightRef = useRef(false);
 
   const previewQuery = useQuery({
     queryKey: ['embedded-workbook', kind, artifactKey],
@@ -248,8 +251,11 @@ export function useEmbeddedWorkbookState(
           cellEditsRef.current = nextEdits;
           setCellEdits(nextEdits);
           setSaveState('saved');
+          // Yalnız preview sorgusu tazelenir: workbook dosyası sorgusu anahtarı
+          // download_path/updated_at türettiğinden sunucudaki belge gerçekten
+          // değiştiyse react-query kendisi yeniden indirip parse eder. Her
+          // otosave sonrası kör indirme + senkron parse yapılmaz.
           await queryClient.invalidateQueries({ queryKey: ['embedded-workbook', kind, artifactKey] });
-          await queryClient.invalidateQueries({ queryKey: ['embedded-workbook-file', kind, artifactKey] });
         } catch (error) {
           if (error instanceof ApiError && error.status === 409) {
             // Keep the user's unsent values over the freshly loaded workbook;
@@ -257,7 +263,6 @@ export function useEmbeddedWorkbookState(
             setCellErrors({});
             setSaveState('conflict');
             await queryClient.invalidateQueries({ queryKey: ['embedded-workbook', kind, artifactKey] });
-            await queryClient.invalidateQueries({ queryKey: ['embedded-workbook-file', kind, artifactKey] });
             throw error;
           }
           setSaveState('error');
@@ -279,9 +284,15 @@ export function useEmbeddedWorkbookState(
   useEffect(() => {
     if (isReadOnly || managedExcelOpen || Object.keys(cellEdits).length === 0) return undefined;
     const timeout = window.setTimeout(() => {
-      void flushRef.current().catch(() => undefined);
+      void flushRef.current().catch((error: unknown) => {
+        // 409 conflict yüzeyde kendi bandıyla görünür; diğer hatalar sessiz
+        // yutulursa kullanıcı 422 doğrulama detayını hiç göremez.
+        if (error instanceof ApiError && error.status === 409) return;
+        toast.error(t('workbook.saveError', getLocale()), localizeApiError(error));
+      });
     }, 1_200);
     return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cellEdits, isReadOnly, managedExcelOpen]);
 
   useEffect(() => {
@@ -319,7 +330,6 @@ export function useEmbeddedWorkbookState(
           setManagedExcelOpen(false);
           setExcelMessage(null);
           await queryClient.invalidateQueries({ queryKey: ['embedded-workbook', kind, artifactKey] });
-          await queryClient.invalidateQueries({ queryKey: ['embedded-workbook-file', kind, artifactKey] });
           return;
         }
         if (!response.ok) return;
@@ -327,10 +337,9 @@ export function useEmbeddedWorkbookState(
         if (Number.isFinite(status.revision) && status.revision !== revisionRef.current) {
           revisionRef.current = status.revision;
           setRevision(status.revision);
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['embedded-workbook', kind, artifactKey] }),
-            queryClient.invalidateQueries({ queryKey: ['embedded-workbook-file', kind, artifactKey] }),
-          ]);
+          // Preview tazelenir; dosya sorgusu updated_at/download_path anahtarı
+          // değişince kendiliğinden yeniden indirilir (her poll'da değil).
+          await queryClient.invalidateQueries({ queryKey: ['embedded-workbook', kind, artifactKey] });
         }
         if (status.message) {
           setExcelMessage(status.message);
@@ -352,7 +361,7 @@ export function useEmbeddedWorkbookState(
       delete next[key];
       return next;
     });
-    setSaveState('idle');
+    setSaveState((current) => (current === 'saved' ? 'idle' : current));
     setExcelConflict(false);
     const next = { ...cellEditsRef.current, [key]: value };
     cellEditsRef.current = next;
@@ -464,23 +473,51 @@ export function useEmbeddedWorkbookState(
 
   const onExport = async () => {
     if (!preview?.download_path) return;
-    const blob = await apiRequest<Blob>(preview.download_path);
-    const fileName = preview.artifact?.file_name || `${kind}-${artifactKey}.xlsx`;
-    if (isTauriRuntime()) {
-      const result = await exportDocumentBytes(fileName, await blobToBase64(blob));
-      if (result) setExcelMessage(result.path);
+    // Yönetilen Excel oturumu açıkken kanonik dosya çalışma kopyasındaki
+    // kaydedilmemiş değişiklikleri içermez; eski dosya verip kullanıcıyı
+    // yanıltmak yerine dışa aktarma kilitlenir.
+    if (managedExcelOpen) {
+      const message = 'Excel’deki kaydedilmemiş değişiklikler dışa aktarılan dosyaya yansımaz; önce değişiklikleri senkronlayın.';
+      setExcelMessage(message);
+      toast.warning(message);
       return;
     }
-    await downloadAuthedDocument(preview.download_path, fileName);
+    if (exportInFlightRef.current) return;
+    exportInFlightRef.current = true;
+    try {
+      const blob = await apiRequest<Blob>(preview.download_path);
+      const fileName = preview.artifact?.file_name || `${kind}-${artifactKey}.xlsx`;
+      if (isTauriRuntime()) {
+        const result = await exportDocumentBytes(fileName, await blobToBase64(blob));
+        if (result) setExcelMessage(result.path);
+        return;
+      }
+      await downloadAuthedDocument(preview.download_path, fileName);
+    } catch (error) {
+      const detail = localizeApiError(error);
+      setExcelMessage(detail);
+      toast.error(t('workbook.export', getLocale()), detail);
+    } finally {
+      exportInFlightRef.current = false;
+    }
   };
 
   const onReload = async () => {
     // A revision conflict cannot be resolved by resending the same stale
     // values.  In that state the explicit reload button is the user's safe
     // discard action; for every other state we still flush before replacing
-    // the grid so a normal reload cannot lose pending edits.
+    // the grid so a normal reload cannot lose pending edits.  A failed flush
+    // must not silently swallow the reload either: the user decides whether
+    // the unsent edits may be discarded.
     if (saveState !== 'conflict') {
-      await flushPendingChanges();
+      try {
+        await flushPendingChanges();
+      } catch {
+        const proceed = window.confirm(
+          'Kaydedilemeyen hücre düzenlemeleri yenileme ile silinecek. Kaydetmeden yenilemek istiyor musunuz?',
+        );
+        if (!proceed) return;
+      }
     }
     setCellEdits({});
     cellEditsRef.current = {};

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import { apiRequest, downloadAuthedDocument, localizeApiError } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { exportDocumentBytes, isTauriRuntime, pickDocumentImportFile } from '@/lib/desktop';
+import { registerPendingSaveHandler } from '@/lib/saveCoordinator';
 import type {
   DocumentArtifactEditableCell,
   DocumentArtifactPreview,
@@ -196,6 +197,24 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
   const [cellEdits, setCellEdits] = useState<Record<string, string>>({});
   const [reconcilePreview, setReconcilePreview] = useState<DocumentArtifactReconcilePreview | null>(null);
   const [pendingWorkbookFile, setPendingWorkbookFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const cellEditsRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    cellEditsRef.current = cellEdits;
+  }, [cellEdits]);
+
+  // make/excel'de otomatik kayıt yok: kirli hücreler kullanıcı onayı olmadan
+  // sunucuya gönderilemez. Masaüstü pencere kapatma/çıkış akışı kayıtlı
+  // handler'ları çalıştırır; kirli durum bilinçli olarak reddedilerek akışın
+  // "kaydet/yeniden dene/vazgeç" karar diyaloğuna düşmesi sağlanır.
+  useEffect(() => {
+    const unregister = registerPendingSaveHandler(`excel-preview:${kind}:${artifactKey}`, async () => {
+      if (Object.keys(cellEditsRef.current).length === 0) return;
+      throw new Error('Excel önizlemesinde kaydedilmemiş hücre düzenlemeleri var');
+    });
+    return unregister;
+  }, [kind, artifactKey]);
 
   const previewQuery = useQuery({
     queryKey: ['excel-preview', kind, artifactKey],
@@ -297,31 +316,36 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
     reconcilePreview,
     isPreviewingChanges: previewMutation.isPending,
     isApplyingChanges: applyMutation.isPending,
+    isImporting,
+    pendingImportFileName: pendingWorkbookFile?.name ?? null,
     useNativeImportDialog: isTauriRuntime(),
     onExport: async () => {
       if (!previewQuery.data?.download_path) return;
       const fileName = previewQuery.data.artifact?.file_name || `${kind}-${artifactKey}.xlsx`;
-      const blob = await apiRequest<Blob>(previewQuery.data.download_path);
-      if (isTauriRuntime()) {
-        const dataBase64 = await blobToBase64(blob);
-        await exportDocumentBytes(fileName, dataBase64);
-        return;
+      try {
+        const blob = await apiRequest<Blob>(previewQuery.data.download_path);
+        if (isTauriRuntime()) {
+          const dataBase64 = await blobToBase64(blob);
+          await exportDocumentBytes(fileName, dataBase64);
+          return;
+        }
+        await downloadAuthedDocument(previewQuery.data.download_path, fileName);
+      } catch (error) {
+        // İçe/dışa aktarma hataları sessiz yutulmaz; previewMutation ile aynı
+        // toast sözleşmesini paylaşır.
+        toast.error('Dışa aktarma başarısız oldu', localizeApiError(error));
       }
-      void downloadAuthedDocument(previewQuery.data.download_path, fileName);
     },
     onImportFromDialog: async () => {
-      if (!isTauriRuntime()) return;
+      if (!isTauriRuntime() || isImporting) return;
       const picked = await pickDocumentImportFile();
       if (!picked) return;
       const file = fileFromPickedImport(picked.file_name, picked.data_base64);
-      setPendingWorkbookFile(file);
-      setReconcilePreview(null);
-      await previewMutation.mutateAsync(file).catch(() => undefined);
+      await runImport(file);
     },
     onImportFile: async (file: File) => {
-      setPendingWorkbookFile(file);
-      setReconcilePreview(null);
-      await previewMutation.mutateAsync(file).catch(() => undefined);
+      if (isImporting) return;
+      await runImport(file);
     },
     onCellChange: (sheetName, cellRef, value) => {
       setPendingWorkbookFile(null);
@@ -337,9 +361,39 @@ export function useExcelPreviewState(): ExcelPreviewPageProps {
       await previewMutation.mutateAsync(file).catch(() => undefined);
     },
     onApplyChanges: async () => {
+      // Backend bugün hep editable:true dönse de sözleşme geldiğinde sessiz
+      // apply göndermek yerine engelleyici durumu görünür kılmak zorundayız.
+      if (reconcilePreview && (reconcilePreview.editable === false || (reconcilePreview.blocking_errors?.length ?? 0) > 0)) {
+        toast.error(
+          'Değişiklikler uygulanamadı',
+          reconcilePreview.blocking_errors?.length
+            ? reconcilePreview.blocking_errors.join(' ')
+            : 'Bu değişiklik seti uygulanabilir durumda değil; önizlemeyi yenileyin.',
+        );
+        return;
+      }
       const file = await buildPendingFile();
       if (!file) return;
       await applyMutation.mutateAsync(file).catch(() => undefined);
     },
+    onCancelPreview: () => {
+      setReconcilePreview(null);
+    },
   };
+
+  async function runImport(file: File) {
+    setIsImporting(true);
+    setPendingWorkbookFile(file);
+    setReconcilePreview(null);
+    try {
+      await previewMutation.mutateAsync(file);
+      // İçe aktarılan dosya gönderim kaynağıdır: eski hücre düzenlemeleri
+      // diff'e sessizce karışmamalı ve tek hücre dokunuşu dosyayı silmemeli.
+      setCellEdits({});
+    } catch {
+      // Hata detayı previewMutation.onError'daki toast ile gösterilir.
+    } finally {
+      setIsImporting(false);
+    }
+  }
 }

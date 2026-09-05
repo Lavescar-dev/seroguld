@@ -51,6 +51,7 @@ class ExcelSession:
     # in-memory ``dirty`` flag was never set.
     last_known_checksum: str | None = None
     last_known_mtime_ns: int | None = None
+    last_known_size: int | None = None
     last_message: str | None = None
     last_blocking_errors: list[str] | None = None
 
@@ -81,20 +82,38 @@ def _atomic_write(path: Path, content: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _working_fingerprint(path: Path) -> tuple[str | None, int | None]:
-    """Return a content+mtime fingerprint without turning missing files into errors."""
+def _safe_restore_file(path: Path, content: bytes) -> None:
+    """Compensation wrapper: a failed file restore must not mask the domain error.
+
+    Same policy as ``restore_inventory_environment`` in v2_support: best-effort
+    rollback steps log their failure and let the original rejected/exception
+    path answer the request instead of turning it into an unexplained 500.
+    """
+
+    try:
+        _restore_file(path, content)
+    except OSError:
+        _logger.warning(
+            "Excel senkronu geri alınırken artifact dosyası eski haline getirilemedi",
+            exc_info=True,
+        )
+
+
+def _working_fingerprint(path: Path) -> tuple[str | None, int | None, int | None]:
+    """Return a content+mtime+size fingerprint without turning missing files into errors."""
 
     try:
         stat = path.stat()
-        return hashlib.sha256(path.read_bytes()).hexdigest(), stat.st_mtime_ns
+        return hashlib.sha256(path.read_bytes()).hexdigest(), stat.st_mtime_ns, stat.st_size
     except OSError:
-        return None, None
+        return None, None, None
 
 
 def _remember_working_fingerprint(entry: ExcelSession) -> None:
-    checksum, mtime_ns = _working_fingerprint(entry.working_path)
+    checksum, mtime_ns, size = _working_fingerprint(entry.working_path)
     entry.last_known_checksum = checksum
     entry.last_known_mtime_ns = mtime_ns
+    entry.last_known_size = size
 
 
 def _record_applied_working_copy(entry: ExcelSession, workbook_bytes: bytes) -> None:
@@ -113,7 +132,7 @@ def _record_applied_working_copy(entry: ExcelSession, workbook_bytes: bytes) -> 
     """
 
     expected_checksum = hashlib.sha256(workbook_bytes).hexdigest()
-    current_checksum, _ = _working_fingerprint(entry.working_path)
+    current_checksum, _, _ = _working_fingerprint(entry.working_path)
     if current_checksum == expected_checksum:
         _remember_working_fingerprint(entry)
         return
@@ -141,7 +160,7 @@ def _record_applied_working_copy(entry: ExcelSession, workbook_bytes: bytes) -> 
             exc_info=True,
         )
         return
-    current_checksum, current_mtime_ns = _working_fingerprint(entry.working_path)
+    current_checksum, current_mtime_ns, current_size = _working_fingerprint(entry.working_path)
     if current_checksum != expected_checksum:
         entry.dirty = True
         _logger.warning(
@@ -150,24 +169,38 @@ def _record_applied_working_copy(entry: ExcelSession, workbook_bytes: bytes) -> 
         return
     entry.last_known_checksum = current_checksum
     entry.last_known_mtime_ns = current_mtime_ns
+    entry.last_known_size = current_size
 
 
 def _working_copy_changed(entry: ExcelSession) -> bool:
     """Detect edits that happened before the bridge could mark ``dirty``.
 
-    Comparing both SHA-256 and nanosecond mtime catches normal writes while
-    avoiding a false negative on filesystems whose timestamp precision is
-    coarse.  A missing copy is considered changed when a baseline existed;
-    it must never be treated as a clean session eligible for silent discard.
+    The status endpoint polls this on every frontend tick (1.5 s), so the
+    common clean case is decided by a ``stat`` comparison alone: an unchanged
+    (mtime_ns, size) pair against the accepted baseline skips the full-file
+    read + SHA-256.  Only a stat difference falls through to hashing.  A
+    missing copy is considered changed when a baseline existed; it must never
+    be treated as a clean session eligible for silent discard.
     """
 
-    current_checksum, current_mtime_ns = _working_fingerprint(entry.working_path)
     # Real sessions always call _remember_working_fingerprint at creation. If
     # that baseline could not be read (for example, a transient disk error),
     # fail closed and preserve the copy rather than treating unknown bytes as
     # clean. Hand-built test/legacy entries are safer under this behavior too.
     if entry.last_known_checksum is None:
         return True
+    try:
+        stat = entry.working_path.stat()
+    except OSError:
+        return True
+    if (
+        entry.last_known_mtime_ns is not None
+        and entry.last_known_size is not None
+        and stat.st_mtime_ns == entry.last_known_mtime_ns
+        and stat.st_size == entry.last_known_size
+    ):
+        return False
+    current_checksum, current_mtime_ns, _ = _working_fingerprint(entry.working_path)
     return (
         current_checksum != entry.last_known_checksum
         or current_mtime_ns != entry.last_known_mtime_ns
@@ -340,7 +373,9 @@ async def create_excel_session(db: AsyncSession, *, kind: str, key: str, admin) 
             token = secrets.token_urlsafe(32)
             file_name = _safe_file_name(artifact.file_name)
             working_path = _working_root() / session_id / file_name
-            _atomic_write(working_path, source_path.read_bytes())
+            # Büyük xlsm bayt akışları event loop'u bloklamadan taşınır.
+            source_content = await asyncio.to_thread(source_path.read_bytes)
+            await asyncio.to_thread(_atomic_write, working_path, source_content)
             entry = ExcelSession(
                 session_id=session_id,
                 bearer_token=token,
@@ -354,7 +389,7 @@ async def create_excel_session(db: AsyncSession, *, kind: str, key: str, admin) 
                 revision=int(artifact.revision or 0),
                 can_write=can_write,
             )
-            _remember_working_fingerprint(entry)
+            await asyncio.to_thread(_remember_working_fingerprint, entry)
             _active_session = entry
             try:
                 await db.commit()
@@ -405,7 +440,7 @@ async def sync_excel_session(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Salt okunur Excel oturumu yazılamaz")
     prepared = await prepare_artifact(db, kind=entry.kind, key=entry.key, admin=None)
     current_revision = int(prepared.record.revision or 0)
-    original_content = prepared.path.read_bytes()
+    original_content = await asyncio.to_thread(prepared.path.read_bytes)
     if base_revision != current_revision or entry.revision != current_revision:
         entry.status = "rejected"
         entry.dirty = True
@@ -420,12 +455,16 @@ async def sync_excel_session(
             },
         )
     keep_vba = Path(entry.file_name).suffix.lower() == ".xlsm"
-    try:
+
+    def _validate_workbook_archive() -> None:
         # Validate the uploaded archive before handing it to the domain parser;
         # keep_vba is essential for .xlsm working copies.
         load_workbook(io.BytesIO(workbook_bytes), data_only=False, keep_vba=keep_vba, keep_links=True).close()
+
+    try:
+        await asyncio.to_thread(_validate_workbook_archive)
     except Exception as exc:
-        _atomic_write(entry.working_path, workbook_bytes)
+        await asyncio.to_thread(_atomic_write, entry.working_path, workbook_bytes)
         entry.status = "rejected"
         entry.dirty = True
         entry.last_message = "Excel workbook okunamadı."
@@ -472,7 +511,7 @@ async def sync_excel_session(
 
             restore_inventory_environment(inventory_env_snapshot)
         await db.rollback()
-        _restore_file(prepared.path, original_content)
+        _safe_restore_file(prepared.path, original_content)
         if exc.status_code == status.HTTP_409_CONFLICT:
             entry.status = "rejected"
             entry.dirty = True
@@ -480,7 +519,7 @@ async def sync_excel_session(
             entry.last_blocking_errors = [entry.last_message]
             raise
         detail = exc.detail if isinstance(exc.detail, str) else "Excel değişikliği reddedildi"
-        _atomic_write(entry.working_path, workbook_bytes)
+        await asyncio.to_thread(_atomic_write, entry.working_path, workbook_bytes)
         entry.status = "rejected"
         entry.dirty = True
         entry.last_message = detail
@@ -500,8 +539,8 @@ async def sync_excel_session(
 
             restore_inventory_environment(inventory_env_snapshot)
         await db.rollback()
-        _restore_file(prepared.path, original_content)
-        _atomic_write(entry.working_path, workbook_bytes)
+        _safe_restore_file(prepared.path, original_content)
+        await asyncio.to_thread(_atomic_write, entry.working_path, workbook_bytes)
         entry.status = "rejected"
         entry.dirty = True
         entry.last_message = "Excel değişiklikleri CRM'ye aktarılamadı."
@@ -525,7 +564,7 @@ async def sync_excel_session(
     entry.dirty = False
     entry.last_message = "Excel değişiklikleri CRM'ye aktarıldı."
     entry.last_blocking_errors = []
-    _record_applied_working_copy(entry, workbook_bytes)
+    await asyncio.to_thread(_record_applied_working_copy, entry, workbook_bytes)
     return ExcelSessionSyncOut(
         session_id=session_id,
         status="applied",

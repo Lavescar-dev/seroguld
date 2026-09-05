@@ -63,3 +63,33 @@ def test_expired_session_preserves_changed_copy_for_recovery(monkeypatch, tmp_pa
     recovery = list((tmp_path / "working").glob("recovery-session-1-*"))
     assert recovery
     assert (recovery[0] / entry.working_path.name).read_bytes() == b"bridge wrote before callback"
+
+
+def test_working_copy_changed_skips_hash_when_stat_matches_baseline(monkeypatch, tmp_path: Path) -> None:
+    entry = _entry(tmp_path)
+
+    def _forbidden_fingerprint(path):
+        raise AssertionError("stat değişmediyse tam dosya hash'i hesaplanmamalı")
+
+    monkeypatch.setattr(excel, "_working_fingerprint", _forbidden_fingerprint)
+    assert excel._working_copy_changed(entry) is False
+
+
+def test_working_copy_changed_detects_rewrites_and_missing_copy(tmp_path: Path) -> None:
+    entry = _entry(tmp_path)
+
+    entry.working_path.write_bytes(b"unsynced edit")
+    assert excel._working_copy_changed(entry) is True
+
+    entry.working_path.unlink()
+    assert excel._working_copy_changed(entry) is True
+
+
+def test_safe_restore_file_swallows_oserror(monkeypatch, tmp_path: Path) -> None:
+    """Kompanzasyon hatası orijinal domain hatasının yerine geçmemeli."""
+
+    def _raising_restore(path, content):
+        raise OSError("disk doldu")
+
+    monkeypatch.setattr(excel, "_restore_file", _raising_restore)
+    excel._safe_restore_file(tmp_path / "artifact.xlsx", b"content")
