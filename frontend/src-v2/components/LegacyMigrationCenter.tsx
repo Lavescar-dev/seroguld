@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, DatabaseZap, FileSpreadsheet, Loader2, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, DatabaseZap, FileSpreadsheet, Loader2, RefreshCw, ShieldCheck, SkipForward, X } from 'lucide-react';
 
 import { apiRequest, localizeApiError } from '@/lib/api';
 
@@ -133,11 +133,45 @@ export function LegacyMigrationCenter({ open, onClose, initialPhase = 'afg' }: {
     }
   };
 
+  // A10: engelli kaydı çözmek için mevcut PATCH conflicts ucu — 'Atla'
+  // (skip) ve 'Mevcudu koru' (keep_existing), taşımanın ölü
+  // kilitlenmesini kırar. Sonrasında kayıtlar + çalışma durumu tazelenir;
+  // canApply render'da phaseState'ten türetildiği için kendiliğinden
+  // yeniden hesaplanır.
+  const resolveConflict = async (record: MigrationRecord, action: 'skip' | 'keep_existing') => {
+    if (!run) return;
+    const label = action === 'skip' ? 'Atla' : 'Mevcudu koru';
+    if (!window.confirm(`"${record.source_key}" kaydı için "${label}" kararı işlensin mi?`)) return;
+    setBusy(`conflict-${record.id}`);
+    setError(null);
+    try {
+      await apiRequest(`/api/v2/legacy-migrations/runs/${run.id}/conflicts/${record.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ action }),
+      });
+      await refresh();
+    } catch (reason) {
+      setError(localizeApiError(reason));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const phaseState = run?.phases[activePhase];
   const activeIndex = phases.findIndex((phase) => phase.id === activePhase);
   const currentIndex = phases.findIndex((phase) => phase.id === run?.current_phase);
   const canEditPhase = Boolean(run && (activeIndex <= currentIndex || phaseState?.status === 'applied'));
-  const canApply = Boolean(phaseState && phaseState.file_count > 0 && phaseState.blocked === 0 && ['ready', 'applied'].includes(phaseState.status));
+  // A10: conflict çözümü record.status'u 'skipped'a çeker ama analizde
+  // 'blocked' yazılan DOSYA durumunu geri alamaz; backend faz durumunu dosya
+  // durumundan türettiği için faz 'blocked' görünmeye devam eder. Engelli
+  // kayıt kalmadıysa (blocked===0) uygulamaya izin ver — backend apply_phase
+  // yalnız kayıt durumlarını doğrular ve gerektiğinde 409 ile reddeder.
+  const canApply = Boolean(
+    phaseState
+      && phaseState.file_count > 0
+      && phaseState.blocked === 0
+      && ['ready', 'applied', 'blocked'].includes(phaseState.status),
+  );
   const selectedDefinition = useMemo(() => phases.find((phase) => phase.id === activePhase)!, [activePhase]);
 
   if (!open) return null;
@@ -171,7 +205,7 @@ export function LegacyMigrationCenter({ open, onClose, initialPhase = 'afg' }: {
           </div>
           <div className="mt-5 space-y-3">
             {(run?.files.filter((file) => file.phase === activePhase) || []).map((file) => <div key={file.id} className="flex items-start justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3"><div><p className="break-all text-sm font-bold text-slate-900">{file.file_name}</p>{file.error ? <p className="mt-1 text-xs text-red-700">{file.error}</p> : null}</div><span className="shrink-0 text-xs font-bold text-slate-500">{file.status}</span></div>)}
-            {records.slice(0, 30).map((record) => <div key={record.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><div className="flex justify-between gap-3"><code className="break-all text-xs text-slate-600">{record.source_key}</code><span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${record.status === 'blocked' ? 'bg-red-100 text-red-800' : record.status === 'ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>{record.status}</span></div>{record.errors?.map((message) => <p key={message} className="mt-2 text-xs text-red-700">{message}</p>)}{record.warnings?.map((message) => <p key={message} className="mt-2 text-xs text-amber-700">{message}</p>)}</div>)}
+            {records.slice(0, 30).map((record) => <div key={record.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3"><div className="flex justify-between gap-3"><code className="break-all text-xs text-slate-600">{record.source_key}</code><span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-black ${record.status === 'blocked' ? 'bg-red-100 text-red-800' : record.status === 'ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>{record.status}</span></div>{record.errors?.map((message) => <p key={message} className="mt-2 text-xs text-red-700">{message}</p>)}{record.warnings?.map((message) => <p key={message} className="mt-2 text-xs text-amber-700">{message}</p>)}{record.status === 'blocked' && canEditPhase && run?.status !== 'analyzing' ? <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => void resolveConflict(record, 'skip')} disabled={Boolean(busy)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-800 hover:bg-slate-50 disabled:opacity-40">{busy === `conflict-${record.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SkipForward className="h-3.5 w-3.5" />}Atla</button><button type="button" onClick={() => void resolveConflict(record, 'keep_existing')} disabled={Boolean(busy)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-black text-slate-800 hover:bg-slate-50 disabled:opacity-40"><ShieldCheck className="h-3.5 w-3.5" />Mevcudu koru</button></div> : null}</div>)}
           </div>
         </div>
         <footer className="flex items-center justify-between border-t border-slate-200 px-6 py-4"><button type="button" onClick={() => void create()} disabled={Boolean(busy)} className="text-sm font-bold text-slate-600 hover:text-slate-950"><DatabaseZap className="mr-2 inline h-4 w-4" />Yeni taşıma çalışması</button><button type="button" onClick={onClose} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-800">Kapat</button></footer>

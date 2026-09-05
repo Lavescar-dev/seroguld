@@ -56,6 +56,7 @@ from app.services.woocommerce_import_helpers import (
     extract_purity,
     extract_wc_price_dkk,
     extract_weight_grams,
+    find_mock_seed_products,
     infer_metal_type_details,
     infer_product_type_details,
     map_wc_images,
@@ -125,24 +126,99 @@ async def create_product(
     return await create_product_service(db, payload, admin.id)
 
 
+def _parse_uuid_id_list(raw: str | None) -> list[UUID]:
+    """A10 — virgülle ayrılmış ürün ID query param'ını UUID listesine çevirir."""
+    if not raw or not raw.strip():
+        return []
+    parsed: list[UUID] = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            parsed.append(UUID(chunk))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Geçersiz ürün ID: {chunk}",
+            ) from exc
+    return parsed
+
+
+@router.get("/mock-seed/preview")
+async def get_mock_seed_preview(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+) -> dict:
+    """A10 — canlı Woo import öncesi mock/smoke seed temizliği ÖNİZLEMESİ.
+
+    Eski 'R-%' jokeri kaldırıldı: gerçek ürünler R- önekli referansla
+    yanlışlıkla silinebiliyordu. Bu uç adayları SAYAR ve ID'lerini döndürür;
+    operatör onayladığı ID'leri import isteğine `mock_seed_product_ids`
+    olarak açıkça ekler — silme artık yalnız o listeyle yapılır.
+    """
+    candidates = await find_mock_seed_products(db)
+    items = [
+        {
+            "id": str(product.id),
+            "product_number": product.product_number,
+            "reference_number": product.reference_number,
+            "notes": product.notes,
+            "woocommerce_product_id": product.woocommerce_product_id,
+        }
+        for product in candidates
+    ]
+    return {
+        "count": len(items),
+        "product_ids": [item["id"] for item in items],
+        "items": items,
+    }
+
+
 @router.post("/import/woocommerce-live", response_model=ProductWooImportResponse)
 async def import_woocommerce_live_products(
     payload: ProductWooImportRequest,
+    mock_seed_product_ids: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ) -> ProductWooImportResponse:
-    deleted_mock_seed = 0
-    if payload.replace_mock_seed:
-        deleted_mock_seed = await delete_mock_seed_products(db)
+    # A10: silme kararı operatörün preview'dan onayladığı AÇIK ID listesine
+    # bağlıdır; pattern tabanlı silme kaldırıldı.
+    requested_mock_seed_ids = _parse_uuid_id_list(mock_seed_product_ids)
+    errors: list[str] = []
+    if payload.replace_mock_seed and not requested_mock_seed_ids:
+        errors.append(
+            "Mock seed temizliği istendi ama mock_seed_product_ids gönderilmedi; "
+            "hiçbir ürün silinmedi. Önce GET /products/mock-seed/preview "
+            "ucundan ID listesini alıp onaylayın."
+        )
 
     wc_service = WooCommerceService()
+    # A10: Woo fetch başarılı olduktan SONRA sil — fetch patlarsa mevcut
+    # stok kayıtları yerinde kalır (eski akış önce silip sonra fetch
+    # atıyordu; ağ hatasında veri kaybı kesinleşiyordu).
     wc_items = await wc_service.fetch_recent_published_products(limit=payload.limit)
+
+    deleted_mock_seed = 0
+    if payload.replace_mock_seed and requested_mock_seed_ids:
+        deleted_rows = await delete_mock_seed_products(
+            db,
+            product_ids=requested_mock_seed_ids,
+            performed_by=admin.id,
+        )
+        deleted_mock_seed = len(deleted_rows)
+        skipped_requests = len(requested_mock_seed_ids) - deleted_mock_seed
+        if skipped_requests > 0:
+            errors.append(
+                f"Mock seed temizliğinde {skipped_requests} ID atlandı: kriterlere "
+                "(notes mock/smoke veya MNSM referansı) uymuyor, zaten silinmiş "
+                "veya Woo'ya bağlı."
+            )
 
     created = 0
     updated = 0
     skipped = 0
     imported_product_ids: list[str] = []
-    errors: list[str] = []
 
     for wc_product in wc_items:
         wc_id = int(wc_product.get("id") or 0)

@@ -95,11 +95,15 @@ export default function ProductsPage() {
     setError('');
     setSyncMessage('');
     try {
+      // Silme artık yalnız açık ID listesiyle: önce adayları preview'dan al,
+      // operatörün zaten onayladığı import akışına bu ID'leri ekle.
+      const preview = await apiRequest<{ count: number; product_ids: string[] }>('/api/products/mock-seed/preview');
       const result = await apiRequest<ProductWooImportResponse>('/api/products/import/woocommerce-live', {
         method: 'POST',
         body: JSON.stringify({
           limit: 100,
           replace_mock_seed: true,
+          mock_seed_product_ids: preview.product_ids.join(','),
         }),
       });
       setSyncMessage(

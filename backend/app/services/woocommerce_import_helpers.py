@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import logging
 import re
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from uuid import UUID
 
-from sqlalchemy import delete, select
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.ai_usage_log import AIUsageLog
 from app.models.enums import MetalTypeEnum, ProductTypeEnum
-from app.models.pos_session_product_link import PosSessionProductLink
 from app.models.product import Product
 from app.models.product_history import ProductHistory
-from app.models.woocommerce_log import WooCommerceSyncLog
+from app.services.product_service import soft_delete_product
 from app.utils.helpers import quantize_2, utc_now
+
+logger = logging.getLogger(__name__)
 
 _TEXT_NORMALIZE_MAP = str.maketrans(
     {
@@ -526,29 +530,117 @@ def build_wc_product_summary(wc_product: dict) -> dict[str, object]:
     }
 
 
-async def delete_mock_seed_products(db: AsyncSession) -> int:
-    mock_ids = list(
+def mock_seed_match_clause():
+    """A10 — mock/smoke seed kriterleri. 'R-%' jokeri bilinçli olarak YOK:
+    R- önekli referanslar gerçek üretim ürünlerinde de kullanılabiliyor ve
+    eski pattern tabanlı hard delete gerçek ürünleri silebiliyordu."""
+    return (
+        Product.notes.ilike("%mock%")
+        | Product.notes.ilike("%smoke%")
+        | Product.reference_number.ilike("MNSM%")
+    )
+
+
+async def find_mock_seed_products(db: AsyncSession) -> list[Product]:
+    """A10 — mock/smoke seed temizliği ADAYLARINI döndürür, HİÇBİR ŞEYİ SİLMEZ.
+
+    Önizleme ucunun (GET /products/mock-seed/preview) veri kaynağı: operatör
+    listeyi görür, onayladığı ID'leri import isteğine açıkça ekler.
+    """
+    return list(
         (
             await db.scalars(
-                select(Product.id).where(
+                select(Product).where(
+                    Product.deleted_at.is_(None),
                     Product.woocommerce_product_id.is_(None),
-                    (
-                        Product.notes.ilike("%mock%")
-                        | Product.notes.ilike("%smoke%")
-                        | Product.reference_number.ilike("MNSM%")
-                        | Product.reference_number.ilike("R-%")
-                    ),
+                    mock_seed_match_clause(),
                 )
             )
         ).all()
     )
-    if not mock_ids:
-        return 0
 
-    await db.execute(delete(AIUsageLog).where(AIUsageLog.product_id.in_(mock_ids)))
-    await db.execute(delete(PosSessionProductLink).where(PosSessionProductLink.product_id.in_(mock_ids)))
-    await db.execute(delete(ProductHistory).where(ProductHistory.product_id.in_(mock_ids)))
-    await db.execute(delete(WooCommerceSyncLog).where(WooCommerceSyncLog.product_id.in_(mock_ids)))
-    await db.execute(delete(Product).where(Product.id.in_(mock_ids)))
+
+def _mock_seed_reasons(product: Product) -> list[str]:
+    reasons: list[str] = []
+    notes = (product.notes or "").lower()
+    if "mock" in notes:
+        reasons.append("notes~'mock'")
+    if "smoke" in notes:
+        reasons.append("notes~'smoke'")
+    if (product.reference_number or "").upper().startswith("MNSM"):
+        reasons.append("reference~MNSM%")
+    return reasons
+
+
+async def delete_mock_seed_products(
+    db: AsyncSession,
+    *,
+    product_ids: Sequence[UUID],
+    performed_by: UUID | None = None,
+) -> list[dict[str, object]]:
+    """A10 — YALNIZCA çağıranın AÇIK verdiği ID'lerle mock seed ürünlerini SOFT delete eder.
+
+    Eski davranış üç kez tehlikeliydi: (1) 'R-%' jokeri gerçek ürünleri de
+    yakalayabiliyordu, (2) hard delete ProductHistory dahil tüm izleri
+    fiziksel siliyordu, (3) Woo fetch'inden ÖNCE commit ediyordu — Woo
+    erişimi patlasa bile ürünler çoktan gitmiş oluyordu.
+
+    Yeni sözleşme: operatör preview ucundan gördüğü ürünleri onaylar, silme
+    yalnız o ID'lerle ve yalnız güvenli kriterlere de uyan kayıtlar üzerinde
+    yapılır; ürünler soft_delete_product ile deleted_at işaretlenir ve
+    ProductHistory'ye gerekçeli 'mock_seed_cleanup' kaydı düşülür.
+    """
+    unique_ids = list(dict.fromkeys(product_ids))
+    if not unique_ids:
+        return []
+
+    products = list(
+        (
+            await db.scalars(
+                select(Product).where(
+                    Product.id.in_(unique_ids),
+                    Product.deleted_at.is_(None),
+                    Product.woocommerce_product_id.is_(None),
+                    mock_seed_match_clause(),
+                )
+            )
+        ).all()
+    )
+
+    deleted: list[dict[str, object]] = []
+    for product in products:
+        reasons = _mock_seed_reasons(product)
+        db.add(
+            ProductHistory(
+                product_id=product.id,
+                action="mock_seed_cleanup",
+                old_value=jsonable_encoder({"deleted_at": None, "status": product.status}),
+                new_value=jsonable_encoder(
+                    {
+                        "matched_criteria": reasons,
+                        "context": "woocommerce_live_import",
+                        "requested_explicitly": True,
+                    }
+                ),
+                performed_by=performed_by,
+                notes="Woo canlı import öncesi mock/smoke seed temizliği (operatör onaylı ID listesi)",
+            )
+        )
+        await soft_delete_product(db, product, performed_by, commit=False)
+        summary = {
+            "id": str(product.id),
+            "product_number": product.product_number,
+            "reference_number": product.reference_number,
+            "matched_criteria": reasons,
+        }
+        deleted.append(summary)
+        logger.info(
+            "Mock seed soft-delete: %s (%s) — gerekçe: %s",
+            product.product_number,
+            product.reference_number,
+            ", ".join(reasons) or "bilinmiyor",
+        )
+
     await db.commit()
-    return len(mock_ids)
+    logger.info("Mock seed temizliği tamamlandı: %d ürün soft delete edildi", len(deleted))
+    return deleted

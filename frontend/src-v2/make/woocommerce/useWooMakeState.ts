@@ -629,7 +629,9 @@ export function useWooMakeState(): WooMakeState {
   // DOKUNMAZ (null gönderilir) — refetch'ler seçimi ezmesin diye ürün
   // değişiminde sıfırlanır.
   const [publishNewBadgeTouched, setPublishNewBadgeTouched] = useState(false);
-  const badgeProductIdRef = useRef<string | null>(null);
+  // A10: panel formunun hangi ürün için doldurulduğunu izler; aynı ürüne
+  // gelen refetch'ler formu EZMEZ (aşağıdaki effect).
+  const formProductIdRef = useRef<string | null>(null);
   const [catalogDetailId, setCatalogDetailId] = useState<string | null>(null);
 
   const bootstrapQuery = useQuery({
@@ -750,6 +752,15 @@ export function useWooMakeState(): WooMakeState {
   useEffect(() => {
     const product = detailQuery.data;
     if (!product) return;
+    // A10: panel formu YALNIZ ürün değiştiğinde sunucudan doldurulur.
+    // Fotoğraf yükleme/silme, AI kaydetme, yayın sonrası invalidate'lerin
+    // tetiklediği refetch'ler aynı ürüne gelir ve operatörün henüz
+    // KAYDETMEMİŞ fiyat/markup/min fiyat/AI taslak düzenlemelerini ezmemeli
+    // (badgeProductIdRef kalıbının tüm panel alanlarına genelleştirilmişi).
+    // Etkilenen alanları bilinçli güncelleyen mutasyonlar (generateAi,
+    // saveAi, publish) onSuccess'ta kendi alanlarını zaten kurar.
+    if (formProductIdRef.current === product.id) return;
+    formProductIdRef.current = product.id;
     setPublishPrice(String(product.shop_price_dkk || product.sale_price_dkk || product.purchase_price_dkk || ''));
     setPublishMarkupRate(product.woo_markup_rate != null ? String(Number(product.woo_markup_rate) * 100) : '');
     setPublishMinPrice(product.woo_min_price_dkk != null ? String(product.woo_min_price_dkk) : '');
@@ -758,13 +769,9 @@ export function useWooMakeState(): WooMakeState {
     // Override varsa onu, yoksa türetilen profili göster; yıl varsa doldur.
     setPublishProfile(product.woocommerce_publish_profile || product.resolved_publish_profile || '');
     setPublishYear(product.production_year ? String(product.production_year) : '');
-    // R1-21: rozet default'u YALNIZ ürün değişince kur — fotoğraf/AI kayıt
-    // refetch'leri operatörün işaretini ezmesin.
-    if (badgeProductIdRef.current !== product.id) {
-      badgeProductIdRef.current = product.id;
-      setPublishNewBadge(!product.is_published_to_site);
-      setPublishNewBadgeTouched(false);
-    }
+    // R1-21: rozet default'u da ürün değişince kurulur; refetch dokunmaz.
+    setPublishNewBadge(!product.is_published_to_site);
+    setPublishNewBadgeTouched(false);
   }, [detailQuery.data]);
 
   async function invalidateProduct(productId?: string | null) {
