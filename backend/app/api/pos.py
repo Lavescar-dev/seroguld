@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from decimal import Decimal
 from uuid import UUID
@@ -96,6 +97,8 @@ from app.utils.security import TokenError, decode_access_token
 
 router = APIRouter()
 
+LOGGER = logging.getLogger(__name__)
+
 
 def _document_kind_label(document_type: PosDocumentTypeEnum) -> str:
     if document_type == PosDocumentTypeEnum.SALE_INVOICE:
@@ -125,7 +128,7 @@ def _empty_document_product_meta() -> dict[str, object]:
     }
 
 
-@router.post("/sessions", response_model=PosSessionOutClerk)
+@router.post("/sessions", response_model=PosSessionOutClerk, deprecated=True)
 async def post_pos_session(
     payload: PosSessionCreate,
     db: AsyncSession = Depends(get_db),
@@ -134,7 +137,7 @@ async def post_pos_session(
     return await create_pos_session(db, payload, clerk_user)
 
 
-@router.get("/workspace/open-draft", response_model=PosWorkspaceOut | None)
+@router.get("/workspace/open-draft", response_model=PosWorkspaceOut | None, deprecated=True)
 async def get_purchase_workspace_open_draft(
     db: AsyncSession = Depends(get_db),
     clerk_user: User = Depends(require_admin),
@@ -149,7 +152,7 @@ async def get_purchase_workspace_open_draft(
     return await build_purchase_workspace(db, pos_session=draft)
 
 
-@router.post("/workspace/open", response_model=PosWorkspaceOut)
+@router.post("/workspace/open", response_model=PosWorkspaceOut, deprecated=True)
 async def post_purchase_workspace_open(
     payload: PosWorkspaceOpenRequest,
     db: AsyncSession = Depends(get_db),
@@ -169,7 +172,7 @@ async def post_purchase_workspace_open(
     return await build_purchase_workspace(db, pos_session=pos_session)
 
 
-@router.get("/workspace/{session_id}", response_model=PosWorkspaceOut)
+@router.get("/workspace/{session_id}", response_model=PosWorkspaceOut, deprecated=True)
 async def get_purchase_workspace(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -179,7 +182,7 @@ async def get_purchase_workspace(
     return await build_purchase_workspace(db, pos_session=pos_session)
 
 
-@router.put("/workspace/{session_id}/customer", response_model=PosWorkspaceOut)
+@router.put("/workspace/{session_id}/customer", response_model=PosWorkspaceOut, deprecated=True)
 async def put_purchase_workspace_customer(
     session_id: UUID,
     payload: PosWorkspaceCustomerUpdate,
@@ -190,7 +193,7 @@ async def put_purchase_workspace_customer(
     return await update_purchase_workspace_customer(db, pos_session=pos_session, payload=payload)
 
 
-@router.put("/workspace/{session_id}/sections", response_model=PosWorkspaceOut)
+@router.put("/workspace/{session_id}/sections", response_model=PosWorkspaceOut, deprecated=True)
 async def put_purchase_workspace_sections(
     session_id: UUID,
     payload: PosWorkspaceSectionsUpdate,
@@ -201,7 +204,7 @@ async def put_purchase_workspace_sections(
     return await replace_purchase_workspace_sections(db, pos_session=pos_session, payload=payload)
 
 
-@router.post("/workspace/{session_id}/finalize", response_model=PosWorkspaceFinalizeResponse)
+@router.post("/workspace/{session_id}/finalize", response_model=PosWorkspaceFinalizeResponse, deprecated=True)
 async def post_purchase_workspace_finalize(
     session_id: UUID,
     payload: PosWorkspaceFinalizeRequest,
@@ -212,7 +215,7 @@ async def post_purchase_workspace_finalize(
     return await finalize_purchase_workspace(db, pos_session=pos_session, payload=payload)
 
 
-@router.post("/workspace/{session_id}/cancel", response_model=PosSessionOutClerk)
+@router.post("/workspace/{session_id}/cancel", response_model=PosSessionOutClerk, deprecated=True)
 async def post_purchase_workspace_cancel(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -222,7 +225,7 @@ async def post_purchase_workspace_cancel(
     return await cancel_session(db, pos_session=pos_session)
 
 
-@router.get("/sessions/open-draft", response_model=PosSessionOutClerk | None)
+@router.get("/sessions/open-draft", response_model=PosSessionOutClerk | None, deprecated=True)
 async def get_open_draft_session(
     customer_id: UUID,
     trade_side: PosTradeSideEnum = Query(default=PosTradeSideEnum.BUY_FROM_CUSTOMER),
@@ -240,7 +243,7 @@ async def get_open_draft_session(
     return clerk_snapshot(draft)
 
 
-@router.get("/sessions/{session_id}", response_model=PosSessionOutClerk)
+@router.get("/sessions/{session_id}", response_model=PosSessionOutClerk, deprecated=True)
 async def get_pos_session(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -250,7 +253,7 @@ async def get_pos_session(
     return clerk_snapshot(pos_session)
 
 
-@router.patch("/sessions/{session_id}/quote", response_model=PosSessionOutClerk)
+@router.patch("/sessions/{session_id}/quote", response_model=PosSessionOutClerk, deprecated=True)
 async def patch_quote(
     session_id: UUID,
     payload: PosQuoteUpdate,
@@ -261,7 +264,7 @@ async def patch_quote(
     return await update_quote(db, pos_session=pos_session, payload=payload)
 
 
-@router.get("/sessions/{session_id}/lines", response_model=list[PosSessionLineOut])
+@router.get("/sessions/{session_id}/lines", response_model=list[PosSessionLineOut], deprecated=True)
 async def get_pos_lines(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -271,7 +274,7 @@ async def get_pos_lines(
     return await list_pos_session_lines(db, pos_session=pos_session)
 
 
-@router.post("/sessions/{session_id}/lines", response_model=PosSessionLineOut)
+@router.post("/sessions/{session_id}/lines", response_model=PosSessionLineOut, deprecated=True)
 async def post_pos_line(
     session_id: UUID,
     payload: PosSessionLineCreate,
@@ -282,7 +285,7 @@ async def post_pos_line(
     return await create_pos_session_line(db, pos_session=pos_session, payload=payload)
 
 
-@router.post("/sessions/{session_id}/lines/bulk", response_model=list[PosSessionLineOut])
+@router.post("/sessions/{session_id}/lines/bulk", response_model=list[PosSessionLineOut], deprecated=True)
 async def post_pos_lines_bulk(
     session_id: UUID,
     payload: PosSessionLineBulkCreate,
@@ -293,7 +296,7 @@ async def post_pos_lines_bulk(
     return await create_pos_session_lines_bulk(db, pos_session=pos_session, payload=payload)
 
 
-@router.patch("/sessions/{session_id}/lines/{line_id}", response_model=PosSessionLineOut)
+@router.patch("/sessions/{session_id}/lines/{line_id}", response_model=PosSessionLineOut, deprecated=True)
 async def patch_pos_line(
     session_id: UUID,
     line_id: UUID,
@@ -305,7 +308,7 @@ async def patch_pos_line(
     return await update_pos_session_line(db, pos_session=pos_session, line_id=line_id, payload=payload)
 
 
-@router.delete("/sessions/{session_id}/lines/{line_id}", status_code=204)
+@router.delete("/sessions/{session_id}/lines/{line_id}", status_code=204, deprecated=True)
 async def delete_pos_line(
     session_id: UUID,
     line_id: UUID,
@@ -317,7 +320,7 @@ async def delete_pos_line(
     return Response(status_code=204)
 
 
-@router.post("/sessions/{session_id}/rate/sync", response_model=PosSessionOutClerk)
+@router.post("/sessions/{session_id}/rate/sync", response_model=PosSessionOutClerk, deprecated=True)
 async def post_rate_sync(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -327,7 +330,7 @@ async def post_rate_sync(
     return await sync_live_rate(db, pos_session=pos_session)
 
 
-@router.patch("/sessions/{session_id}/rate/manual", response_model=PosSessionOutClerk)
+@router.patch("/sessions/{session_id}/rate/manual", response_model=PosSessionOutClerk, deprecated=True)
 async def patch_manual_rate(
     session_id: UUID,
     payload: PosManualRateUpdate,
@@ -338,7 +341,7 @@ async def patch_manual_rate(
     return await set_manual_rate(db, pos_session=pos_session, payload=payload)
 
 
-@router.post("/sessions/{session_id}/confirm", response_model=PosConfirmResponse)
+@router.post("/sessions/{session_id}/confirm", response_model=PosConfirmResponse, deprecated=True)
 async def post_confirm(
     session_id: UUID,
     payload: PosConfirmRequest,
@@ -382,7 +385,17 @@ async def get_numbering_preview(
 async def get_live_metal_rates(
     _: User = Depends(require_admin),
 ) -> PosMetalRatesOut:
-    rates = await GoldPriceService().get_rates()
+    price_service = GoldPriceService()
+    rates = await price_service.get_rates()
+    # Kaynak şeffaflığı: canlı besleme kapalıyken hard-coded fallback döner;
+    # 'live metal rates' adıyla sabitleri live diye sunmamak için kaynak
+    # etiketi yanıtla taşınır (UI 'sabit/bayat' rozeti bununla ayrılır).
+    meta = GoldPriceService.cached_meta_or_fallback()
+    sources = {
+        str((meta.get(key) or {}).get("source") or "fallback")
+        for key in ("gold", "silver", "platinum", "palladium")
+    }
+    source = sources.pop() if len(sources) == 1 else "mixed"
     gold = format(quantize_2(rates.get("gold", 0)), "f")
     return PosMetalRatesOut(
         yellow_gold=gold,
@@ -390,6 +403,7 @@ async def get_live_metal_rates(
         silver=format(quantize_2(rates.get("silver", 0)), "f"),
         platinum=format(quantize_2(rates.get("platinum", 0)), "f"),
         palladium=format(quantize_2(rates.get("palladium", 0)), "f"),
+        source=source,
     )
 
 
@@ -556,6 +570,13 @@ async def get_pos_document_detail(
 
     document, pos_session, transaction = row
     effective_customer = await _workspace_customer_from_session(db, pos_session)
+    # NOT: ham customer_cpr / customer_identity_doc_number bu paylaşılan
+    # fonksiyondan bilinçli olarak dönmeye devam eder — v2_alis artifact/
+    # export hatları (build_afg_workbook_bytes_from_detail) ve Excel oturum
+    # servisi aynı fonksiyonu iç çağrıyla kullanır ve AFG belgesi CPR doğum
+    # bölümü + kimlik numarasını basmak ZORUNDAdır (AFG-P1 politikası).
+    # Wire'da maskeleme ancak iç çağıranlara ?reveal= sözleşmesi verildikten
+    # sonra uygulanabilir; o dosyalar bu dalganın kapsamı dışında.
     cpr_plain = effective_customer.cpr_number
     cpr_masked = mask_cpr(cpr_plain) if cpr_plain else None
     identity_number_plain = effective_customer.identity_doc_number
@@ -790,7 +811,7 @@ async def get_pos_receipt(
     )
 
 
-@router.post("/sessions/{session_id}/cancel", response_model=PosSessionOutClerk)
+@router.post("/sessions/{session_id}/cancel", response_model=PosSessionOutClerk, deprecated=True)
 async def post_cancel(
     session_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -849,23 +870,41 @@ def _clerk_websocket_token(websocket: WebSocket) -> tuple[str | None, str | None
 
 @router.websocket("/display/{display_token}/ws")
 async def display_socket(websocket: WebSocket, display_token: str):
+    # 'Oturum yok' (4404) ile 'veritabanı/decrypt arızası' (1011) ayrıştırılır;
+    # geniş sessiz close kiosk tarafında kök nedeni izsiz bırakıyordu.
     async with AsyncSessionLocal() as session:
         try:
-            pos_session = await get_pos_session_by_display_token_or_404(session, display_token)
-        except Exception:
+            await get_pos_session_by_display_token_or_404(session, display_token)
+        except HTTPException:
             await websocket.close(code=4404)
+            return
+        except Exception:
+            LOGGER.exception("display ws token çözümlemesi başarısız (token=%s)", display_token)
+            await websocket.close(code=1011)
             return
 
     await realtime_hub.connect_display(display_token, websocket)
     try:
-        async with AsyncSessionLocal() as session:
-            pos_session = await get_pos_session_by_display_token_or_404(session, display_token)
-            snapshot = await display_snapshot(session, pos_session)
-            await websocket.send_json({"type": "display:init", "data": jsonable_encoder(snapshot)})
+        # Init gönderimi receive döngüsünden AYRI: kurulamayan init, hub'da
+        # kopuk kayıt bırakmadan temizlenir.
+        try:
+            async with AsyncSessionLocal() as session:
+                pos_session = await get_pos_session_by_display_token_or_404(session, display_token)
+                snapshot = await display_snapshot(session, pos_session)
+                await websocket.send_json({"type": "display:init", "data": jsonable_encoder(snapshot)})
+        except WebSocketDisconnect:
+            raise
+        except Exception:
+            LOGGER.exception("display ws init snapshot gönderilemedi (token=%s)", display_token)
+            await websocket.close(code=1011)
+            return
 
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
+        # disconnect garanti: her istisna yolunda hub kaydı temizlenir.
         await realtime_hub.disconnect_display(display_token, websocket)
 
 
@@ -879,9 +918,13 @@ async def clerk_socket(websocket: WebSocket, session_id: UUID):
 
     async with AsyncSessionLocal() as session:
         try:
-            pos_session = await get_pos_session_or_404(session, session_id)
-        except Exception:
+            await get_pos_session_or_404(session, session_id)
+        except HTTPException:
             await websocket.close(code=4404)
+            return
+        except Exception:
+            LOGGER.exception("clerk ws oturum çözümlemesi başarısız (session=%s)", session_id)
+            await websocket.close(code=1011)
             return
 
     await realtime_hub.connect_clerk(
@@ -890,9 +933,16 @@ async def clerk_socket(websocket: WebSocket, session_id: UUID):
         subprotocol=accepted_subprotocol,
     )
     try:
-        async with AsyncSessionLocal() as session:
-            pos_session = await get_pos_session_or_404(session, session_id)
-            await websocket.send_json({"type": "clerk:init", "data": jsonable_encoder(clerk_snapshot(pos_session))})
+        try:
+            async with AsyncSessionLocal() as session:
+                pos_session = await get_pos_session_or_404(session, session_id)
+                await websocket.send_json({"type": "clerk:init", "data": jsonable_encoder(clerk_snapshot(pos_session))})
+        except WebSocketDisconnect:
+            raise
+        except Exception:
+            LOGGER.exception("clerk ws init snapshot gönderilemedi (session=%s)", session_id)
+            await websocket.close(code=1011)
+            return
 
         while True:
             raw_message = await websocket.receive_text()
@@ -912,15 +962,25 @@ async def clerk_socket(websocket: WebSocket, session_id: UUID):
             except ValidationError:
                 continue
 
-            async with AsyncSessionLocal() as session:
-                pos_session = await get_pos_session_or_404(session, session_id)
-                display_payload = await build_realtime_display_snapshot(session, pos_session, preview_payload)
-                accepted_preview = realtime_hub.set_display_preview(pos_session.display_token, display_payload)
-                if accepted_preview is None:
-                    continue
-                await realtime_hub.broadcast_display(
-                    pos_session.display_token,
-                    {"type": "display:preview", "data": accepted_preview.snapshot.model_dump(mode="json")},
-                )
+            try:
+                async with AsyncSessionLocal() as session:
+                    pos_session = await get_pos_session_or_404(session, session_id)
+                    display_payload = await build_realtime_display_snapshot(session, pos_session, preview_payload)
+                    accepted_preview = realtime_hub.set_display_preview(pos_session.display_token, display_payload)
+                    if accepted_preview is None:
+                        continue
+                    await realtime_hub.broadcast_display(
+                        pos_session.display_token,
+                        {"type": "display:preview", "data": accepted_preview.snapshot.model_dump(mode="json")},
+                    )
+            except WebSocketDisconnect:
+                raise
+            except Exception:
+                # Tek bozuk preview mesajı soketi düşürmesin; ama sessiz de
+                # kalmasın — ValidationError yutma sadece şema redsi için.
+                LOGGER.exception("clerk preview işlenemedi (session=%s)", session_id)
     except WebSocketDisconnect:
+        pass
+    finally:
+        # disconnect garanti: her istisna yolunda hub kaydı temizlenir.
         await realtime_hub.disconnect_clerk(session_id, websocket)

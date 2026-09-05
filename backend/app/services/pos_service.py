@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -11,7 +12,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -128,6 +129,7 @@ from app.utils.cpr import cpr_birth_part
 from app.utils.security import decrypt_field, hash_sensitive_value, mask_cpr, mask_last4
 
 settings = get_settings()
+LOGGER = logging.getLogger(__name__)
 DEFAULT_POS_MARGIN_PERCENT = Decimal("8.00")
 SALE_OVERRIDE_EPSILON = Decimal("0.01")
 
@@ -697,6 +699,14 @@ async def _overlay_display_customer_identity(
 
 
 async def _emit_session_state(pos_session: PosSession) -> None:
+    # Performans: bu token/oturum için bağlı görüntüleyici yoksa ağır
+    # (get_pos_session_or_404 + display_snapshot) zinciri hiç kurulmaz — her
+    # tuş başına çift katlı çalışma ve yanıt gecikmesi biter.
+    has_watchers = realtime_hub.has_display_connections(pos_session.display_token) or realtime_hub.has_clerk_connections(
+        pos_session.id
+    )
+    if not has_watchers:
+        return
     try:
         async with AsyncSessionLocal() as realtime_session:
             fresh = await get_pos_session_or_404(realtime_session, pos_session.id)
@@ -707,16 +717,21 @@ async def _emit_session_state(pos_session: PosSession) -> None:
             }
             clerk_payload = {"type": "clerk:update", "data": jsonable_encoder(_to_clerk_out(fresh))}
     except Exception:
-        try:
-            async with AsyncSessionLocal() as realtime_session:
-                fresh = await get_pos_session_or_404(realtime_session, pos_session.id)
-                fallback_display = await display_snapshot(realtime_session, fresh)
-        except Exception:
-            fallback_display = _to_display_out(pos_session)
-        display_payload = {"type": "display:update", "data": jsonable_encoder(fallback_display)}
+        # Kalıcı DB hatasında ikinci sorgu denemesi de düşer (ölü deneme +
+        # ek gecikme) — doğrudan bellek içi bayat nesneden fallback üretilir
+        # ama artık LOGSUZ değil: kök neden kayda geçer.
+        LOGGER.exception(
+            "display/clerk snapshot yayını kurulamadı (session=%s), bellek içi fallback yayınlanıyor",
+            pos_session.id,
+        )
+        display_payload = {"type": "display:update", "data": jsonable_encoder(_to_display_out(pos_session))}
         clerk_payload = {"type": "clerk:update", "data": jsonable_encoder(_to_clerk_out(pos_session))}
-    await realtime_hub.broadcast_display(pos_session.display_token, display_payload)
-    await realtime_hub.broadcast_clerk(pos_session.id, clerk_payload)
+    try:
+        await realtime_hub.broadcast_display(pos_session.display_token, display_payload)
+        await realtime_hub.broadcast_clerk(pos_session.id, clerk_payload)
+    except Exception:
+        # Yayın hataları isteğin sonucunu etkilemesin; sessiz yutma yok.
+        LOGGER.exception("realtime yayın gönderilemedi (session=%s)", pos_session.id)
 
 
 async def _display_document_meta(session: AsyncSession, pos_session_id) -> dict[str, str | None]:
@@ -824,9 +839,16 @@ async def get_pos_session_or_404(session: AsyncSession, session_id) -> PosSessio
 
 
 async def get_pos_session_by_display_token_or_404(session: AsyncSession, display_token: str) -> PosSession:
+    # Güvenlik: token yalnız AÇIK taslak oturumu çözer. Bilgisi sızan bir
+    # token, finalize/cancel sonrasında bile müşteri adı/telefon/e-posta/
+    # adres snapshot'ını süresiz çekemez — sunucu tarafında nötrleşmedir,
+    # istemci revoke çağrısına bırakılmaz.
     pos_session = await session.scalar(
         select(PosSession)
-        .where(PosSession.display_token == display_token)
+        .where(
+            PosSession.display_token == display_token,
+            PosSession.status == PosSessionStatusEnum.DRAFT,
+        )
         .options(selectinload(PosSession.customer), selectinload(PosSession.clerk_user))
     )
     if not pos_session:
@@ -879,8 +901,16 @@ async def find_latest_draft_pos_session(
     ).all()
 
     for row in rows:
-        if _resolved_trade_side(row) == trade_side:
-            return row
+        if _resolved_trade_side(row) != trade_side:
+            continue
+        # Belge düzenleme (edit_source) taslakları sıradan "son taslak" olarak
+        # devam ettirilmez: kaynağı bu arada silinmiş bir edit taslağının
+        # sessizce diriltme kapısı burasıydı. Edit taslakları yalnız kendi
+        # akışlarından (open_purchase_document_for_edit) açılır.
+        edit_source_session_id, _ = _workspace_edit_source(row.notes)
+        if edit_source_session_id:
+            continue
+        return row
     return None
 
 
@@ -915,6 +945,31 @@ async def revoke_display_token(
         if candidate is not None and candidate.clerk_user_id == clerk_user_id:
             if candidate.status == PosSessionStatusEnum.DRAFT:
                 pos_session = candidate
+    if pos_session is not None and requested_token:
+        # Atomik revoke: koşulsuz oku-üret-yaz yerine koşullu UPDATE — iki
+        # eşzamanlı revoke çağrısından yalnız biri kazanır, ilk çağıranın
+        # aldığı token artık ölü doğmaz (kaybeden çağrı düşüş akışına gider).
+        new_token = _random_display_token()
+        result = await session.execute(
+            update(PosSession)
+            .where(
+                PosSession.display_token == requested_token,
+                PosSession.clerk_user_id == clerk_user_id,
+                PosSession.status == PosSessionStatusEnum.DRAFT,
+            )
+            .values(display_token=new_token)
+        )
+        if result.rowcount:
+            pos_session.display_token = new_token
+            await session.commit()
+            await session.refresh(pos_session)
+            realtime_hub.clear_display_preview(requested_token)
+            # Eski bağlantılar kapatılır: kiosk'un düşmesi artık ön yüzdeki
+            # probe davranışına borçlu değil.
+            await realtime_hub.close_display_token(requested_token)
+            return pos_session
+        pos_session = None
+
     if pos_session is None:
         pos_session = await find_latest_draft_pos_session(
             session,
@@ -929,6 +984,7 @@ async def revoke_display_token(
     pos_session.display_token = _random_display_token()
     await session.commit()
     await session.refresh(pos_session)
+    await realtime_hub.close_display_token(previous_token)
     return pos_session
 
 
@@ -1214,6 +1270,9 @@ async def _workspace_customer_from_session(
     if isinstance(note_payload.get("workspace_customer"), dict):
         snapshot = _workspace_draft_customer_from_note(note_payload)
         if snapshot is not None:
+            # CPR/kimlik alanları notta şifreli taşınır; parse katmanı bunları
+            # transparan çözerek buraya getirir (PII minimizasyonu at-rest için,
+            # explicit-empty semantiği bozulmadan korunur).
             return snapshot.model_copy(update={"customer_id": pos_session.customer_id})
     customer = pos_session.customer
     if customer is None and pos_session.customer_id is not None:
@@ -2003,7 +2062,18 @@ async def sync_live_rate(session: AsyncSession, *, pos_session: PosSession) -> P
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak oturumda kur senkronize edilir")
 
     metal_key = _metal_rate_key(pos_session.metal_type)
-    rates = await GoldPriceService().get_rates()
+    price_service = GoldPriceService()
+    rates = await price_service.get_rates()
+    # Provenance: canlı besleme kapalıyken/ağda düşerken get_rates hard-coded
+    # _FALLBACK_RATES döner. Bu sabiti rate_source=LIVE mühürüyle finansal
+    # snapshot'a yazmak sonraki denetim adımlarını yanıltır — senkron reddedilir,
+    # kasiyer manuel kur yolunu kullanır.
+    rate_meta = GoldPriceService.cached_meta_or_fallback().get(metal_key) or {}
+    if str(rate_meta.get("source") or "") != "live":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Canlı kur beslemesi kapalı veya erişilemiyor; senkronizasyon reddedildi. Manuel kur girin.",
+        )
     live_rate = to_decimal(rates.get(metal_key), default="0")
 
     pos_session.live_rate_dkk = quantize_2(live_rate)
@@ -2715,11 +2785,11 @@ async def build_pos_receipt_context(
         "identity_type": (identity.identity_doc_type.value if identity and identity.identity_doc_type else "-"),
         "identity_number_masked": mask_last4(identity_number) or "-",
         "identity_country": (identity.identity_doc_country or "-") if identity else "-",
-        # AFG-P1: müşteri belgesi alanları (orijinal AFG düzeni) — dash bloğu
-        # yalnız POS fişi yolunda uygulanmaya devam eder; AFG renderer bu
-        # ham değerleri cpr_birth_part/Excel minimizasyon politikasıyla kullanır.
-        "cpr_plain": cpr_plain or "",
-        "identity_number_plain": identity_number or "",
+        # PII minimizasyonu: ham cpr_plain/identity_number_plain context'te
+        # geniş yayılmaz. AFG çıktısının gerçekten ihtiyaç duyduğu değerler
+        # (cpr doğum bölümü, kimlik no) yalnız afg block içinde hesaplanır;
+        # afg_document_renderer'daki customer_ctx fallback'leri bu anahtarlar
+        # yokken de "-" üretir (afg_customer değerleri hep truthy "-" taşır).
     }
 
     trade_side = _resolved_trade_side(pos_session)

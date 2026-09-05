@@ -30,12 +30,48 @@ from app.services.market_rate_profile import (
     get_effective_market_rate_profile_cached,
 )
 from app.utils.helpers import quantize_2, to_decimal
+from app.utils.security import decrypt_field, encrypt_field
 
 
 def _core():
     from app.services import pos_service as core
 
     return core
+
+
+def _encrypt_note_value(value: str | None) -> str | None:
+    """Not snapshot'ına girecek PII şifrelemesi — fail-closed.
+
+    Şifreleme kullanılamazsa değer DÜZ METİN yazılmaz, düşürülür: DB dökümü/
+    backup/proxy loglarında CPR/kimlik numarası asla plaintext dolaşmaz.
+    """
+    if not value:
+        return None
+    try:
+        return encrypt_field(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _note_customer_cpr(raw_customer: dict[str, Any]) -> str | None:
+    """Notta CPR: bayat plaintext anahtar (eski kayıtlar) yoksa şifreliyi çöz."""
+    plain = str(raw_customer.get("cpr_number") or "").strip()
+    if plain:
+        return plain or None
+    try:
+        return decrypt_field(raw_customer.get("cpr_number_encrypted"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _note_customer_identity_number(raw_customer: dict[str, Any]) -> str | None:
+    plain = str(raw_customer.get("identity_doc_number") or "").strip()
+    if plain:
+        return plain or None
+    try:
+        return decrypt_field(raw_customer.get("identity_doc_number_encrypted"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _normalize_workspace_companion_mode(value: object, *, default: str) -> str:
@@ -504,9 +540,11 @@ def _parse_workspace_note_payload(value: str | None) -> dict[str, Any]:
             "address": str(raw_customer.get("address") or "").strip() or None,
             "postal_code": str(raw_customer.get("postal_code") or "").strip() or None,
             "city": str(raw_customer.get("city") or "").strip() or None,
-            "cpr_number": str(raw_customer.get("cpr_number") or "").strip() or None,
+            # CPR/kimlik notta şifreli taşınır; burada bellek-içi kullanım için
+            # transparan çözülür (bayat plaintext anahtarlı eski kayıtlar da okunur).
+            "cpr_number": _note_customer_cpr(raw_customer),
             "identity_doc_type": raw_customer.get("identity_doc_type"),
-            "identity_doc_number": str(raw_customer.get("identity_doc_number") or "").strip() or None,
+            "identity_doc_number": _note_customer_identity_number(raw_customer),
             "identity_doc_country": str(raw_customer.get("identity_doc_country") or "").strip() or None,
         }
 
@@ -588,6 +626,14 @@ def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         sanitized["workspace_revision"] = 1
     draft_customer = payload.get("draft_customer", {}) if isinstance(payload.get("draft_customer"), dict) else {}
+    # PII minimizasyonu (v2 import politikasıyla aynı karar: "Belge
+    # snapshot'ında CPR düz metin tutulmaz"): notes snapshot'ı CPR ve kimlik
+    # belge numarasını ŞİFRELİ taşır — DB dökümü/backup/loglarda plaintext
+    # dolaşmaz. Parse katmanı (_note_customer_cpr) şifreliyi transparan
+    # çözerek mevcut tüm okuyucuları kırılmaz tutar; shadow (mastersız)
+    # müşteri akışının save/reopen roundtrip'i korunur.
+    draft_cpr_plain = str(draft_customer.get("cpr_number") or "").strip() or None
+    draft_identity_plain = str(draft_customer.get("identity_doc_number") or "").strip() or None
     sanitized["draft_customer"] = {
         "customer_id": str(draft_customer.get("customer_id") or "").strip() or None,
         "name": str(draft_customer.get("name") or "").strip(),
@@ -596,13 +642,17 @@ def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
         "address": str(draft_customer.get("address") or "").strip() or None,
         "postal_code": str(draft_customer.get("postal_code") or "").strip() or None,
         "city": str(draft_customer.get("city") or "").strip() or None,
-        "cpr_number": str(draft_customer.get("cpr_number") or "").strip() or None,
+        "cpr_number": None,
+        "cpr_number_encrypted": _encrypt_note_value(draft_cpr_plain),
         "identity_doc_type": draft_customer.get("identity_doc_type"),
-        "identity_doc_number": str(draft_customer.get("identity_doc_number") or "").strip() or None,
+        "identity_doc_number": None,
+        "identity_doc_number_encrypted": _encrypt_note_value(draft_identity_plain),
         "identity_doc_country": str(draft_customer.get("identity_doc_country") or "").strip() or None,
     }
     workspace_customer = payload.get("workspace_customer")
     if isinstance(workspace_customer, dict):
+        ws_cpr_plain = str(workspace_customer.get("cpr_number") or "").strip() or None
+        ws_identity_plain = str(workspace_customer.get("identity_doc_number") or "").strip() or None
         sanitized["workspace_customer"] = {
             "customer_id": str(workspace_customer.get("customer_id") or "").strip() or None,
             "name": str(workspace_customer.get("name") or "").strip(),
@@ -611,9 +661,11 @@ def _serialize_workspace_note_payload(payload: dict[str, Any]) -> str:
             "address": str(workspace_customer.get("address") or "").strip() or None,
             "postal_code": str(workspace_customer.get("postal_code") or "").strip() or None,
             "city": str(workspace_customer.get("city") or "").strip() or None,
-            "cpr_number": str(workspace_customer.get("cpr_number") or "").strip() or None,
+            "cpr_number": None,
+            "cpr_number_encrypted": _encrypt_note_value(ws_cpr_plain),
             "identity_doc_type": workspace_customer.get("identity_doc_type"),
-            "identity_doc_number": str(workspace_customer.get("identity_doc_number") or "").strip() or None,
+            "identity_doc_number": None,
+            "identity_doc_number_encrypted": _encrypt_note_value(ws_identity_plain),
             "identity_doc_country": str(workspace_customer.get("identity_doc_country") or "").strip() or None,
         }
     sanitized["workspace_customer_city"] = str(payload.get("workspace_customer_city") or "").strip() or None

@@ -45,7 +45,11 @@ class PosQuoteUpdate(AppBaseModel):
     weight_grams: Decimal | None = Field(default=None, gt=0)
     purity_karat: str | None = Field(default=None, max_length=10)
     purity_percentage: Decimal | None = Field(default=None, ge=0, le=100)
-    margin_percent_internal: Decimal | None = Field(default=None, ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): yüzde değil, birim fiyata EKLENEN düzeltme —
+    # negatif serbest, üst sınır yok (workspace inputlarıyla aynı kanonik
+    # davranış; eski ge=0/le=100 aynı değeri /alis/workspace'ta kabul edip
+    # burada 422 döndürüyordu).
+    margin_percent_internal: Decimal | None = Field(default=None)
 
 
 class PosSessionLineCreate(AppBaseModel):
@@ -55,7 +59,8 @@ class PosSessionLineCreate(AppBaseModel):
     purity_karat: str | None = Field(default=None, max_length=10)
     purity_percentage: Decimal = Field(ge=0, le=100)
     rate_dkk: Decimal | None = Field(default=None, gt=0)
-    margin_percent_internal: Decimal | None = Field(default=None, ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): negatif serbest, üst sınır yok.
+    margin_percent_internal: Decimal | None = Field(default=None)
     notes: str | None = None
 
 
@@ -70,7 +75,8 @@ class PosSessionLineUpdate(AppBaseModel):
     purity_karat: str | None = Field(default=None, max_length=10)
     purity_percentage: Decimal | None = Field(default=None, ge=0, le=100)
     rate_dkk: Decimal | None = Field(default=None, gt=0)
-    margin_percent_internal: Decimal | None = Field(default=None, ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): negatif serbest, üst sınır yok.
+    margin_percent_internal: Decimal | None = Field(default=None)
     notes: str | None = None
 
 
@@ -220,6 +226,10 @@ class PosMetalRatesOut(AppBaseModel):
     silver: str
     platinum: str
     palladium: str
+    # Kaynak şeffaflığı: 'live' | 'fallback' | 'mixed' — canlı besleme kapalıyken
+    # hard-coded sabitler live diye sunulmasın (UI 'sabit/bayat' rozeti bununla
+    # ayrılır). Varsayılan, statik profil değerleri üreten eski çağıranlar içindir.
+    source: str = "fallback"
 
 
 class PosDisplayLineOut(AppBaseModel):
@@ -244,7 +254,10 @@ class PosRealtimePreviewLine(AppBaseModel):
     purity_karat: str | None = Field(default=None, max_length=10)
     purity_percentage: Decimal = Field(ge=0, le=100)
     rate_dkk: Decimal | None = Field(default=None, gt=0)
-    margin_percent_internal: Decimal | None = Field(default=None, ge=0, le=100)
+    # R2-07 "Mer pris" (kr/g): negatif serbest, üst sınır yok (ws önizleme
+    # yolu workspace ile aynı kanonu izler; aksi halde ValidationError
+    # clerk_socket'ta sessiz continue ile yutulup önizleme kasiyere ulaşmaz).
+    margin_percent_internal: Decimal | None = Field(default=None)
     line_offer_dkk: Decimal | None = Field(default=None, ge=0)
     notes: str | None = None
 
@@ -722,9 +735,10 @@ class PosSavedPurchaseListItemOut(AppBaseModel):
     customer_address: str | None = None
     customer_postal_code: str | None = None
     customer_city: str | None = None
-    customer_cpr: str | None = None
+    # PII minimizasyonu: liste yüzeyi (300 kayda kadar) ham CPR / kimlik belge
+    # numarası DÖNDÜRMEZ. Maskeli CPR korunur; ham değer gerekirse tek kayıtlık
+    # belge detay ucundan audit-loglu ?reveal= ile alınır.
     customer_cpr_masked: str | None = None
-    customer_identity_doc_number: str | None = None
     gross_amount_dkk: Decimal
     total_weight_grams: Decimal | None = None
     line_count: int = 0

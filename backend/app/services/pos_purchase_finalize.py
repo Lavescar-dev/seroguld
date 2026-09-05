@@ -197,6 +197,20 @@ async def finalize_purchase_workspace(
         source_transaction = await session.scalar(
             select(core.Transaction).where(core.Transaction.pos_session_id == source_session.id)
         )
+        # Yaşam döngüsü: taslak açıldıktan sonra kaynak belge silinmiş/iptal
+        # edilmişse finalize onu CONFIRMED'e çekerek DİRİLTEMEZ. Taslak da
+        # kapatılır; aksi halde silinmiş belge satırları geri gelir.
+        if source_session.status == PosSessionStatusEnum.CANCELLED or (
+            source_transaction is not None and source_transaction.status == "cancelled"
+        ):
+            pos_session.status = PosSessionStatusEnum.CANCELLED
+            await session.commit()
+            core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
+            await core.realtime_hub.close_display_token(pos_session.display_token)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Kaynak belge silinmiş veya iptal edilmiş; düzenleme taslağı kapatıldı.",
+            )
         await core._replace_purchase_workspace_lines(
             session,
             target_session_id=source_session.id,
@@ -268,10 +282,12 @@ async def finalize_purchase_workspace(
         await session.refresh(source_transaction)
         await session.refresh(pos_session)
 
-        await _sync_uniconta(session, source_document, source_session, pos_lines)
-        await _send_afg_email_best_effort(session, source_document, source_session)
+        await _run_finalization_side_effects(session, source_document, source_session, pos_lines)
 
         core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
+        # Müşteri ekranı oturumu sona erdi: eski token'lı WS bağlantıları
+        # sunucu tarafında kapatılır (kiosk anında çevrimdışına düşer).
+        await core.realtime_hub.close_display_token(pos_session.display_token)
         await core._emit_session_state(source_session)
         await core._emit_session_state(pos_session)
         return PosWorkspaceFinalizeResponse(
@@ -329,10 +345,12 @@ async def finalize_purchase_workspace(
     await session.refresh(pos_document)
     await session.refresh(transaction)
 
-    await _sync_uniconta(session, pos_document, pos_session, pos_lines)
-    await _send_afg_email_best_effort(session, pos_document, pos_session)
+    await _run_finalization_side_effects(session, pos_document, pos_session, pos_lines)
 
     core.realtime_hub.clear_display_preview(pos_session.display_token, session_code=pos_session.session_code)
+    # Müşteri ekranı oturumu sona erdi: eski token'lı WS bağlantıları
+    # sunucu tarafında kapatılır (kiosk anında çevrimdışına düşer).
+    await core.realtime_hub.close_display_token(pos_session.display_token)
     await core._emit_session_state(pos_session)
     return PosWorkspaceFinalizeResponse(
         session=core._to_clerk_out(pos_session),
@@ -345,6 +363,36 @@ async def finalize_purchase_workspace(
         uniconta_sync_error=pos_document.uniconta_sync_error,
         repricing_warnings=repricing_warnings,
     )
+
+
+async def _run_finalization_side_effects(
+    session: AsyncSession,
+    pos_document,
+    pos_session: PosSession,
+    pos_lines: list[PosSessionLine],
+) -> None:
+    """Commit SONRASI yan zincir — 'belge kesinleşti' sözleşmesi.
+
+    Belge/transaction buraya gelmeden kesinleşmiştir; Uniconta durum yazımı ve
+    e-posta akışından HERHANGİ BİRİ hata alırsa istemciye 500 dönerse operatör
+    yeniden denediğinde 409 'zaten kesinleşmiş' ile karşılaşır ve satışın
+    durumu ekrandan doğrulanmak zorunda kalır. Yan zincir bu yüzden
+    loglanarak yutulur: belge kesinleşmiştir, yan işlemler kuyruktadır.
+    """
+    try:
+        await _sync_uniconta(session, pos_document, pos_session, pos_lines)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception(
+            "Uniconta durum yazımı başarısız (seq=%s) — belge kesinleşti, senkron kuyrukta",
+            pos_document.sequence_no,
+        )
+    try:
+        await _send_afg_email_best_effort(session, pos_document, pos_session)
+    except Exception:  # noqa: BLE001
+        LOGGER.exception(
+            "AFG e-posta akışı başarısız (seq=%s) — belge kesinleşti, e-posta gönderilmedi",
+            pos_document.sequence_no,
+        )
 
 
 async def _sync_uniconta(
@@ -434,18 +482,25 @@ async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_s
     from app.config import get_settings as _gs
 
     _transport = (_gs().email_transport or "smtp").strip().lower()
-    session.add(
-        PosDocumentAudit(
-            sequence_no=pos_document.sequence_no,
-            pos_session_id=pos_session.id,
-            action="afg_email_sent" if sent else "afg_email_skipped",
-            actor_user_id=None,
-            actor_email="system:afg_email",
-            payload_json=_json.dumps(
-                {"to": to_address or None, "sent": sent, "note": note, "transport": _transport},
-                ensure_ascii=False,
-            ),
-            note=note[:500] or None,
+    try:
+        session.add(
+            PosDocumentAudit(
+                sequence_no=pos_document.sequence_no,
+                pos_session_id=pos_session.id,
+                action="afg_email_sent" if sent else "afg_email_skipped",
+                actor_user_id=None,
+                actor_email="system:afg_email",
+                payload_json=_json.dumps(
+                    {"to": to_address or None, "sent": sent, "note": note, "transport": _transport},
+                    ensure_ascii=False,
+                ),
+                note=note[:500] or None,
+            )
         )
-    )
-    await session.commit()
+        await session.commit()
+    except Exception:  # noqa: BLE001 — audit commit'i belgeyi zaten kesinleşmiş yanıtı 500'e çevirmesin
+        LOGGER.exception(
+            "AFG e-posta audit kaydı yazılamadı (seq=%s) — belge kesinleşti",
+            pos_document.sequence_no,
+        )
+        await session.rollback()
