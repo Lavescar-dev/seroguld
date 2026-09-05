@@ -56,9 +56,13 @@ router = APIRouter()
 
 @router.get("/log/recent", response_model=list[PosDocumentListItemOut])
 async def get_log_recent_v2(
-    q: str | None = None,
-    kind: str | None = "afregningsbilag",
-    limit: int = 10,
+    q: str | None = Query(default=None),
+    # Legacy get_pos_documents Python'dan çağrıldığında FastAPI Query
+    # kısıtları bypass edilir; v2 yüzeyi aynı sözleşmeyi burada zorlar
+    # (limit=-1 → limitsiz sorgu, limit=999999 → sınırsız, kind=xyz →
+    # document_type filtresi tamamen kalkıyordu).
+    kind: str | None = Query(default="afregningsbilag", pattern="^(afregningsbilag|faktura)$"),
+    limit: int = Query(default=10, ge=1, le=300),
     db: AsyncSession = Depends(get_db),
     clerk_user: User = Depends(require_admin),
 ) -> list[PosDocumentListItemOut]:
@@ -73,9 +77,11 @@ async def get_log_recent_v2(
 
 @router.get("/log/workspace", response_model=AfgLogWorkspaceOut)
 async def get_log_workspace_v2(
-    q: str | None = None,
+    q: str | None = Query(default=None),
     year: int | None = Query(default=None, ge=2000, le=2100),
-    limit: int = 200,
+    # Yıl sorgusu _fetch_document_bundle içinde max(limit, 10000) clamp'ine
+    # düşer; filtresiz sorguyu negatif/limitsiz limit'e karşı da koru.
+    limit: int = Query(default=200, ge=1, le=10000),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> AfgLogWorkspaceOut:
@@ -228,7 +234,18 @@ async def post_log_melt_lot_reopen_v2(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> AfgMeltLotOut:
-    return await finalize_afg_melt_lot(db, lot_id=lot_id, actor=admin, reverse=True)
+    lot = await finalize_afg_melt_lot(db, lot_id=lot_id, actor=admin, reverse=True)
+    # Finalize ile aynı senkron disiplini: aksi halde yeniden açılan lot,
+    # indirilen log workbook'unda hâlâ 'finalized' görünür.
+    workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
+    await _ensure_log_artifact(
+        db,
+        workspace,
+        year=_default_artifact_year(None),
+        create_snapshot=True,
+        force_sync=True,
+    )
+    return lot
 
 
 @router.delete("/log/melt-lots/{lot_id}", status_code=204, response_class=Response)
@@ -315,6 +332,22 @@ async def post_log_workbook_reconcile_preview_v2(
             content,
             year=resolved_year,
             current_workspace=current_workspace,
+        )
+    except BadZipFile as exc:
+        # Bozuk/xlsx-olmayan dosya reconcile-preview'da da 500 değil,
+        # öngörülebilir bir blocking-error döner.
+        return DocumentArtifactReconcilePreviewOut(
+            editable=False,
+            changes=[],
+            warnings=["Dry-run tamamlanmadı; hiçbir mutasyon yapılmadı."],
+            blocking_errors=[f"Geçersiz Excel dosyası: {exc}"],
+        )
+    except InvalidFileException as exc:
+        return DocumentArtifactReconcilePreviewOut(
+            editable=False,
+            changes=[],
+            warnings=["Dry-run tamamlanmadı; hiçbir mutasyon yapılmadı."],
+            blocking_errors=[f"Geçersiz Excel dosyası: {exc}"],
         )
     except (ValidationError, ValueError) as exc:
         return DocumentArtifactReconcilePreviewOut(

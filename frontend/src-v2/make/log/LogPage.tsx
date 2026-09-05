@@ -1,4 +1,5 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -26,7 +27,8 @@ import {
   X,
 } from 'lucide-react';
 
-import { fetchAuthedText } from '@/lib/api';
+import { apiRequest, fetchAuthedText } from '@/lib/api';
+import { useToast } from '@/lib/toast';
 import { useNavigate } from 'react-router-dom';
 import { HtmlDocumentModal } from '@/components/HtmlDocumentModal';
 import {
@@ -42,6 +44,7 @@ import {
 import type {
   AfgWorkspaceDocument,
   AfgWorkspaceLine,
+  DocumentArtifactReconcilePreview,
   LogBucketWorkspace,
   LogMeltLot,
   LogMeltLotHistory,
@@ -119,6 +122,20 @@ const splitMeta: Record<
 
 function formatWorkbookYearLabel(year: number) {
   return `Canlı workbook · ${year}`;
+}
+
+function readApiDetail(error: unknown, fallback: string): string {
+  if (!(error instanceof Error) || !error.message) return fallback;
+  try {
+    const parsed = JSON.parse(error.message) as { detail?: unknown };
+    if (typeof parsed.detail === 'string') return parsed.detail;
+    if (parsed.detail && typeof parsed.detail === 'object' && 'message' in parsed.detail) {
+      return String(parsed.detail.message);
+    }
+  } catch {
+    // apiRequest hata metni zaten kullanıcıya gösterilebilir olabilir.
+  }
+  return error.message;
 }
 
 
@@ -265,11 +282,17 @@ export interface LogPageProps {
   historyLotId: string | null;
   lotHistory: LogMeltLotHistory[];
   lotHistoryLoading: boolean;
+  /** M3 — history sorgusu hata durumunda 'kayıt yok' yanılgısını önler. */
+  lotHistoryError?: boolean;
+  onRetryLotHistory?: () => void;
   onOpenLotLines: (lotId: string) => void;
   onCloseLotLines: () => void;
   linesLotId: string | null;
   lotLines: LogMeltLotLine[];
   lotLinesLoading: boolean;
+  /** M3 — lines sorgusu hata durumunda 'satır yok' yanılgısını önler. */
+  lotLinesError?: boolean;
+  onRetryLotLines?: () => void;
   selectedYear: number;
   onSelectedYearChange: (year: number) => void;
   /** A15 — seçili AFG belgesinin /excel-preview rotası; seçili kayıt yoksa null. */
@@ -315,11 +338,15 @@ export function LogPage({
   historyLotId,
   lotHistory,
   lotHistoryLoading,
+  lotHistoryError,
+  onRetryLotHistory,
   onOpenLotLines,
   onCloseLotLines,
   linesLotId,
   lotLines,
   lotLinesLoading,
+  lotLinesError,
+  onRetryLotLines,
   selectedYear,
   onSelectedYearChange,
   excelImportPath,
@@ -512,6 +539,8 @@ export function LogPage({
         <LotHistoryDrawer
           entries={lotHistory}
           loading={lotHistoryLoading}
+          error={lotHistoryError}
+          onRetry={onRetryLotHistory}
           onClose={onCloseLotHistory}
         />
       ) : null}
@@ -519,6 +548,8 @@ export function LogPage({
         <LotLinesDrawer
           entries={lotLines}
           loading={lotLinesLoading}
+          error={lotLinesError}
+          onRetry={onRetryLotLines}
           onClose={onCloseLotLines}
         />
       ) : null}
@@ -539,10 +570,14 @@ const HISTORY_ACTION_LABEL: Record<string, string> = {
 function LotHistoryDrawer({
   entries,
   loading,
+  error,
+  onRetry,
   onClose,
 }: {
   entries: LogMeltLotHistory[];
   loading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -567,6 +602,22 @@ function LotHistoryDrawer({
         </div>
         {loading ? (
           <div className="px-4 py-6 text-sm text-brand-500">Yükleniyor...</div>
+        ) : error ? (
+          <div className="px-4 py-6 text-center">
+            <AlertTriangle className="mx-auto h-5 w-5 text-rose-500" />
+            <p className="mt-2 text-sm font-semibold text-rose-700">Geçmiş yüklenemedi.</p>
+            <p className="mt-1 text-xs text-rose-500">Audit kayıtları alınırken bir hata oluştu.</p>
+            {onRetry ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-3 inline-flex items-center gap-2 border border-rose-400 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 hover:bg-rose-50"
+              >
+                <RefreshCcw className="h-3 w-3" />
+                Tekrar Dene
+              </button>
+            ) : null}
+          </div>
         ) : entries.length === 0 ? (
           <div className="px-4 py-6 text-sm text-brand-400">Bu lot için henüz history kaydı yok.</div>
         ) : (
@@ -597,10 +648,14 @@ function LotHistoryDrawer({
 function LotLinesDrawer({
   entries,
   loading,
+  error,
+  onRetry,
   onClose,
 }: {
   entries: LogMeltLotLine[];
   loading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -625,6 +680,22 @@ function LotLinesDrawer({
         </div>
         {loading ? (
           <div className="px-4 py-6 text-sm text-brand-500">Yükleniyor...</div>
+        ) : error ? (
+          <div className="px-4 py-6 text-center">
+            <AlertTriangle className="mx-auto h-5 w-5 text-rose-500" />
+            <p className="mt-2 text-sm font-semibold text-rose-700">Satırlar yüklenemedi.</p>
+            <p className="mt-1 text-xs text-rose-500">Bağlı AFG kalemleri alınırken bir hata oluştu.</p>
+            {onRetry ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-3 inline-flex items-center gap-2 border border-rose-400 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 hover:bg-rose-50"
+              >
+                <RefreshCcw className="h-3 w-3" />
+                Tekrar Dene
+              </button>
+            ) : null}
+          </div>
         ) : entries.length === 0 ? (
           <div className="px-4 py-6 text-sm text-brand-400">Bu lot'a henüz bağlı satır yok.</div>
         ) : (
@@ -733,10 +804,211 @@ function LogSurfaceTabs({
 function LogExcelSurface({ year }: { year: number }) {
   return (
     <div className="flex-1 min-h-0 border-b-2 border-brand-300 bg-stone-100">
-      <div className="h-[calc(100vh-16rem)] min-h-[760px]">
+      <div className="border-b border-brand-200 bg-white px-4 py-3">
+        <LogWorkbookImport year={year} />
+      </div>
+      <div className="h-[calc(100vh-20rem)] min-h-[720px]">
         <EmbeddedWorkbookPanel kind="log" artifactKey={String(year)} layoutMode="workspace" />
       </div>
     </div>
+  );
+}
+
+type LogImportStatus = { tone: 'error' | 'success'; message: string };
+
+// M3 — klasik temada Log-{yıl}.xlsx geri yüklemesi hiç yoktu; modern yüzeyde
+// ise onizlemesiz window.confirm + doğrudan import atılıyordu. Depolama
+// yüzeyindeki güvenli akış (reconcile-preview → blocking_errors → apply)
+// buraya Log varyantı olarak taşındı.
+function LogWorkbookImport({ year }: { year: number }) {
+  const queryClient = useQueryClient();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<DocumentArtifactReconcilePreview | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<LogImportStatus | null>(null);
+
+  async function previewFile(file: File) {
+    const extension = file.name.toLowerCase().split('.').pop();
+    if (extension !== 'xlsx' && extension !== 'xlsm') {
+      setStatus({ tone: 'error', message: 'Yalnızca .xlsx veya .xlsm Log çalışma kitabı seçilebilir.' });
+      return;
+    }
+    setBusy(true);
+    setStatus(null);
+    setFileName(file.name);
+    setPendingFile(file);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', file);
+      const result = await apiRequest<DocumentArtifactReconcilePreview>(
+        `/api/v2/log/workbook/reconcile-preview?year=${encodeURIComponent(String(year))}`,
+        { method: 'POST', body: formData },
+      );
+      setPreview(result);
+    } catch (error) {
+      setPreview(null);
+      setPendingFile(null);
+      setStatus({ tone: 'error', message: readApiDetail(error, 'Log Excel önizlemesi alınamadı.') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyImport() {
+    if (!preview || !pendingFile || !preview.editable || (preview.blocking_errors || []).length > 0 || busy) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', pendingFile);
+      await apiRequest(`/api/v2/log/workbook/import?year=${encodeURIComponent(String(year))}`, {
+        method: 'POST',
+        body: formData,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['log'] }),
+        queryClient.invalidateQueries({ queryKey: ['depolama'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+        queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
+        queryClient.invalidateQueries({ queryKey: ['office-document-launch', 'log'] }),
+        queryClient.invalidateQueries({ queryKey: ['office-document-status', 'log'] }),
+      ]);
+      setPreview(null);
+      setPendingFile(null);
+      setStatus({ tone: 'success', message: `${fileName || 'Çalışma kitabı'} içe aktarıldı. Log çalışma alanı yenilendi.` });
+      setFileName(null);
+      if (inputRef.current) inputRef.current.value = '';
+    } catch (error) {
+      setStatus({ tone: 'error', message: readApiDetail(error, 'Log Excel içe aktarma tamamlanamadı.') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelPreview() {
+    setPreview(null);
+    setPendingFile(null);
+    setFileName(null);
+    setStatus(null);
+    if (inputRef.current) inputRef.current.value = '';
+  }
+
+  const blockingErrors = preview?.blocking_errors || [];
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Log Excel İçe Aktar</p>
+          <p className="mt-1 text-xs text-brand-500">
+            Yalnızca {year} yılının Log çalışma kitabını kullanın; uygulama öncesi değişiklikler önizlemede listelenir.
+          </p>
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-2 border border-emerald-600 bg-emerald-700 px-3 py-2 text-[11px] font-black uppercase tracking-widest text-white transition hover:bg-emerald-800">
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileUp className="h-3.5 w-3.5" />}
+          {busy ? 'Önizleniyor' : 'Excel seç'}
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
+            className="hidden"
+            aria-label="Log Excel dosyası seç"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              if (file) void previewFile(file);
+              event.currentTarget.value = '';
+            }}
+          />
+        </label>
+      </div>
+
+      {status ? (
+        <div
+          role={status.tone === 'error' ? 'alert' : 'status'}
+          className={`mt-2 flex items-start gap-2 border px-3 py-2 text-xs ${
+            status.tone === 'error' ? 'border-rose-300 bg-rose-50 text-rose-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800'
+          }`}
+        >
+          {status.tone === 'error' ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+          <span>{status.message}</span>
+        </div>
+      ) : null}
+
+      {preview ? (
+        <div className="fixed inset-0 z-drawer flex items-center justify-center bg-brand-950/45 px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="log-import-title">
+          <div className="flex max-h-[min(84vh,54rem)] w-full max-w-3xl flex-col overflow-hidden border-2 border-brand-300 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b-2 border-brand-200 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Log Excel Import — {year}</p>
+                <h2 id="log-import-title" className="mt-1 text-base font-black text-brand-900">Değişiklikleri kontrol et</h2>
+                <p className="mt-1 text-xs text-brand-500">{fileName || 'Seçilen çalışma kitabı'} henüz uygulanmadı.</p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelPreview}
+                className="border border-brand-300 bg-white p-1.5 text-brand-700 hover:bg-brand-50"
+                aria-label="Import önizlemesini kapat"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+              {blockingErrors.length > 0 ? (
+                <div className="border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                  <p className="text-xs font-black uppercase tracking-widest text-rose-700">Import engellendi</p>
+                  {blockingErrors.map((importError) => (
+                    <p key={importError} className="mt-1">{importError}</p>
+                  ))}
+                </div>
+              ) : null}
+              {(preview.warnings || []).length > 0 ? (
+                <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="text-xs font-black uppercase tracking-widest text-amber-700">Uyarılar</p>
+                  {preview.warnings.map((warning) => (
+                    <p key={warning} className="mt-1">{warning}</p>
+                  ))}
+                </div>
+              ) : null}
+              <div className="border border-brand-200 bg-brand-50/50 px-4 py-3">
+                <p className="text-sm font-black text-brand-900">{preview.changes.length} kontrollü değişiklik</p>
+                <div className="mt-2 divide-y divide-brand-100">
+                  {preview.changes.slice(0, 50).map((change) => (
+                    <div key={`${change.sheet}:${change.cell_ref}:${change.label}`} className="grid gap-1 py-2 text-xs sm:grid-cols-[1.2fr_1fr_1fr]">
+                      <span className="font-bold text-brand-800">{change.label}</span>
+                      <span className="text-brand-400">{change.old_value || '—'}</span>
+                      <span className="font-semibold text-brand-800">{change.new_value || '—'}</span>
+                    </div>
+                  ))}
+                </div>
+                {preview.changes.length > 50 ? (
+                  <p className="mt-2 text-[11px] text-brand-400">İlk 50 değişiklik gösteriliyor.</p>
+                ) : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t-2 border-brand-200 px-5 py-4">
+              <button
+                type="button"
+                onClick={cancelPreview}
+                className="border border-brand-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-widest text-brand-800 hover:bg-brand-50"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyImport()}
+                disabled={busy || !preview.editable || blockingErrors.length > 0}
+                className="inline-flex items-center gap-2 border border-brand-900 bg-brand-900 px-4 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                {busy ? 'Uygulanıyor' : 'İçe aktar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -838,12 +1110,24 @@ function BucketWorkspaceView({
     [bucketGroups],
   );
   const selectedDocument = documents.find((document) => document.sequence_no === expandedDocument) ?? documents[0] ?? null;
+  const toast = useToast();
   // R2-13 — window.open Tauri'de sessizce yutulduğu için belge modalda açılır.
   const [htmlDoc, setHtmlDoc] = useState<{ html: string; title: string } | null>(null);
+  const [docBusy, setDocBusy] = useState(false);
   const closeHtmlDoc = () => setHtmlDoc(null);
+  // M3 — try/catch'siz `void openDocumentHtml(...)` reddi tamamen sessiz
+  // yutuyordu; buton busy'siz kalıyor, kullanıcıya hiçbir şey söylemiyordu.
   const openDocumentHtml = async (sessionId: string, documentNumber: string) => {
-    const html = await fetchAuthedText(`/api/pos/sessions/${sessionId}/receipt?audience=admin&format=html`);
-    setHtmlDoc({ html, title: documentNumber });
+    if (docBusy) return;
+    setDocBusy(true);
+    try {
+      const html = await fetchAuthedText(`/api/pos/sessions/${sessionId}/receipt?audience=admin&format=html`);
+      setHtmlDoc({ html, title: documentNumber });
+    } catch (error) {
+      toast.error('Belge açılamadı', readApiDetail(error, 'Sunucu hatası'));
+    } finally {
+      setDocBusy(false);
+    }
   };
   const selectedWorkspace = useMemo(() => {
     if (!selectedDocument) {
@@ -1052,12 +1336,13 @@ function BucketWorkspaceView({
                       </div>
                       <button
                         type="button"
+                        disabled={docBusy}
                         onClick={() =>
                           void openDocumentHtml(selectedWorkspace.document.session_id, selectedWorkspace.document.document_number)
                         }
-                        className="inline-flex items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-50"
+                        className="inline-flex items-center gap-2 border border-brand-300 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <FileText className="h-3.5 w-3.5" />
+                        {docBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
                         Belgeyi Aç
                       </button>
                     </div>

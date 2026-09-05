@@ -47,6 +47,10 @@ function hasPendingLineChange(line: AfgWorkspaceLine, draft: LineDraft | undefin
   );
 }
 
+function draftsEqual(a: MeltLotDraft, b: MeltLotDraft): boolean {
+  return (Object.keys(a) as Array<keyof MeltLotDraft>).every((key) => a[key] === b[key]);
+}
+
 function extractApiMessage(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     try {
@@ -100,6 +104,10 @@ export function useLogMakeState(): LogPageProps {
   const [showMeltSection, setShowMeltSection] = useState(false);
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [lotDrafts, setLotDrafts] = useState<Record<string, MeltLotDraft>>({});
+  // Lot taslağının temel aldığı sunucu updated_at: stale_lot (409) koruması
+  // bunun üzerinden çalışır — kaydetme anındaki GÜNCEL değer değil, taslağın
+  // tohumlandığı değer gönderilir.
+  const [lotDraftBases, setLotDraftBases] = useState<Record<string, string>>({});
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const [historyLotId, setHistoryLotId] = useState<string | null>(null);
   const [linesLotId, setLinesLotId] = useState<string | null>(null);
@@ -182,6 +190,11 @@ export function useLogMakeState(): LogPageProps {
     lotDraftsRef.current = lotDrafts;
   }, [lotDrafts]);
 
+  const lotDraftBasesRef = useRef(lotDraftBases);
+  useEffect(() => {
+    lotDraftBasesRef.current = lotDraftBases;
+  }, [lotDraftBases]);
+
   const bucketLotsKey = useMemo(
     () => (bucket?.melt_lots ?? []).map((lot) => `${lot.id}:${lot.updated_at}`).join('|'),
     [bucket?.melt_lots],
@@ -189,14 +202,28 @@ export function useLogMakeState(): LogPageProps {
 
   useEffect(() => {
     const current = lotDraftsRef.current;
+    const bases = lotDraftBasesRef.current;
     const seeded: Record<string, MeltLotDraft> = {};
+    const rebased: Record<string, string> = {};
     for (const lot of bucket?.melt_lots ?? []) {
-      if (!current[lot.id]) {
+      const draft = current[lot.id];
+      if (!draft) {
         seeded[lot.id] = toLotDraft(lot);
+        rebased[lot.id] = lot.updated_at;
+      } else if (draftsEqual(draft, toLotDraft(lot)) && bases[lot.id] !== lot.updated_at) {
+        // Taslak kirli değilse sunucu güncellemesiyle tabanı tazele: kullanıcı
+        // hiç görmediği değerlerin üzerine yazamaz, çakışma stale_lot 409 olarak
+        // yüzeye çıkar. Kirli taslakta taban kasıtlı olarak bayat kalır.
+        rebased[lot.id] = lot.updated_at;
       }
     }
     if (Object.keys(seeded).length > 0) {
       setLotDrafts((prev) => ({ ...seeded, ...prev }));
+    }
+    if (Object.keys(rebased).length > 0) {
+      // DİKKAT: rebase değerleri mevcut base'i GEÇMELİ (aynı lot için); prev
+      // yalnızca rebased olmayan lotların tabanını korur.
+      setLotDraftBases((prev) => ({ ...prev, ...rebased }));
     }
   }, [bucketLotsKey, bucket?.melt_lots]);
 
@@ -346,13 +373,19 @@ export function useLogMakeState(): LogPageProps {
           expected_updated_at: payload.expectedUpdatedAt || null,
         }),
       }),
-    onSuccess: async (_, variables) => {
+    onSuccess: async (lot, variables) => {
       await invalidateLog();
       emitArtifactSync({ kind: 'log', key: String(selectedYear), source: 'log-ui' });
-      setLotDrafts((current) => ({
-        ...current,
-        [variables.lotId]: current[variables.lotId],
-      }));
+      // Başarılı kayıtta taslağı sunucu yanıtından tazele; ama kayıt sürerken
+      // yapılan yeni düzenlemeleri ezme.
+      setLotDrafts((current) => {
+        const existing = current[variables.lotId];
+        if (!existing || draftsEqual(existing, variables.draft)) {
+          return { ...current, [variables.lotId]: toLotDraft(lot) };
+        }
+        return current;
+      });
+      setLotDraftBases((current) => ({ ...current, [variables.lotId]: lot.updated_at }));
       toast.success('Lot kaydedildi');
     },
     onError: (error) => {
@@ -511,10 +544,13 @@ export function useLogMakeState(): LogPageProps {
       const fallback = bucket?.melt_lots.find((lot) => lot.id === lotId);
       if (!fallback) return;
       const draft = lotDrafts[lotId] || toLotDraft(fallback);
+      // Taslağın temel aldığı updated_at gönderilir: taze fallback değeriyle
+      // bayat taslak kaydedilirse stale_lot koruması atlanıp çakışma sessizce
+      // eziliyordu.
       updateMeltLotMutation.mutate({
         lotId,
         draft,
-        expectedUpdatedAt: fallback.updated_at,
+        expectedUpdatedAt: lotDraftBases[lotId] || fallback.updated_at,
       });
     },
     onCreateMeltLot: () => createMeltLotMutation.mutate(),
@@ -535,11 +571,19 @@ export function useLogMakeState(): LogPageProps {
     historyLotId,
     lotHistory: lotHistoryQuery.data ?? [],
     lotHistoryLoading: lotHistoryQuery.isLoading,
+    lotHistoryError: lotHistoryQuery.isError,
+    onRetryLotHistory: () => {
+      void lotHistoryQuery.refetch();
+    },
     onOpenLotLines: (lotId) => setLinesLotId(lotId),
     onCloseLotLines: () => setLinesLotId(null),
     linesLotId,
     lotLines: lotLinesQuery.data ?? [],
     lotLinesLoading: lotLinesQuery.isLoading,
+    lotLinesError: lotLinesQuery.isError,
+    onRetryLotLines: () => {
+      void lotLinesQuery.refetch();
+    },
     selectedYear,
     onSelectedYearChange: setSelectedYear,
   };

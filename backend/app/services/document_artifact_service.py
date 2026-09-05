@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -15,6 +17,7 @@ from uuid import UUID, uuid4
 from openpyxl.cell.cell import MergedCell
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Protection
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,6 +61,8 @@ from app.schemas.pos import (
 from app.schemas.product import ProductUpdate
 from app.services import document_artifact_inventory, document_artifact_log
 from app.utils.helpers import quantize_2, to_decimal, utc_now
+
+logger = logging.getLogger(__name__)
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 XLSM_MIME = "application/vnd.ms-excel.sheet.macroEnabled.12"
@@ -788,10 +793,12 @@ async def _store_artifact(
     revision: int | None = None,
 ) -> WorkbookArtifactBundle:
     absolute_path = _document_root() / relative_path
-    absolute_path.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(absolute_path.parent.mkdir, parents=True, exist_ok=True)
     temporary = absolute_path.with_name(f".{absolute_path.name}.{uuid4().hex}.tmp")
     try:
-        temporary.write_bytes(content)
+        # Disk IO event loop'u bloklamasın (büyük workbook'lar saniyeler
+        # sürebilir).
+        await asyncio.to_thread(temporary.write_bytes, content)
         record = await _upsert_record(
             session,
             artifact_key=artifact_key,
@@ -808,10 +815,67 @@ async def _store_artifact(
             updated_at=updated_at,
             revision=revision,
         )
-        os.replace(temporary, absolute_path)
+        await asyncio.to_thread(os.replace, temporary, absolute_path)
     finally:
         temporary.unlink(missing_ok=True)
     return WorkbookArtifactBundle(artifact=record, content=content)
+
+
+def _workspace_data_fingerprint(payload: BaseModel, *, year: int | None = None) -> str:
+    """Workspace verisinin içeriğe bağlı kararlı özeti.
+
+    openpyxl çıktısı byte-stabil değildir (zip zaman damgaları); bu yüzden
+    "veri değişti mi?" kararı xlsx baytları üzerinden değil, workspace
+    modelinin deterministik JSON özeti üzerinden verilir.
+    """
+    basis = payload.model_dump_json()
+    if year is not None:
+        basis = f"{year}:{basis}"
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_sidecar_path(live_path: Path) -> Path:
+    return live_path.with_name(live_path.name + ".fp")
+
+
+def _write_fingerprint_sidecar(live_path: Path, fingerprint: str) -> None:
+    sidecar = _fingerprint_sidecar_path(live_path)
+    sidecar.write_text(fingerprint + "\n", encoding="utf-8")
+
+
+def _load_live_artifact_if_unchanged(record: DocumentArtifact, fingerprint: str) -> bytes | None:
+    """Veri değişmediyse canlı dosyanın baytlarını, aksi halde None döner.
+
+    İki kapı kontrolü vardır: (1) yan dosyadaki workspace parmak izi,
+    (2) DB kaydının checksum'u ile diskteki dosyanın checksum'u tutarlılığı
+    (rollback sonrası disk/DB ayrışmasını yeniden üreterek iyileştirir).
+    Yan dosya yoksa (eski kayıt) veya okunamazsa tam senkron yapılır.
+    """
+    try:
+        live_path = artifact_absolute_path(record)
+        if not live_path.exists():
+            return None
+        sidecar = _fingerprint_sidecar_path(live_path)
+        if not sidecar.exists():
+            return None
+        stored_fingerprint = sidecar.read_text(encoding="utf-8").strip()
+        if stored_fingerprint != fingerprint:
+            return None
+        content = live_path.read_bytes()
+    except OSError:
+        logger.warning(
+            "canlı artifact dosyası okunamadı, tam senkron yapılacak (artifact_key=%s)",
+            record.artifact_key,
+            exc_info=True,
+        )
+        return None
+    if record.checksum_sha256 and _sha256(content) != record.checksum_sha256:
+        logger.warning(
+            "canlı artifact disk/DB checksum'u ayrışmış, yeniden üretilecek (artifact_key=%s)",
+            record.artifact_key,
+        )
+        return None
+    return content
 
 
 async def list_artifact_records(
@@ -2159,12 +2223,23 @@ def parse_log_workbook_inputs_from_workbook(
     year: int,
     current_workspace: AfgLogWorkspaceOut | None = None,
 ) -> LogWorkbookArtifactInputs:
-    workbook = load_workbook(io.BytesIO(content), data_only=False)
-    metadata = _sync_metadata_if_present(workbook, expected_kind="log", expected_key=str(year))
-    if metadata is not None:
-        if metadata.contract_version == "log-v1":
-            return _parse_log_workbook_inputs_v1(workbook, metadata)
-        return _parse_log_workbook_inputs_v2(workbook, metadata)
+    # Sync sheet varlığı read_only probe ile test edilir (sheetname okuması
+    # tembel); böylece ham import yolu workbook'u iki kez TAM parse etmez.
+    probe = load_workbook(io.BytesIO(content), read_only=True)
+    try:
+        has_sync_sheet = SYNC_SHEET_NAME in probe.sheetnames
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+    if has_sync_sheet:
+        workbook = load_workbook(io.BytesIO(content), data_only=False)
+        metadata = _sync_metadata_if_present(workbook, expected_kind="log", expected_key=str(year))
+        if metadata is not None:
+            if metadata.contract_version == "log-v1":
+                return _parse_log_workbook_inputs_v1(workbook, metadata)
+            return _parse_log_workbook_inputs_v2(workbook, metadata)
     if current_workspace is None:
         raise ValueError("Log raw import için mevcut workspace gerekir")
     values_workbook = load_workbook(io.BytesIO(content), data_only=True)
@@ -2485,10 +2560,21 @@ async def sync_inventory_workbook_artifact(
     *,
     create_snapshot: bool,
 ) -> WorkbookArtifactBundle:
-    stamp = utc_now()
     existing_record = await get_artifact_record(session, "depolama.live")
+    # Log senkronu ile aynı değişmedi-koruması: veri aynıysa revision şişmez,
+    # dosya yeniden yazılmaz.
+    fingerprint = _workspace_data_fingerprint(workspace)
+    if existing_record is not None:
+        unchanged_content = await asyncio.to_thread(
+            _load_live_artifact_if_unchanged, existing_record, fingerprint
+        )
+        if unchanged_content is not None:
+            return WorkbookArtifactBundle(artifact=existing_record, content=unchanged_content)
+
+    stamp = utc_now()
     revision = _next_artifact_revision(existing_record)
-    content = _build_inventory_workbook_bytes(
+    content = await asyncio.to_thread(
+        _build_inventory_workbook_bytes,
         workspace,
         sync_context=ArtifactSyncContext(
             kind="depolama",
@@ -2499,6 +2585,26 @@ async def sync_inventory_workbook_artifact(
         ),
         display_updated_at=stamp if create_snapshot or existing_record is None else existing_record.updated_at,
     )
+    live_relative_path = Path("depolama") / "live" / "Depolama.xlsx"
+    if create_snapshot:
+        now = utc_now()
+        # Log snapshot'ı ile aynı uuid eki: aynı saniyede ezilme yok.
+        snapshot_token = f"{now.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+        await _store_artifact(
+            session,
+            artifact_key=f"depolama.snapshot.{snapshot_token}",
+            module_name="depolama",
+            document_type="inventory_workbook",
+            business_key="live",
+            version_kind="snapshot",
+            is_live=False,
+            file_name=f"{snapshot_token}-Depolama.xlsx",
+            relative_path=Path("depolama") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{snapshot_token}-Depolama.xlsx",
+            mime_type=XLSX_MIME,
+            template_name=DEPOLAMA_TEMPLATE_NAME,
+            content=content,
+            updated_at=now,
+        )
     live_bundle = await _store_artifact(
         session,
         artifact_key="depolama.live",
@@ -2508,31 +2614,21 @@ async def sync_inventory_workbook_artifact(
         version_kind="live",
         is_live=True,
         file_name="Depolama.xlsx",
-        relative_path=Path("depolama") / "live" / "Depolama.xlsx",
+        relative_path=live_relative_path,
         mime_type=XLSX_MIME,
         template_name=DEPOLAMA_TEMPLATE_NAME,
         content=content,
         updated_at=stamp,
         revision=revision,
     )
-    if create_snapshot:
-        now = utc_now()
-        snapshot_stamp = now.strftime("%Y%m%d-%H%M%S")
-        await _store_artifact(
-            session,
-            artifact_key=f"depolama.snapshot.{snapshot_stamp}",
-            module_name="depolama",
-            document_type="inventory_workbook",
-            business_key="live",
-            version_kind="snapshot",
-            is_live=False,
-            file_name=f"{snapshot_stamp}-Depolama.xlsx",
-            relative_path=Path("depolama") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{snapshot_stamp}-Depolama.xlsx",
-            mime_type=XLSX_MIME,
-            template_name=DEPOLAMA_TEMPLATE_NAME,
-            content=content,
-            updated_at=now,
+    try:
+        await asyncio.to_thread(
+            _write_fingerprint_sidecar,
+            _document_root() / live_relative_path,
+            fingerprint,
         )
+    except OSError:
+        logger.warning("depolama artifact parmak izi yan dosyası yazılamadı", exc_info=True)
     return live_bundle
 
 
@@ -2543,10 +2639,23 @@ async def sync_log_workbook_artifact(
     year: int,
     create_snapshot: bool,
 ) -> WorkbookArtifactBundle:
-    stamp = utc_now()
     existing_record = await get_artifact_record(session, f"log.live.{year}")
+    # Veri değişmediyse live dosyaya ve revision'a dokunma: her indirmede
+    # revision+1 şişmesi, B'nin base_version'ının başkasının export'uyla
+    # bayatlaması ve office her açılışta tam yeniden üretim tam olarak
+    # bunu önler.
+    fingerprint = _workspace_data_fingerprint(workspace, year=year)
+    if existing_record is not None:
+        unchanged_content = await asyncio.to_thread(
+            _load_live_artifact_if_unchanged, existing_record, fingerprint
+        )
+        if unchanged_content is not None:
+            return WorkbookArtifactBundle(artifact=existing_record, content=unchanged_content)
+
+    stamp = utc_now()
     revision = _next_artifact_revision(existing_record)
-    content = _build_log_workbook_bytes(
+    content = await asyncio.to_thread(
+        _build_log_workbook_bytes,
         workspace,
         year=year,
         sync_context=ArtifactSyncContext(
@@ -2556,6 +2665,29 @@ async def sync_log_workbook_artifact(
             base_version=str(revision),
         ),
     )
+    live_relative_path = Path("log") / "live" / f"Log-{year}.xlsx"
+    if create_snapshot:
+        now = utc_now()
+        # Saniye çözünürlüklü damga aynı saniyede ikinci bir senkronda
+        # çakışır: unique artifact_key sayesinde mevcut snapshot kaydı
+        # bulunup EZİLİR ya da IntegrityError → 500. uuid eki ikisini de
+        # engeller.
+        snapshot_token = f"{now.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+        await _store_artifact(
+            session,
+            artifact_key=f"log.snapshot.{year}.{snapshot_token}",
+            module_name="log",
+            document_type="log_workbook",
+            business_key=str(year),
+            version_kind="snapshot",
+            is_live=False,
+            file_name=f"{snapshot_token}-Log-{year}.xlsx",
+            relative_path=Path("log") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{snapshot_token}-Log-{year}.xlsx",
+            mime_type=XLSX_MIME,
+            template_name=LOG_TEMPLATE_NAME,
+            content=content,
+            updated_at=now,
+        )
     live_bundle = await _store_artifact(
         session,
         artifact_key=f"log.live.{year}",
@@ -2565,29 +2697,21 @@ async def sync_log_workbook_artifact(
         version_kind="live",
         is_live=True,
         file_name=f"Log-{year}.xlsx",
-        relative_path=Path("log") / "live" / f"Log-{year}.xlsx",
+        relative_path=live_relative_path,
         mime_type=XLSX_MIME,
         template_name=LOG_TEMPLATE_NAME,
         content=content,
         updated_at=stamp,
         revision=revision,
     )
-    if create_snapshot:
-        now = utc_now()
-        snapshot_stamp = now.strftime("%Y%m%d-%H%M%S")
-        await _store_artifact(
-            session,
-            artifact_key=f"log.snapshot.{year}.{snapshot_stamp}",
-            module_name="log",
-            document_type="log_workbook",
-            business_key=str(year),
-            version_kind="snapshot",
-            is_live=False,
-            file_name=f"{snapshot_stamp}-Log-{year}.xlsx",
-            relative_path=Path("log") / "snapshots" / now.strftime("%Y") / now.strftime("%m") / f"{snapshot_stamp}-Log-{year}.xlsx",
-            mime_type=XLSX_MIME,
-            template_name=LOG_TEMPLATE_NAME,
-            content=content,
-            updated_at=now,
+    try:
+        await asyncio.to_thread(
+            _write_fingerprint_sidecar,
+            _document_root() / live_relative_path,
+            fingerprint,
         )
+    except OSError:
+        # Yan dosya yalnızca hızlandırıcı; yazımı başarısız olursa sonraki
+        # senkron tam üretim yapar, senkronun kendisini bozmamalı.
+        logger.warning("log artifact parmak izi yan dosyası yazılamadı", exc_info=True)
     return live_bundle

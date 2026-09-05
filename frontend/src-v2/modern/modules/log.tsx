@@ -1,5 +1,6 @@
-import { AlertCircle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Search, Upload } from 'lucide-react';
-import { type ChangeEvent, useMemo, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Search, Upload, X } from 'lucide-react';
+import { type ChangeEvent, useContext, useMemo, useRef, useState } from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
 
 import type { ModernLogViewModel } from '@/modern/adapters/log';
 import { LegacyMigrationCenter } from '@/components/LegacyMigrationCenter';
@@ -10,7 +11,7 @@ import { useToast } from '@/lib/toast';
 import { EmbeddedWorkbookPanel } from '@/make/embedded/EmbeddedWorkbookPanel';
 import { lineHasPendingChange, resolveLineDraft } from '@/make/log/lineHelpers';
 import type { LineDraft, RouteDestination } from '@/make/log/types';
-import type { AfgWorkspaceLine } from '@/types';
+import type { AfgWorkspaceLine, DocumentArtifactReconcilePreview } from '@/types';
 import { ModernDrawer } from '@/modern/design-system';
 import { DataPill, EmptyState, LoadingState, ModernModuleShell, ModernReviewBar, ModernSection, ModernStatGrid, shellButtonClass } from './shared';
 import { DocumentPipeline } from './log/DocumentPipeline';
@@ -251,6 +252,16 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
           >
             {state.lotHistoryLoading ? (
               <LoadingState label="Geçmiş yükleniyor" />
+            ) : state.lotHistoryError ? (
+              <EmptyState
+                title="Geçmiş yüklenemedi"
+                message="Audit kayıtları alınırken bir hata oluştu."
+                action={
+                  state.onRetryLotHistory ? (
+                    <button type="button" onClick={state.onRetryLotHistory} className={shellButtonClass('primary')}>Tekrar Dene</button>
+                  ) : undefined
+                }
+              />
             ) : state.lotHistory.length === 0 ? (
               <EmptyState title="Kayıt yok" message="Bu lot için henüz geçmiş kaydı bulunmuyor." />
             ) : (
@@ -279,6 +290,16 @@ export function ModernLogModule({ viewModel }: { viewModel: ModernLogViewModel }
           >
             {state.lotLinesLoading ? (
               <LoadingState label="Satırlar yükleniyor" />
+            ) : state.lotLinesError ? (
+              <EmptyState
+                title="Satırlar yüklenemedi"
+                message="Bağlı AFG kalemleri alınırken bir hata oluştu."
+                action={
+                  state.onRetryLotLines ? (
+                    <button type="button" onClick={state.onRetryLotLines} className={shellButtonClass('primary')}>Tekrar Dene</button>
+                  ) : undefined
+                }
+              />
             ) : state.lotLines.length === 0 ? (
               <EmptyState title="Satır yok" message="Bu lota bağlı satır bulunmuyor." />
             ) : (
@@ -387,46 +408,95 @@ function ModernLogWorkbookImport({
   year: number;
   onImported: () => void | Promise<void>;
 }) {
+  const queryClient = useContext(QueryClientContext);
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  // M3 — önizlemesiz window.confirm + doğrudan import, yanlış dosyayı önizleme
+  // görmeden uyguluyordu; reconcile-preview → blocking_errors → apply akışına
+  // taşındı (Depolama import güvenli akışıyla parite).
+  const [preview, setPreview] = useState<DocumentArtifactReconcilePreview | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
 
   async function onFileSelected(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
-    if (file) await processFile(file);
+    if (file) await previewFile(file);
   }
 
-  async function processFile(file: File) {
+  async function previewFile(file: File) {
     const extension = file.name.toLowerCase().split('.').pop();
     if (extension !== 'xlsx' && extension !== 'xlsm') {
       setStatus({ tone: 'error', message: 'Yalnızca .xlsx veya .xlsm Log çalışma kitabı içe aktarılabilir.' });
       return;
     }
 
-    const accepted = window.confirm(
-      `${file.name} dosyası ${year} Log çalışma alanına uygulanacak. Bu işlem rota ve lot kayıtlarını değiştirebilir. Devam edilsin mi?`,
-    );
-    if (!accepted) return;
+    setBusy(true);
+    setStatus(null);
+    setFileName(file.name);
+    setPendingFile(file);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', file);
+      const result = await apiRequest<DocumentArtifactReconcilePreview>(
+        `/api/v2/log/workbook/reconcile-preview?year=${encodeURIComponent(String(year))}`,
+        { method: 'POST', body: formData },
+      );
+      setPreview(result);
+    } catch (error) {
+      setPreview(null);
+      setPendingFile(null);
+      setStatus({ tone: 'error', message: readImportError(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
 
+  async function applyImport() {
+    if (!preview || !pendingFile || !preview.editable || (preview.blocking_errors || []).length > 0 || busy) return;
     setBusy(true);
     setStatus(null);
     try {
       const formData = new FormData();
-      formData.append('workbook', file);
+      formData.append('workbook', pendingFile);
       await apiRequest(`/api/v2/log/workbook/import?year=${encodeURIComponent(String(year))}`, {
         method: 'POST',
         body: formData,
       });
+      if (queryClient) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['log'] }),
+          queryClient.invalidateQueries({ queryKey: ['depolama'] }),
+          queryClient.invalidateQueries({ queryKey: ['inventory'] }),
+          queryClient.invalidateQueries({ queryKey: ['bootstrap'] }),
+          queryClient.invalidateQueries({ queryKey: ['office-document-launch', 'log'] }),
+          queryClient.invalidateQueries({ queryKey: ['office-document-status', 'log'] }),
+        ]);
+      }
       await onImported();
-      setStatus({ tone: 'success', message: `${file.name} içe aktarıldı. Log çalışma alanı yenilendi.` });
+      setPreview(null);
+      setPendingFile(null);
+      setStatus({ tone: 'success', message: `${fileName || 'Çalışma kitabı'} içe aktarıldı. Log çalışma alanı yenilendi.` });
+      setFileName(null);
+      if (inputRef.current) inputRef.current.value = '';
     } catch (error) {
       setStatus({ tone: 'error', message: readImportError(error) });
     } finally {
       setBusy(false);
     }
   }
+
+  function cancelPreview() {
+    setPreview(null);
+    setPendingFile(null);
+    setFileName(null);
+    setStatus(null);
+    if (inputRef.current) inputRef.current.value = '';
+  }
+
+  const blockingErrors = preview?.blocking_errors || [];
 
   return (
     <ModernSection
@@ -449,7 +519,7 @@ function ModernLogWorkbookImport({
             className={shellButtonClass('secondary')}
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            {busy ? 'İçe aktarılıyor' : 'Excel seç ve içe aktar'}
+            {busy ? 'Önizleniyor' : 'Excel seç'}
           </button>
         </>
       }
@@ -475,13 +545,67 @@ function ModernLogWorkbookImport({
           setDragActive(false);
           if (busy) return;
           const file = Array.from(event.dataTransfer?.files || []).find((f) => /\.(xlsx|xlsm)$/i.test(f.name));
-          if (file) void processFile(file);
+          if (file) void previewFile(file);
         }}
         onClick={() => inputRef.current?.click()}
         className={`mt-2 cursor-pointer rounded-sg-md border border-dashed px-4 py-5 text-center text-sm transition ${dragActive ? 'border-sg-accent bg-sg-accent-soft text-sg-accent-dark' : 'border-sg-border text-sg-text-soft hover:bg-sg-surface-soft'}`}
       >
-        {dragActive ? 'Log Excel dosyasını buraya bırakın (.xlsx / .xlsm)' : 'Excel dosyasını buraya sürükleyin veya tıklayıp seçin. Onay olmadan hiçbir kayıt güncellenmez.'}
+        {dragActive ? 'Log Excel dosyasını buraya bırakın (.xlsx / .xlsm)' : 'Excel dosyasını buraya sürükleyin veya tıklayıp seçin. Önizleme onayından önce hiçbir kayıt güncellenmez.'}
       </div>
+
+      {preview ? (
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/45 px-4 py-6" role="dialog" aria-modal="true" aria-labelledby="modern-log-import-title">
+          <div className="flex max-h-[min(84vh,54rem)] w-full max-w-3xl flex-col overflow-hidden rounded-sg-lg border border-sg-border bg-sg-surface shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-sg-border-soft px-5 py-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sg-accent">Log Excel import — {year}</p>
+                <h2 id="modern-log-import-title" className="mt-1 text-lg font-semibold text-sg-text">Değişiklikleri kontrol et</h2>
+                <p className="mt-1 text-sm text-sg-text-soft">{fileName || 'Seçilen çalışma kitabı'} henüz uygulanmadı.</p>
+              </div>
+              <button type="button" onClick={cancelPreview} className="rounded-sg-md border border-sg-border p-2 text-sg-text-soft hover:bg-sg-surface-soft" aria-label="Import önizlemesini kapat"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              {blockingErrors.length > 0 ? (
+                <div className="rounded-sg-md border border-sg-red/30 bg-sg-red-soft px-4 py-3 text-sm text-sg-red">
+                  <p className="font-semibold">Import engellendi</p>
+                  {blockingErrors.map((importError) => <p key={importError} className="mt-1">{importError}</p>)}
+                </div>
+              ) : null}
+              {(preview.warnings || []).length > 0 ? (
+                <div className="rounded-sg-md border border-sg-amber/40 bg-sg-amber-soft px-4 py-3 text-sm text-sg-amber">
+                  <p className="font-semibold">Uyarılar</p>
+                  {preview.warnings.map((warning) => <p key={warning} className="mt-1">{warning}</p>)}
+                </div>
+              ) : null}
+              <div className="rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3">
+                <p className="text-sm font-semibold text-sg-text">{preview.changes.length} kontrollü değişiklik</p>
+                <div className="mt-3 divide-y divide-sg-border-soft">
+                  {preview.changes.slice(0, 50).map((change) => (
+                    <div key={`${change.sheet}:${change.cell_ref}:${change.label}`} className="grid gap-2 py-3 text-sm sm:grid-cols-[1.2fr_1fr_1fr]">
+                      <span className="font-medium text-sg-text">{change.label}</span>
+                      <span className="text-sg-text-soft">{change.old_value || '—'}</span>
+                      <span className="font-medium text-sg-text">{change.new_value || '—'}</span>
+                    </div>
+                  ))}
+                </div>
+                {preview.changes.length > 50 ? <p className="mt-3 text-xs text-sg-text-soft">İlk 50 değişiklik gösteriliyor.</p> : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-sg-border-soft px-5 py-4">
+              <button type="button" onClick={cancelPreview} className="inline-flex min-h-9 items-center justify-center rounded-sg-md border border-sg-border px-3.5 text-xs font-medium text-sg-text">Vazgeç</button>
+              <button
+                type="button"
+                onClick={() => void applyImport()}
+                disabled={busy || !preview.editable || blockingErrors.length > 0}
+                className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sg-md bg-sg-accent px-3.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                {busy ? 'Uygulanıyor' : 'İçe aktar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </ModernSection>
   );
 }
