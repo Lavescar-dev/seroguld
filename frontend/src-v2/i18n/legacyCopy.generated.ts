@@ -533,6 +533,21 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Fatura Companion (Guld &amp; Sølv / Diverse)": { en: "Invoice companions (Guld & Sølv / Diverse)", da: "Fakturabilag (Guld & Sølv / Diverse)" },
   "Guld &amp; Sølv → Auto": { en: "Guld & Sølv → Auto", da: "Guld & Sølv → Auto" },
   "%25 alış KDV&apos;si (tarihsel belge)": { en: "25% purchase VAT (historical document)", da: "25% købsmoms (historisk dokument)" },
+  "Durum yükleniyor…": { en: "Loading status…", da: "Indlæser status…" },
+  "Durum bilinmiyor": { en: "Status unknown", da: "Status ukendt" },
+  "Yedek durumu okunamadı; backend'e ulaşılıyor olmayabilir.": { en: "Backup status could not be read; the backend may be unreachable.", da: "Backupstatus kunne ikke læses; backend er muligvis ikke tilgængelig." },
+  "Gerçek zamanlama okunamadı; varsayılanla kaydetme kilitli.": { en: "The actual schedule could not be read; saving with defaults is locked.", da: "Den faktiske tidsplan kunne ikke læses; gem med standarder er låst." },
+  "Bu alanlar backend'de fatura satıcı bilgisi olarak saklanır ve": { en: "These fields are stored as the invoice seller details in the backend and", da: "Disse felter gemmes som faktisksælgeroplysninger i backend og" },
+  "ile kalıcılaşır.": { en: "persist them into the document.", da: "gør dem gældende i dokumentet." },
+  "WooCommerce'te Aç": { en: "Open in WooCommerce", da: "Åbn i WooCommerce" },
+  "Gerekçe (zorunlu)": { en: "Reason (required)", da: "Begrundelse (påkrævet)" },
+  "Örn. müşterinin 3 başarılı siparişi var, false positive değerlendirildi": { en: "E.g. the customer has 3 successful orders; assessed as a false positive", da: "F.eks. kunden har 3 vellykkede ordrer; vurderet som falsk positiv" },
+  "Gerekçe yazmadan override gönderilemez.": { en: "An override cannot be submitted without a reason.", da: "En override kan ikke sendes uden begrundelse." },
+  "IP adresi": { en: "IP address", da: "IP-adresse" },
+  "Ham Woo Meta (İnsan Dili)": { en: "Raw Woo meta (human readable)", da: "Rå Woo-meta (læselig)" },
+  "Beklemeye Alınan": { en: "On hold", da: "Sat på hold" },
+  "İade": { en: "Refunded", da: "Refunderet" },
+  "Override kaydı": { en: "Override record", da: "Override-registrering" },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {
