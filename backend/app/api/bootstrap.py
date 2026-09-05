@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,12 +85,17 @@ async def woocommerce_sync_counters(db: AsyncSession, since: datetime) -> tuple:
 @router.get("", response_model=DesktopBootstrapOut)
 async def get_bootstrap(
     db: AsyncSession = Depends(get_db),
-    # Rol denetimi burada, fonksiyon üzerinde yapılır: /api/bootstrap ve
-    # /api/v2/bootstrap aynı fonksiyona delege olduğu için CUSTOMER token'ı
-    # iki uçta da ciro/stok/backup telemetrisini okuyamaz. must_change_password
-    # kapısı require_admin zinciri üzerinden korunmaya devam eder.
+    # Route bağımlılığı /api/bootstrap ucu için rol + must_change_password
+    # kapısını kurar.
     current_user: User = Depends(require_admin),
 ) -> DesktopBootstrapOut:
+    # Gövde içi rol denetimi ZORUNLUDUR: /api/v2/bootstrap (v2.py) bu fonksiyonu
+    # açık argümanla (db=..., current_user=...) çağırır; plain Python çağrısı
+    # signature'daki Depends(require_admin) default'unu ÇÖZÜMLEMEZ. Denetim
+    # yalnız bağımlılıkta kalsaydı CUSTOMER token'ı /api/v2/bootstrap üzerinden
+    # ciro/stok/AI maliyeti/backup telemetrisini okuyabiliyordu.
+    if current_user.role != RoleEnum.ADMIN:
+        raise HTTPException(status_code=403, detail="Bu işlem için admin yetkisi gerekli")
     settings = get_settings()
     now = utc_now()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

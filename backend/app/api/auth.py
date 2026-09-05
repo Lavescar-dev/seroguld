@@ -277,6 +277,19 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Kullanıcı bulunamadı")
 
+    # Şifre değişimi, değişimden ÖNCE verilmiş refresh token'ları geçersiz kılar:
+    # User şemasına token_version eklemeden iat <-> password_changed_at
+    # karşılaştırması aynı garantiyi verir. iat'sız (bu sürüm öncesi) token'lar
+    # da reddedilir; ilgili kullanıcı bir kez yeniden giriş yapar.
+    password_changed_at = user.password_changed_at
+    if password_changed_at is not None:
+        if password_changed_at.tzinfo is None:
+            # SQLite round-tripi tz bilgisini atar; değer zaten UTC duvar saatidir.
+            password_changed_at = password_changed_at.replace(tzinfo=timezone.utc)
+        issued_at = claims.get("iat")
+        if not isinstance(issued_at, (int, float)) or issued_at < int(password_changed_at.timestamp()):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token geçersiz")
+
     access_token = create_access_token(str(user.id), user.role.value)
     refresh_token_value = create_refresh_token(str(user.id), user.role.value)
 

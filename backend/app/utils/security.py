@@ -55,11 +55,17 @@ def create_access_token(subject: str, role: str) -> str:
 
 
 def create_refresh_token(subject: str, role: str) -> str:
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_expire_days)
+    issued_at = datetime.now(timezone.utc)
+    expires_at = issued_at + timedelta(days=settings.jwt_refresh_expire_days)
     payload = {
         "sub": subject,
         "role": role,
         "type": "refresh",
+        # Şifre değişimi, değişimden ÖNCE verilmiş refresh token'ları geçersiz
+        # kılmak için kullanılır: auth.refresh, iat'ı user.password_changed_at
+        # ile karşılaştırır (token_version alanı User şemasına eklenmeden aynı
+        # garantiyi verir).
+        "iat": int(issued_at.timestamp()),
         "exp": expires_at,
     }
     return jwt.encode(payload, settings.jwt_refresh_secret, algorithm="HS256")

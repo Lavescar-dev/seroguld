@@ -5,16 +5,17 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api import auth as auth_module
-from app.api.bootstrap import router as bootstrap_router
+from app.api.bootstrap import get_bootstrap, router as bootstrap_router
 from app.api.deps import require_admin
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.database import Base
 from app.models.enums import RoleEnum
 from app.models.user import User
@@ -178,6 +179,100 @@ def test_bootstrap_state_masks_email_for_non_desktop_and_skips_inactive_admin() 
         await engine.dispose()
 
     asyncio.run(run())
+
+
+def test_password_change_invalidates_refresh_tokens_issued_before_it() -> None:
+    """Şifre değişimi, değişimden ÖNCE verilmiş refresh token'ları ölü doğurur;
+    değişim anında/sonrasında verilmiş token (change-password yanıtındakiler
+    dahil) sorunsuz döner."""
+
+    user = _admin_user("rotate@example.com")
+    settings = get_settings()
+    # SQLite round-tripini simüle et: tz bilgisi atılmış naive UTC duvar saati.
+    changed_at = datetime.now(timezone.utc).replace(microsecond=0)
+    user.password_changed_at = changed_at.replace(tzinfo=None)
+    threshold = int(changed_at.timestamp())
+
+    def _refresh_token(iat: int) -> str:
+        return jwt.encode(
+            {
+                "sub": str(user.id),
+                "role": user.role.value,
+                "type": "refresh",
+                "iat": iat,
+                "exp": changed_at + timedelta(days=1),
+            },
+            settings.jwt_refresh_secret,
+            algorithm="HS256",
+        )
+
+    # Değişimden ÖNCEki saniyede verilmiş token → reddedilir.
+    with pytest.raises(HTTPException) as captured:
+        asyncio.run(
+            auth_module.refresh_token(
+                RefreshRequest(refresh_token=_refresh_token(threshold - 1)),
+                StaticSession(user),  # type: ignore[arg-type]
+            )
+        )
+    assert captured.value.status_code == 401
+
+    # Değişim anında verilmiş token → geçerli.
+    response = asyncio.run(
+        auth_module.refresh_token(
+            RefreshRequest(refresh_token=_refresh_token(threshold)),
+            StaticSession(user),  # type: ignore[arg-type]
+        )
+    )
+    assert response.refresh_token
+
+
+def test_refresh_rejects_legacy_token_without_iat_after_password_change() -> None:
+    """Bu sürüm öncesi verilmiş (iat'sız) refresh token, kullanıcının şifresi
+    bir kez bile değişmişse reddedilir — tek seferlik yeniden giriş yeter."""
+
+    user = _admin_user("legacy@example.com")
+    user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    legacy_claims = {
+        "sub": str(user.id),
+        "role": user.role.value,
+        "type": "refresh",
+        "exp": datetime.now(timezone.utc) + timedelta(days=1),
+    }
+    legacy_token = jwt.encode(legacy_claims, get_settings().jwt_refresh_secret, algorithm="HS256")
+
+    with pytest.raises(HTTPException) as captured:
+        asyncio.run(
+            auth_module.refresh_token(
+                RefreshRequest(refresh_token=legacy_token),
+                StaticSession(user),  # type: ignore[arg-type]
+            )
+        )
+    assert captured.value.status_code == 401
+
+
+def test_bootstrap_delegate_call_rejects_customer_role() -> None:
+    """/api/v2/bootstrap get_bootstrap'i açık argümanla çağırır; signature'daki
+    Depends(require_admin) plain Python çağrısında çözümlenmez. Gövde içi rol
+    denetimi CUSTOMER'ı 403'te kesmeli (ciro/stok/backup telemetrisi sızmasın)."""
+
+    customer = User(
+        id=uuid.uuid4(),
+        email="portal@example.com",
+        name="Portal Customer",
+        role=RoleEnum.CUSTOMER,
+        password_hash=get_password_hash("whatever-long-password"),
+        is_active=True,
+        must_change_password=False,
+    )
+    with pytest.raises(HTTPException) as captured:
+        asyncio.run(
+            get_bootstrap(
+                db=StaticSession(None),  # type: ignore[arg-type]
+                current_user=customer,  # type: ignore[arg-type]
+            )
+        )
+    assert captured.value.status_code == 403
 
 
 def test_bootstrap_route_is_role_gated_by_require_admin() -> None:
