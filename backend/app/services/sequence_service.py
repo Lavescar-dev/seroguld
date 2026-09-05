@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, status
-from sqlalchemy import Integer, cast, func, select
+from sqlalchemy import Integer, and_, cast, func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pos_document import PosDocument
@@ -14,18 +14,6 @@ AFREGNINGS_NUMBER_SEQUENCE_KEY = "afregnings_number"
 INVOICE_NUMBER_SEQUENCE_KEY = "invoice_number"
 
 LEGACY_REFERENCE_SEQUENCE_KEYS = ("product_reference",)
-
-
-def _parse_numeric(value: str | None) -> int | None:
-    if value is None:
-        return None
-    raw = str(value).strip()
-    if not raw or not raw.isdigit():
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
 
 
 async def _get_or_seed_sequence(
@@ -63,22 +51,40 @@ async def infer_product_number_seed(session: AsyncSession) -> int:
 
 
 async def infer_reference_number_seed(session: AsyncSession, *, start: int, window: int) -> int:
+    """Pencere içindeki en büyük sayısal referansı SQL tarafında bulur.
+
+    Eski hali TÜM ``Product.reference_number`` satırlarını çekip Python'da
+    ayrıştırıyordu; display snapshot'ı her üretiminde workspace kurulumu bu
+    fonksiyona düşündüğü için 1 sn'lik polling döngülerinde tablo boyutuyla
+    büyüyen tarama yapıyordu. Artık MAX + pencere filtresi veritabanında
+    çözülür; digit filtresi cast'ten ÖNCE uygulanır (Postgres CAST('abc' AS
+    INTEGER) hata fırlatır; elle girilmiş alphanumeric referanslar eskisi
+    gibi atlanır — yalnız tamamen rakam olan değerler sayılır).
+    """
     lower = max(0, int(start))
     upper = lower + max(100, int(window))
-    max_seen = lower - 1
-
-    refs = (
-        await session.scalars(
-            select(Product.reference_number).where(Product.reference_number.is_not(None))
+    numeric_value = cast(Product.reference_number, Integer)
+    if session.get_bind().dialect.name == "postgresql":
+        # ^[0-9]+$ = tamamen rakam (boş string dahil değil); eski Python
+        # isdigit() kabulünün referans numaraları için eşdeğeri.
+        digit_filter = Product.reference_number.op("~")(r"^[0-9]+$")
+    else:
+        # SQLite: GLOB ile "ilk karakter rakam VE hiç rakam-dışı karakter yok".
+        digit_filter = and_(
+            Product.reference_number.op("GLOB")("[0-9]*"),
+            not_(Product.reference_number.op("GLOB")("*[^0-9]*")),
         )
-    ).all()
-    for ref in refs:
-        parsed = _parse_numeric(ref)
-        if parsed is None:
-            continue
-        if lower <= parsed <= upper and parsed > max_seen:
-            max_seen = parsed
-    return max_seen + 1
+    max_seen = await session.scalar(
+        select(func.max(numeric_value)).where(
+            Product.reference_number.is_not(None),
+            digit_filter,
+            numeric_value >= lower,
+            numeric_value <= upper,
+        )
+    )
+    if max_seen is None:
+        return lower
+    return int(max_seen) + 1
 
 
 async def infer_invoice_number_seed(session: AsyncSession) -> int:

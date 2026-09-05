@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatNumber } from '@/lib/format';
 import { useAppLocale, useAppTranslation, type Locale } from '@/i18n';
-import type { PosDisplaySnapshot, PosWorkspaceGoldRow, PosWorkspaceSilverRow } from '@/types';
+import type { PosDisplaySnapshot, PosWorkspaceExtraRow, PosWorkspaceGoldRow, PosWorkspaceSilverRow } from '@/types';
 
 type CustomerDisplayIdleViewProps = {
   embedded?: boolean;
@@ -49,6 +49,21 @@ function parseDecimalValue(value?: string | number | null) {
 
 function hasWorksheetGram(value?: string | number | null) {
   return parseDecimalValue(value) > 0;
+}
+
+// R2-01 — dinamik kniv/çeyrek satırını (PosWorkspaceExtraRow) T5Row'un 'raw'
+// görünümüne çevirir. Saflık sütununda karat/lodighed anahtarı gösterilir
+// ('22b', '999' gibi — satırın kendi etiketi başlık sütununda zaten var).
+function toExtraRawRow(row: PosWorkspaceExtraRow): DisplayRawRow {
+  return {
+    row_key: row.row_key,
+    label: row.label,
+    lodighed: row.karat,
+    karat: row.metal === 'gold' ? row.karat : null,
+    gram: row.gram,
+    unit_price_dkk: row.unit_price_dkk,
+    line_total_dkk: row.line_total_dkk,
+  };
 }
 
 function useDisplaySceneScale() {
@@ -372,6 +387,9 @@ export function CustomerDisplayLiveView({
   const barRows = useMemo(() => snapshot.bar_rows ?? [], [snapshot.bar_rows]);
   const ptpdRows = useMemo(() => snapshot.ptpd_rows ?? [], [snapshot.ptpd_rows]);
   const knivRows = useMemo(() => snapshot.kniv_rows ?? [], [snapshot.kniv_rows]);
+  // R2-01 — dinamik kniv/çeyrek satırları (22K-2 vb.): sabit grid tanımına
+  // oturmazlar, metal alanına göre GULD/SØLV bölümlerine eklenirler.
+  const extraRows = useMemo(() => snapshot.extra_rows ?? [], [snapshot.extra_rows]);
   const goldFilled = useMemo(() => goldRows.filter((row) => hasWorksheetGram(row.gram)), [goldRows]);
   const silverFilled = useMemo(() => silverRows.filter((row) => hasWorksheetGram(row.gram)), [silverRows]);
   const goldBarFilled = useMemo(
@@ -383,22 +401,35 @@ export function CustomerDisplayLiveView({
     [barRows],
   );
   const ptpdFilled = useMemo(() => ptpdRows.filter((row) => hasWorksheetGram(row.gram)), [ptpdRows]);
+  const goldExtraFilled = useMemo(
+    () => extraRows.filter((row) => row.metal === 'gold' && hasWorksheetGram(row.gram)),
+    [extraRows],
+  );
+  const silverExtraFilled = useMemo(
+    () => extraRows.filter((row) => row.metal === 'silver' && hasWorksheetGram(row.gram)),
+    [extraRows],
+  );
   const knivFilled = useMemo(() => knivRows.filter((row) => hasWorksheetGram(row.total_weight)), [knivRows]);
   const hasAnyRow =
     goldFilled.length > 0 ||
     silverFilled.length > 0 ||
     goldBarFilled.length > 0 ||
     silverBarFilled.length > 0 ||
-    ptpdFilled.length > 0;
+    ptpdFilled.length > 0 ||
+    goldExtraFilled.length > 0 ||
+    silverExtraFilled.length > 0;
   const totalAmount = useMemo(() => {
+    // Birincil kaynak sunucu workspace özetidir (extra satırlar dahil, authoritatif).
     if (snapshot.lines_total_dkk) return snapshot.lines_total_dkk;
-    const sum = [...goldRows, ...silverRows].reduce(
+    // Fallback: tüm bölümlerin satır toplamları — extra satırlar hariç bırakmak
+    // müşteri ekranında "satır var ama toplam eksik" para hatası üretir.
+    const sum = [...goldRows, ...silverRows, ...barRows, ...ptpdRows, ...extraRows].reduce(
       (acc, row) => acc + parseDecimalValue(row.line_total_dkk),
       0,
     );
     if (sum > 0) return sum.toFixed(2);
     return snapshot.final_offer_dkk ?? '0';
-  }, [goldRows, silverRows, snapshot.final_offer_dkk, snapshot.lines_total_dkk]);
+  }, [goldRows, silverRows, barRows, ptpdRows, extraRows, snapshot.final_offer_dkk, snapshot.lines_total_dkk]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
@@ -502,7 +533,7 @@ export function CustomerDisplayLiveView({
           </h1>
         </div>
 
-        {(goldFilled.length > 0 || goldBarFilled.length > 0) && (
+        {(goldFilled.length > 0 || goldBarFilled.length > 0 || goldExtraFilled.length > 0) && (
           <>
             <GroupHeader title="GULD" />
             <div
@@ -515,11 +546,14 @@ export function CustomerDisplayLiveView({
               {goldBarFilled.map((row) => (
                 <T5Row key={row.row_key} kind="raw" row={row} />
               ))}
+              {goldExtraFilled.map((row) => (
+                <T5Row key={row.row_key} kind="raw" row={toExtraRawRow(row)} />
+              ))}
             </div>
           </>
         )}
 
-        {(silverFilled.length > 0 || silverBarFilled.length > 0) && (
+        {(silverFilled.length > 0 || silverBarFilled.length > 0 || silverExtraFilled.length > 0) && (
           <>
             <GroupHeader title="SØLV" />
             <div
@@ -531,6 +565,9 @@ export function CustomerDisplayLiveView({
               ))}
               {silverBarFilled.map((row) => (
                 <T5Row key={row.row_key} kind="raw" row={row} />
+              ))}
+              {silverExtraFilled.map((row) => (
+                <T5Row key={row.row_key} kind="raw" row={toExtraRawRow(row)} />
               ))}
             </div>
           </>

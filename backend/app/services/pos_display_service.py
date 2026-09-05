@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from time import monotonic
 from typing import Any
 
 from sqlalchemy import select
@@ -17,6 +18,37 @@ def _core():
     from app.services import pos_service as core
 
     return core
+
+
+# --- Display workspace bölüm önbelleği -------------------------------------
+#
+# Müşteri ekranı snapshot'ı REST polling (1 sn) ve WS clerk:preview ile sürekli
+# üretilir; her üretim `_attach_display_workspace_rows` -> tam workspace
+# kurulumu (satır yeniden fiyatlandırma, numaralandırma önizlemesi) demektir.
+# Önbellek anahtarı (session_id, workspace_revision): revizyon değişmedikçe
+# bölüm satırları değişmez. TTL kısa tutulur — revizyon atlamadan yapılan oran
+# düzenlemeleri en fazla bir polling döngüsü kadar bayat görebilir.
+DISPLAY_WORKSPACE_CACHE_TTL_SECONDS = 1.0
+_DISPLAY_WORKSPACE_CACHE_MAX_ENTRIES = 128
+_workspace_section_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+
+
+def reset_display_workspace_cache() -> None:
+    """Önbelleği boşaltır (testler ve revizyon dışı değişim sonrası çağrı için)."""
+    _workspace_section_cache.clear()
+
+
+def _display_cache_key(pos_session: PosSession) -> tuple[str, int]:
+    note_payload = _core()._parse_workspace_note_payload(pos_session.notes)
+    revision = int(note_payload.get("workspace_revision") or 1)
+    return (str(pos_session.id), revision)
+
+
+def _evict_display_cache_if_needed() -> None:
+    if len(_workspace_section_cache) <= _DISPLAY_WORKSPACE_CACHE_MAX_ENTRIES:
+        return
+    oldest_key = min(_workspace_section_cache, key=lambda key: _workspace_section_cache[key][0])
+    _workspace_section_cache.pop(oldest_key, None)
 
 
 def _customer_safe_snapshot(snapshot: PosSessionDisplayOut) -> PosSessionDisplayOut:
@@ -140,6 +172,7 @@ def _preview_workspace_totals(
     silver_rows: list[Any],
     bar_rows: list[Any] = (),
     ptpd_rows: list[Any] = (),
+    extra_rows: list[Any] = (),
 ) -> tuple[int, Decimal, Decimal, Decimal]:
     core = _core()
     active_line_count = 0
@@ -147,7 +180,7 @@ def _preview_workspace_totals(
     total_weight = Decimal("0.00")
     total_pure = Decimal("0.00")
 
-    for row in [*gold_rows, *silver_rows, *bar_rows, *ptpd_rows]:
+    for row in [*gold_rows, *silver_rows, *bar_rows, *ptpd_rows, *extra_rows]:
         gram = core.to_decimal(row.gram or Decimal("0"))
         line_total = core.to_decimal(row.line_total_dkk or Decimal("0"))
         purity_percentage = core.to_decimal(row.purity_percentage or Decimal("0"))
@@ -172,6 +205,12 @@ async def _attach_display_workspace_rows(
     snapshot: PosSessionDisplayOut,
 ) -> PosSessionDisplayOut:
     core = _core()
+    cache_key = _display_cache_key(pos_session)
+    now = monotonic()
+    cached = _workspace_section_cache.get(cache_key)
+    if cached is not None and now - cached[0] < DISPLAY_WORKSPACE_CACHE_TTL_SECONDS:
+        return snapshot.model_copy(update=cached[1])
+
     try:
         workspace = await core.build_purchase_workspace(session, pos_session=pos_session)
     except Exception:
@@ -185,20 +224,26 @@ async def _attach_display_workspace_rows(
     # R1-23/R1-24 kapanışı: başlıktaki TOPLAM da CANLI workspace özetinden gelir.
     # Eski hali donmuş line_offer_dkk toplamıydı — oran editöründe değişiklik
     # sonrası grid canlı, TOPLAM bayat (ör. 0,00) görünebiliyordu.
-    return snapshot.model_copy(
-        update={
-            "gold_rows": workspace.gold_rows,
-            "silver_rows": workspace.silver_rows,
-            "bar_rows": workspace.bar_rows,
-            "ptpd_rows": workspace.ptpd_rows,
-            "kniv_rows": kniv_rows,
-            "lines_total_dkk": workspace.summary.total_amount_dkk,
-            "final_offer_dkk": workspace.summary.gross_amount_dkk,
-            "total_weight_grams": workspace.summary.total_weight_grams,
-            "total_pure_gold_grams": workspace.summary.total_pure_gold_grams,
-            "line_count": workspace.summary.active_line_count,
-        }
-    )
+    payload: dict[str, Any] = {
+        "gold_rows": workspace.gold_rows,
+        "silver_rows": workspace.silver_rows,
+        "bar_rows": workspace.bar_rows,
+        "ptpd_rows": workspace.ptpd_rows,
+        "kniv_rows": kniv_rows,
+        # ŞEMA KÖPRÜSÜ BEKLİYOR: PosSessionDisplayOut.extra_rows alanı
+        # schemas/pos.py'ye eklenene kadar model_dump bu anahtarı düşürür
+        # (model_copy doğrulamadan geçirmez). Eklenince kniv/çeyrek satırları
+        # müşteri ekranına akmaya başlar — canvas ve tipler hazır.
+        "extra_rows": workspace.extra_rows,
+        "lines_total_dkk": workspace.summary.total_amount_dkk,
+        "final_offer_dkk": workspace.summary.gross_amount_dkk,
+        "total_weight_grams": workspace.summary.total_weight_grams,
+        "total_pure_gold_grams": workspace.summary.total_pure_gold_grams,
+        "line_count": workspace.summary.active_line_count,
+    }
+    _workspace_section_cache[cache_key] = (now, payload)
+    _evict_display_cache_if_needed()
+    return snapshot.model_copy(update=payload)
 
 
 def _to_clerk_out(pos_session: PosSession) -> PosSessionOutClerk:
@@ -282,6 +327,10 @@ async def build_realtime_display_snapshot(
     preview_silver_rows = list(payload.preview_silver_rows or [])
     preview_bar_rows = list(payload.preview_bar_rows or [])
     preview_ptpd_rows = list(payload.preview_ptpd_rows or [])
+    # ŞEMA KÖPRÜSÜ: preview_extra_rows alanı PosRealtimePreview'e eklenene kadar
+    # api katmanındaki model_validate bu alanı düşürür; getattr ile ileriye dönük
+    # okunur (alan geldiğinde hiçbir değişiklik gerekmeksizin devreye girer).
+    preview_extra_rows = list(getattr(payload, "preview_extra_rows", None) or [])
     preview_has_workspace_rows = (
         payload.preview_gold_rows is not None
         or payload.preview_silver_rows is not None
@@ -360,6 +409,7 @@ async def build_realtime_display_snapshot(
             silver_rows=preview_silver_rows,
             bar_rows=preview_bar_rows,
             ptpd_rows=preview_ptpd_rows,
+            extra_rows=preview_extra_rows,
         )
     document_meta = await core._display_document_meta(session, pos_session.id)
     if not document_meta["document_number"]:
@@ -461,6 +511,10 @@ async def build_realtime_display_snapshot(
             overlay["bar_rows"] = preview_bar_rows
         if payload.preview_ptpd_rows is not None:
             overlay["ptpd_rows"] = preview_ptpd_rows
+        if preview_extra_rows:
+            # ŞEMA KÖPRÜSÜ: PosSessionDisplayOut.extra_rows eklenene kadar no-op
+            # (model_dump bilinmeyen anahtarı serileştirmez).
+            overlay["extra_rows"] = preview_extra_rows
         snapshot = snapshot.model_copy(update=overlay)
     elif not payload.preview_lines:
         snapshot = await _attach_display_workspace_rows(session, pos_session=pos_session, snapshot=snapshot)

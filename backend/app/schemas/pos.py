@@ -105,6 +105,7 @@ class PosRealtimePreview(AppBaseModel):
     customer_cpr: str | None = Field(default=None, max_length=20)
     customer_identity_doc_number: str | None = Field(default=None, max_length=50)
     preview_sequence: int | None = Field(default=None, ge=1)
+    preview_extra_rows: list[PosWorkspaceExtraRowOut] | None = None
     weight_grams: Decimal | None = Field(default=None, ge=0)
     purity_karat: str | None = Field(default=None, max_length=10)
     purity_percentage: Decimal | None = Field(default=None, ge=0, le=100)
@@ -176,6 +177,7 @@ class PosSessionDisplayOut(AppBaseModel):
     customer_identity_doc_number_masked: str | None = None
     preview_sequence: int | None = None
     workspace_revision: int = Field(default=1, ge=1)
+    extra_rows: list[PosWorkspaceExtraRowOut] = Field(default_factory=list)
     product_type: str | None
     metal_type: str | None
     weight_grams: Decimal | None

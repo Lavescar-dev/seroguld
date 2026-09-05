@@ -604,14 +604,16 @@ function previewSilverRowsPayload(rows: EditableSilverRow[]) {
   }));
 }
 
-function computedPreviewBarRowsPayload(rows: EditableBarRow[], marketRates: PosWorkspaceMarketRates) {
+export function computedPreviewBarRowsPayload(rows: EditableBarRow[], marketRates: PosWorkspaceMarketRates) {
   return rows.map((row) => {
     const liveRate = toNumeric(
       row.bar_type === 'gold' ? marketRates.gold_bar_dkk : marketRates.silver_bar_dkk,
     );
     const gram = toNumeric(row.gram);
     const avance = toNumeric(row.avance_percent);
-    const unitPrice = liveRate * (1 - avance / 100);
+    // Backend paritesi (R2-07): mer pris gram başına EKLENEN kr/g düzeltme,
+    // yüzde değil. unit = quantize_2(rate + avance); total = quantize_2(unit × gram).
+    const unitPrice = previewUnitPriceFromMatrix(liveRate, avance);
     return {
       row_key: row.row_key,
       bar_type: row.bar_type,
@@ -622,19 +624,20 @@ function computedPreviewBarRowsPayload(rows: EditableBarRow[], marketRates: PosW
       avance_percent: normalizeTextInput(row.avance_percent || '0'),
       rate_dkk: quantize2(liveRate),
       unit_price_dkk: quantize2(unitPrice),
-      line_total_dkk: quantize2(unitPrice * gram),
+      line_total_dkk: previewLineTotalFromMatrix(unitPrice, gram),
     };
   });
 }
 
-function computedPreviewPtPdRowsPayload(rows: EditablePtPdRow[], marketRates: PosWorkspaceMarketRates) {
+export function computedPreviewPtPdRowsPayload(rows: EditablePtPdRow[], marketRates: PosWorkspaceMarketRates) {
   return rows.map((row) => {
     const liveRate = toNumeric(
       row.metal === 'platinum' ? marketRates.platinum_dkk : marketRates.palladium_dkk,
     );
     const gram = toNumeric(row.gram);
     const avance = toNumeric(row.avance_percent);
-    const unitPrice = liveRate * (1 - avance / 100);
+    // Backend paritesi (R2-07): unit = quantize_2(rate + avance) — kr/g ekleme.
+    const unitPrice = previewUnitPriceFromMatrix(liveRate, avance);
     return {
       row_key: row.row_key,
       metal: row.metal,
@@ -645,7 +648,7 @@ function computedPreviewPtPdRowsPayload(rows: EditablePtPdRow[], marketRates: Po
       avance_percent: normalizeTextInput(row.avance_percent || '0'),
       rate_dkk: quantize2(liveRate),
       unit_price_dkk: quantize2(unitPrice),
-      line_total_dkk: quantize2(unitPrice * gram),
+      line_total_dkk: previewLineTotalFromMatrix(unitPrice, gram),
     };
   });
 }
@@ -656,6 +659,19 @@ function toNumeric(value: string | number | null | undefined) {
 
 function quantize2(value: number) {
   return value.toFixed(2);
+}
+
+// Backend referans formülü: pos_workspace_state._workspace_row_unit_price_from_matrix
+// (R2-07) — ``avance_percent`` YÜZDE DEĞİL, gram başına EKLENEN mer pris'tir (kr/g,
+// negatif olabilir). Efektif birim = quantize_2(rate + avance); satır toplamı
+// quantize_2(KAPALI birim × gram). Birim önce 2 haneye kapatılır, toplam kapalı
+// birimle çarpılır — Decimal semantiğiyle birebir parite için sıralama kritik.
+function previewUnitPriceFromMatrix(liveRate: number, avance: number) {
+  return Number(quantize2(liveRate + avance));
+}
+
+function previewLineTotalFromMatrix(unitPrice: number, gram: number) {
+  return quantize2(unitPrice * gram);
 }
 
 async function openExcelPreviewRoute(route: string, title: string) {
@@ -670,36 +686,64 @@ async function openExcelPreviewRoute(route: string, title: string) {
   }
 }
 
-function computedPreviewGoldRowsPayload(rows: EditableGoldRow[], marketRates: PosWorkspaceMarketRates) {
+export function computedPreviewGoldRowsPayload(rows: EditableGoldRow[], marketRates: PosWorkspaceMarketRates) {
   return rows.map((row) => {
-    // Karat oranı saflığı zaten içerir; sunucu matematiğiyle aynı:
-    // unit = rate × (1 − avance/100), saflık ikinci kez uygulanmaz.
+    // Backend paritesi (pos_workspace_state._workspace_row_unit_price_from_matrix,
+    // R2-07): matris oranı saflığı zaten içerir, ikinci kez uygulanmaz; mer pris
+    // gram başına EKLENEN kr/g düzeltmedir: unit = quantize_2(rate + avance).
     const liveRate = toNumeric(marketRates.gold_rates_dkk?.[normalizeRateKey(row.karat)]);
     const gram = toNumeric(row.gram);
     const avance = toNumeric(row.avance_percent);
-    const unitPrice = liveRate * (1 - avance / 100);
-    const lineTotal = unitPrice * gram;
+    const unitPrice = previewUnitPriceFromMatrix(liveRate, avance);
     return {
       ...previewGoldRowsPayload([row])[0],
       rate_dkk: quantize2(liveRate),
       unit_price_dkk: quantize2(unitPrice),
-      line_total_dkk: quantize2(lineTotal),
+      line_total_dkk: previewLineTotalFromMatrix(unitPrice, gram),
     };
   });
 }
 
-function computedPreviewSilverRowsPayload(rows: EditableSilverRow[], marketRates: PosWorkspaceMarketRates) {
+export function computedPreviewSilverRowsPayload(rows: EditableSilverRow[], marketRates: PosWorkspaceMarketRates) {
   return rows.map((row) => {
+    // Backend paritesi (R2-07): unit = quantize_2(rate + avance) — kr/g ekleme.
     const liveRate = toNumeric(marketRates.silver_rates_dkk?.[normalizeRateKey(row.lodighed)]);
     const gram = toNumeric(row.gram);
     const avance = toNumeric(row.avance_percent);
-    const unitPrice = liveRate * (1 - avance / 100);
-    const lineTotal = unitPrice * gram;
+    const unitPrice = previewUnitPriceFromMatrix(liveRate, avance);
     return {
       ...previewSilverRowsPayload([row])[0],
       rate_dkk: quantize2(liveRate),
       unit_price_dkk: quantize2(unitPrice),
-      line_total_dkk: quantize2(lineTotal),
+      line_total_dkk: previewLineTotalFromMatrix(unitPrice, gram),
+    };
+  });
+}
+
+// R2-01 — dinamik kniv/çeyrek satırlarının müşteri ekranı önizlemesi. Oran
+// metal+karat anahtarından CANLI çözülür ('22b' gibi matris anahtarları doğrudan
+// bakılır), sonra aynı backend paritesi uygulanır: unit = quantize_2(rate + avance).
+export function computedPreviewExtraRowsPayload(rows: EditableExtraRow[], marketRates: PosWorkspaceMarketRates) {
+  return rows.map((row) => {
+    const rateSource = row.metal === 'gold'
+      ? marketRates.gold_rates_dkk?.[row.karat]
+      : marketRates.silver_rates_dkk?.[row.karat];
+    const liveRate = toNumeric(rateSource);
+    const gram = toNumeric(row.gram);
+    const avance = toNumeric(row.avance_percent);
+    const unitPrice = previewUnitPriceFromMatrix(liveRate, avance);
+    return {
+      row_key: row.row_key,
+      kind: row.kind,
+      label: row.label,
+      metal: row.metal,
+      karat: row.karat,
+      purity_percentage: normalizeTextInput(row.purity_percentage || '0'),
+      gram: normalizeTextInput(row.gram || '0'),
+      avance_percent: normalizeTextInput(row.avance_percent || '0'),
+      rate_dkk: quantize2(liveRate),
+      unit_price_dkk: quantize2(unitPrice),
+      line_total_dkk: previewLineTotalFromMatrix(unitPrice, gram),
     };
   });
 }
@@ -1514,6 +1558,7 @@ export function useAlisMakeState(): AlisPageProps {
     silverRows?: EditableSilverRow[];
     barRows?: EditableBarRow[];
     ptpdRows?: EditablePtPdRow[];
+    extraRows?: EditableExtraRow[];
     customerForm?: EditableCustomer;
     newCustomer?: EditableCustomer;
     customerMode?: 'existing' | 'new' | null;
@@ -1547,6 +1592,10 @@ export function useAlisMakeState(): AlisPageProps {
       preview_silver_rows: computedPreviewSilverRowsPayload(options?.silverRows ?? silverRowsRef.current, marketRates),
       preview_bar_rows: computedPreviewBarRowsPayload(options?.barRows ?? barRowsRef.current, marketRates),
       preview_ptpd_rows: computedPreviewPtPdRowsPayload(options?.ptpdRows ?? ptpdRowsRef.current, marketRates),
+      // R2-01: kniv/çeyrek satırları da müşteri ekranına gitsin. ŞEMA NOTU:
+      // PosRealtimePreview.preview_extra_rows alanı schemas/pos.py'ye eklenene
+      // kadar pydantic bu alanı extra='ignore' ile düşürür (A12 köprü notu).
+      preview_extra_rows: computedPreviewExtraRowsPayload(options?.extraRows ?? extraRowsRef.current, marketRates),
     };
   }
 
@@ -2030,7 +2079,10 @@ export function useAlisMakeState(): AlisPageProps {
     }, PREVIEW_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [workspace?.session.id, workspace?.customer.customer_id, customerMode, customerForm, newCustomer, goldRows, silverRows, marketRates]);
+    // bar/ptpd/extra satırları da deps'te: mutasyonlar anında sendClerkPreview
+    // etse bile applyWorkspace rehidrasyonu sonrası ekranın bayat kalmaması için
+    // debounce zinciri bölümlerin hepsini görmeli (extra satırlar eklenmişti).
+  }, [workspace?.session.id, workspace?.customer.customer_id, customerMode, customerForm, newCustomer, goldRows, silverRows, barRows, ptpdRows, extraRows, marketRates]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2245,6 +2297,9 @@ export function useAlisMakeState(): AlisPageProps {
     );
     extraRowsRef.current = nextRows;
     setExtraRows(nextRows);
+    // Extra satırlar da müşteri ekranına canlı yansısın (gold/silver/bar/ptpd ile aynı zincir).
+    const payload = buildPreviewPayload({ extraRows: nextRows });
+    if (payload) sendClerkPreview(payload);
   }
 
   function deleteExtraRow(rowKey: string) {
@@ -2253,6 +2308,8 @@ export function useAlisMakeState(): AlisPageProps {
     const nextRows = extraRowsRef.current.filter((row) => row.row_key !== rowKey);
     extraRowsRef.current = nextRows;
     setExtraRows(nextRows);
+    const payload = buildPreviewPayload({ extraRows: nextRows });
+    if (payload) sendClerkPreview(payload);
   }
 
   // Hesaplayıcı blok aktarımı: çeyrek/kniv toplamını YENİ satır olarak ekler.
@@ -2294,6 +2351,9 @@ export function useAlisMakeState(): AlisPageProps {
     const nextRows = [...extraRowsRef.current, ...created];
     extraRowsRef.current = nextRows;
     setExtraRows(nextRows);
+    // Hesaplayıcıdan gelen yeni satır(lar) da müşteri ekranına canlı gitsin.
+    const payload = buildPreviewPayload({ extraRows: nextRows });
+    if (payload) sendClerkPreview(payload);
   }
 
   function updateNumbering(field: keyof EditableWorkspaceNumbering, value: string) {
