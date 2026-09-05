@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
+import { getActiveLocale } from '@/i18n';
 import { ApiError, apiRequest } from '@/lib/api';
 import { getDesktopStartupState } from '@/lib/desktop';
 import { useToast } from '@/lib/toast';
@@ -17,6 +18,37 @@ import type {
 } from './types';
 
 export type DashboardData = DashboardLegacyScreen;
+
+/** /api/dashboard/calendar satırı: kilit süresi dolan ürün (önümüzdeki 14 gün). */
+export type GdprReleaseItem = {
+  productId: string;
+  productNumber: string;
+  releaseDate: string;
+  daysRemaining: number;
+};
+
+/** Modern pano yüzeyinde eksik gösterilen kaynak adları ('Piyasa oranları' vb.).
+ *  allSettled'da düşen alt istekler daha önce sessizce FALLBACK_* sıfırlarına
+ *  iniyordu; düşüş artık görünür. */
+export type DashboardDegradedSource = 'Piyasa oranları' | 'Son hareketler' | 'Grafikler';
+
+/** Backend paymentMethod enum'u ('bank' | 'cash' | yok) için tek etiket kaynağı.
+ *
+ * Classic tablo sabit 'Banka' basıyordu (nakit alış da Banka görünüyordu),
+ * modern aktivite akışı ise ham İngilizce enum'u yazıyordu; backend kendi
+ * PDF'lerinde 'Kontant'/'Bankoverførsel'e çeviriyor. Katalog anahtarları
+ * henüz yok: inline Türkçe + i18n_pending. */
+export function labelPaymentMethod(value?: string | null): string {
+  if (value === 'cash') return 'Nakit';
+  if (value === 'bank') return 'Banka';
+  return 'Belirtilmedi';
+}
+
+/** lib/format ile aynı locale stratejisi: getActiveLocale tabanlı tek kaynak. */
+function intlLocale() {
+  const locale = getActiveLocale();
+  return locale === 'en' ? 'en-GB' : locale === 'da' ? 'da-DK' : 'tr-TR';
+}
 
 const EMPTY_DASHBOARD_DATA: DashboardLegacyScreen = {
   alisSayisi: 0,
@@ -68,7 +100,7 @@ function numberValue(value: string | number | null | undefined) {
 }
 
 function money(value: number) {
-  return `${new Intl.NumberFormat(document.documentElement.lang || 'tr-TR', {
+  return `${new Intl.NumberFormat(intlLocale(), {
     maximumFractionDigits: 0,
   }).format(value)} DKK`;
 }
@@ -88,7 +120,7 @@ function sliceTrend(points: DashboardTrendPoint[], period: DashboardPeriod) {
 
 function modernActivities(legacy: DashboardLegacyScreen): ModernDashboardViewModel['activities'] {
   return [
-    ...legacy.sonAlislar.map((item) => ({ id: `purchase-${item.id}`, title: `${item.afregningsnr} · ${item.musteri}`, description: `${money(item.total)} · ${item.paymentMethod || 'Ödeme yöntemi belirtilmedi'}`, occurredAt: item.dato, route: '/log', kind: 'purchase' as const })),
+    ...legacy.sonAlislar.map((item) => ({ id: `purchase-${item.id}`, title: `${item.afregningsnr} · ${item.musteri}`, description: `${money(item.total)} · ${labelPaymentMethod(item.paymentMethod)}`, occurredAt: item.dato, route: '/log', kind: 'purchase' as const })),
     ...legacy.sonMusteriler.map((item) => ({ id: `customer-${item.id}`, title: item.navn, description: 'Müşteri kaydı oluşturuldu', occurredAt: item.kayitTarihi, route: '/musteriler', kind: 'customer' as const })),
   ].sort((left, right) => Date.parse(right.occurredAt) - Date.parse(left.occurredAt)).slice(0, 8);
 }
@@ -96,7 +128,7 @@ function modernActivities(legacy: DashboardLegacyScreen): ModernDashboardViewMod
 function chartTrends(charts: DashboardEndpointBundle['charts'], legacy: DashboardLegacyScreen): ModernDashboardViewModel['trend'] {
   const dailyTrend: DashboardTrendPoint[] = charts.stock_flow_30d.map((point) => ({
     key: point.day,
-    label: new Date(`${point.day}T12:00:00`).toLocaleDateString(document.documentElement.lang || 'tr-TR', { day: '2-digit', month: 'short' }),
+    label: new Date(`${point.day}T12:00:00`).toLocaleDateString(intlLocale(), { day: '2-digit', month: 'short' }),
     primary: numberValue(point.purchases_dkk),
     secondary: numberValue(point.removals_dkk),
   }));
@@ -120,6 +152,7 @@ export function mapDashboardOverview(
   marketProfile: DashboardEndpointBundle['market'],
   charts: DashboardEndpointBundle['charts'],
   selectedPeriod: DashboardPeriod = '30d',
+  degradedMarket = false,
 ): ModernDashboardViewModel {
   const confirmation = payload.marketRateConfirmation;
   const market = confirmation.currentRates;
@@ -136,7 +169,9 @@ export function mapDashboardOverview(
         { key: 'platinum', label: 'Platin', value: numberValue(market.platinumDkk), unit: 'DKK/g' },
         { key: 'palladium', label: 'Palladyum', value: numberValue(market.palladiumDkk), unit: 'DKK/g' },
       ],
-      sourceLabel: marketProfile.source === 'manual' ? 'Manuel oran profili' : 'Yerel oran profili',
+      // Oran ucu düştüyse 0'ı gerçek oran gibi göstermemek için kartın kaynağı
+      // açıkça düşüş olarak etiketlenir.
+      sourceLabel: degradedMarket ? 'Oran verisi alınamadı' : marketProfile.source === 'manual' ? 'Manuel oran profili' : 'Yerel oran profili',
       lastUpdatedAt: marketProfile.updated_at ?? marketProfile.last_updated_at ?? payload.generatedAt,
       confirmedToday: confirmation.confirmed,
       confirmedAt: confirmation.confirmedAt,
@@ -165,7 +200,10 @@ export function mapDashboardOverview(
   };
 }
 
-export function mapDashboardFallback(bundle: DashboardEndpointBundle): ModernDashboardViewModel {
+export function mapDashboardFallback(
+  bundle: DashboardEndpointBundle,
+  failures: { market?: boolean; charts?: boolean } = {},
+): ModernDashboardViewModel {
   const { legacy, summary, stock, ops, charts, integrations, market } = bundle;
   const confirmationDate = market.confirmed_for_date;
 
@@ -178,7 +216,7 @@ export function mapDashboardFallback(bundle: DashboardEndpointBundle): ModernDas
         { key: 'platinum', label: 'Platin', value: numberValue(market.platinum_dkk || legacy.platinPrice), unit: 'DKK/g' },
         { key: 'palladium', label: 'Palladyum', value: numberValue(market.palladium_dkk || legacy.palladyumPrice), unit: 'DKK/g' },
       ],
-      sourceLabel: market.source === 'manual' ? 'Manuel oran profili' : 'Yerel oran profili',
+      sourceLabel: failures.market ? 'Oran verisi alınamadı' : market.source === 'manual' ? 'Manuel oran profili' : 'Yerel oran profili',
       lastUpdatedAt: market.updated_at ?? market.last_updated_at ?? null,
       confirmedToday: market.confirmed_today ?? confirmationDate === todayIso(),
       confirmedAt: market.confirmed_at ?? null,
@@ -229,10 +267,14 @@ const FALLBACK_MARKET: DashboardEndpointBundle['market'] = {
   live_enabled: false, source: 'manual', updated_at: null,
 };
 
-async function fetchFallbackBundle(): Promise<DashboardEndpointBundle> {
+async function fetchFallbackBundle(): Promise<{
+  bundle: DashboardEndpointBundle;
+  failures: { market: boolean; charts: boolean };
+}> {
   // Tek uç noktanın 404/500'ü tüm panoyu boşaltmasın: legacy zorunlu, kalanı
   // yumuşak varsayılana düşer (allSettled). Legacy hatası olduğu gibi fırlatılır
-  // ki ApiError.url + status sürüm tanısında görünsün.
+  // ki ApiError.url + status sürüm tanısında görünsün. Düşen alt istekler
+  // failures ile döner — sessiz sıfır yerine görünür düşüş.
   const [legacyResult, summary, stock, ops, charts, integrations, market] = await Promise.allSettled([
     apiRequest<DashboardLegacyScreen>('/api/v2/dashboard'),
     apiRequest<DashboardEndpointBundle['summary']>('/api/dashboard/summary'),
@@ -244,13 +286,16 @@ async function fetchFallbackBundle(): Promise<DashboardEndpointBundle> {
   ]);
   if (legacyResult.status === 'rejected') throw legacyResult.reason;
   return {
-    legacy: legacyResult.value,
-    summary: summary.status === 'fulfilled' ? summary.value : FALLBACK_SUMMARY,
-    stock: stock.status === 'fulfilled' ? stock.value : FALLBACK_STOCK,
-    ops: ops.status === 'fulfilled' ? ops.value : FALLBACK_OPS,
-    charts: charts.status === 'fulfilled' ? charts.value : { stock_flow_30d: [], monthly_profit_12m: [] },
-    integrations: integrations.status === 'fulfilled' ? integrations.value : FALLBACK_INTEGRATIONS,
-    market: market.status === 'fulfilled' ? market.value : FALLBACK_MARKET,
+    bundle: {
+      legacy: legacyResult.value,
+      summary: summary.status === 'fulfilled' ? summary.value : FALLBACK_SUMMARY,
+      stock: stock.status === 'fulfilled' ? stock.value : FALLBACK_STOCK,
+      ops: ops.status === 'fulfilled' ? ops.value : FALLBACK_OPS,
+      charts: charts.status === 'fulfilled' ? charts.value : { stock_flow_30d: [], monthly_profit_12m: [] },
+      integrations: integrations.status === 'fulfilled' ? integrations.value : FALLBACK_INTEGRATIONS,
+      market: market.status === 'fulfilled' ? market.value : FALLBACK_MARKET,
+    },
+    failures: { market: market.status === 'rejected', charts: charts.status === 'rejected' },
   };
 }
 
@@ -263,11 +308,15 @@ export async function fetchModernOverview(period: DashboardPeriod) {
       apiRequest<DashboardEndpointBundle['charts']>('/api/dashboard/charts'),
     ]);
     const legacy = legacyResult.status === 'fulfilled' ? legacyResult.value : EMPTY_DASHBOARD_DATA;
+    const marketFailed = marketResult.status === 'rejected';
     const currentRates = overview.marketRateConfirmation.currentRates;
     const market: DashboardEndpointBundle['market'] = marketResult.status === 'fulfilled'
       ? marketResult.value
       : {
-          eur_dkk_fx: '0',
+          // EUR/DKK'nın gerçek kaynağı bu uçtur; overview'da alternatifi yok.
+          // Uydurma '0' yerine boş bırakılıp kartta 'veri alınamadı' etiketi
+          // gösterilir (sourceLabel degrade).
+          eur_dkk_fx: '',
           gold_24k_dkk: currentRates.goldDkk,
           silver_dkk: currentRates.silverDkk,
           platinum_dkk: currentRates.platinumDkk,
@@ -279,11 +328,26 @@ export async function fetchModernOverview(period: DashboardPeriod) {
     const charts: DashboardEndpointBundle['charts'] = chartsResult.status === 'fulfilled'
       ? chartsResult.value
       : { stock_flow_30d: [], monthly_profit_12m: [] };
-    return { view: mapDashboardOverview(overview, legacy, market, charts, period), legacy };
+    const degraded: DashboardDegradedSource[] = [];
+    if (legacyResult.status === 'rejected') degraded.push('Son hareketler');
+    if (marketFailed) degraded.push('Piyasa oranları');
+    if (chartsResult.status === 'rejected') degraded.push('Grafikler');
+    return {
+      view: mapDashboardOverview(overview, legacy, market, charts, period, marketFailed),
+      legacy,
+      degraded,
+    };
   } catch (error) {
     if (!(error instanceof ApiError) || ![404, 405, 422].includes(error.status)) throw error;
-    const bundle = await fetchFallbackBundle();
-    return { view: mapDashboardFallback(bundle), legacy: bundle.legacy };
+    const { bundle, failures } = await fetchFallbackBundle();
+    return {
+      view: mapDashboardFallback(bundle, failures),
+      legacy: bundle.legacy,
+      degraded: [
+        ...(failures.market ? (['Piyasa oranları'] as DashboardDegradedSource[]) : []),
+        ...(failures.charts ? (['Grafikler'] as DashboardDegradedSource[]) : []),
+      ],
+    };
   }
 }
 
@@ -359,6 +423,46 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
 
   const data = dashboardQuery.data?.legacy ?? legacyQuery.data ?? EMPTY_DASHBOARD_DATA;
 
+  // GDPR takvimi: backend /api/dashboard/calendar ucu (kilit süresi dolan
+  // ürünler) hiçbir yüzeyde kullanılmıyordu; classic pano kartını besler.
+  const calendarQuery = useQuery({
+    queryKey: ['dashboard-calendar'],
+    queryFn: () =>
+      apiRequest<{
+        items: Array<{ product_id: string; product_number: string; gdpr_release_date: string; days_remaining: number }>;
+      }>('/api/dashboard/calendar'),
+    enabled: mode === 'classic',
+    refetchInterval: 300_000,
+  });
+  const gdprReleases: { state: 'loading' | 'ready' | 'error'; items: GdprReleaseItem[] } = {
+    state: calendarQuery.isPending ? 'loading' : calendarQuery.isError ? 'error' : 'ready',
+    items: (calendarQuery.data?.items ?? []).map((item) => ({
+      productId: item.product_id,
+      productNumber: item.product_number,
+      releaseDate: item.gdpr_release_date,
+      daysRemaining: item.days_remaining,
+    })),
+  };
+
+  // Düşen alt kaynaklar (sessiz sıfır değil) yüzeyde işaretlenir; yeni düşen
+  // kaynak için tek uyarı, kaynak düzelince iz temizlenir.
+  const degraded: DashboardDegradedSource[] = dashboardQuery.data?.degraded ?? [];
+  const degradedKey = degraded.join('|');
+  const degradedSeen = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const current = degradedKey ? degradedKey.split('|') : [];
+    for (const source of current) {
+      if (!degradedSeen.current.has(source)) {
+        degradedSeen.current.add(source);
+        toast.warning(`${source} verisi alınamadı — ilgili kart eksik gösterebilir.`);
+      }
+    }
+    for (const source of [...degradedSeen.current]) {
+      if (!current.includes(source)) degradedSeen.current.delete(source);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast kararsız; Set koruması tekrar uyarıyı engeller
+  }, [degradedKey]);
+
   const modernError = buildDashboardErrorParts(dashboardQuery.error ?? null, versionDiagQuery.data);
   // Classic yüzey hatası: legacyQuery.isError'ı yutmak yerine yüzeye çıkar.
   const classicError = buildDashboardErrorParts(legacyQuery.error ?? null, versionDiagQuery.data);
@@ -372,6 +476,10 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
     modernError,
     errorMessage: classicError,
     hasServerData,
+    // Modern yüzeyde eksik gösterilen kaynaklar; 'Piyasa oranları' vb. dolduğunda
+    // ilgili kartta düşüş etiketiyle birlikte kullanılabilir.
+    modernDegraded: degraded,
+    gdprReleases,
     period,
     setPeriod,
     // Sahte saat yok: son yenileme, aktif sorgunun veri aldığı andır; veri hiç
@@ -392,6 +500,8 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
     confirmationMutation.isPending,
     dashboardQuery,
     data,
+    degraded,
+    gdprReleases,
     hasServerData,
     legacyQuery,
     mode,

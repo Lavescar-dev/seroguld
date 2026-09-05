@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -251,6 +252,14 @@ async def operations(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> DashboardOpsOut:
+    """Ops sayaçları iki aşamada hesaplanır.
+
+    Önceki sürüm tüm görünür ürünleri 9 kolonla (photos JSON ve ai_description
+    serbest metni dahil) belleğe alıp Python döngüsünde sayıyordu; pano 60 sn
+    poll ile aynı process'i paylaştığından büyük envanterde tüm istekler
+    gecikiyordu. Artık durum-bazlı sayaçlar tek agregasyon sorgusunda SQL'e
+    iner; yalnız aktif ürünlerin (status, photos, tarihler) kolonları okunur.
+    """
     now = _to_utc(utc_now())
     active_statuses = {
         ProductStatusEnum.PURCHASED,
@@ -258,55 +267,81 @@ async def operations(
         ProductStatusEnum.FOR_SALE,
         ProductStatusEnum.UNDECIDED,
     }
-    rows = await db.execute(
-        select(
-            Product.status,
-            Product.photos,
-            Product.needs_cleaning,
-            Product.ai_description,
-            Product.ai_description_approved,
-            Product.is_published_to_site,
-            Product.is_gdpr_locked,
-            Product.gdpr_release_date,
-            Product.purchase_date,
-        )
-        .where(visible_product_clause())
-    )
+    visible = visible_product_clause()
+    for_sale = Product.status == ProductStatusEnum.FOR_SALE
+    has_ai_description = func.length(func.trim(func.coalesce(Product.ai_description, ""))) > 0
 
-    active_products = 0
+    aggregate = await db.execute(
+        select(
+            func.sum(case((Product.status.in_(active_statuses), 1), else_=0)),
+            func.sum(
+                case(
+                    (and_(Product.status.in_(active_statuses), Product.needs_cleaning.is_(True)), 1),
+                    else_=0,
+                )
+            ),
+            func.sum(case((and_(for_sale, ~has_ai_description), 1), else_=0)),
+            func.sum(case((and_(for_sale, has_ai_description, Product.ai_description_approved.is_not(True)), 1), else_=0)),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            for_sale,
+                            Product.ai_description_approved.is_(True),
+                            Product.is_published_to_site.is_not(True),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Product.status.in_([ProductStatusEnum.IN_INVENTORY, ProductStatusEnum.FOR_SALE]),
+                            Product.is_gdpr_locked.is_not(True),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+        ).where(visible)
+    )
+    (
+        active_products,
+        needs_cleaning_queue,
+        pending_ai_description,
+        pending_ai_approval,
+        pending_publish,
+        ready_for_sale,
+    ) = (int(value or 0) for value in aggregate.one())
+
+    # Fotoğraf JSON'u ancak aktif ürünlerde anlam taşıyor: yalnız o satırlar
+    # okunur (kapak: foto kapsama, satışta fotosuz, bayat GDPR kilidi, yaş).
+    lean_rows = (
+        await db.execute(
+            select(
+                Product.status,
+                Product.photos,
+                Product.is_gdpr_locked,
+                Product.gdpr_release_date,
+                Product.purchase_date,
+            ).where(Product.status.in_(active_statuses), visible)
+        )
+    ).all()
+
     products_with_photo = 0
     for_sale_without_photo = 0
-    needs_cleaning_queue = 0
-    pending_ai_description = 0
-    pending_ai_approval = 0
-    pending_publish = 0
     stale_gdpr_lock = 0
-    ready_for_sale = 0
     total_active_age_days = Decimal("0")
-
-    for (
-        status,
-        photos,
-        needs_cleaning,
-        ai_description,
-        ai_description_approved,
-        is_published_to_site,
-        is_gdpr_locked,
-        gdpr_release_date,
-        purchase_date,
-    ) in rows.all():
-        is_active = status in active_statuses
+    for status, photos, is_gdpr_locked, gdpr_release_date, purchase_date in lean_rows:
         has_photo = _has_any_photo(photos)
-        has_ai_description = bool((ai_description or "").strip())
-
+        if has_photo:
+            products_with_photo += 1
         if status == ProductStatusEnum.FOR_SALE and not has_photo:
             for_sale_without_photo += 1
-        if status == ProductStatusEnum.FOR_SALE and not has_ai_description:
-            pending_ai_description += 1
-        if status == ProductStatusEnum.FOR_SALE and has_ai_description and not bool(ai_description_approved):
-            pending_ai_approval += 1
-        if status == ProductStatusEnum.FOR_SALE and bool(ai_description_approved) and not bool(is_published_to_site):
-            pending_publish += 1
         if (
             status == ProductStatusEnum.PURCHASED
             and bool(is_gdpr_locked)
@@ -314,17 +349,6 @@ async def operations(
             and _to_utc(gdpr_release_date) <= now
         ):
             stale_gdpr_lock += 1
-
-        if not is_active:
-            continue
-
-        active_products += 1
-        if has_photo:
-            products_with_photo += 1
-        if needs_cleaning:
-            needs_cleaning_queue += 1
-        if status in {ProductStatusEnum.IN_INVENTORY, ProductStatusEnum.FOR_SALE} and not bool(is_gdpr_locked):
-            ready_for_sale += 1
         if purchase_date is not None:
             age_days = max(0, (_to_utc(now) - _to_utc(purchase_date)).days)
             total_active_age_days += Decimal(age_days)
@@ -535,7 +559,9 @@ async def integrations(
     )
     last_sync_at = await db.scalar(select(func.max(WooCommerceSyncLog.created_at)))
 
-    backup_latest_at = _find_latest_hourly_backup(settings.backup_root_path())
+    # Yedek taramaları senkron disk IO (glob/stat/read): event loop'u
+    # bloklamamak için iş parçacığına alınır.
+    backup_latest_at = await asyncio.to_thread(_find_latest_hourly_backup, settings.backup_root_path())
     backup_age_minutes = _age_minutes(now, backup_latest_at)
     backup_recent_ok = bool(
         backup_latest_at is not None
@@ -544,7 +570,7 @@ async def integrations(
     )
 
     offsite_enabled = settings.backup_offsite_enabled
-    offsite_last_sync_at = _find_last_offsite_sync(settings.backup_offsite_status_path())
+    offsite_last_sync_at = await asyncio.to_thread(_find_last_offsite_sync, settings.backup_offsite_status_path())
     offsite_age_minutes = _age_minutes(now, offsite_last_sync_at)
     offsite_recent_ok: bool | None = None
     if offsite_enabled:
@@ -554,7 +580,7 @@ async def integrations(
             and offsite_age_minutes <= settings.backup_offsite_max_age_minutes
         )
 
-    restore_drill_last_at = _find_latest_restore_drill(settings.backup_restore_drill_path())
+    restore_drill_last_at = await asyncio.to_thread(_find_latest_restore_drill, settings.backup_restore_drill_path())
     restore_drill_age_hours = _age_hours(now, restore_drill_last_at)
     restore_drill_recent_ok = bool(
         restore_drill_last_at is not None

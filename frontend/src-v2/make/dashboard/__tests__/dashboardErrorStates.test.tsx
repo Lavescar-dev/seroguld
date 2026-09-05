@@ -198,8 +198,8 @@ describe('Classic pano — hata yüzeyi (sıfır dolu sahte pano yok)', () => {
     await screen.findByText(/pano şu an kapalı/);
 
     // Header saati: veri yokken "—" (panel modunda gövde çizilmediği için başka "—" yok)
-    expect(screen.getByText('Son guncelleme: —')).toBeInTheDocument();
-    expect(screen.queryByText(/Son guncelleme: \d/)).not.toBeInTheDocument();
+    expect(screen.getByText('Son güncelleme: —')).toBeInTheDocument();
+    expect(screen.queryByText(/Son güncelleme: \d/)).not.toBeInTheDocument();
   });
 
   it('bayat veri + yenileme hatasında şerit gösterilir, bayat pano sıfırlanmadan kalır', async () => {
@@ -221,7 +221,7 @@ describe('Classic pano — hata yüzeyi (sıfır dolu sahte pano yok)', () => {
     expect(await screen.findByText('Alış Sayısı')).toBeInTheDocument();
     expect(harness.state.lastRefresh).toBeInstanceOf(Date);
     expect(harness.state.errorMessage).toBeNull();
-    expect(screen.getByText(/Son guncelleme: \d/)).toBeInTheDocument();
+    expect(screen.getByText(/Son güncelleme: \d/)).toBeInTheDocument();
 
     // Yenileme başarısız: hata şeridi + Tekrar dene, ama bayat veri durur
     fireEvent.click(screen.getByRole('button', { name: 'Yenile' }));
@@ -257,7 +257,7 @@ describe('Classic pano — hata yüzeyi (sıfır dolu sahte pano yok)', () => {
     expect(screen.getByText('Müşteri kaydı yok')).toBeInTheDocument();
     // Son güncelleme artık gerçek: sahte "—" yok
     expect(harness.state.lastRefresh).toBeInstanceOf(Date);
-    expect(screen.queryByText('Son guncelleme: —')).not.toBeInTheDocument();
-    expect(screen.getByText(/Son guncelleme: \d/)).toBeInTheDocument();
+    expect(screen.queryByText('Son güncelleme: —')).not.toBeInTheDocument();
+    expect(screen.getByText(/Son güncelleme: \d/)).toBeInTheDocument();
   });
 });

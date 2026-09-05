@@ -58,17 +58,29 @@ def test_resolve_period_bounds_supports_all_values():
     start, end = _resolve_period_bounds("all", now)
     assert start is None and end is None
 
+    # 2026-02-28 Cumartesi; Kopenhag kış saati UTC+1 → yerel gece yarısı 23:00Z
     start, end = _resolve_period_bounds("daily", now)
-    assert start == datetime(2026, 2, 28, 0, 0, tzinfo=timezone.utc)
-    assert end == datetime(2026, 3, 1, 0, 0, tzinfo=timezone.utc)
+    assert start == datetime(2026, 2, 27, 23, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 2, 28, 23, 0, tzinfo=timezone.utc)
 
+    # weekly artık ISO takvim haftası: Pazartesi 00:00 Kopenhag → şimdi
     start, end = _resolve_period_bounds("weekly", now)
-    assert start == datetime(2026, 2, 21, 12, 0, tzinfo=timezone.utc)
+    assert start == datetime(2026, 2, 22, 23, 0, tzinfo=timezone.utc)
     assert end == now
 
     start, end = _resolve_period_bounds("monthly", now)
-    assert start == datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
+    assert start == datetime(2026, 1, 31, 23, 0, tzinfo=timezone.utc)
     assert end == now
+
+
+def test_resolve_period_bounds_daily_follows_dst():
+    # Yaz saatinde (CEST, UTC+2) yerel gün UTC gece yarısından 22:00Z'de başlar;
+    # eski UTC-midnight davranışı 02:00'e kayıyordu.
+    now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+
+    start, end = _resolve_period_bounds("daily", now)
+    assert start == datetime(2026, 7, 14, 22, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 7, 15, 22, 0, tzinfo=timezone.utc)
 
 
 def test_csv_export_contains_header_and_rows():
@@ -91,3 +103,112 @@ def test_pdf_export_returns_pdf_payload():
     payload = _build_pdf_content(_sample_rows(), period="monthly", generated_at=now)
     assert payload.startswith(b"%PDF")
     assert len(payload) > 1000
+
+
+def test_xlsx_summary_uses_passed_summary_and_basis_note():
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    from app.schemas.report import ReportSummaryOut
+
+    now = datetime(2026, 2, 28, 12, 0, tzinfo=timezone.utc)
+    # Satır kohortunun kârı 1500; satış-bazlı özet 2500 — dosya özeti geçen
+    # summary'yi (satış tarihi bazlı) kullanmalı.
+    summary = ReportSummaryOut(
+        period_start=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        period_end=now,
+        purchased_count=2,
+        sold_count=1,
+        melted_count=0,
+        total_purchase_value_dkk="17146.09",
+        total_sale_value_dkk="6500.00",
+        total_profit_dkk="2500.00",
+    )
+    payload = _build_xlsx_content(_sample_rows(), period="monthly", generated_at=now, summary=summary)
+    sheet = load_workbook(_io.BytesIO(payload)).active
+    assert "satış tarihi" in str(sheet["A4"].value)
+    assert sheet["H6"].value == "2500.00"
+
+
+def test_summary_excludes_soft_deleted_and_unsold_sale_amounts():
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.api.reports import _summary_for_range
+    from app.database import Base
+    from app.models.enums import ProductStatusEnum
+    from app.models.product import Product
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            start = datetime(2026, 2, 1, tzinfo=timezone.utc)
+            end = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+            def product(number: str, **kwargs) -> Product:
+                return Product(
+                    product_number=number,
+                    product_type="bracelet",
+                    metal_type="silver",
+                    weight_grams=Decimal("10"),
+                    purchase_date=start,
+                    gdpr_release_date=start,
+                    **kwargs,
+                )
+
+            session.add_all(
+                [
+                    # Normal alım — sayılır
+                    product("0100", status=ProductStatusEnum.FOR_SALE, purchase_price_dkk=100),
+                    # Soft-deleted alım — summary ve export popülasyonu dışı
+                    product(
+                        "0101",
+                        status=ProductStatusEnum.FOR_SALE,
+                        purchase_price_dkk=999,
+                        deleted_at=datetime(2026, 2, 2, tzinfo=timezone.utc),
+                    ),
+                    # Satılmış — satış + kâr sayılır
+                    product(
+                        "0102",
+                        status=ProductStatusEnum.SOLD,
+                        purchase_price_dkk=200,
+                        sale_date=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                        sale_price_dkk=500,
+                        profit_dkk=300,
+                    ),
+                    # sale_date dolu ama status FOR_SALE — eski status'suz
+                    # toplam bunu da sayıyordu; artık sayılmaz
+                    product(
+                        "0103",
+                        status=ProductStatusEnum.FOR_SALE,
+                        purchase_price_dkk=300,
+                        sale_date=datetime(2026, 2, 11, tzinfo=timezone.utc),
+                        sale_price_dkk=700,
+                        profit_dkk=400,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            summary = await _summary_for_range(session, start, end)
+
+            assert summary.purchased_count == 3  # soft-deleted hariç
+            assert Decimal(summary.total_purchase_value_dkk) == Decimal("600")  # 100+200+300
+            assert summary.sold_count == 1
+            assert Decimal(summary.total_sale_value_dkk) == Decimal("500")  # yalnız SOLD
+            assert Decimal(summary.total_profit_dkk) == Decimal("300")
+
+            # period=all: satış bazlı alanlar tüm zamanlara bakar
+            all_time = await _summary_for_range(session, None, None)
+            assert all_time.purchased_count == 3
+            assert all_time.sold_count == 1
+            assert Decimal(all_time.total_profit_dkk) == Decimal("300")
+
+        await engine.dispose()
+
+    asyncio.run(run())

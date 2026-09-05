@@ -19,33 +19,36 @@ import {
   Users,
   Zap,
 } from 'lucide-react';
-import type { DashboardData } from './useDashboardMakeState';
+import { formatMoney, formatNumber } from '@/lib/format';
+import { getActiveLocale } from '@/i18n';
+import { labelPaymentMethod, type DashboardData, type GdprReleaseItem } from './useDashboardMakeState';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 const sansStyle = { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" } as const;
 
-// <html lang> boşsa Intl "Invalid language tag" fırlatıyor; hook tarafındaki
-// money() fallback'iyle aynı varsayılan.
-function uiLang() {
-  const lang = document.documentElement.lang;
-  return lang && lang.trim() ? lang : 'tr-TR';
+// lib/format ile aynı tek locale stratejisi: getActiveLocale tabanlı.
+// (Eski hand-rolled uiLang() document.documentElement.lang'i fallback'siz
+// okuyor, dil değişiminde sayılar tutarsızlaşıyordu.)
+function intlLocale() {
+  const locale = getActiveLocale();
+  return locale === 'en' ? 'en-GB' : locale === 'da' ? 'da-DK' : 'tr-TR';
 }
 
 function fmtKr(value: number) {
-  return `${value.toLocaleString(uiLang(), { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK`;
+  return formatMoney(value);
 }
 
 function fmtGram(value: number) {
-  return `${value.toLocaleString(uiLang(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} g`;
+  return formatNumber(value, ' g');
 }
 
+// Saatli lib/format formatDate yerine tablo için yalnız tarih; try/catch ölü
+// koduydu (Date throw etmez) — geçersiz girdi Number.isNaN ile '—' olur.
 function fmtDato(value: string) {
   if (!value) return '—';
-  try {
-    return new Date(value).toLocaleDateString(uiLang(), { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch {
-    return value;
-  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString(intlLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 function KpiCard({
@@ -148,7 +151,7 @@ function DashboardErrorNotice({
         className="flex flex-shrink-0 items-center gap-1.5 border border-red-500/60 bg-red-900/40 px-3 py-1.5 text-xs font-black uppercase tracking-wider text-red-200 transition-colors hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <RefreshCw className={`h-3.5 w-3.5 ${isRetrying ? 'animate-spin' : ''}`} />
-        {isRetrying ? 'Yukleniyor' : 'Tekrar dene'}
+        {isRetrying ? 'Yükleniyor' : 'Tekrar dene'}
       </button>
     </div>
   );
@@ -174,27 +177,44 @@ function DepoPieChart({ pieData }: { pieData: { name: string; gram: number; spot
   const outerR = 65;
   const innerR = 30;
   let startAngle = -Math.PI / 2;
+  // SVG spec: yay başlangıç/bitiş noktaları çakışınca (açı = 2π) arc hiçbir
+  // şey çizmez — tek kategori grafığı komple görünmez yapıyordu. Tam daire
+  // iki yarımyay olarak çizilir.
+  const FULL_CIRCLE = 2 * Math.PI - 1e-9;
 
   const slices = pieData.map((item) => {
     const angle = (item.spot / total) * 2 * Math.PI;
-    const endAngle = startAngle + angle;
-    const x1 = cx + outerR * Math.cos(startAngle);
-    const y1 = cy + outerR * Math.sin(startAngle);
-    const x2 = cx + outerR * Math.cos(endAngle);
-    const y2 = cy + outerR * Math.sin(endAngle);
-    const ix1 = cx + innerR * Math.cos(endAngle);
-    const iy1 = cy + innerR * Math.sin(endAngle);
-    const ix2 = cx + innerR * Math.cos(startAngle);
-    const iy2 = cy + innerR * Math.sin(startAngle);
-    const large = angle > Math.PI ? 1 : 0;
-    const path = [
-      `M ${x1} ${y1}`,
-      `A ${outerR} ${outerR} 0 ${large} 1 ${x2} ${y2}`,
-      `L ${ix1} ${iy1}`,
-      `A ${innerR} ${innerR} 0 ${large} 0 ${ix2} ${iy2}`,
-      'Z',
-    ].join(' ');
-    startAngle = endAngle;
+    let path: string;
+    if (angle >= FULL_CIRCLE) {
+      path = [
+        `M ${cx + outerR} ${cy}`,
+        `A ${outerR} ${outerR} 0 1 1 ${cx - outerR} ${cy}`,
+        `A ${outerR} ${outerR} 0 1 1 ${cx + outerR} ${cy}`,
+        `L ${cx - innerR} ${cy}`,
+        `A ${innerR} ${innerR} 0 1 0 ${cx + innerR} ${cy}`,
+        `A ${innerR} ${innerR} 0 1 0 ${cx - innerR} ${cy}`,
+        'Z',
+      ].join(' ');
+    } else {
+      const endAngle = startAngle + angle;
+      const x1 = cx + outerR * Math.cos(startAngle);
+      const y1 = cy + outerR * Math.sin(startAngle);
+      const x2 = cx + outerR * Math.cos(endAngle);
+      const y2 = cy + outerR * Math.sin(endAngle);
+      const ix1 = cx + innerR * Math.cos(endAngle);
+      const iy1 = cy + innerR * Math.sin(endAngle);
+      const ix2 = cx + innerR * Math.cos(startAngle);
+      const iy2 = cy + innerR * Math.sin(startAngle);
+      const large = angle > Math.PI ? 1 : 0;
+      path = [
+        `M ${x1} ${y1}`,
+        `A ${outerR} ${outerR} 0 ${large} 1 ${x2} ${y2}`,
+        `L ${ix1} ${iy1}`,
+        `A ${innerR} ${innerR} 0 ${large} 0 ${ix2} ${iy2}`,
+        'Z',
+      ].join(' ');
+    }
+    startAngle += angle;
     return { ...item, path };
   });
 
@@ -276,6 +296,8 @@ type MakeDashboardPageProps = {
   errorMessage: string | null;
   /** Sunucudan hiç veri gelmediyse false → sıfır dolu pano yerine ayrı durum çizilir. */
   hasServerData: boolean;
+  /** GDPR takvim yüzeyi (/api/dashboard/calendar); beslenmiyorsa kart hiç çizilmez. */
+  gdprReleases?: { state: 'loading' | 'ready' | 'error'; items: GdprReleaseItem[] };
 };
 
 export function MakeDashboardPage({
@@ -286,6 +308,7 @@ export function MakeDashboardPage({
   onNavigate,
   errorMessage,
   hasServerData,
+  gdprReleases,
 }: MakeDashboardPageProps) {
   const spotFark = data.depoSpotDeger - data.depoAlisDeger;
   const spotFarkPct = data.depoAlisDeger > 0 ? (spotFark / data.depoAlisDeger) * 100 : 0;
@@ -315,10 +338,10 @@ export function MakeDashboardPage({
             }`}
             style={monoStyle}
           >
-            {!hasServerData && errorMessage ? 'Baglanti hatasi' : isRefreshing ? 'Canli yenileniyor' : hasServerData ? 'Canli bagli' : 'Baglaniyor'}
+            {!hasServerData && errorMessage ? 'Bağlantı hatası' : isRefreshing ? 'Canlı yenileniyor' : hasServerData ? 'Canlı bağlı' : 'Bağlanıyor'}
           </span>
           <p className="hidden text-xs text-brand-500 sm:block" style={monoStyle}>
-            Son guncelleme: {lastRefresh ? lastRefresh.toLocaleTimeString(uiLang()) : '—'}
+            Son güncelleme: {lastRefresh ? lastRefresh.toLocaleTimeString(intlLocale()) : '—'}
           </p>
           <button
             onClick={onRefresh}
@@ -326,7 +349,7 @@ export function MakeDashboardPage({
             className="flex items-center gap-1.5 border border-brand-600 px-3 py-1.5 text-xs font-bold text-brand-300 transition-colors hover:bg-brand-800"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            {isRefreshing ? 'Yukleniyor' : 'Yenile'}
+            {isRefreshing ? 'Yükleniyor' : 'Yenile'}
           </button>
         </div>
       </div>
@@ -358,7 +381,7 @@ export function MakeDashboardPage({
                 <div>
                   <p className="text-xs font-bold text-brand-400">{market.label}</p>
                   <p className={`font-black ${market.color}`} style={monoStyle}>
-                    {market.price.toLocaleString(uiLang())} DKK
+                    {fmtKr(market.price)}
                   </p>
                 </div>
               </div>
@@ -373,7 +396,9 @@ export function MakeDashboardPage({
             value={data.alisSayisi}
             sub={fmtKr(data.alisToplamKr)}
             color="amber"
-            onClick={() => onNavigate('/')}
+            // AFG alış listesi: modern varyantın purchase aktivite hedefiyle aynı.
+            // '/' POS ekranıdır; liste görmek isteyen kasiyeri yanlış ekrana düşürüyordu.
+            onClick={() => onNavigate('/log')}
           />
           <KpiCard
             icon={<Users className="h-5 w-5" />}
@@ -498,7 +523,7 @@ export function MakeDashboardPage({
               title="Son Alışlar"
               action={
                 <button
-                  onClick={() => onNavigate('/')}
+                  onClick={() => onNavigate('/log')}
                   className="flex items-center gap-1 text-xs font-bold text-brand-400 transition-colors hover:text-amber-400"
                 >
                   Tümü <ArrowRight className="h-3 w-3" />
@@ -534,7 +559,10 @@ export function MakeDashboardPage({
                       {data.sonAlislar.map((alis, index) => (
                         <tr
                           key={alis.id}
-                          className={`transition-colors hover:bg-brand-50 ${
+                          // Satır AFG listesine gider: hover tıklanabilir hissi
+                          // verip ölü duruyordu (modern aktivite satırları gibi).
+                          onClick={() => onNavigate('/log')}
+                          className={`cursor-pointer transition-colors hover:bg-brand-50 ${
                             index % 2 === 1 ? 'bg-brand-50/40' : 'bg-white'
                           }`}
                         >
@@ -551,8 +579,11 @@ export function MakeDashboardPage({
                             {fmtKr(alis.total)}
                           </td>
                           <td className="border border-brand-200 px-3 py-2 text-center">
+                            {/* Ham 'bank'/'cash' enum'u ya da sabit 'Banka' değil:
+                                backend ödeme yöntemi etiketi (nakit alışta Banka
+                                yazan yanlış finansal bilgi düzeltildi). */}
                             <span className="border border-sky-300 bg-sky-100 px-1.5 py-0.5 text-xs font-black text-sky-700">
-                              Banka
+                              {labelPaymentMethod(alis.paymentMethod)}
                             </span>
                           </td>
                         </tr>
@@ -724,7 +755,12 @@ export function MakeDashboardPage({
                     .join('')
                     .toUpperCase();
                   return (
-                    <div key={customer.id} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-brand-50">
+                    // Hover'ın vaat ettiği tıklama: müşteri kaydını açar.
+                    <div
+                      key={customer.id}
+                      onClick={() => onNavigate('/musteriler')}
+                      className="flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-brand-50"
+                    >
                       <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center bg-brand-800 text-xs font-black text-amber-400" style={monoStyle}>
                         {initials || '?'}
                       </span>
@@ -740,13 +776,66 @@ export function MakeDashboardPage({
           </div>
         </div>
 
+        {/* Backend /api/dashboard/calendar artık pano yüzeyine bağlı: kilit
+            süresi dolan (önümüzdeki 14 gün) ürünler satılabilir olduğu an
+            kasiyerin gözünün önünde olur. */}
+        {gdprReleases ? (
+          <div className="overflow-hidden border-2 border-brand-300 bg-white">
+            <SectionHeader
+              icon={<ShieldAlert className="h-4 w-4" />}
+              title="Yaklaşan GDPR serbest bırakma (14 gün)"
+              action={
+                <button
+                  onClick={() => onNavigate('/depolama')}
+                  className="flex items-center gap-1 text-xs font-bold text-brand-400 transition-colors hover:text-amber-400"
+                >
+                  Depolama <ArrowRight className="h-3 w-3" />
+                </button>
+              }
+            />
+            {gdprReleases.state === 'loading' ? (
+              <div className="flex items-center justify-center py-6 text-xs font-bold text-brand-400">Yükleniyor…</div>
+            ) : gdprReleases.state === 'error' ? (
+              <div className="flex items-center justify-center py-6 text-xs font-bold text-red-600">GDPR takvimi alınamadı</div>
+            ) : gdprReleases.items.length === 0 ? (
+              <div className="flex items-center justify-center py-6 text-xs font-bold text-brand-400">Önümüzdeki 14 günde kilit süresi dolan ürün yok</div>
+            ) : (
+              <div className="divide-y divide-brand-100">
+                {gdprReleases.items.map((item) => (
+                  <div
+                    key={item.productId}
+                    onClick={() => onNavigate('/depolama')}
+                    className="flex cursor-pointer items-center gap-3 px-4 py-2 transition-colors hover:bg-brand-50"
+                  >
+                    <span className="flex-shrink-0 font-black text-brand-800" style={monoStyle}>
+                      {item.productNumber}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-brand-500" style={monoStyle}>
+                      {fmtDato(item.releaseDate)}
+                    </span>
+                    <span
+                      className={`flex-shrink-0 border px-1.5 py-0.5 text-xs font-black ${
+                        item.daysRemaining <= 3
+                          ? 'border-amber-300 bg-amber-50 text-amber-700'
+                          : 'border-brand-200 bg-brand-50 text-brand-600'
+                      }`}
+                    >
+                      {item.daysRemaining === 0 ? 'bugün' : `${item.daysRemaining} gün`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+
         <div className="flex items-center justify-between border border-brand-200 bg-white px-4 py-2.5">
           <div className="flex items-center gap-2">
             <Layers className="h-3.5 w-3.5 text-brand-400" />
             <span className="text-xs font-black uppercase tracking-wider text-brand-500">Sero Guld · Kuyumcu Yönetim Sistemi</span>
           </div>
           <span className="text-xs text-brand-400" style={monoStyle}>
-            {new Date().toLocaleDateString(uiLang())} — v{data.alisSayisi + data.depoToplamItem + data.musteriSayisi} kayıt
+            {new Date().toLocaleDateString(intlLocale())} — v{data.alisSayisi + data.depoToplamItem + data.musteriSayisi} kayıt
           </span>
         </div>
       </div>

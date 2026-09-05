@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import os
 from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -42,6 +47,10 @@ from app.utils.helpers import to_decimal, utc_now
 DASHBOARD_TIMEZONE_NAME = "Europe/Copenhagen"
 DASHBOARD_TIMEZONE = ZoneInfo(DASHBOARD_TIMEZONE_NAME)
 MONEY_QUANTUM = Decimal("0.01")
+
+logger = logging.getLogger(__name__)
+
+DESKTOP_BACKUP_CONFIG_FILE = "backup-settings.v1.json"
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -240,26 +249,66 @@ def _inventory_snapshot(
     )
 
 
+def _desktop_backup_config_candidates(settings: Settings) -> list[Path]:
+    """Desktop backup config'in olası konumları (desktop/src-tauri backup.rs ile aynı öncelik).
+
+    Desktop PROGRAMDATA/SeroGuldCRM/config altına yazar; eski parent.parent
+    türetmesi yalnızca varsayılan backup_root düzeniyle eşleştiği için artık
+    yedek konum ve açık uyarıyla okunur.
+    """
+    candidates: list[Path] = []
+    program_data = os.environ.get("SEROGULD_PROGRAM_DATA") or os.environ.get("PROGRAMDATA")
+    if program_data and program_data.strip():
+        candidates.append(Path(program_data.strip()) / "SeroGuldCRM" / "config" / DESKTOP_BACKUP_CONFIG_FILE)
+    candidates.append(settings.backup_root_path().parent.parent / "config" / DESKTOP_BACKUP_CONFIG_FILE)
+    return candidates
+
+
+def _read_desktop_offsite_state(settings: Settings) -> tuple[bool, datetime | None]:
+    """Desktop config'inden offsite hedefini ve en yeni .sgbackup zamanını okur.
+
+    Hata sınıfları ayrıştırılır: dosya yok normal durum (bilgi), bozuk JSON /
+    okuma izni sorunu ise uyarıdır — daha önce hepsi sessizce 'offsite kapalı'
+    olarak yutuluyordu ve nedeni hiçbir logda görünmüyordu.
+    """
+    candidates = _desktop_backup_config_candidates(settings)
+    config_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if config_path is None:
+        logger.info(
+            "Desktop backup config bulunamadı (offsite desktop katkısı yok): %s",
+            ", ".join(str(candidate) for candidate in candidates),
+        )
+        return False, None
+
+    try:
+        configured = json.loads(config_path.read_text(encoding="utf-8")).get("destinationDir")
+    except json.JSONDecodeError as error:
+        logger.warning("Desktop backup config bozuk JSON, okunamadı: %s (%s)", config_path, error)
+        return False, None
+    except OSError as error:
+        logger.warning("Desktop backup config okunamadı: %s (%s)", config_path, error)
+        return False, None
+
+    if not configured:
+        return False, None
+
+    destination = Path(str(configured))
+    desktop_offsite_latest: datetime | None = None
+    try:
+        candidates_backup = list(destination.glob("*.sgbackup")) if destination.is_dir() else []
+        if candidates_backup:
+            newest = max(candidates_backup, key=lambda path: path.stat().st_mtime)
+            desktop_offsite_latest = datetime.fromtimestamp(newest.stat().st_mtime, tz=timezone.utc)
+    except OSError as error:
+        logger.warning("Offsite hedefi taranamadı (%s): %s", destination, error)
+
+    return True, desktop_offsite_latest
+
+
 def _backup_health(settings: Settings, *, now: datetime) -> DashboardBackupHealthOut:
     latest_backup = find_latest_hourly_backup(settings.backup_root_path())
     backup_age = age_minutes(now, latest_backup)
-    desktop_config_path = settings.backup_root_path().parent.parent / "config" / "backup-settings.v1.json"
-    desktop_offsite_enabled = False
-    desktop_offsite_latest: datetime | None = None
-    try:
-        import json
-        from pathlib import Path
-
-        configured = json.loads(desktop_config_path.read_text(encoding="utf-8")).get("destinationDir")
-        if configured:
-            destination = Path(str(configured))
-            desktop_offsite_enabled = True
-            candidates = list(destination.glob("*.sgbackup")) if destination.is_dir() else []
-            if candidates:
-                newest = max(candidates, key=lambda path: path.stat().st_mtime)
-                desktop_offsite_latest = datetime.fromtimestamp(newest.stat().st_mtime, tz=timezone.utc)
-    except (OSError, ValueError, TypeError):
-        pass
+    desktop_offsite_enabled, desktop_offsite_latest = _read_desktop_offsite_state(settings)
     offsite_enabled = bool(settings.backup_offsite_enabled or desktop_offsite_enabled)
     last_offsite = desktop_offsite_latest or find_last_offsite_sync(settings.backup_offsite_status_path())
     offsite_age = age_minutes(now, last_offsite)
@@ -403,7 +452,8 @@ async def build_dashboard_overview(
             lastSyncedAt=last_synced_at,
             latestFailedDocumentCreatedAt=latest_failed_document_created_at,
         ),
-        backupHealth=_backup_health(effective_settings, now=effective_now),
+        # Disk taraması (glob/stat/read) event loop'u bloklamasın.
+        backupHealth=await asyncio.to_thread(_backup_health, effective_settings, now=effective_now),
         marketRateConfirmation=await build_market_rate_confirmation_state(
             db,
             now=effective_now,

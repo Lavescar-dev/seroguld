@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable
 
@@ -18,7 +19,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
+from app.services.dashboard_overview import DASHBOARD_TIMEZONE, copenhagen_business_date
 from app.services.pos_value_helpers import display_metal_type_da, display_product_type_da
+from app.services.product_service import visible_product_clause
 from app.database import get_db
 from app.models.enums import ProductStatusEnum
 from app.models.product import Product
@@ -26,6 +29,9 @@ from app.schemas.report import ReportSummaryOut
 from app.utils.helpers import utc_now
 
 router = APIRouter()
+
+# period=all exportunda bellek/event-loop yükünü sınırlamak için satır üst sınırı.
+EXPORT_MAX_ROWS = 50_000
 
 EXPORT_HEADERS = [
     ("product_number", "Ürün No"),
@@ -39,47 +45,77 @@ EXPORT_HEADERS = [
 ]
 
 
-async def _summary_for_range(db: AsyncSession, start, end) -> ReportSummaryOut:
+async def _summary_for_range(db: AsyncSession, start: datetime | None, end: datetime | None) -> ReportSummaryOut:
+    """Dönem özeti; start/end None ise tüm zamanlar (export period=all) ölçülür.
+
+    Popülasyon notları:
+    - Her sorgu visible_product_clause() uygular: soft-deleted ürünler
+      dashboard uçlarıyla aynı popülasyonda kalır.
+    - Satış ve kâr toplamları status=SOLD + sale_date aralığına bakar —
+      sold_count ve dashboard /profit ile aynı popülasyon (daha önce
+      status'suz sale_date toplamı iki farklı popülasyon karıştırıyordu).
+    """
+    visible = visible_product_clause()
+    purchase_window = (
+        (Product.purchase_date >= start, Product.purchase_date < end)
+        if start and end
+        else tuple()
+    )
+    sale_window = (
+        (Product.sale_date >= start, Product.sale_date < end)
+        if start and end
+        else (Product.sale_date.is_not(None),)
+    )
+    melt_window = (
+        (Product.melt_date >= start, Product.melt_date < end)
+        if start and end
+        else (Product.melt_date.is_not(None),)
+    )
+
     purchased_count = await db.scalar(
-        select(func.count(Product.id)).where(Product.purchase_date >= start, Product.purchase_date < end)
+        select(func.count(Product.id)).where(*purchase_window, visible)
     )
     sold_count = await db.scalar(
         select(func.count(Product.id)).where(
             Product.status == ProductStatusEnum.SOLD,
-            Product.sale_date >= start,
-            Product.sale_date < end,
+            *sale_window,
+            visible,
         )
     )
     melted_count = await db.scalar(
         select(func.count(Product.id)).where(
             Product.status == ProductStatusEnum.MELTED,
-            Product.melt_date >= start,
-            Product.melt_date < end,
+            *melt_window,
+            visible,
         )
     )
 
     purchase_total = await db.scalar(
         select(func.coalesce(func.sum(Product.purchase_price_dkk), Decimal("0"))).where(
-            Product.purchase_date >= start,
-            Product.purchase_date < end,
+            *purchase_window,
+            visible,
         )
     )
     sale_total = await db.scalar(
         select(func.coalesce(func.sum(Product.sale_price_dkk), Decimal("0"))).where(
-            Product.sale_date >= start,
-            Product.sale_date < end,
+            Product.status == ProductStatusEnum.SOLD,
+            *sale_window,
+            visible,
         )
     )
     profit_total = await db.scalar(
         select(func.coalesce(func.sum(Product.profit_dkk), Decimal("0"))).where(
-            Product.sale_date >= start,
-            Product.sale_date < end,
+            Product.status == ProductStatusEnum.SOLD,
+            *sale_window,
+            visible,
         )
     )
 
     return ReportSummaryOut(
-        period_start=start,
-        period_end=end,
+        # period=all için şema datetime beklediğinden tüm-zamanlar aralığı
+        # epoch → şimdi olarak etiketlenir.
+        period_start=start or datetime(1970, 1, 1, tzinfo=timezone.utc),
+        period_end=end or _report_to_utc(utc_now()),
         purchased_count=int(purchased_count or 0),
         sold_count=int(sold_count or 0),
         melted_count=int(melted_count or 0),
@@ -89,14 +125,22 @@ async def _summary_for_range(db: AsyncSession, start, end) -> ReportSummaryOut:
     )
 
 
+def _report_to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _local_day_start_utc(day) -> datetime:
+    return datetime.combine(day, time.min, tzinfo=DASHBOARD_TIMEZONE).astimezone(timezone.utc)
+
+
 @router.get("/daily", response_model=ReportSummaryOut)
 async def daily(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> ReportSummaryOut:
-    now = utc_now()
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=1)
+    start, end = _resolve_period_bounds("daily", utc_now())
     return await _summary_for_range(db, start, end)
 
 
@@ -105,9 +149,8 @@ async def weekly(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> ReportSummaryOut:
-    now = utc_now()
-    start = now - timedelta(days=7)
-    return await _summary_for_range(db, start, now)
+    start, end = _resolve_period_bounds("weekly", utc_now())
+    return await _summary_for_range(db, start, end)
 
 
 @router.get("/monthly", response_model=ReportSummaryOut)
@@ -115,23 +158,31 @@ async def monthly(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> ReportSummaryOut:
-    now = utc_now()
-    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return await _summary_for_range(db, start, now)
+    start, end = _resolve_period_bounds("monthly", utc_now())
+    return await _summary_for_range(db, start, end)
 
 
 def _resolve_period_bounds(period: str, now: datetime) -> tuple[datetime | None, datetime | None]:
+    """Dönem sınırları — Europe/Copenhagen iş günü (pano overview ile aynı semantik).
+
+    Önceki sürüm UTC takvim sınırı kullanıyordu (yaz saatinde yerel gün
+    02:00'e kayıyor, overview ise yerel günü ölçüyordu) ve weekly üst üste
+    binen now-7d yuvarlayan pencereydi (aylık özetle karşılaştırılamaz).
+    weekly artık ISO takvim haftasıdır: Pazartesi 00:00 yerel → şimdi.
+    """
     if period == "all":
         return None, None
+    business_date = copenhagen_business_date(now)
     if period == "daily":
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1)
-        return start, end
+        return (
+            _local_day_start_utc(business_date),
+            _local_day_start_utc(business_date + timedelta(days=1)),
+        )
     if period == "weekly":
-        return now - timedelta(days=7), now
+        monday = business_date - timedelta(days=business_date.weekday())
+        return _local_day_start_utc(monday), _report_to_utc(now)
     if period == "monthly":
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return start, now
+        return _local_day_start_utc(business_date.replace(day=1)), _report_to_utc(now)
     raise ValueError(f"Bilinmeyen period: {period}")
 
 
@@ -219,12 +270,37 @@ def _build_csv_content(records: list[Any]) -> str:
     return output.getvalue()
 
 
-def _build_xlsx_content(records: list[Any], period: str, generated_at: datetime) -> bytes:
+def _summary_totals(records: list[Any], summary: ReportSummaryOut | None) -> dict[str, Any]:
+    """Özet bloğu: verildiğinde satış-tarihi bazlı summary kullanılır.
+
+    Satır listesi alım kohortudur; özet ise /daily /monthly uçlarıyla aynı
+    sale_date + status=SOLD bazlıdır. İki sayı aynı periyot etiketinde
+    farklıbaz ölçtüğü için baz dosyada açıkça yazılır.
+    """
+    if summary is not None:
+        return {
+            "purchased_count": summary.purchased_count,
+            "sold_count": summary.sold_count,
+            "melted_count": summary.melted_count,
+            "total_purchase_value_dkk": summary.total_purchase_value_dkk,
+            "total_sale_value_dkk": summary.total_sale_value_dkk,
+            "total_profit_dkk": summary.total_profit_dkk,
+        }
+    return _compute_export_totals(records)
+
+
+def _build_xlsx_content(
+    records: list[Any],
+    period: str,
+    generated_at: datetime,
+    summary: ReportSummaryOut | None = None,
+    truncated: bool = False,
+) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Rapor"
 
-    totals = _compute_export_totals(records)
+    totals = _summary_totals(records, summary)
     generated_label = generated_at.strftime("%Y-%m-%d %H:%M")
 
     sheet["A1"] = "SERO GULD CRM RAPORU"
@@ -232,8 +308,11 @@ def _build_xlsx_content(records: list[Any], period: str, generated_at: datetime)
     sheet.merge_cells("A1:H1")
     sheet["A2"] = f"Periyot: {period}"
     sheet["A3"] = f"Oluşturulma: {generated_label}"
+    sheet["A4"] = "Özet baz: satış tarihi (status=SOLD) · Tablo: alım kaydına göre ürün listesi"
+    if truncated:
+        sheet["A5"] = f"Not: Dosya boyutu için ilk {EXPORT_MAX_ROWS} satır alındı; özet tüm kayıtları kapsar."
 
-    summary_row = 5
+    summary_row = 7 if truncated else 6
     sheet[f"A{summary_row}"] = "Alım"
     sheet[f"B{summary_row}"] = totals["purchased_count"]
     sheet[f"C{summary_row}"] = "Satış"
@@ -243,7 +322,7 @@ def _build_xlsx_content(records: list[Any], period: str, generated_at: datetime)
     sheet[f"G{summary_row}"] = "Toplam Kâr"
     sheet[f"H{summary_row}"] = totals["total_profit_dkk"]
 
-    header_row = 7
+    header_row = summary_row + 2
     for idx, (_, title) in enumerate(EXPORT_HEADERS, start=1):
         cell = sheet.cell(row=header_row, column=idx, value=title)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -264,7 +343,13 @@ def _build_xlsx_content(records: list[Any], period: str, generated_at: datetime)
     return payload.getvalue()
 
 
-def _build_pdf_content(records: list[Any], period: str, generated_at: datetime) -> bytes:
+def _build_pdf_content(
+    records: list[Any],
+    period: str,
+    generated_at: datetime,
+    summary: ReportSummaryOut | None = None,
+    truncated: bool = False,
+) -> bytes:
     payload = io.BytesIO()
     document = SimpleDocTemplate(
         payload,
@@ -276,7 +361,7 @@ def _build_pdf_content(records: list[Any], period: str, generated_at: datetime) 
     )
     styles = getSampleStyleSheet()
 
-    totals = _compute_export_totals(records)
+    totals = _summary_totals(records, summary)
     generated_label = generated_at.strftime("%Y-%m-%d %H:%M")
 
     elements: list[Any] = []
@@ -284,6 +369,19 @@ def _build_pdf_content(records: list[Any], period: str, generated_at: datetime) 
     elements.append(Spacer(1, 8))
     elements.append(Paragraph(f"Periyot: {period}", styles["Normal"]))
     elements.append(Paragraph(f"Oluşturulma: {generated_label}", styles["Normal"]))
+    elements.append(
+        Paragraph(
+            "Özet baz: satış tarihi (status=SOLD) · Tablo: alım kaydına göre ürün listesi",
+            styles["Normal"],
+        )
+    )
+    if truncated:
+        elements.append(
+            Paragraph(
+                f"Not: Dosya boyutu için ilk {EXPORT_MAX_ROWS} satır alındı; özet tüm kayıtları kapsar.",
+                styles["Italic"],
+            )
+        )
     elements.append(Spacer(1, 12))
     elements.append(
         Paragraph(
@@ -353,6 +451,11 @@ async def export_report(
     now = utc_now()
     start, end = _resolve_period_bounds(period, now)
 
+    # Özet, satır listesinden değil ayrı satış-bazlı sorgudan hesaplanır:
+    # satırlar alım kohortudur (dönemde alınıp sonra satılanların kârı bu
+    # dosyanın "Toplam Kâr"ına yanlışlıkla girmez), özet sale_date bazlıdır.
+    summary = await _summary_for_range(db, start, end)
+
     stmt = (
         select(
             Product.product_number,
@@ -364,18 +467,22 @@ async def export_report(
             Product.profit_dkk,
             Product.purchase_date,
         )
+        .where(visible_product_clause())
         .order_by(Product.created_at.desc())
+        .limit(EXPORT_MAX_ROWS + 1)
     )
     if start and end:
         stmt = stmt.where(Product.purchase_date >= start, Product.purchase_date < end)
 
-    records = (await db.execute(stmt)).all()
+    rows = (await db.execute(stmt)).all()
+    truncated = len(rows) > EXPORT_MAX_ROWS
+    records = rows[:EXPORT_MAX_ROWS]
 
     timestamp = now.strftime("%Y%m%d-%H%M%S")
     filename_base = f"seroguld-report-{period}-{timestamp}"
 
     if format == "csv":
-        content = _build_csv_content(records)
+        content = await asyncio.to_thread(_build_csv_content, records)
         return StreamingResponse(
             iter([content]),
             media_type="text/csv",
@@ -383,14 +490,28 @@ async def export_report(
         )
 
     if format == "xlsx":
-        content = _build_xlsx_content(records, period=period, generated_at=now)
+        content = await asyncio.to_thread(
+            _build_xlsx_content,
+            records,
+            period=period,
+            generated_at=now,
+            summary=summary,
+            truncated=truncated,
+        )
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{filename_base}.xlsx"'},
         )
 
-    content = _build_pdf_content(records, period=period, generated_at=now)
+    content = await asyncio.to_thread(
+        _build_pdf_content,
+        records,
+        period=period,
+        generated_at=now,
+        summary=summary,
+        truncated=truncated,
+    )
     return Response(
         content=content,
         media_type="application/pdf",
