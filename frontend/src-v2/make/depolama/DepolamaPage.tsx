@@ -1,8 +1,16 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/api';
 import { labelMetalType, labelProductType } from '@/lib/format';
 import { WooPhotoThumb } from '@/make/woocommerce/WooPhotoThumb';
-import { type Dispatch, type FormEvent, type SetStateAction, useMemo, useRef, useState } from 'react';
+import {
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ArrowUpRight,
   AlertTriangle,
@@ -26,7 +34,7 @@ import {
   X,
 } from 'lucide-react';
 
-import type { ProductHistoryEntry, ProductOut, ProductSourceAfg } from '@/types';
+import type { CustomerOut, ProductHistoryEntry, ProductOut, ProductSourceAfg } from '@/types';
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
@@ -49,7 +57,11 @@ import type {
   SilverSub,
   StokItem,
 } from './types';
-import { ALLOWED_STATUS_TRANSITIONS, PRODUCT_STATUS_LABEL as SHARED_PRODUCT_STATUS_LABEL } from './types';
+import {
+  ALLOWED_STATUS_TRANSITIONS,
+  PRODUCT_STATUS_BADGE_CLASS,
+  PRODUCT_STATUS_LABEL as SHARED_PRODUCT_STATUS_LABEL,
+} from './types';
 
 const GOLD_PURITIES = [
   { label: '24K / Barren', saflik: 0.9999 },
@@ -96,6 +108,73 @@ function hasMetalGram(item: StokItem) {
 
 function spotDeger(item: StokItem) {
   return item.spotDegeri ?? 0;
+}
+
+// Klasik overlay'lere modern OverlayFrame davranışı (Escape ile kapatma, body
+// scroll kilidi, açılışta odak, Tab focus-trap) — iç içe overlay'lerde Escape
+// yalnız EN ÜSTTEKİ katmanı kapatır (MeltConfirmDialog drawer içinde açılır).
+const overlayStack: { id: number; onClose: () => void }[] = [];
+let overlaySeq = 0;
+
+function useClassicOverlayBehavior(open: boolean, onClose: () => void) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const id = ++overlaySeq;
+    const entry = { id, onClose: () => onCloseRef.current() };
+    overlayStack.push(entry);
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    containerRef.current?.focus();
+
+    const isTop = () => overlayStack[overlayStack.length - 1]?.id === id;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        // textarea'da bile (MeltConfirmDialog gerekçesi) Escape = üst katmanı kapat
+        if (isTop()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          entry.onClose();
+        }
+        return;
+      }
+      if (event.key !== 'Tab' || !isTop()) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const focusables = Array.from(
+        container.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((el) => el.offsetParent !== null);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !container.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !container.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      const index = overlayStack.indexOf(entry);
+      if (index >= 0) overlayStack.splice(index, 1);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
+  return containerRef;
 }
 
 function getPurityOptions(kat: MainCategory) {
@@ -194,7 +273,23 @@ function StokForm({
       <div className="grid grid-cols-4 gap-x-6 gap-y-4 border-2 border-brand-200 bg-brand-50 p-5">
         <div>
           <label className={labelCls}>Kategori</label>
-          <select value={kat} onChange={(event) => upd('mainKat', event.target.value as MainCategory)} className={cellIn} disabled>
+          {/* Enabled: hem 'Tümü' kapsamında açılan yeni ürün kategorisini buradan
+              seçebilsin hem de yanlış kategoriyle kaydedilmiş ürün düzeltilebilsin
+              (modern editörde zaten mümkündü). */}
+          <select
+            value={kat}
+            onChange={(event) => {
+              const nextKat = event.target.value as MainCategory;
+              if (nextKat === kat) return;
+              upd('mainKat', nextKat);
+              // Kategori değişince saflık listesi değişir — eski değer yeni
+              // listede olmayabilir; varsayılana çekilir ve alt tipler sıfırlanır.
+              upd('saflik', getPurityOptions(nextKat)[0].saflik);
+              if (nextKat !== 'gumus') upd('gumusAlt', undefined);
+              if (nextKat !== 'platin_pd') upd('platinAlt', undefined);
+            }}
+            className={cellIn}
+          >
             <option value="kulce">Guldbarrer</option>
             <option value="sikke">Guldmønter</option>
             <option value="taki">Guldsmykker</option>
@@ -330,6 +425,20 @@ function StokForm({
           />
         </div>
 
+        <div className="flex items-end">
+          {/* needs_cleaning: filtre/drawer/KPI bu bayrağı okuyordu ama UI'dan
+              set edilemiyordu; payload zaten değeri taşıyor. */}
+          <label className="flex cursor-pointer items-center gap-2 border border-brand-200 bg-white px-3 py-1.5">
+            <input
+              type="checkbox"
+              checked={Boolean(editing.needsCleaning)}
+              onChange={(event) => upd('needsCleaning', event.target.checked)}
+              className="h-4 w-4 accent-orange-600"
+            />
+            <span className="text-xs font-bold uppercase tracking-wider text-brand-700">Temizlik gerekli</span>
+          </label>
+        </div>
+
         {isTaki ? (
           <>
             <div>
@@ -431,15 +540,8 @@ function StokForm({
 
 const PRODUCT_STATUS_LABEL = SHARED_PRODUCT_STATUS_LABEL;
 
-const PRODUCT_STATUS_TONE: Record<string, string> = {
-  purchased: 'border-brand-300 bg-brand-100 text-brand-700',
-  in_inventory: 'border-emerald-300 bg-emerald-50 text-emerald-700',
-  for_sale: 'border-sky-300 bg-sky-50 text-sky-700',
-  undecided: 'border-amber-300 bg-amber-50 text-amber-800',
-  sold: 'border-zinc-300 bg-zinc-100 text-zinc-700',
-  melted: 'border-rose-300 bg-rose-50 text-rose-700',
-};
-
+// Rozet renkleri types.ts'teki tek kaynaktan (PRODUCT_STATUS_BADGE_CLASS) —
+// tablo ve drawer artık aynı eşlemeyi kullanır.
 const ALLOWED_TRANSITIONS = ALLOWED_STATUS_TRANSITIONS;
 
 const HISTORY_ACTION_LABEL: Record<string, string> = {
@@ -477,7 +579,7 @@ function InventorySurfaceTabs({
   workbookStatus,
 }: {
   activeView: InventorySurfaceView;
-  setActiveView: Dispatch<SetStateAction<InventorySurfaceView>>;
+  setActiveView: (view: InventorySurfaceView) => void;
   workbookStatus: string;
 }) {
   return (
@@ -540,6 +642,9 @@ function MeltConfirmDialog({
   pending: boolean;
 }) {
   const [reason, setReason] = useState('');
+  // Drawer'ın ÜST katmanı olarak açılır: Escape (textarea'da dahil) yalnız bu
+  // diyaloğu iptal eder, arkadaki drawer kapanmaz.
+  const overlayRef = useClassicOverlayBehavior(open, onCancel);
   if (!open) return null;
   const isValid = reason.trim().length >= 3;
   const submit = (event: FormEvent) => {
@@ -550,7 +655,7 @@ function MeltConfirmDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4">
+    <div ref={overlayRef} tabIndex={-1} className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4 outline-none">
       <form onSubmit={submit} className="w-full max-w-md border-2 border-rose-300 bg-white p-6 shadow-2xl">
         <div className="flex items-start gap-3">
           <Flame className="h-5 w-5 flex-shrink-0 text-rose-700" />
@@ -872,6 +977,7 @@ function ProductSourceAfgPanel({
 function InventoryDetailDrawer({
   product,
   loading,
+  error,
   history,
   historyLoading,
   sourceAfg,
@@ -893,6 +999,8 @@ function InventoryDetailDrawer({
 }: {
   product: ProductOut | null;
   loading: boolean;
+  /** Detay isteği hatalı (404 değil) — drawer açık kalır, Tekrar dene canlı */
+  error: boolean;
   history: ProductHistoryEntry[];
   historyLoading: boolean;
   sourceAfg: ProductSourceAfg | null;
@@ -901,7 +1009,12 @@ function InventoryDetailDrawer({
   onRetry: () => void;
   onEdit: () => void;
   onOpenWooProduct: () => void;
-  onUpdateStatus: (status: InventoryLifecycleStatus, meltReason?: string | null, salePriceDkk?: number | null) => void;
+  onUpdateStatus: (
+    status: InventoryLifecycleStatus,
+    meltReason?: string | null,
+    salePriceDkk?: number | null,
+    buyerCustomerId?: string | null,
+  ) => void;
   updatingStatus: boolean;
   onUploadPhotos: (files: FileList | File[]) => void;
   onDeletePhoto: (photoId: string) => void;
@@ -915,15 +1028,36 @@ function InventoryDetailDrawer({
   const [meltDialogOpen, setMeltDialogOpen] = useState(false);
   const [salePriceInput, setSalePriceInput] = useState('');
   const [saleMode, setSaleMode] = useState(false);
+  // Alıcı (buyer_customer_id): opsiyonel müşteri araması — seçilmezse satış
+  // müşterisiz kaydedilir (backend alanı nullable).
+  const [buyerTerm, setBuyerTerm] = useState('');
+  const [buyer, setBuyer] = useState<CustomerOut | null>(null);
+  const buyersQuery = useQuery({
+    queryKey: ['customers', 'depolama-sale-search', buyerTerm],
+    enabled: saleMode && buyerTerm.trim().length >= 2,
+    queryFn: () => apiRequest<CustomerOut[]>(`/api/customers/search?q=${encodeURIComponent(buyerTerm.trim())}`),
+  });
+
+  // Ürün değişince satış girişini sıfırla — önceki ürünün alıcı/fiyatı taşmasın.
+  const productId = product?.id;
+  useEffect(() => {
+    setSaleMode(false);
+    setSalePriceInput('');
+    setBuyerTerm('');
+    setBuyer(null);
+  }, [productId]);
 
   const statusLabel = product ? PRODUCT_STATUS_LABEL[product.status] || product.status : '—';
-  const statusTone = product ? PRODUCT_STATUS_TONE[product.status] || 'border-brand-300 bg-brand-100 text-brand-700' : 'border-brand-300 bg-brand-100 text-brand-700';
+  const statusTone = product ? PRODUCT_STATUS_BADGE_CLASS[product.status] || PRODUCT_STATUS_BADGE_CLASS.purchased : PRODUCT_STATUS_BADGE_CLASS.purchased;
   const allowedNext: InventoryLifecycleStatus[] = product ? ALLOWED_TRANSITIONS[product.status] || [] : [];
-  const canSell = product?.status === 'for_sale';
+  // purchased → satış backend'de izinli (0.3.8 kararı): taze alım 'Depoda'
+  // ara adımına basmadan doğrudan 'Satıldı' işaretlenebilir.
+  const canSell = product?.status === 'for_sale' || product?.status === 'purchased';
   const isLocked = product?.is_gdpr_locked;
+  const overlayRef = useClassicOverlayBehavior(true, onClose);
 
   return (
-    <div className="fixed inset-0 z-drawer flex justify-end bg-brand-950/20">
+    <div ref={overlayRef} tabIndex={-1} className="fixed inset-0 z-drawer flex justify-end bg-brand-950/20 outline-none">
       <button type="button" className="flex-1 cursor-default" aria-label="Detay drawer overlay" onClick={onClose} />
       <aside className="relative h-full w-full max-w-[32rem] overflow-y-auto border-l-2 border-brand-300 bg-stone-100 shadow-2xl" style={sansStyle}>
         <div className="sticky top-0 z-sticky border-b border-brand-300 bg-white px-5 py-4 shadow-sm">
@@ -1035,44 +1169,99 @@ function InventoryDetailDrawer({
                   </button>
                 ) : null}
                 {canSell ? (
-                  <div className="flex w-full items-center gap-1">
+                  <div className="w-full">
                     {saleMode ? (
-                      <>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={salePriceInput}
-                          onChange={(event) => setSalePriceInput(event.target.value)}
-                          className="mono w-24 border border-emerald-300 bg-white px-1.5 py-1 text-xs"
-                          placeholder="DKK"
-                          autoFocus
-                        />
-                        <button
-                          type="button"
-                          disabled={updatingStatus || !Number(salePriceInput)}
-                          onClick={() => {
-                            const price = Number(salePriceInput);
-                            if (!Number.isFinite(price) || price <= 0) return;
-                            onUpdateStatus('sold' as InventoryLifecycleStatus, null, price);
-                            setSaleMode(false);
-                            setSalePriceInput('');
-                          }}
-                          className="border border-emerald-500 bg-emerald-600 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-50"
-                        >
-                          Sat
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSaleMode(false);
-                            setSalePriceInput('');
-                          }}
-                          className="border border-brand-300 bg-white px-2 py-1 text-[10px] font-bold text-brand-600 hover:bg-brand-50"
-                        >
-                          İptal
-                        </button>
-                      </>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={salePriceInput}
+                            onChange={(event) => setSalePriceInput(event.target.value)}
+                            className="mono w-24 border border-emerald-300 bg-white px-1.5 py-1 text-xs"
+                            placeholder="DKK"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            disabled={updatingStatus || !Number(salePriceInput)}
+                            onClick={() => {
+                              const price = Number(salePriceInput);
+                              if (!Number.isFinite(price) || price <= 0) return;
+                              onUpdateStatus('sold' as InventoryLifecycleStatus, null, price, buyer?.id ?? null);
+                              setSaleMode(false);
+                              setSalePriceInput('');
+                              setBuyerTerm('');
+                              setBuyer(null);
+                            }}
+                            className="border border-emerald-500 bg-emerald-600 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            Sat
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSaleMode(false);
+                              setSalePriceInput('');
+                              setBuyerTerm('');
+                              setBuyer(null);
+                            }}
+                            className="border border-brand-300 bg-white px-2 py-1 text-[10px] font-bold text-brand-600 hover:bg-brand-50"
+                          >
+                            İptal
+                          </button>
+                        </div>
+                        {/* Opsiyonel alıcı: backend buyer_customer_id destekler;
+                            boş bırakmak meşru (müşterisiz satış). */}
+                        <div className="border border-brand-200 bg-white p-1.5">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-brand-400">Alıcı (opsiyonel)</p>
+                          {buyer ? (
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-brand-900">
+                                {buyer.name}
+                                {buyer.phone ? <span className="ml-1 text-brand-400">{buyer.phone}</span> : null}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => { setBuyer(null); setBuyerTerm(''); }}
+                                className="border border-brand-200 px-1.5 py-0.5 text-[10px] font-bold text-brand-500 hover:bg-brand-50"
+                              >
+                                Kaldır
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <input
+                                type="text"
+                                value={buyerTerm}
+                                onChange={(event) => setBuyerTerm(event.target.value)}
+                                placeholder="Ad, telefon veya CPR ile ara…"
+                                className="mt-1 w-full border border-brand-200 px-1.5 py-1 text-xs outline-none focus:border-brand-500"
+                              />
+                              {buyerTerm.trim().length >= 2 && buyersQuery.isLoading ? (
+                                <p className="mt-1 text-[10px] text-brand-400">Aranıyor…</p>
+                              ) : (buyerTerm.trim().length >= 2 && (buyersQuery.data || []).length > 0 ? (
+                                <div className="mt-1 divide-y divide-brand-100">
+                                  {(buyersQuery.data || []).slice(0, 4).map((candidate) => (
+                                    <button
+                                      key={candidate.id}
+                                      type="button"
+                                      onClick={() => { setBuyer(candidate); setBuyerTerm(''); }}
+                                      className="flex w-full items-center justify-between px-1 py-1 text-left text-xs hover:bg-emerald-50"
+                                    >
+                                      <span className="font-semibold text-brand-800">{candidate.name}</span>
+                                      <span className="text-brand-400">{candidate.phone || candidate.email || ''}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : buyerTerm.trim().length >= 2 ? (
+                                <p className="mt-1 text-[10px] text-brand-400">Eşleşen müşteri yok.</p>
+                              ) : null)}
+                            </>
+                          )}
+                        </div>
+                      </div>
                     ) : (
                       <button
                         type="button"
@@ -1093,7 +1282,10 @@ function InventoryDetailDrawer({
           <div className="px-5 py-10 text-sm text-brand-500">Ürün detayı yükleniyor...</div>
         ) : !product ? (
           <div className="flex flex-col items-start gap-3 px-5 py-10">
-            <p className="text-sm text-brand-500">Ürün detayı bulunamadı.</p>
+            {/* 404 olmayan hatalar drawer'ı kapatmaz — hata mesajı + Tekrar dene canlıdır */}
+            <p className="text-sm text-brand-500">
+              {error ? 'Ürün detayı yüklenemedi. Bağlantıyı kontrol edip tekrar deneyin.' : 'Ürün detayı bulunamadı.'}
+            </p>
             <button
               type="button"
               onClick={onRetry}
@@ -1216,6 +1408,7 @@ export interface DepolamaPageProps {
     status: InventoryLifecycleStatus,
     meltReason?: string | null,
     salePriceDkk?: number | null,
+    buyerCustomerId?: string | null,
   ) => void;
   savingItem: boolean;
   deletingItem: boolean;
@@ -1264,6 +1457,7 @@ export function DepolamaPage({
   selectedProductId,
   selectedProduct,
   loadingSelectedProduct,
+  detailError,
   productHistory,
   productHistoryLoading,
   productSourceAfg,
@@ -1334,12 +1528,53 @@ export function DepolamaPage({
     () => ({
       toplamGramSum: filteredItems.reduce((sum, item) => sum + toplamGram(item), 0),
       hasMetalSum: filteredItems.reduce((sum, item) => sum + hasMetalGram(item), 0),
+      // Footer tek kaynak = sunucu değeri: has_metal None gelen satır tahminle
+      // doldurulmaz (hücrede '—' basılır), bilinen satırlar toplanır.
+      hasMetalKnownSum: filteredItems.reduce((sum, item) => sum + (item.hasMetalGrams ?? 0), 0),
+      hasMetalUnknownCount: filteredItems.filter((item) => item.hasMetalGrams == null).length,
+      adetSum: filteredItems.reduce((sum, item) => sum + (item.adet || 0), 0),
       alisSum: filteredItems.reduce((sum, item) => sum + item.alisFiyati, 0),
       spotSum: filteredItems.reduce((sum, item) => sum + spotDeger(item), 0),
       shopSum: filteredItems.reduce((sum, item) => sum + (item.shopFiyati || 0), 0),
     }),
     [filteredItems],
   );
+
+  // --- Düzenleme taslağı koruması: açılış anındaki kopya saklanır, mevcut form
+  // bununla karşılaştırılır; dirty ise İptal/görünüm değişimi onay ister. ---
+  const editingSignature = editing ? JSON.stringify(editing) : '';
+  const editingBaselineRef = useRef('');
+  const editingIdRef = useRef<string | null>(null);
+  if (editing) {
+    // Render sırasında yalnız taslak DEĞİŞTİĞİNDE baseline yakalanır (alan
+    // düzenlemeleri snapshot'ı tazelemez); state'i mutasyona uğratmayan ref deseni.
+    if (editing.id !== editingIdRef.current) {
+      editingIdRef.current = editing.id;
+      editingBaselineRef.current = editingSignature;
+    }
+  } else {
+    editingIdRef.current = null;
+    editingBaselineRef.current = '';
+  }
+  const isEditingDirty = Boolean(editing) && editingSignature !== editingBaselineRef.current;
+
+  const confirmDiscardEditing = async (): Promise<boolean> => {
+    if (!editing || !isEditingDirty) return true;
+    return Boolean(
+      await confirm({
+        title: 'Kaydedilmemiş değişiklikler',
+        message: `"${editing.urun || 'Ürün'}" formunda kaydedilmemiş değişiklikler var. Kapatılsın mı?`,
+        confirmText: 'Değişiklikleri at',
+        cancelText: 'Formda kal',
+        variant: 'warning',
+      }),
+    );
+  };
+
+  const handleActiveViewChange = async (view: InventorySurfaceView) => {
+    if (view !== activeView && editing && !(await confirmDiscardEditing())) return;
+    setActiveView(view);
+  };
 
   function upd<K extends keyof StokItem>(field: K, value: StokItem[K]) {
     setEditing((current) => (current ? { ...current, [field]: value } : current));
@@ -1372,6 +1607,27 @@ export function DepolamaPage({
   const workbookStatus = formatWorkbookStamp(opdateret);
   const selectedDraft = selectedProductId ? stokList.find((item) => item.id === selectedProductId) ?? null : null;
   const isInitialLoading = loading && stokList.length === 0;
+
+  // Piyasa fiyatı popover'ı: dış tık ve Escape ile kapanır (yalnız toggle ve
+  // başarılı Kaydet ile kapanması kaydetmeyi unutan kullanıcıyı tuzaklardı).
+  const pricePopoverRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!priceOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (pricePopoverRef.current && !pricePopoverRef.current.contains(event.target as Node)) {
+        setPriceOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPriceOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [priceOpen, setPriceOpen]);
 
   const systemContent = workspaceError ? (
     // LogPage deseni: liste isteği patladıysa sıfır KPI/boş liste yanıltmasın —
@@ -1463,7 +1719,10 @@ export function DepolamaPage({
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-brand-500">{sub}</span>
                   <span className="text-xs font-semibold text-brand-400" style={monoStyle}>
-                    {countFor(key)}
+                    {/* Workspace isteği kapsam kategorisiyle filtreli; kapsam 'all'
+                        değilken diğer sekmelerin sayısı 0 YANILTICIDIR — yalnız
+                        kapsamın gerçekten gördüğü sekmelerde sayı basılır. */}
+                    {scope === 'all' || key === scope ? countFor(key) : '—'}
                   </span>
                 </div>
               </button>
@@ -1528,14 +1787,20 @@ export function DepolamaPage({
           <div className="bg-brand-900 px-6 py-3 flex items-center justify-between border-b-4 border-amber-600">
             <div>
               <span className="text-xs text-brand-500 uppercase tracking-widest block">
-                {stokList.find((item) => item.id === editing.id) ? 'Ürün Düzenle' : 'Yeni Ürün Ekle'}
+                {/* Kaydet'teki tek kaynakla aynı ayrım: isDraft bayrağı — filtreli
+                    listede satır aranması kapsam değişince etiketi şaşırtıyordu. */}
+                {editing.isDraft ? 'Yeni Ürün Ekle' : 'Ürün Düzenle'}
               </span>
               <span className="text-lg font-black text-white">{editing.urun || '—'}</span>
             </div>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setEditing(null)}
+                onClick={() => {
+                  void confirmDiscardEditing().then((ok) => {
+                    if (ok) setEditing(null);
+                  });
+                }}
                 className="px-4 py-2 text-brand-300 text-sm font-semibold border border-brand-700 hover:border-brand-400 hover:text-white transition-colors flex items-center gap-1"
               >
                 <X className="w-3.5 h-3.5" /> İptal
@@ -1692,7 +1957,7 @@ export function DepolamaPage({
               </span>
             </span>
           </button>
-          <div className="relative">
+          <div ref={pricePopoverRef} className="relative">
             <button
               type="button"
               onClick={() => setPriceOpen(!priceOpen)}
@@ -1776,12 +2041,13 @@ export function DepolamaPage({
           ) : null}
         </div>
       </div>
-      <InventorySurfaceTabs activeView={activeView} setActiveView={setActiveView} workbookStatus={workbookStatus} />
+      <InventorySurfaceTabs activeView={activeView} setActiveView={handleActiveViewChange} workbookStatus={workbookStatus} />
       {activeView === 'excel' ? <InventoryExcelSurface /> : systemContent}
       {activeView === 'system' && (selectedProductId || loadingSelectedProduct) ? (
         <InventoryDetailDrawer
           product={selectedProduct}
           loading={loadingSelectedProduct}
+          error={detailError}
           history={productHistory}
           historyLoading={productHistoryLoading}
           sourceAfg={productSourceAfg}
@@ -1799,9 +2065,9 @@ export function DepolamaPage({
               onOpenWooProduct(selectedProductId);
             }
           }}
-          onUpdateStatus={(status, meltReason, salePriceDkk) => {
+          onUpdateStatus={(status, meltReason, salePriceDkk, buyerCustomerId) => {
             if (selectedProductId) {
-              onUpdateProductStatus(selectedProductId, status, meltReason, salePriceDkk);
+              onUpdateProductStatus(selectedProductId, status, meltReason, salePriceDkk, buyerCustomerId);
             }
           }}
           updatingStatus={updatingStatus}

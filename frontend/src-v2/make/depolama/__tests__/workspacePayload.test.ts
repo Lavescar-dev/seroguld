@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DepolamaPageProps } from '../DepolamaPage';
-import type { StokItem } from '../types';
-import { buildWorkspaceQueryParams, rowToStokItem, toPatchPayload } from '../useDepolamaMakeState';
+import {
+  ALLOWED_STATUS_TRANSITIONS,
+  PRODUCT_STATUS_BADGE_CLASS,
+  PRODUCT_STATUS_LABEL,
+  type StokItem,
+} from '../types';
+import { buildWorkspaceQueryParams, rowToStokItem, toCreatePayload, toPatchPayload } from '../useDepolamaMakeState';
 import { createModernDepolamaViewModel } from '@/modern/adapters/depolama';
 
 function rowItem(overrides: Partial<StokItem> = {}): StokItem {
@@ -134,5 +139,49 @@ describe('buildWorkspaceQueryParams (regression guard)', () => {
     ));
     expect(params.has('limit')).toBe(false);
     expect(params.has('offset')).toBe(false);
+  });
+});
+
+describe('M1-depolama-fe düzeltmeleri', () => {
+  it('purchased → sold geçişini backend ile sync tutar (0.3.8 kararı)', () => {
+    expect(ALLOWED_STATUS_TRANSITIONS.purchased).toContain('sold');
+    // for_sale satışı yine ayrı akış (sale_price gerekir)
+    expect(ALLOWED_STATUS_TRANSITIONS.for_sale).not.toContain('sold');
+  });
+
+  it('has_metal: yalnız gerçek None undefined olur, 0 meşru değer olarak kalır', () => {
+    const base = {
+      id: 'p-9',
+      product_number: 'P-0009',
+      main_category: 'taki',
+      product_type: 'jewelry',
+      metal_type: 'yellow_gold',
+      status: 'in_inventory',
+      lager_dato: '2026-01-15',
+      urun: 'Has metal testi',
+      saflik_label: '22K / 91.60%',
+      birim_gram: '5.00',
+      adet: 1,
+      toplam_gram: '5.00',
+      alis_fiyati_dkk: '3000.00',
+      spot_degeri_dkk: '3100.00',
+    };
+    // Backend None → tablo '—' basar (footer toplamına da girmez)
+    expect(rowToStokItem({ ...base, has_metal_grams: null } as Parameters<typeof rowToStokItem>[0]).hasMetalGrams).toBeUndefined();
+    // '0.000' meşru değerdir — undefined'a ÇOKTURULMAZ
+    expect(rowToStokItem({ ...base, has_metal_grams: '0' } as Parameters<typeof rowToStokItem>[0]).hasMetalGrams).toBe(0);
+  });
+
+  it('needs_cleaning payloadde taşınır (form checkbox → backend)', () => {
+    const dirty = toCreatePayload(rowItem({ needsCleaning: true })) as Record<string, unknown>;
+    expect(dirty.needs_cleaning).toBe(true);
+    const clean = toPatchPayload(rowItem({ needsCleaning: false })) as Record<string, unknown>;
+    expect(clean.needs_cleaning).toBe(false);
+  });
+
+  it('rozet renk haritası tüm bilinen durumları kapsar (tek kaynak)', () => {
+    for (const status of Object.keys(PRODUCT_STATUS_LABEL)) {
+      expect(PRODUCT_STATUS_BADGE_CLASS[status], `eksik: ${status}`).toBeTruthy();
+    }
   });
 });

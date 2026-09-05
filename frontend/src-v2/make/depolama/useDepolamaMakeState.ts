@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
-import { apiRequest, downloadAuthedDocument } from '@/lib/api';
+import { ApiError, apiRequest, downloadAuthedDocument } from '@/lib/api';
 import { emitArtifactSync, listenArtifactSync, signalMatches } from '@/lib/artifactSync';
 import { useToast } from '@/lib/toast';
 import type {
@@ -24,6 +24,7 @@ interface WorkspacePayload extends InventoryWorkspace {
 }
 
 import type { DepolamaPageProps } from './DepolamaPage';
+import { PRODUCT_STATUS_LABEL } from './types';
 import type {
   InventoryFilterState,
   InventoryLifecycleStatus,
@@ -102,7 +103,9 @@ export function rowToStokItem(row: WorkspaceRow): StokItem {
     adet: row.adet || 1,
     alisFiyati: numeric(row.alis_fiyati_dkk),
     spotDegeri,
-    hasMetalGrams: row.has_metal_grams ? numeric(row.has_metal_grams) : undefined,
+    // Yalnız gerçekten None gelen satırda undefined kalsın; '0.000' meşru
+    // değerdir ve tabloda '0,000' (çizgi değil) basılmalı.
+    hasMetalGrams: row.has_metal_grams == null ? undefined : numeric(row.has_metal_grams),
     toplamGram: numeric(row.toplam_gram),
     shopFark: row.shop_fiyati_dkk ? numeric(row.shop_fiyati_dkk) - spotDegeri : undefined,
     wooFiyati: row.woo_satis_fiyati_dkk ? numeric(row.woo_satis_fiyati_dkk) : undefined,
@@ -186,6 +189,10 @@ function buildNewItem(activeKat: MainCategory, gumusAlt: SilverSub, platinAlt: P
     storageLocation: '',
     referenceNumber: null,
     needsCleaning: false,
+    // Kaydet'te create/update ayrımı bu bayrağa bağlanır (listede id aramak
+    // yerine) — filtreli liste satırı düşürünce POST ile duplike ürün
+    // oluşmaması için.
+    isDraft: true,
   };
 }
 
@@ -235,7 +242,8 @@ function toDateTime(value: string) {
   return `${value || currentDateInput()}T12:00:00+00:00`;
 }
 
-function toCreatePayload(item: StokItem) {
+/** POST gövdesi; toPatchPayload gibi testler fixture doğrulaması için dışa açıktır. */
+export function toCreatePayload(item: StokItem) {
   const spec = categorySpec(item);
   return {
     reference_number: item.mainKat === 'taki' ? item.stokNo || null : item.referenceNumber || null,
@@ -391,6 +399,9 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   const workspaceQuery = useQuery({
     queryKey: ['depolama', 'workspace', workspaceParams],
     queryFn: () => apiRequest<WorkspacePayload>(`/api/v2/depolama/workspace?${workspaceParams}`),
+    // Yazarken her tuş yeni key üretir; previous data tutulursa liste boşalıp
+    // spinner'a düşmez, arka planda tazelenir.
+    placeholderData: keepPreviousData,
   });
 
   // Durum filtresi seçiliyse backend zaten tam o durumu döndürür (satılmış/
@@ -421,16 +432,27 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   });
 
   useEffect(() => {
+    // Piyasa fiyatı popover'ı açıkken arka plan refetch (mutation invalidation,
+    // artifact-sync sinyali, Excel dönüşü) kullanıcının yazdığı değerleri
+    // EZMESİN — senkron yalnız popover kapalıyken çalışır.
+    if (priceOpen) return;
     setPrices(toMarketPrices(workspaceQuery.data));
-  }, [workspaceQuery.data]);
+  }, [workspaceQuery.data, priceOpen]);
 
+  // Görünüm değişiminde tüm aileleri (bootstrap/dashboard/woocommerce) devirmek
+  // yerine yalnız workspace liste verisi tazelenir; import gibi mutasyonlar
+  // kendi artifact-sync sinyaliyle zaten tam invalidation üretir.
+  const previousViewRef = useRef<InventorySurfaceView>(activeView);
   useEffect(() => {
+    const previous = previousViewRef.current;
+    previousViewRef.current = activeView;
     if (activeView === 'excel') {
       setSelectedProductId(null);
       return;
     }
-    void invalidateDepolama(selectedProductId || undefined);
-  }, [activeView]);
+    if (previous === activeView) return; // mount'ta gereksiz refetch yok
+    void queryClient.invalidateQueries({ queryKey: ['depolama', 'workspace'] });
+  }, [activeView, queryClient]);
 
   useEffect(() => {
     if (editing) {
@@ -440,12 +462,18 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   }, [editing]);
 
   useEffect(() => {
-    // Seçimi YALNIZ ürün gerçekten yoksa (silinmiş → detay 404/hata) kapat.
-    // Filtre değişimi veya refetch sırasında stokList'ten düşmesi seçimi
-    // KAPATMAZ (eski davranış Detay'ı aralıklı buga sokuyordu).
+    // Detay isteği patladıysa drawer'ı KÖRCE KAPATMA: ağ/5xx hatalarında hata
+    // ekranı + Tekrar dene kullanılabilsin. Yalnız gerçek 404 (silinmiş ürün)
+    // seçimi kapatır — toast ile haber verip listeyi tazeler.
     if (!selectedProductId) return;
-    if (detailQuery.isError) setSelectedProductId(null);
-  }, [selectedProductId, detailQuery.isError]);
+    const error = detailQuery.error;
+    if (!detailQuery.isError || !error) return;
+    if (error instanceof ApiError && error.status === 404) {
+      setSelectedProductId(null);
+      void queryClient.invalidateQueries({ queryKey: ['depolama', 'workspace'] });
+      toast.warning('Ürün bulunamadı', 'Ürün bu arada silinmiş olabilir; liste güncellendi.');
+    }
+  }, [selectedProductId, detailQuery.isError, detailQuery.error, queryClient, toast]);
 
   useEffect(() => {
     return listenArtifactSync((signal) => {
@@ -539,7 +567,9 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
       await invalidateDepolama(product.id);
       markUpdatedNow();
       emitArtifactSync({ kind: 'depolama', key: 'live', source: 'depolama-ui' });
-      setActiveKat(item.mainKat);
+      // Yalnız "Yeni Ürün" varsayılanını tazele; kullanıcının kategori
+      // KAPSAMINI koru ('Tümü'deyken kaydedince kategori sekmesine atlamasın).
+      setActiveKatState(item.mainKat);
       if (item.mainKat === 'gumus') setGumusAlt(item.gumusAlt || 'smykker');
       if (item.mainKat === 'platin_pd') setPlatinAlt(item.platinAlt || 'platin');
       setEditing(null);
@@ -566,8 +596,12 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     onError: (error) => {
       const msg = extractApiMessage(error, 'Sunucu hatası');
       if (msg.includes('stale_product') || msg.toLowerCase().includes('başka bir kullanıcı')) {
-        toast.warning('Çakışma', 'Ürün başka bir kullanıcı tarafından güncellenmiş. Lütfen sayfayı yenileyin.');
-        setEditing(null);
+        // Çakışmada formu AÇIK tut — setEditing(null) kullanıcının tüm girdilerini
+        // yok ediyordu; değerleri kopyalayıp bilinçli kapatma kullanıcıda kalsın.
+        toast.warning(
+          'Çakışma',
+          'Ürün başka bir kullanıcı tarafından güncellenmiş. Değişiklikleriniz formda korundu; gerekirse kopyalayıp formu kapatın.',
+        );
       } else {
         toast.error('Ürün güncellenemedi', msg);
       }
@@ -624,7 +658,8 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
       if (product.status === 'melted' || product.status === 'sold') {
         setSelectedProductId(null);
       }
-      toast.success('Ürün durumu güncellendi', product.status);
+      // Ham enum yerine yerelleştirilebilir sözlük etiketi basılır.
+      toast.success('Ürün durumu güncellendi', PRODUCT_STATUS_LABEL[product.status] ?? product.status);
     },
     onError: (error) => {
       const msg = extractApiMessage(error, 'Sunucu hatası');
@@ -717,7 +752,9 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
   function startNew() {
     setActiveView('system');
     setSelectedProductId(null);
-    setEditing(buildNewItem(categoryScope === 'all' ? 'taki' : activeKat, gumusAlt, platinAlt));
+    // Son kullanılan kategoride aç ('Tümü' kapsamında Takı'ya zorlamaz);
+    // form içinden kategori değiştirilebildiği için yanlış varsayım maliyetsiz.
+    setEditing(buildNewItem(activeKat, gumusAlt, platinAlt));
   }
 
   function saveItem() {
@@ -734,8 +771,10 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
       toast.warning('Alış fiyatı zorunlu', 'Alış fiyatı 0\'dan büyük olmalıdır.');
       return;
     }
-    const exists = stokList.some((item) => item.id === editing.id);
-    if (exists) {
+    // Create/update ayrımı satır aramasına DEĞİL isDraft bayrağına bağlı:
+    // filtre/refetch/başka kullanıcı stokList'ten bu satırı düşürmüş olsa bile
+    // mevcut ürün PATCH ile güncellenir, POST ile çoğaltılmaz.
+    if (!editing.isDraft) {
       // Optimistic concurrency: öncelik satırdan gelen updatedAt (workspace
       // her kayıtta updated_at döndürür); detailQuery yalnız yedek.
       const detail = detailQuery.data;
@@ -772,6 +811,7 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     nextStatus: InventoryLifecycleStatus,
     meltReason?: string | null,
     salePriceDkk?: number | null,
+    buyerCustomerId?: string | null,
   ) {
     const detail = detailQuery.data;
     const expectedUpdatedAt = detail && detail.id === productId ? detail.updated_at : null;
@@ -781,6 +821,7 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
       meltReason,
       expectedUpdatedAt,
       salePriceDkk,
+      buyerCustomerId,
     });
   }
 

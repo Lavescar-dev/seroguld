@@ -12,23 +12,16 @@ import type {
   PlatinumSub,
   StokItem,
 } from './types';
-import { PRODUCT_STATUS_LABEL, PRODUCT_STATUS_TONE } from './types';
+import { PRODUCT_STATUS_BADGE_CLASS, PRODUCT_STATUS_LABEL } from './types';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 
-const STATUS_TONE_CLASS: Record<string, string> = {
-  success: 'bg-emerald-100 border-emerald-300 text-emerald-700',
-  warning: 'bg-amber-100 border-amber-300 text-amber-700',
-  danger: 'bg-red-100 border-red-300 text-red-700',
-  neutral: 'bg-brand-100 border-brand-300 text-brand-600',
-};
-
 function StatusBadge({ status }: { status?: string }) {
   if (!status) return null;
-  const tone = PRODUCT_STATUS_TONE[status] ?? 'neutral';
+  // Tek kaynak: types.ts PRODUCT_STATUS_BADGE_CLASS — drawer ile aynı renk.
   return (
     <span
-      className={`ml-2 inline-block whitespace-nowrap border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${STATUS_TONE_CLASS[tone]}`}
+      className={`ml-2 inline-block whitespace-nowrap border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${PRODUCT_STATUS_BADGE_CLASS[status] ?? PRODUCT_STATUS_BADGE_CLASS.purchased}`}
     >
       {PRODUCT_STATUS_LABEL[status] ?? status}
     </span>
@@ -49,6 +42,31 @@ const DURUM_LABEL: Record<string, string> = {
   listelendi: 'Listelendi',
   mangler_foto: 'Mangler foto',
   hazir: 'Hazır',
+};
+
+// Tailwind JIT şablon enterpolasyonunu (`border-${accent}-300`) üretemez —
+// sınıflar TAM adlarla haritada tutulur; aksi halde örn. border-zinc-500
+// üretim CSS'inde hiç oluşmaz (platin_pd başlığı bordersız kalırdı).
+type Accent = 'slate' | 'zinc' | 'amber';
+const ACCENT_BADGE: Record<Accent, string> = {
+  slate: 'border-slate-300 bg-slate-100 text-slate-700',
+  zinc: 'border-zinc-300 bg-zinc-100 text-zinc-700',
+  amber: 'border-amber-300 bg-amber-100 text-amber-700',
+};
+const ACCENT_TH_SOFT: Record<Accent, string> = {
+  slate: 'border-slate-300 bg-slate-50 text-slate-800',
+  zinc: 'border-zinc-300 bg-zinc-50 text-zinc-800',
+  amber: 'border-amber-300 bg-amber-50 text-amber-800',
+};
+const ACCENT_TH_MID: Record<Accent, string> = {
+  slate: 'border-slate-400 bg-slate-100 text-slate-900',
+  zinc: 'border-zinc-400 bg-zinc-100 text-zinc-900',
+  amber: 'border-amber-400 bg-amber-100 text-amber-900',
+};
+const ACCENT_TH_STRONG: Record<Accent, string> = {
+  slate: 'border-slate-500 bg-slate-200 text-slate-900',
+  zinc: 'border-zinc-500 bg-zinc-200 text-zinc-900',
+  amber: 'border-amber-500 bg-amber-200 text-amber-900',
 };
 
 const GOLD_PURITIES = [
@@ -198,7 +216,7 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
 
   const isGumus = kat === 'gumus';
   const isPlat = kat === 'platin_pd';
-  const accent = isGumus ? 'slate' : isPlat ? 'zinc' : 'amber';
+  const accent: Accent = isGumus ? 'slate' : isPlat ? 'zinc' : 'amber';
   const metalLabel = isPlat ? (platinAlt === 'platin' ? 'Pt' : 'Pd') : isGumus ? 'Finsølv' : 'Finguld';
 
   baseColumns.push({
@@ -207,7 +225,7 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
     className: TH,
     render: (item) => (
       <span
-        className={`border border-${accent}-300 bg-${accent}-100 px-1.5 py-0.5 text-xs font-black text-${accent}-700`}
+        className={`border px-1.5 py-0.5 text-xs font-black ${ACCENT_BADGE[accent]}`}
         style={monoStyle}
       >
         {saflikLabel(item.saflik, item.mainKat)}
@@ -218,7 +236,7 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
     key: 'birim_gram',
     label: kat === 'taki' ? 'Brüt (g)' : 'g/adet',
     sortKey: 'birim_gram',
-    className: `${TH} border-${accent}-300 bg-${accent}-50 text-${accent}-800`,
+    className: `${TH} ${ACCENT_TH_SOFT[accent]}`,
     render: (item) => (
       <span style={monoStyle}>{item.birimGram.toFixed(kat === 'sikke' ? 3 : 2)}</span>
     ),
@@ -226,10 +244,15 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
   baseColumns.push({
     key: 'adet',
     label: 'Adet',
-    className: `${TH} border-${accent}-300 bg-${accent}-50 text-${accent}-800`,
+    className: `${TH} ${ACCENT_TH_SOFT[accent]}`,
     render: (item) => (
       <span className="font-bold" style={monoStyle}>
         {item.adet}
+      </span>
+    ),
+    footer: (totals) => (
+      <span className="mono" style={monoStyle}>
+        {totals.adetSum}
       </span>
     ),
   });
@@ -237,7 +260,7 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
     key: 'toplam',
     label: 'Toplam (g)',
     sortKey: 'toplam_gram',
-    className: `${TH} border-${accent}-400 bg-${accent}-100 text-${accent}-900`,
+    className: `${TH} ${ACCENT_TH_MID[accent]}`,
     render: (item) => (
       <span className="font-bold" style={monoStyle}>
         {(item.toplamGram ?? item.birimGram * item.adet).toFixed(kat === 'sikke' ? 3 : 2)}
@@ -252,15 +275,17 @@ function buildColumns(kat: MainCategory, platinAlt: PlatinumSub | undefined): Co
   baseColumns.push({
     key: 'has_metal',
     label: `${metalLabel} (g)`,
-    className: `${TH} border-${accent}-500 bg-${accent}-200 text-${accent}-900`,
+    className: `${TH} ${ACCENT_TH_STRONG[accent]}`,
     render: (item) => (
+      // Backend None gönderdiyse TAHMİN BASMA ('—'); footer da yalnız sunucu
+      // değerlerini toplar — hücre/footer çelişkisi ve client uydurması yok.
       <span className="font-black" style={monoStyle}>
-        {(item.hasMetalGrams ?? 0).toFixed(3)}
+        {item.hasMetalGrams == null ? '—' : item.hasMetalGrams.toFixed(3)}
       </span>
     ),
     footer: (totals) => (
-      <span className="mono" style={monoStyle}>
-        {totals.hasMetalSum.toFixed(3)} g
+      <span className="mono" style={monoStyle} title={totals.hasMetalUnknownCount > 0 ? `${totals.hasMetalUnknownCount} satırda değer yok (dahil değil)` : undefined}>
+        {totals.hasMetalKnownSum.toFixed(3)} g
       </span>
     ),
   });
@@ -426,7 +451,6 @@ export function InventoryDataTable({
   printingLabelForId,
 }: InventoryDataTableProps) {
   const columns = useMemo(() => buildColumns(kat, platinAlt), [kat, platinAlt]);
-  const colspanIndex = Math.max(0, columns.findIndex((c) => c.footer != null));
 
   return (
     <table className="w-full border-collapse text-sm">
@@ -511,7 +535,9 @@ export function InventoryDataTable({
         <tr className="border-t-2 border-brand-400">
           {columns.map((col, idx) => (
             <td key={col.key} className={`${TF} ${col.align === 'right' ? 'text-right' : 'text-center'}`}>
-              {idx === colspanIndex ? null : col.footer ? col.footer(catTotal) : idx === 0 ? `${items.length} kalem` : null}
+              {/* İlk footer'lı hücre null'LANARAK atlanıyordu — Toplam (g) ve
+                  'N kalem' etiketi hiç görünmüyordu; her kolon kendi footer'ını basar. */}
+              {col.footer ? col.footer(catTotal) : idx === 0 ? `${items.length} kalem` : null}
             </td>
           ))}
           <td className={TF} />

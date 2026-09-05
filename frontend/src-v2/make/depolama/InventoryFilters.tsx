@@ -1,3 +1,4 @@
+import { type ComponentProps, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Calendar, FilterX, Lock, Search, Sparkles } from 'lucide-react';
 
@@ -14,6 +15,35 @@ interface InventoryFiltersProps {
 
 const inputCls =
   'w-full border border-brand-300 bg-white px-2 py-1 text-xs text-brand-900 focus:border-brand-700 focus:outline-none';
+
+const FILTER_DEBOUNCE_MS = 300;
+
+/**
+ * Serbest metin filtreleri için debounce: her tuşta setFilters → workspace
+ * isteği yerine yazım bittikten 300ms sonra tek istek atılır. Dışarıdan
+ * sıfırlama (ör. "Filtreleri Temizle") taslağı anında düşürür.
+ */
+function DebouncedTextInput({
+  value,
+  onCommit,
+  ...inputProps
+}: { value: string; onCommit: (value: string) => void } & Omit<ComponentProps<'input'>, 'value' | 'onChange'>) {
+  const [draft, setDraft] = useState(value);
+  const onCommitRef = useRef(onCommit);
+  useEffect(() => {
+    onCommitRef.current = onCommit;
+  });
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+  useEffect(() => {
+    if (draft === value) return;
+    const timer = window.setTimeout(() => onCommitRef.current(draft), FILTER_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, value]);
+
+  return <input {...inputProps} value={draft} onChange={(event) => setDraft(event.target.value)} />;
+}
 
 export function InventoryFilters({
   filters,
@@ -39,11 +69,11 @@ export function InventoryFilters({
     <div className="flex flex-wrap items-center gap-2 border-b border-brand-200 bg-white px-4 py-2 print:hidden">
       <div className="relative flex-1 min-w-[16rem]">
         <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-brand-400" />
-        <input
+        <DebouncedTextInput
           type="text"
           placeholder="Stok no, ürün adı, üretici, depo, notlar..."
           value={filters.q}
-          onChange={(event) => setFilters((current) => ({ ...current, q: event.target.value }))}
+          onCommit={(value) => setFilters((current) => ({ ...current, q: value }))}
           className={`${inputCls} pl-7`}
         />
       </div>
@@ -119,11 +149,11 @@ export function InventoryFilters({
         />
       </div>
 
-      <input
+      <DebouncedTextInput
         type="text"
         placeholder="Depo / lokasyon"
         value={filters.location}
-        onChange={(event) => setFilters((current) => ({ ...current, location: event.target.value }))}
+        onCommit={(value) => setFilters((current) => ({ ...current, location: value }))}
         className={`${inputCls} w-32`}
       />
 

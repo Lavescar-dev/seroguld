@@ -3,7 +3,7 @@ export type SilverSub = 'smykker' | 'barrer' | 'monter';
 export type PlatinumSub = 'platin' | 'palladyum';
 export type ShopDurumu = 'hazir' | 'mangler_foto' | 'listelendi';
 export type InventorySurfaceView = 'system' | 'excel';
-export type InventoryLifecycleStatus = 'in_inventory' | 'for_sale' | 'undecided' | 'melted';
+export type InventoryLifecycleStatus = 'in_inventory' | 'for_sale' | 'undecided' | 'melted' | 'sold';
 
 export const PRODUCT_STATUS_LABEL: Record<string, string> = {
   purchased: 'Giriş Bekliyor',
@@ -24,6 +24,18 @@ export const PRODUCT_STATUS_TONE: Record<string, 'success' | 'warning' | 'danger
   melted: 'danger',
 };
 
+// Tam sınıf adlı rozet renkleri — Tailwind JIT şablon enterpolasyonunu
+// (`border-${x}-300`) üretemediği için yüzeyler buradaki tek kaynaktan alır.
+// (Klasik drawer + tablo ortak kullanır; modern yüzey sg-* temasıyla ayrı.)
+export const PRODUCT_STATUS_BADGE_CLASS: Record<string, string> = {
+  purchased: 'border-brand-300 bg-brand-100 text-brand-700',
+  in_inventory: 'border-emerald-300 bg-emerald-50 text-emerald-700',
+  for_sale: 'border-sky-300 bg-sky-50 text-sky-700',
+  undecided: 'border-amber-300 bg-amber-50 text-amber-800',
+  sold: 'border-zinc-300 bg-zinc-100 text-zinc-700',
+  melted: 'border-rose-300 bg-rose-50 text-rose-700',
+};
+
 // Durum filtresi seçenekleri (boş = varsayılan aktif stok görünümü).
 export const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'Aktif stok (varsayılan)' },
@@ -35,10 +47,11 @@ export const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'melted', label: PRODUCT_STATUS_LABEL.melted },
 ];
 
-// Backend `_allowed_status_transition` ile sync (product_service.py:120-145)
+// Backend `_allowed_status_transition` ile sync (product_service.py:120-158)
 export const ALLOWED_STATUS_TRANSITIONS: Record<string, InventoryLifecycleStatus[]> = {
-  // GDPR penceresi bilgilendirme: taze alım doğrudan satışa alınabilir.
-  purchased: ['in_inventory', 'undecided', 'melted', 'for_sale'],
+  // GDPR penceresi bilgilendirme: taze alım doğrudan satışa alınabilir;
+  // purchased → sold da backend'de izinli (0.3.8 kararı, sale_price ile).
+  purchased: ['in_inventory', 'undecided', 'melted', 'for_sale', 'sold'],
   in_inventory: ['for_sale', 'melted', 'undecided'],
   for_sale: ['in_inventory', 'melted'], // sold ayrı akış (sale_price gerek)
   undecided: ['in_inventory', 'for_sale', 'melted'],
@@ -94,11 +107,23 @@ export interface StokItem {
   wooLinked?: boolean;
   /** Yeni eklenen field — düzenleme dispatch'i için optimistic concurrency */
   updatedAt?: string;
+  /**
+   * Henüz sunucuya POST edilmemiş taslak mı? (buildNewItem işaretler, satırdan
+   * gelen öğelerde tanımsız) — Kaydet'te create/update ayrımı listede satır
+   * aramak yerine bu bayrağa bağlanır; filtreli liste satırı düşürünce
+   * yanlışlıkla duplike ürün oluşmasını engeller.
+   */
+  isDraft?: boolean;
 }
 
 export interface CategoryTotals {
   toplamGramSum: number;
   hasMetalSum: number;
+  /** Yalnız sunucudan has_metal_grams gönderilen satırların toplamı (tahmin yok) */
+  hasMetalKnownSum: number;
+  /** Has metal değeri olmayan (backend None) satır sayısı — footer uyarısı için */
+  hasMetalUnknownCount: number;
+  adetSum: number;
   alisSum: number;
   spotSum: number;
   shopSum: number;
