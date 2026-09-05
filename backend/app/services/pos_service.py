@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 from datetime import datetime, timedelta
@@ -80,7 +81,7 @@ from app.schemas.pos import (
     PosWorkspaceSilverRowOut,
     PosWorkspaceSummaryOut,
 )
-from app.schemas.product import ProductCreate, ProductStatusUpdate
+from app.schemas.product import ProductCreate, ProductOut, ProductStatusUpdate
 from app.services.customer_service import create_customer, update_customer
 from app.services.gold_price import GoldPriceService
 from app.services.pos_document_service import (
@@ -129,6 +130,30 @@ from app.utils.security import decrypt_field, hash_sensitive_value, mask_cpr, ma
 settings = get_settings()
 DEFAULT_POS_MARGIN_PERCENT = Decimal("8.00")
 SALE_OVERRIDE_EPSILON = Decimal("0.01")
+
+# Per-session confirm kilidi: aynı POS oturumu için eşzamanlı iki confirm
+# çağrısını serileştirir (çift onay yarışı). Bilinçli olarak pos_service içinde
+# tutulur — ayrı modüle taşınırsa import partition'ı iki ayrı dict açar ve
+# kilitleme etkisini yitirir (desen: office_host_service.callback_lock).
+_POS_CONFIRM_LOCKS: dict[str, asyncio.Lock] = {}
+_POS_CONFIRM_LOCKS_LIMIT = 2048
+
+
+def _pos_confirm_lock(pos_session_id: Any) -> asyncio.Lock:
+    key = str(pos_session_id)
+    lock = _POS_CONFIRM_LOCKS.get(key)
+    if lock is None:
+        # Basit tırtıklama: dict sınırsız büyümesin. Tutulmakta olan bir kilit
+        # dict'ten silinse bile coroutine'lerde yaşamaya devam eder; temizlik
+        # sonrası gelen yeni kilit farklı olsa bile ikinci savunma katmanı
+        # (satır kilidi + DRAFT re-check) yarışı yine keser.
+        if len(_POS_CONFIRM_LOCKS) >= _POS_CONFIRM_LOCKS_LIMIT:
+            _POS_CONFIRM_LOCKS.clear()
+        lock = asyncio.Lock()
+        _POS_CONFIRM_LOCKS[key] = lock
+    return lock
+
+
 _DISPLAY_FINAL_DEFAULT = object()
 WORKSPACE_NOTE_KIND = "purchase_workspace_v1"
 DEFAULT_EUR_DKK_FX = Decimal("7.45")
@@ -2068,6 +2093,28 @@ def _resolve_sale_override_audit(
     }
 
 
+async def _create_product_in_confirm(
+    session: AsyncSession, payload: ProductCreate, actor_id
+) -> ProductOut:
+    """Confirm-yolunda ürün üretimi: create_product commit ETMEZ.
+
+    Atomiklik savepoint ile DEĞİL, "yalnız terminal commit" kuralla sağlanır:
+    confirm'in tüm ara yazıları (ürün, durum geçişi, history, belge) tek
+    terminal commit'inde kalıcı olur; herhangi bir hata ``confirm_session``
+    sarmalayıcısında rollback + pending-expunge ile tamamen geri alınır.
+
+    Bilinçli olarak begin_nested KULLANILMAZ: pysqlite/aiosqlite legacy
+    transaction modunda SAVEPOINT ifadeleri örtük autocommit tetikler ve
+    savepoint içindeki INSERT'ler rollback'e rağmen kalıcılaşır (SQLite'ta
+    atomikliği BOZAR). Postgres'te savepoint doğru çalışsa da davranış iki
+    veritabanında farklılaşmasın; create_product'ın IntegrityError retry
+    döngüsünün kök rollback'i pendings'i oturumda tuttuğu için terminal
+    commit yine tutarlı tek sonuç üretir. Deterministik çakışma (kullanıcının
+    kendi girdiği referans) ise confirm girişinde erken 409 ile kesilir.
+    """
+    return await create_product(session, payload, actor_id, commit=False)
+
+
 async def confirm_session(
     session: AsyncSession,
     *,
@@ -2075,12 +2122,84 @@ async def confirm_session(
     payload: PosConfirmRequest,
     clerk_user: User,
 ) -> PosConfirmResponse:
+    # 1) Aynı oturum için eşzamanlı confirm çağrılarını serileştir (çift onay yarışı).
+    async with _pos_confirm_lock(pos_session.id):
+        # 2) Satır kilidi + taze status okuma: kolon-seviyesi SELECT ... FOR UPDATE
+        #    identity-map'teki bayat nesneyi değil DB'deki güncel satırı görür
+        #    (desen: pos_purchase_finalize / pos_workspace_mutations._lock_workspace_session).
+        locked_status = (
+            await session.execute(
+                select(PosSession.status)
+                .where(PosSession.id == pos_session.id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_status is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="POS oturumu bulunamadı")
+        # 3) DRAFT CAS re-check: ikinci confirm burada doğal olarak dedupe olur.
+        if locked_status != PosSessionStatusEnum.DRAFT:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak oturum onaylanabilir")
+        # write_flag: impl ilk yazma adımına (flush üreten çağrı) girdiğinde
+        # kalkar. Öncesi düşen 400/422'ler salt okuma hatasıdır; rollback
+        # gerektirmez ve oturum nesnelerini gereksiz expire etmemeli
+        # (aynı oturumda zincirlenen ikinci deneme bozulmasın).
+        write_flag = [False]
+        try:
+            return await _confirm_session_locked(
+                session,
+                pos_session=pos_session,
+                payload=payload,
+                clerk_user=clerk_user,
+                write_flag=write_flag,
+            )
+        except Exception:
+            if write_flag[0]:
+                # Parçalı kalıntı yok: ara adımlar commit etmez; tek rollback
+                # confirm'i tamamen geri alır (yarım confirm / sessiz ürün kaybı olmaz).
+                await session.rollback()
+                # rollback, transaction içinde flush'lanan yeni nesneleri "pending"
+                # duruma geri döndürür; bu oturumda sonraki bir autoflush onları
+                # yeniden INSERT edebilir. Confirm sona erdiği için kalıntıyı
+                # oturumdan sök (yeniden dirilme / sessiz kayıt yok).
+                for leftover in list(session.new):
+                    session.expunge(leftover)
+            raise
+
+
+async def _confirm_session_locked(
+    session: AsyncSession,
+    *,
+    pos_session: PosSession,
+    payload: PosConfirmRequest,
+    clerk_user: User,
+    write_flag: list[bool],
+) -> PosConfirmResponse:
     if pos_session.status != PosSessionStatusEnum.DRAFT:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sadece taslak oturum onaylanabilir")
 
     trade_side = _resolved_trade_side(pos_session)
     requested_reference = (payload.reference_number or "").strip()
     allow_line_total_adjustment = bool(payload.allow_line_total_adjustment)
+
+    # Deterministik çakışma erken kesilir: kullanıcının kendi girdiği referans
+    # unique kısıta takılırsa create_product'ın IntegrityError retry döngüsü
+    # hiç devreye girmez (envanter-satışı referans kullanmadığı için kontrol
+    # yalnız referansın gerçekten tüketildiği yollarda koşar).
+    reference_will_be_used = (
+        trade_side != PosTradeSideEnum.SELL_TO_CUSTOMER or payload.sale_product_id is None
+    )
+    if requested_reference and reference_will_be_used:
+        reference_taken = await session.scalar(
+            select(func.count())
+            .select_from(Product)
+            .where(Product.reference_number == requested_reference)
+        )
+        if reference_taken:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Bu referans numarası zaten kayıtlı",
+            )
+
     pos_lines = (
         await session.scalars(
             select(PosSessionLine)
@@ -2122,7 +2241,9 @@ async def confirm_session(
 
         if payload.sale_product_id is not None:
             # Envanterden satış modu
-            sale_product = await get_inventory_product_or_404(session, payload.sale_product_id)
+            sale_product = await get_inventory_product_or_404(
+                session, payload.sale_product_id, commit_gdpr_changes=False
+            )
             # GDPR kilidi satışı engellemez (0.3.8: yalnız bilgi).
             if sale_product.status != ProductStatusEnum.FOR_SALE:
                 raise HTTPException(
@@ -2130,6 +2251,7 @@ async def confirm_session(
                     detail="Seçilen ürün satışta değil. Sadece 'satışta' durumundaki ürünler satılabilir.",
                 )
 
+            write_flag[0] = True
             sold_product = await update_status(
                 session,
                 sale_product,
@@ -2139,6 +2261,7 @@ async def confirm_session(
                     buyer_customer_id=pos_session.customer_id,
                 ),
                 clerk_user.id,
+                commit=False,
             )
 
             pos_session.product_type = sale_product.product_type
@@ -2225,6 +2348,7 @@ async def confirm_session(
             else sale_price
         )
 
+        write_flag[0] = True
         manual_reference = requested_reference or await consume_next_reference_number(session)
         manual_product_payload = ProductCreate(
             reference_number=manual_reference,
@@ -2250,16 +2374,21 @@ async def confirm_session(
             storage_location=payload.storage_location,
             needs_cleaning=False,
         )
-        manual_created = await create_product(session, manual_product_payload, clerk_user.id)
+        manual_created = await _create_product_in_confirm(session, manual_product_payload, clerk_user.id)
 
-        manual_product = await get_inventory_product_or_404(session, manual_created.id)
+        manual_product = await get_inventory_product_or_404(
+            session, manual_created.id, commit_gdpr_changes=False
+        )
         await update_status(
             session,
             manual_product,
             ProductStatusUpdate(status=ProductStatusEnum.FOR_SALE),
             clerk_user.id,
+            commit=False,
         )
-        manual_product_for_sale = await get_inventory_product_or_404(session, manual_created.id)
+        manual_product_for_sale = await get_inventory_product_or_404(
+            session, manual_created.id, commit_gdpr_changes=False
+        )
         sold_manual_product = await update_status(
             session,
             manual_product_for_sale,
@@ -2269,6 +2398,7 @@ async def confirm_session(
                 buyer_customer_id=pos_session.customer_id,
             ),
             clerk_user.id,
+            commit=False,
         )
 
         pos_session.final_offer_dkk = quantize_2(sale_price)
@@ -2421,6 +2551,7 @@ async def confirm_session(
             line_payloads[-1]["purchase_price_dkk"] = quantize_2(line_payloads[-1]["purchase_price_dkk"] + delta)
 
     created_products: list[Product] = []
+    write_flag[0] = True
     for idx, line_payload in enumerate(line_payloads):
         if idx == 0 and requested_reference:
             reference_number = requested_reference
@@ -2449,7 +2580,7 @@ async def confirm_session(
             storage_location=payload.storage_location,
             needs_cleaning=payload.needs_cleaning,
         )
-        created = await create_product(session, product_payload, clerk_user.id)
+        created = await _create_product_in_confirm(session, product_payload, clerk_user.id)
         created_products.append(created)
         session.add(
             ProductHistory(
