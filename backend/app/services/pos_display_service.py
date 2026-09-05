@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from time import monotonic
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.models.customer_identity import CustomerIdentityDocument
 from app.models.enums import PosDocumentTypeEnum, PosRateSourceEnum, PosTradeSideEnum
@@ -214,6 +217,14 @@ async def _attach_display_workspace_rows(
     try:
         workspace = await core.build_purchase_workspace(session, pos_session=pos_session)
     except Exception:
+        # M3 — sessiz düşüş yasak: grid satırları ve başlıktaki TOPLAM canlı
+        # workspace özetinden gelir; buraya düşüldüğünde ikisi de bayat kalır
+        # (tek bozuk decrypt/parse bile tetikleyebilir). Kök neden izsiz
+        # kaybolmasın — iz bırakarak son bilinen snapshot ile devam et.
+        logger.exception(
+            "display workspace bölüm satırları üretilemedi; bayat snapshot döndürülüyor (session=%s)",
+            pos_session.id,
+        )
         return snapshot
 
     kniv_rows = [

@@ -410,12 +410,15 @@ export function CustomerDisplayLiveView({
     [extraRows],
   );
   const knivFilled = useMemo(() => knivRows.filter((row) => hasWorksheetGram(row.total_weight)), [knivRows]);
+  // M3 — knivFilled eksikti: yalnız kniv satırı olan taslakta KNIV bölümü ile
+  // "Ürün satırı bekleniyor" paneli birlikte render oluyordu (çelişkili kiosk).
   const hasAnyRow =
     goldFilled.length > 0 ||
     silverFilled.length > 0 ||
     goldBarFilled.length > 0 ||
     silverBarFilled.length > 0 ||
     ptpdFilled.length > 0 ||
+    knivFilled.length > 0 ||
     goldExtraFilled.length > 0 ||
     silverExtraFilled.length > 0;
   const totalAmount = useMemo(() => {
@@ -428,7 +431,9 @@ export function CustomerDisplayLiveView({
       0,
     );
     if (sum > 0) return sum.toFixed(2);
-    return snapshot.final_offer_dkk ?? '0';
+    // Toplam üretilemiyorsa '0,00' yerine boşluk → footer '—' basar (M3):
+    // satırı olmayan taslakta sıfır tutar yanıltıcı bir "bedava" sinyalidir.
+    return snapshot.final_offer_dkk ?? '';
   }, [goldRows, silverRows, barRows, ptpdRows, extraRows, snapshot.final_offer_dkk, snapshot.lines_total_dkk]);
 
   useEffect(() => {
@@ -448,6 +453,51 @@ export function CustomerDisplayLiveView({
   const idDocDisplay = snapshot.customer_identity_doc_number_masked || '—';
 
   const documentNumber = snapshot.document_number || snapshot.session_code || '—';
+
+  // M3 — snapshot.status ekrana yansımıyordu: backend finalize sonrası
+  // 'confirmed' snapshot'ını aynı WS kanalından yayınlar (pos_purchase_finalize)
+  // ama kiosk teklif görünümünde donuk kalıyordu; kasiyer işlemi bitirdiği
+  // halde müşteri eski teklife bakıyordu. Onayda kapanış sahnesi, iptalde
+  // nötr sıfırlama sahnesi gösterilir.
+  if (snapshot.status === 'confirmed' || snapshot.status === 'cancelled') {
+    const confirmed = snapshot.status === 'confirmed';
+    const closedScene = (
+      <div
+        data-testid="customer-display-closed"
+        className="flex h-[1080px] w-[1920px] flex-col items-center justify-center gap-10 px-16"
+        style={{ backgroundColor: 'var(--display-surface-page)', fontFamily: FONT_STACK_SANS }}
+      >
+        <LogoBar />
+        <DisplayWaitingPanel
+          title={confirmed ? 'İşlem tamamlandı' : 'İşlem iptal edildi'}
+          subtitle={confirmed ? 'Tak for handlen' : 'Afventer ny kunde'}
+        />
+        {confirmed ? (
+          <div className="flex items-baseline gap-4">
+            <span
+              className="text-[18px] uppercase tracking-[0.22em]"
+              style={{ color: 'var(--display-ink-muted)' }}
+            >
+              Genel Toplam
+            </span>
+            <span
+              className="tabular-nums text-[56px] font-bold leading-none"
+              style={{ color: 'var(--display-ink-strong)' }}
+            >
+              {decimalLabel(totalAmount)}
+            </span>
+            <span className="text-[20px] font-bold" style={{ color: 'var(--display-ink-strong)' }}>
+              DKK
+            </span>
+          </div>
+        ) : null}
+        <span aria-live="polite" className="sr-only">
+          {confirmed ? 'İşlem tamamlandı' : 'İşlem iptal edildi'}
+        </span>
+      </div>
+    );
+    return <DisplaySceneViewport embedded={embedded}>{closedScene}</DisplaySceneViewport>;
+  }
 
   const scene = (
     <div

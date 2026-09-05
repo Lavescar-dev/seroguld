@@ -13,13 +13,19 @@ type DisplayRevokeResponse = {
   display_token?: string | null;
 };
 
+// M3 — arıza anında saniyede bir başarısız istek sürmesin: sorgu hatalıyken
+// polling aralığı gevşetilir, düzelince 1 sn'lik canlı takibe döner.
+const DISPLAY_PREVIEW_REFETCH_MS = 1_000;
+const DISPLAY_PREVIEW_ERROR_REFETCH_MS = 15_000;
+
 export function useDisplayPreviewMakeState() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const previewQuery = useQuery({
     queryKey: ['display', 'preview'],
     queryFn: () => apiRequest<PosDisplayPreview>('/api/v2/display/preview'),
-    refetchInterval: 1_000,
+    refetchInterval: (query) =>
+      query.state.error ? DISPLAY_PREVIEW_ERROR_REFETCH_MS : DISPLAY_PREVIEW_REFETCH_MS,
   });
   const queryToken = previewQuery.data?.display_token || '';
   // Revoke sonrası sunucu yeni token yayınlayana kadar yerel override geçerli;
@@ -35,6 +41,9 @@ export function useDisplayPreviewMakeState() {
 
   const [snapshot, setSnapshot] = useState<PosDisplaySnapshot | null>(null);
   const [connection, setConnection] = useState<'connecting' | 'live' | 'offline'>('connecting');
+  // M3 — son WS kare zamanı: kontrol sayfasındaki 'Son sinyal' kartını besler
+  // (init karesi connect anında geldiği için canlı bağlantıda kart doludur).
+  const [lastMessageAt, setLastMessageAt] = useState<string | null>(null);
   const reconnectRef = useRef<number | null>(null);
   const tokenRef = useRef('');
 
@@ -73,6 +82,7 @@ export function useDisplayPreviewMakeState() {
     if (tokenRef.current === token) return;
     tokenRef.current = token;
     setSnapshot(null);
+    setLastMessageAt(null);
   }, [token]);
 
   useEffect(() => {
@@ -88,6 +98,8 @@ export function useDisplayPreviewMakeState() {
       socket = new WebSocket(buildWsUrl(`/api/v2/display/${token}/ws`));
       socket.onopen = () => setConnection('live');
       socket.onmessage = (event) => {
+        // Bozuk kare dahi bağlantı canlılığının kanıtıdır: sinyal zamanını tut.
+        setLastMessageAt(new Date().toISOString());
         try {
           const parsed = JSON.parse(event.data) as { type?: string; data?: PosDisplaySnapshot };
           if (parsed.data) {
@@ -121,6 +133,15 @@ export function useDisplayPreviewMakeState() {
     token,
     snapshot,
     connection,
+    // M3 — preview sorgusu hata yüzeyi: 500/ağ kopması sessizce undefined
+    // döner, operatör 'token yok' sanırdı. Mesaj çağıran tarafına açık verilir.
+    previewError:
+      previewQuery.error instanceof Error
+        ? previewQuery.error.message
+        : previewQuery.error != null
+          ? String(previewQuery.error)
+          : null,
+    lastMessageAt,
     onRevoke: () => revokeDisplayPreviewMutation.mutate(),
     revokingToken: revokeDisplayPreviewMutation.isPending,
   };

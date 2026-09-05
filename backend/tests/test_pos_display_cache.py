@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -111,6 +112,49 @@ def test_display_snapshot_reuses_workspace_sections_within_ttl(monkeypatch):
                 third = await display_snapshot(session, pos_session)
                 assert calls["count"] == 3
                 assert third.workspace_revision == 2
+            finally:
+                pos_display_service.reset_display_workspace_cache()
+
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_display_snapshot_workspace_failure_is_logged_and_falls_back(monkeypatch, caplog):
+    """M3 — build_purchase_workspace patlarsa snapshot bayat döner ama SESSİZ
+    kalmaz: grid satırları ve TOPLAM canlı workspace özetinden geldiği için
+    sessiz düşüş ikisini birden donuk bırakıyordu, tek bozuk decrypt/parse
+    bile iz bırakmadan kayboluyordu. logger.exception izini zorunlu kılar."""
+
+    async def run() -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        async with Session() as session:
+            clerk = User(email="cache-stale@test.local", password_hash="x", name="Admin", role=RoleEnum.ADMIN)
+            session.add(clerk)
+            await session.flush()
+
+            pos_session = _draft_session(clerk, "DSPSTALE1", "stale-token-1")
+            session.add(pos_session)
+            await session.commit()
+
+            async def broken_build(session, *, pos_session):
+                raise RuntimeError("decrypt patladı")
+
+            monkeypatch.setattr(pos_service_module, "build_purchase_workspace", broken_build)
+            pos_display_service.reset_display_workspace_cache()
+            try:
+                with caplog.at_level(logging.ERROR, logger="app.services.pos_display_service"):
+                    snapshot = await display_snapshot(session, pos_session)
+                # Workspace satırları eklenemedi: bayat (satırsız) snapshot döner.
+                assert snapshot.lines_total_dkk is None
+                assert snapshot.gold_rows == []
+                # Ama artık izsiz değil: hata + stack trace loglanır.
+                assert any("bayat snapshot" in rec.getMessage() for rec in caplog.records)
+                assert any(rec.exc_info for rec in caplog.records)
             finally:
                 pos_display_service.reset_display_workspace_cache()
 
