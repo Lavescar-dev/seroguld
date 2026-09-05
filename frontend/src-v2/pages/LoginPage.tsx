@@ -15,11 +15,13 @@ export function LoginPage() {
       ]}
       form={{
         email: state.email,
+        emailHint: state.emailHint,
         password: state.password,
         remember: state.remember,
         isSubmitting: state.isPending,
         errorMessage: state.errorMessage,
         credentialWarning: state.credentialWarning,
+        onEmailChange: state.onEmailChange,
         onPasswordChange: state.onPasswordChange,
         onRememberChange: state.onRememberChange,
         onSubmit: state.onSubmitAction,

@@ -96,11 +96,15 @@ export interface ModernActionItem {
 
 export interface ModernLoginFormModel {
   email: string;
+  /** Maskeli bootstrap ipucu ("i***@…") — doluysa alan düzenlenebilir,
+   *  ipucu placeholder olarak gösterilir; boşsa alan kilitli tam e-postadır. */
+  emailHint?: string | null;
   password: string;
   remember?: boolean;
   isSubmitting: boolean;
   errorMessage?: string | null;
   credentialWarning?: string | null;
+  onEmailChange?: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onRememberChange?: (value: boolean) => void;
   onSubmit: () => void;

@@ -50,10 +50,12 @@ export function ModernLoginPage({ runtime, form }: ModernLoginPageProps) {
                   type="email"
                   name="username"
                   value={form.email}
-                  readOnly
+                  readOnly={!form.emailHint}
+                  placeholder={form.emailHint ?? undefined}
+                  onChange={(event) => form.onEmailChange?.(event.target.value)}
                   autoComplete="username"
-                  aria-readonly="true"
-                  className="bg-sg-surface-soft pr-10 font-medium"
+                  aria-readonly={form.emailHint ? undefined : true}
+                  className={form.emailHint ? 'pr-10 font-medium' : 'bg-sg-surface-soft pr-10 font-medium'}
                 />
                 <LockKeyhole aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sg-text-soft" />
               </div>

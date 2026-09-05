@@ -5,6 +5,8 @@ import { getLocale, t } from '@/lib/locale';
 
 type MakeLoginPageProps = {
   email: string;
+  /** Maskeli bootstrap ipucu — doluysa placeholder olarak gösterilir. */
+  emailHint?: string | null;
   password: string;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
@@ -26,6 +28,7 @@ function BrandMark() {
 
 export function MakeLoginPage({
   email,
+  emailHint,
   password,
   onEmailChange,
   onPasswordChange,
@@ -118,6 +121,7 @@ export function MakeLoginPage({
                   type="email"
                   name="username"
                   value={email}
+                  placeholder={emailHint ?? undefined}
                   onChange={(event) => onEmailChange(event.target.value)}
                   autoComplete="username"
                   className="min-h-11 w-full border border-brand-300 bg-white px-4 pr-11 text-sm font-medium text-brand-950 outline-none transition focus:border-amber-600 focus:ring-2 focus:ring-amber-100"

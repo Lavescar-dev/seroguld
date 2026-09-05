@@ -8,6 +8,9 @@ async function login(page: import('@playwright/test').Page) {
   // Tarayıcıda modern login yüzeyi açılır (classic değil). Vite dev
   // sunucusunda ilk boot uzun sürebilir (özellikle CI'da).
   await expect(page.getByRole('heading', { name: /Masaüstü girişi/i })).toBeVisible({ timeout: 30_000 });
+  // Sunucu (desktop olmayan) env'de bootstrap e-postası maskeli gelir ve alan
+  // boş açılır; tam adres test tarafında yazılır.
+  await page.getByLabel('E-posta').fill('info@seroguld.dk');
   await page.locator('input[type="password"]').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
   await expect(page).toHaveURL(/#\/dashboard/, { timeout: 30_000 });

@@ -21,6 +21,7 @@ export function useLoginMakeState() {
   const navigate = useNavigate();
   const toast = useToast();
   const [email, setEmail] = useState(DEMO_LOGIN_EMAIL);
+  const [emailHint, setEmailHint] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
   const [credentialWarning, setCredentialWarning] = useState<string | null>(null);
@@ -40,22 +41,31 @@ export function useLoginMakeState() {
       }
 
       const bootstrapEmail = bootstrap?.email?.trim() || DEMO_LOGIN_EMAIL;
+      // Kimlik doğrulamasız sunucu ucu e-postayı maskeli döndürür (ör.
+      // "i***@seroguld.dk"); maskeli değer login payload'ına giremez.  Tam
+      // adres yalnız desktop env'de gelir ve alana kilitli olarak basılır;
+      // maskeli ipucu placeholder olarak gösterilir, kullanıcı tam adresini
+      // yazar.
+      const maskedHint = bootstrapEmail.includes('***') ? bootstrapEmail : null;
       // The account identity comes from the backend and does not depend on
       // Credential Manager being available.  In particular, a renamed
       // bootstrap admin must remain usable even when the secure store is
       // temporarily locked; only password prefill is blocked in that case.
       if (active && !emailTouched.current) {
-        setEmail(bootstrapEmail);
+        setEmail(maskedHint ? '' : bootstrapEmail);
+        setEmailHint(maskedHint);
       }
       let storedPassword: string | null = null;
-      try {
-        storedPassword = await getStoredLoginPassword(bootstrapEmail);
-      } catch {
-        // A locked/unavailable Credential Manager is not the same as an empty
-        // entry.  Stop here so the bootstrap password is never silently
-        // substituted for a credential that could not be read.
-        if (active) setCredentialWarning(t('auth.remember.readFailed', getLocale()));
-        return;
+      if (!maskedHint) {
+        try {
+          storedPassword = await getStoredLoginPassword(bootstrapEmail);
+        } catch {
+          // A locked/unavailable Credential Manager is not the same as an empty
+          // entry.  Stop here so the bootstrap password is never silently
+          // substituted for a credential that could not be read.
+          if (active) setCredentialWarning(t('auth.remember.readFailed', getLocale()));
+          return;
+        }
       }
       if (!active) return;
 
@@ -119,6 +129,7 @@ export function useLoginMakeState() {
 
   return {
     email,
+    emailHint,
     password,
     remember,
     onEmailChange: (value: string) => {

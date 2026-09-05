@@ -5,6 +5,9 @@ async function login(page: import('@playwright/test').Page) {
   // Tarayıcıda modern login yüzeyi açılır (classic değil). Vite dev
   // sunucusunda ilk boot uzun sürebilir (özellikle CI'da).
   await expect(page.getByRole('heading', { name: /Masaüstü girişi/i })).toBeVisible({ timeout: 30_000 });
+  // Sunucu (desktop olmayan) env'de bootstrap e-postası maskeli gelir ve alan
+  // boş açılır; tam adres test tarafında yazılır.
+  await page.getByLabel('E-posta').fill('info@seroguld.dk');
   await page.locator('input[type="password"]').fill('Admin123!');
   await page.getByRole('button', { name: 'Giriş Yap' }).click();
 
@@ -32,13 +35,13 @@ test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) 
   // locale'ine ('tr') çevirir — beklentiler çevrilmiş metinlerdir.
   await page.goto('/#/gdpr/request');
   await expect(page.getByRole('heading', { name: /Veri Talep Merkezi/i })).toBeVisible();
-  await page.getByLabel('Talep türü').selectOption('access_export');
+  await page.getByLabel('Talep tipi').selectOption('access_export');
   await page.getByLabel('Ad Soyad').fill(subjectName);
-  await page.getByLabel('E-mail').fill('smoke.gdpr@seroguld.test');
+  await page.getByLabel('E-posta').fill('smoke.gdpr@seroguld.test');
   await page.getByLabel('Telefon').fill('+4500000000');
-  await page.getByLabel(/Persondata ve privacy/i).check();
-  await page.getByRole('button', { name: /Request oluştur/i }).click();
-  await expect(page.getByText('İstek oluşturuldu')).toBeVisible();
+  await page.getByLabel(/Kişisel veri ve gizlilik/i).check();
+  await page.getByRole('button', { name: 'Talep oluştur' }).click();
+  await expect(page.getByText('Talep oluşturuldu')).toBeVisible();
 
   await login(page);
 
@@ -55,7 +58,8 @@ test('auth, AFG, depolama, log and GDPR routes smoke cleanly', async ({ page }) 
 
   await page.goto('/#/gdpr');
   // Modern GDPR yüzeyi: talep kuyruğunda public formdan gelen smoke talebi
-  // "Pseudonymous subject" kimliğiyle listelenir.
+  // gerçek talep sahibi kimliğiyle (eski "Pseudonymous subject" yer tutucusu
+  // yerine) listelenir ve detay panelinde görünür.
   await expect(page.getByRole('heading', { name: 'GDPR Merkezi' }).first()).toBeVisible();
-  await expect(page.getByText('Pseudonymous subject').first()).toBeVisible();
+  await expect(page.getByText(subjectName).first()).toBeVisible();
 });
