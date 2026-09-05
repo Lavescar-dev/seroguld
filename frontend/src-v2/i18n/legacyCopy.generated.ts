@@ -499,6 +499,16 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Eşleşen müşteri": { en: "Matched customer", da: "Matchet kunde" },
   "Talep referans numarası": { en: "Request reference number", da: "Anmodningens referencenummer" },
   "Copy-task kurtarma": { en: "Copy-task recovery", da: "Copy-opgave-genopretning" },
+  "Piyasa oranları yükleniyor…": { en: "Loading market rates…", da: "Indlæser markedspriser…" },
+  "Profil canlı kaynaktan doğrulanamadı — değerler fallback veya bayat olabilir.": { en: "Profile could not be verified from the live source — values may be fallback or stale.", da: "Profilen kunne ikke verificeres fra den levende kilde — værdier kan være fallback eller forældede." },
+  "bayat": { en: "stale", da: "forældet" },
+  "Global oran profiline ulaşılamadı": { en: "Global rate profile unreachable", da: "Global kursprofil kunne ikke nås" },
+  "Kayıt, güncel profil sunucudan okunana kadar kilitli — gösterilen değerler yerel fallback olabilir ve kaydedilirse gerçek oranların üzerine yazılırdı.": { en: "Saving is locked until the current profile is read from the server — shown values may be a local fallback and saving would overwrite real rates.", da: "Gem er låst, indtil den aktuelle profil er læst fra serveren — viste værdier kan være lokal fallback, og gemning ville overskrive rigtige kurser." },
+  "Sıfır değerlerle sahte pano gösterilmiyor; bağlantı düzelince veriler otomatik yenilenir.": { en: "No fake zero-filled dashboard is shown; data refreshes automatically once the connection recovers.", da: "Intet falsk dashboard med nulværdier vises; data opdateres automatisk, når forbindelsen genvindes." },
+  "Pano verileri yükleniyor": { en: "Loading dashboard data", da: "Indlæser dashboarddata" },
+  "Excel'den İçe Aktar": { en: "Import from Excel", da: "Importér fra Excel" },
+  "Bu sekmede görünen / filtrelenen toplam": { en: "Shown in this tab / filtered total", da: "Vist i dette faneblad / filtreret i alt" },
+  "Sipariş bulunamadı": { en: "No orders found", da: "Ingen ordrer fundet" },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {
