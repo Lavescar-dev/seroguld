@@ -179,4 +179,68 @@ describe.each(['modern', 'classic'] as const)('SettingsWorkspace %s', (variant) 
 
     expect(screen.getByText(`password-form-${variant}`)).toBeInTheDocument();
   });
+
+  it('shows the business identity fields in their own category', () => {
+    const onUpdate = vi.fn();
+    render(
+      <SettingsWorkspace
+        variant={variant}
+        config={config}
+        saved={false}
+        isSaving={false}
+        apiStatus={[]}
+        configuredCount={0}
+        onUpdate={onUpdate}
+        onSave={vi.fn()}
+        onReset={vi.fn()}
+        onExport={vi.fn()}
+        onImport={vi.fn()}
+        uiVariantSlot={null}
+        languageSlot={null}
+        monitorSlot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /İşletme bilgileri/ }));
+
+    expect(screen.getByDisplayValue('Sero Guld')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('34093083'), { target: { value: '12345678' } });
+    expect(onUpdate).toHaveBeenCalledWith('firma_cvr', '12345678');
+  });
+
+  it('renders a deliberately disabled integration as neutral Kapalı, not Eksik', () => {
+    render(
+      <SettingsWorkspace
+        variant={variant}
+        config={config}
+        saved={false}
+        isSaving={false}
+        apiStatus={[
+          { name: 'OpenAI', ok: true },
+          { name: 'OPMC', ok: true },
+          { name: 'WooCommerce', ok: true },
+          { name: 'WordPress', ok: true },
+          { name: 'E-posta (AFG)', ok: false, off: true },
+          { name: 'Uniconta', ok: true },
+        ]}
+        configuredCount={5}
+        onUpdate={vi.fn()}
+        onSave={vi.fn()}
+        onReset={vi.fn()}
+        onExport={vi.fn()}
+        onImport={vi.fn()}
+        uiVariantSlot={null}
+        languageSlot={null}
+        monitorSlot={null}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Entegrasyonlar/ }));
+
+    // Bilinçli kapatma nötr 'Kapalı'dır; hiçbir kart 'Eksik' göstermez.
+    expect(screen.getByText('Kapalı')).toBeInTheDocument();
+    expect(screen.queryByText('Eksik')).not.toBeInTheDocument();
+    // Rozet sayacı gerçek oranı gösterir; tümü hazır olmadığında amber nokta.
+    expect(screen.getByText('5/6')).toBeInTheDocument();
+  });
 });

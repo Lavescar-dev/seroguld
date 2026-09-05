@@ -35,8 +35,11 @@ export const DEFAULT_CONFIG: ApiConfig = {
   uniconta_api_key: '',
   uniconta_purchase_vat_code_25: 'Købsmoms',
   uniconta_purchase_vat_code_0: 'KøbBrugtmoms',
-  market_gold: '2850',
-  market_silver: '8.5',
+  // Backend market_rate_profile varsayılanlarıyla aynı (DEFAULT_GOLD_DKK /
+  // DEFAULT_SILVER_DKK = 615.50 / 7.80); çekmece ve alış ekranları da bu
+  // değerlerle başlar. 2850/8.5 eski, çelişen frontend kopyasıydı.
+  market_gold: '615.50',
+  market_silver: '7.80',
   market_platin: '280',
   market_palladyum: '335',
   market_rates_live_enabled: false,
@@ -70,16 +73,22 @@ export function buildSettingsApiStatus(config: ApiConfig) {
     // OPMC modülü yapım aşamasında ve anahtar hiçbir canlı çağrıda kullanılmıyor;
     // hazır sayılması için URL yeterli (anahtar opsiyonel).
     { name: 'OPMC', ok: Boolean(config.opmc_api_url?.trim()) },
-    { name: 'metals.dev', ok: hasSecret('metals_dev_api_key') },
+    // metals.dev artık sayılmaz: R1-20/R2-06 ile canlı kur zincirinden
+    // çıkarıldı (Pt/Pd/EUR Stooq, karat fiyatları WP "Priser"). Anahtar yalnız
+    // probe aracında kalır; burada saymak ekrandan kapatılamayan sahte 'Eksik'
+    // üretirdi.
     { name: 'WooCommerce', ok: hasSecret('woo_consumer_key') && hasSecret('woo_consumer_secret') },
     { name: 'WordPress', ok: hasSecret('wp_app_password') },
     // AFG mail: wp-bridge için URL + secret, smtp için anahtar gerekmez.
+    // off: bilinçli kapatma (afg_email_enabled=false) — 'Eksik' değil nötr
+    // gösterilir; bozuk bağlantı iması vermemesi için üçüncü durumdur.
     {
       name: 'E-posta (AFG)',
       ok:
         Boolean(config.afg_email_enabled) &&
         (config.email_transport !== 'wp-bridge' ||
           (Boolean(config.wp_bridge_url?.trim()) && hasSecret('wp_bridge_secret'))),
+      off: !config.afg_email_enabled,
     },
     { name: 'Uniconta', ok: Boolean(config.uniconta_username) && hasSecret('uniconta_password') },
   ];
@@ -162,18 +171,21 @@ export function useSettingsMakeState() {
       variant: 'danger',
     });
     if (!confirmed) return;
-    saveMutation.mutate({ ...DEFAULT_CONFIG }, {
-      onSuccess: (nextConfig) => {
-        setConfig(nextConfig);
-        queryClient.setQueryData(['settings-v2'], nextConfig);
-        void queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
-        markSaved();
-        requestCriticalBackup();
+    saveMutation.mutate(
+      { ...DEFAULT_CONFIG },
+      {
+        onSuccess: (nextConfig) => {
+          setConfig(nextConfig);
+          queryClient.setQueryData(['settings-v2'], nextConfig);
+          void queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
+          markSaved();
+          requestCriticalBackup();
+        },
+        onError: (error) => {
+          toast.error('Ayarlar sıfırlanamadı', error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.');
+        },
       },
-      onError: (error) => {
-        toast.error('Ayarlar sıfırlanamadı', error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.');
-      },
-    });
+    );
   };
 
   const handleExport = () => {
@@ -199,6 +211,17 @@ export function useSettingsMakeState() {
         variant: 'warning',
       });
       if (!confirmed) return;
+    } else {
+      // Temiz formda bile içe aktarma KAYITLI üretim yapılandırmasını PUT ile
+      // değiştirir; ezme işlemi onaysız yapılmaz.
+      const confirmed = await confirm({
+        title: 'İçe aktarma kayıtlı ayarların üzerine yazacak',
+        message: 'Dosyadaki değerler hem formu hem kayıtlı üretim yapılandırmasını değiştirir. Devam edilsin mi?',
+        confirmText: 'Devam et',
+        cancelText: 'Vazgeç',
+        variant: 'warning',
+      });
+      if (!confirmed) return;
     }
     const input = document.createElement('input');
     input.type = 'file';
@@ -215,12 +238,20 @@ export function useSettingsMakeState() {
           saveMutation.mutate(merged, {
             onSuccess: (nextConfig) => {
               setConfig(nextConfig);
+              // handleSave ile aynı önbellek tazelemesi: aksi halde ['settings-v2']
+              // dışındaki ekranlar bayat değerle formu geri yazardı.
               queryClient.setQueryData(['settings-v2'], nextConfig);
+              void queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
+              void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
+              void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
               markSaved();
               requestCriticalBackup();
             },
             onError: (error) => {
-              toast.error('Ayarlar içe aktarılamadı', error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.');
+              toast.error(
+                'Ayarlar içe aktarılamadı',
+                error instanceof Error ? error.message : 'Beklenmeyen bir hata oluştu.',
+              );
             },
           });
         } catch {
@@ -234,8 +265,7 @@ export function useSettingsMakeState() {
 
   // Kaydedilmemiş değişiklikle sayfadan ayrılma onayı (react-router blocker).
   const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      isReady && isDirty && currentLocation.pathname !== nextLocation.pathname,
+    ({ currentLocation, nextLocation }) => isReady && isDirty && currentLocation.pathname !== nextLocation.pathname,
   );
 
   useEffect(() => {

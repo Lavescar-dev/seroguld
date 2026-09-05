@@ -24,7 +24,7 @@ const SERVER_CONFIG: ApiConfig = {
 };
 
 function serverConfig(): ApiConfig {
-  return { ...SERVER_CONFIG, secret_fields_configured: [...SERVER_CONFIG.secret_fields_configured ?? []] };
+  return { ...SERVER_CONFIG, secret_fields_configured: [...(SERVER_CONFIG.secret_fields_configured ?? [])] };
 }
 
 type SettingsState = ReturnType<typeof useSettingsMakeState>;
@@ -38,12 +38,28 @@ function Probe() {
   return (
     <div>
       {/* i18n metin çevirisi test metnini de çevirdiğinden durum attribute ile taşınır. */}
-      <span data-testid="mode" data-mode={latestState.isLoading ? 'loading' : latestState.isError ? 'error' : 'ready'} />
-      <button type="button" data-testid="save-btn" onClick={() => latestState?.onSave()}>save</button>
-      <button type="button" data-testid="reset-btn" onClick={() => latestState?.onReset()}>reset</button>
-      <button type="button" data-testid="export-btn" onClick={() => latestState?.onExport()}>export</button>
-      <button type="button" data-testid="edit-btn" onClick={() => latestState?.onUpdate('market_gold', '9999')}>edit</button>
-      <button type="button" data-testid="retry-btn" onClick={() => latestState?.onRetryLoad()}>retry</button>
+      <span
+        data-testid="mode"
+        data-mode={latestState.isLoading ? 'loading' : latestState.isError ? 'error' : 'ready'}
+      />
+      <button type="button" data-testid="save-btn" onClick={() => latestState?.onSave()}>
+        save
+      </button>
+      <button type="button" data-testid="reset-btn" onClick={() => latestState?.onReset()}>
+        reset
+      </button>
+      <button type="button" data-testid="export-btn" onClick={() => latestState?.onExport()}>
+        export
+      </button>
+      <button type="button" data-testid="import-btn" onClick={() => void latestState?.onImport()}>
+        import
+      </button>
+      <button type="button" data-testid="edit-btn" onClick={() => latestState?.onUpdate('market_gold', '9999')}>
+        edit
+      </button>
+      <button type="button" data-testid="retry-btn" onClick={() => latestState?.onRetryLoad()}>
+        retry
+      </button>
     </div>
   );
 }
@@ -91,6 +107,14 @@ describe('isSettingsConfigDirty', () => {
   });
 });
 
+describe('DEFAULT_CONFIG market fallbacks', () => {
+  it('align with the backend market_rate_profile defaults, not a stale frontend copy', () => {
+    // backend market_rate_profile.py: DEFAULT_GOLD_DKK=615.50, DEFAULT_SILVER_DKK=7.80
+    expect(DEFAULT_CONFIG.market_gold).toBe('615.50');
+    expect(DEFAULT_CONFIG.market_silver).toBe('7.80');
+  });
+});
+
 describe('useSettingsMakeState', () => {
   it('reports loading and keeps reset/export locked until the real config arrives', async () => {
     apiRequestMock.mockImplementation(() => new Promise(() => {}));
@@ -103,7 +127,9 @@ describe('useSettingsMakeState', () => {
     fireEvent.click(screen.getByTestId('reset-btn'));
     fireEvent.click(screen.getByTestId('export-btn'));
     await waitFor(() => {
-      expect(apiRequestMock.mock.calls.filter(([, options]) => (options as RequestInit | undefined)?.method === 'PUT')).toHaveLength(0);
+      expect(
+        apiRequestMock.mock.calls.filter(([, options]) => (options as RequestInit | undefined)?.method === 'PUT'),
+      ).toHaveLength(0);
     });
     // Onay diyaloğu da açılmaz.
     expect(screen.queryByText(/fabrika değerlerine döndürülsün/)).not.toBeInTheDocument();
@@ -216,5 +242,71 @@ describe('useSettingsMakeState', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/other'));
     expect(screen.getByText('other-page')).toBeInTheDocument();
     expect(screen.queryByText(/Kaydedilmemiş değişiklikler var/)).not.toBeInTheDocument();
+  });
+
+  it('asks before an import overwrites the saved config and aborts on cancel', async () => {
+    apiRequestMock.mockResolvedValue(serverConfig());
+    renderSettingsState();
+
+    await waitFor(() => expect(screen.getByTestId('mode').dataset.mode).toBe('ready'));
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+    fireEvent.click(screen.getByTestId('import-btn'));
+
+    // Temiz formda bile içe aktarma ezme onayı olmadan ilerlemez.
+    expect(await screen.findByText(/kayıtlı ayarların üzerine yazacak/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Vazgeç' }));
+
+    await waitFor(() => expect(clickSpy).not.toHaveBeenCalled());
+    expect(putCalls()).toHaveLength(0);
+    clickSpy.mockRestore();
+  });
+
+  it('imports a settings file after confirmation and puts the merged config', async () => {
+    apiRequestMock.mockImplementation((path: string, options?: RequestInit) => {
+      if (options?.method === 'PUT') return Promise.resolve({ ...serverConfig(), market_silver: '9.9' });
+      return Promise.resolve(serverConfig());
+    });
+    renderSettingsState();
+
+    await waitFor(() => expect(screen.getByTestId('mode').dataset.mode).toBe('ready'));
+
+    // Dosya seçici + FileReader'ı taklit et: onchange dosya seçilmiş gibi tetiklenir.
+    const realCreateElement = document.createElement.bind(document);
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation(((
+      tag: string,
+      options?: ElementCreationOptions,
+    ) => {
+      const element = realCreateElement(tag, options);
+      if (tag === 'input') {
+        queueMicrotask(() => {
+          element.onchange?.({ target: { files: [new File(['{}'], 'settings.json')] } } as unknown as Event);
+        });
+      }
+      return element;
+    }) as typeof document.createElement);
+    class FakeFileReader {
+      onload: ((event: { target: { result: string } }) => void) | null = null;
+      readAsText() {
+        this.onload?.({ target: { result: JSON.stringify({ market_silver: '9.9' }) } });
+      }
+    }
+    vi.stubGlobal('FileReader', FakeFileReader);
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      fireEvent.click(screen.getByTestId('import-btn'));
+      fireEvent.click(await screen.findByRole('button', { name: 'Devam et' }));
+
+      await waitFor(() => expect(putCalls()).toHaveLength(1));
+      // DEFAULT_CONFIG ile birleştirilir ve PUT gövdesine yazılır.
+      expect(putCalls()[0].market_silver).toBe('9.9');
+      expect(putCalls()[0].openai_model).toBe(DEFAULT_CONFIG.openai_model);
+      // Başarıda form, sunucu yanıtına göre güncellenir.
+      await waitFor(() => expect(latestState?.config.market_silver).toBe('9.9'));
+    } finally {
+      vi.unstubAllGlobals();
+      clickSpy.mockRestore();
+      createElementSpy.mockRestore();
+    }
   });
 });
