@@ -6,6 +6,7 @@ import {
   ModernBadge,
   ModernButton,
   ModernCard,
+  ModernNotice,
   ModernPage,
   ModernSection,
   ModernSectionHeader,
@@ -26,6 +27,13 @@ type OpmcTab = 'queue' | 'all' | 'history';
 function riskAverage(items: ModernOpmcListPageProps['items']): number | string {
   const scores = items.map((item) => item.risk_score).filter((score): score is number => typeof score === 'number');
   return scores.length > 0 ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : '—';
+}
+
+// M2 — make detaydaki 'Kural Puanları / Tutarlılık' alanının modern karşılığı.
+function consistencyLabel(value?: string | null): string {
+  if (value === 'consistent') return 'Tutarlı';
+  if (value === 'mismatch') return 'Uyuşmuyor';
+  return 'Kontrol edilemedi';
 }
 
 export function ModernOpmcListPage({
@@ -284,15 +292,38 @@ export function ModernOpmcDetailPage({
 
       {detail ? (
         <>
+          {/* M2 — make detaydaki 'Skor Kaynağı & Override Zinciri' panelinin
+          uyuşmazlık uyarısı modern'e taşındı: OPMC skoru ile tetiklenen kural
+          puanları tutuşmuyorsa operatör burada uyarılır. */}
+          {detail.score_consistency === 'mismatch' ? (
+            <ModernNotice
+              tone="warning"
+              title="Skor uyuşmazlığı"
+              description={`OPMC risk skoru ${detail.opmc_risk_score ?? '—'}; tetiklenen kural puanları toplamı ${detail.failed_rule_points_total ?? '—'}. Manuel doğrulama gerekli.`}
+            />
+          ) : null}
           <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
             <DetailGrid title="Risk özeti" description="Skor ve kaynak mevcut OPMC sipariş verisinden gelir." items={[
               { label: 'Sipariş', value: detail.order_number || detail.order_id, accent: true },
               { label: 'Durum', value: formatOrderStatus(detail.status) },
               { label: 'Risk skoru', value: detail.risk_score ?? '—', accent: true },
+              // M2 — ham/etkin karşılaştırma ve tutarlılık: override zinciriyle
+              // birlikte okunur; make detaydaki panel bilgisi burada da görünür.
+              { label: 'Ham risk skoru', value: detail.raw_risk_score ?? '—' },
+              { label: 'Kural puanları', value: detail.failed_rule_points_total ?? '—' },
+              { label: 'Skor tutarlılığı', value: consistencyLabel(detail.score_consistency) },
+              ...(detail.whitelist_action_human ? [{ label: 'Beyaz liste', value: detail.whitelist_action_human }] : []),
               { label: 'OPMC güven / risk', value: `${detail.opmc_trust_score ?? '—'} / ${detail.opmc_risk_score ?? '—'}` },
               { label: 'Kaynak', value: riskSourceLabel(detail.risk_score_source) },
               { label: 'İnceleme durumu', value: detail.review_queue_status === 'historical' ? 'Geçmiş kayıt' : detail.review_queue_status === 'active' ? 'Aktif inceleme' : 'Değerlendirilmedi' },
-              { label: 'Müşteri geçmişi', value: detail.customer_history ? `${detail.customer_history.total_orders} sipariş · ${detail.customer_history.known_safe ? 'güvenli' : 'eşleşme yok'}` : 'Kayıt yok' },
+              // M2 — dağılım: modern yalnız toplam gösteriyordu; başarılı/
+              // iptal/başarısız kırılımı make detayla eşitlendi.
+              {
+                label: 'Müşteri geçmişi',
+                value: detail.customer_history
+                  ? `${detail.customer_history.total_orders} sipariş · ${detail.customer_history.successful_orders} başarılı · ${detail.customer_history.cancelled_orders} iptal/iade · ${detail.customer_history.failed_orders} başarısız${detail.customer_history.known_safe ? ' · güvenli' : ''}`
+                  : 'Kayıt yok',
+              },
               { label: 'Toplam', value: formatMoney(detail.total) },
               // Dolandırıcılık kararının ana verileri: e-posta, IP ve ödeme yöntemi.
               { label: 'E-posta', value: detail.customer_email || '—' },
@@ -320,6 +351,14 @@ export function ModernOpmcDetailPage({
               <ModernSectionHeader title="Risk sinyalleri" />
               <div className="mt-4 space-y-3">{detail.risk_reasons.length > 0 ? detail.risk_reasons.map((item) => <div key={item.code} className="flex items-start gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-sg-red" /><div><p className="text-sm font-semibold text-sg-text">{item.reason}</p></div></div>) : <ModernUnavailableState title="Risk nedeni yok" description="Bu vaka için risk sinyali bulunmuyor." />}</div>
             </ModernSection>
+            {/* M2 — AI değerlendirmesi make detayda vardı, modern'e hiç
+            taşınmamıştı; bilgi asimetrisi kapatıldı. */}
+            {detail.ai_explanations_human.length > 0 ? (
+              <ModernSection>
+                <ModernSectionHeader title="AI değerlendirmesi" description="AI modelinin açıklamaları otomatik çeviriyle listelenir; karar kaynağı OPMC'dir." />
+                <div className="mt-4 space-y-3">{detail.ai_explanations_human.map((line, index) => <div key={`${line}-${index}`} className="flex items-start gap-3 rounded-sg-md border border-sg-border bg-sg-surface-soft px-4 py-3"><UserRound className="mt-0.5 h-4 w-4 shrink-0 text-sg-accent" /><p className="text-sm text-sg-text">{line}</p></div>)}</div>
+              </ModernSection>
+            ) : null}
             <ModernSection>
               <ModernSectionHeader title="Meta ve karar geçmişi" />
               <div className="mt-4 space-y-3">

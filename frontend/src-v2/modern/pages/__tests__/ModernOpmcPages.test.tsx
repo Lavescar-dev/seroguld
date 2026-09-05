@@ -184,3 +184,60 @@ describe('ModernOpmcDetailPage override guard', () => {
     expect(screen.getByRole('button', { name: 'Düşük risk' })).toBeDisabled();
   });
 });
+
+describe('ModernOpmcDetailPage make-parity panels', () => {
+  function renderDetailPanels(overrides: Partial<AntiFraudOrder> = {}) {
+    const detail = makeItem({
+      order_id: 1001,
+      requires_manual_review: true,
+      review_queue_status: 'active',
+      risk_score: 90,
+      ...overrides,
+    });
+    render(
+      <ModernOpmcDetailPage requestedId="1001" detail={detail} overrideAvailability={{ state: 'available' }} />,
+    );
+  }
+
+  it('surfaces AI evaluation, raw/effective score, consistency and history distribution like the make detail', () => {
+    renderDetailPanels({
+      raw_risk_score: 70,
+      opmc_risk_score: 90,
+      failed_rule_points_total: 60,
+      score_consistency: 'mismatch',
+      ai_explanations_human: ['İsim ve adres tutarlılığı: uyumlu.'],
+      customer_history: {
+        total_orders: 5,
+        successful_orders: 3,
+        cancelled_orders: 1,
+        failed_orders: 1,
+        known_safe: true,
+      },
+    });
+
+    // Uyuşmazlık bandı OPMC skoru ile kural puanlarını yan yana verir.
+    expect(screen.getByText('Skor uyuşmazlığı')).toBeInTheDocument();
+    expect(screen.getByText(/tetiklenen kural puanları toplamı 60/)).toBeInTheDocument();
+
+    // Ham (70) ile etkin (90) skor aynı panelde karşılaştırılabilir.
+    expect(screen.getByText('Ham risk skoru')).toBeInTheDocument();
+    expect(screen.getByText('70')).toBeInTheDocument();
+    expect(screen.getByText('Uyuşmuyor')).toBeInTheDocument();
+
+    // AI değerlendirmesi make detaydaki panelin modern karşılığı.
+    expect(screen.getByText('AI değerlendirmesi')).toBeInTheDocument();
+    expect(screen.getByText('İsim ve adres tutarlılığı: uyumlu.')).toBeInTheDocument();
+
+    // Müşteri geçmişi yalnız toplam değil, dağılımıyla gösterilir.
+    expect(screen.getByText(/5 sipariş · 3 başarılı · 1 iptal\/iade · 1 başarısız · güvenli/)).toBeInTheDocument();
+  });
+
+  it('omits the mismatch banner and AI section when they are not applicable', () => {
+    renderDetailPanels();
+
+    expect(screen.queryByText('Skor uyuşmazlığı')).not.toBeInTheDocument();
+    expect(screen.queryByText('AI değerlendirmesi')).not.toBeInTheDocument();
+    // Skor yoksa tutarlılık dürüstçe 'kontrol edilemedi' der, tutarlı saymaz.
+    expect(screen.getByText('Kontrol edilemedi')).toBeInTheDocument();
+  });
+});
