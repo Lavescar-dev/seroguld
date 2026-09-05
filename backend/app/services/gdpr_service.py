@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, insert, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,7 @@ from app.models.gdpr_copy_task import (
     COPY_TASK_FAILED,
     COPY_TASK_LEGALLY_RETAINED,
     COPY_TASK_MANUAL_ACTION_REQUIRED,
+    COPY_TASK_PENDING,
     COPY_TASK_PSEUDONYMIZED,
     COPY_TASK_STATES,
     COPY_TASK_TERMINAL_STATES,
@@ -63,12 +65,26 @@ from app.utils.helpers import utc_now
 from app.utils.security import decrypt_field
 
 
-OPEN_REQUEST_STATUSES = {"submitted", "identity_pending", "verified", "under_review", "approved", "queued", "executing"}
+OPEN_REQUEST_STATUSES = {
+    "submitted",
+    "identity_pending",
+    "verified",
+    "under_review",
+    "approved",
+    "queued",
+    "executing",
+    # Intermediate state: the Woo privacy sync failed BEFORE the CRM record
+    # was mutated, so the request stays retryable instead of "failed".
+    "pseudonymize_pending",
+}
 COMPLETED_REQUEST_STATUSES = {"completed", "completed_with_warnings"}
 REQUEST_EXECUTABLE_STATUSES = {"approved", "queued"}
+REQUEST_RETRYABLE_STATUSES = {"failed", "pseudonymize_pending"}
 AUTOMATIC_JOB_TYPES = {"retention_scan", "gdpr_runner"}
 EXPORT_ARCHIVE_RETENTION_DAYS = 30
 TRACKING_TOKEN_RETENTION_DAYS = 90
+PUBLIC_REQUEST_DEDUPE_HOURS = 24
+REFERENCE_COLLISION_RETRY_ATTEMPTS = 5
 DEFAULT_COPY_TASK_SPECS = (
     ("crm_master", "CRM", "users and customer master", "pseudonymize"),
     ("customer_identity", "CRM identity store", "identity documents and photo refs", "pseudonymize"),
@@ -370,10 +386,15 @@ def _set_copy_task_status(
     *,
     reason: str | None = None,
     metadata: dict[str, Any] | None = None,
+    force: bool = False,
 ) -> bool:
     if status_value not in COPY_TASK_STATES:
         raise ValueError(f"Unsupported GDPR copy task state: {status_value}")
-    if task.status in (COPY_TASK_COMPLETION_STATES | {COPY_TASK_FAILED}) and task.status != status_value:
+    if (
+        not force
+        and task.status in (COPY_TASK_COMPLETION_STATES | {COPY_TASK_FAILED})
+        and task.status != status_value
+    ):
         return False
     task.status = status_value
     if reason is not None:
@@ -391,10 +412,15 @@ async def _reconcile_copy_task_completion(session: AsyncSession, request: GdprRe
         request.completed_at = None
         if any(task.status == COPY_TASK_FAILED for task in unresolved):
             request.status = "failed"
+        elif request.status == "pseudonymize_pending":
+            # Keep the retryable intermediate state: the Woo sync failed before
+            # the CRM mutation, so the request must not degrade into a generic
+            # manual_action_required record.
+            pass
         elif request.status != "rejected":
             request.status = "manual_action_required"
         return unresolved
-    if request.status in {"executing", "queued", "approved", "manual_action_required"}:
+    if request.status in {"executing", "queued", "approved", "manual_action_required", "failed", "pseudonymize_pending"}:
         request.status = "completed"
         request.completed_at = utc_now()
     return unresolved
@@ -1055,22 +1081,67 @@ def get_public_gdpr_bridge_config() -> GdprPublicBridgeConfigOut:
 async def submit_public_gdpr_request(session: AsyncSession, payload: GdprPublicRequestCreateIn) -> GdprPublicRequestCreateOut:
     if not payload.accepted_privacy:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Privacy kabulü zorunlu.")
-    request = GdprRequest(
-        reference_number=_request_reference(),
-        request_type=payload.request_type.strip(),
-        status="identity_pending",
-        channel="public_page",
-        subject_name=payload.subject_name.strip(),
-        subject_email=(payload.subject_email or "").strip().lower() or None,
-        subject_phone=(payload.subject_phone or "").strip() or None,
-        message=(payload.message or "").strip() or None,
-        public_tracking_token=_tracking_token(),
-        public_tracking_token_expires_at=utc_now() + timedelta(days=90),
-        due_at=utc_now() + timedelta(days=30),
-        request_meta={"accepted_privacy": True},
-    )
-    session.add(request)
-    await session.flush()
+
+    # Public endpoint abuse guard (2/2): a 24h dedupe on
+    # (subject_email, request_type) — the same combination inside the window
+    # gets its existing tracking link back instead of creating another row.
+    subject_email = (payload.subject_email or "").strip().lower() or None
+    if subject_email:
+        dedupe_cutoff = utc_now() - timedelta(hours=PUBLIC_REQUEST_DEDUPE_HOURS)
+        existing = await session.scalar(
+            select(GdprRequest)
+            .where(
+                func.lower(GdprRequest.subject_email) == subject_email,
+                GdprRequest.request_type == payload.request_type.strip(),
+                GdprRequest.channel == "public_page",
+                GdprRequest.status != "rejected",
+            )
+            .order_by(GdprRequest.created_at.desc())
+            .limit(1)
+        )
+        existing_created_at = _coerce_utc_datetime(existing.created_at) if existing is not None else None
+        if existing is not None and existing_created_at is not None and existing_created_at >= dedupe_cutoff:
+            return GdprPublicRequestCreateOut(
+                reference_number=existing.reference_number,
+                tracking_token=existing.public_tracking_token,
+                status=existing.status,
+                due_at=existing.due_at or utc_now() + timedelta(days=30),
+            )
+
+    request: GdprRequest | None = None
+    for _ in range(REFERENCE_COLLISION_RETRY_ATTEMPTS):
+        try:
+            # The candidate row is created INSIDE the savepoint so a rollback
+            # on reference collision also expunges the pending object; a
+            # stale candidate must never be re-flushed at commit time.
+            async with session.begin_nested():
+                candidate = GdprRequest(
+                    reference_number=_request_reference(),
+                    request_type=payload.request_type.strip(),
+                    status="identity_pending",
+                    channel="public_page",
+                    subject_name=payload.subject_name.strip(),
+                    subject_email=subject_email,
+                    subject_phone=(payload.subject_phone or "").strip() or None,
+                    message=(payload.message or "").strip() or None,
+                    public_tracking_token=_tracking_token(),
+                    public_tracking_token_expires_at=utc_now() + timedelta(days=90),
+                    due_at=utc_now() + timedelta(days=30),
+                    request_meta={"accepted_privacy": True},
+                )
+                session.add(candidate)
+                await session.flush()
+        except IntegrityError:
+            # reference_number collision: retry with a fresh reference inside
+            # a rolled-back savepoint, then surface 409 to the caller.
+            continue
+        request = candidate
+        break
+    if request is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GDPR başvuru numarası üretilemedi; lütfen tekrar deneyin.",
+        )
     await ensure_gdpr_copy_tasks(session, request)
     await _append_request_event(
         session,
@@ -1322,13 +1393,34 @@ async def _best_effort_sync_woo_privacy(
 
 
 async def _execute_pseudonymize(session: AsyncSession, customer: User) -> dict[str, Any]:
+    # Ordering matters for atomicity: the Woo privacy sync runs BEFORE any CRM
+    # mutation, using the customer's original email/phone. If Woo fails with a
+    # transient (remote) error the CRM authoritative record stays intact and
+    # the caller puts the request into the retryable "pseudonymize_pending"
+    # state. The old order (CRM first, Woo second) permanently destroyed the
+    # matching keys on a Woo failure and made the request unrecoverable.
+    original_email = customer.email
+    original_phone = customer.phone
+    placeholder_email = _customer_placeholder_email(customer)
+    sync_result = await _best_effort_sync_woo_privacy(
+        woocommerce_customer_id=customer.woocommerce_customer_id,
+        action="pseudonymize",
+        email=original_email,
+        phone=original_phone,
+        placeholder_email=placeholder_email,
+    )
+    if str(sync_result.get("status") or "") == "remote_error":
+        return {
+            "warnings": [f"WooCommerce privacy sync failed: {exc}" for exc in (sync_result.get("warnings") or [])],
+            "woo_sync": sync_result,
+            "crm_applied": False,
+        }
+
     identity = await session.scalar(
         select(CustomerIdentityDocument).where(CustomerIdentityDocument.user_id == customer.id)
     )
-    original_email = customer.email
-    original_phone = customer.phone
     customer.name = _customer_placeholder_name(customer)
-    customer.email = _customer_placeholder_email(customer)
+    customer.email = placeholder_email
     customer.phone = None
     customer.postal_code = None
     customer.address_encrypted = None
@@ -1340,14 +1432,7 @@ async def _execute_pseudonymize(session: AsyncSession, customer: User) -> dict[s
         identity.identity_doc_number_encrypted = None
         identity.identity_photo_refs = []
     await session.flush()
-    sync_result = await _best_effort_sync_woo_privacy(
-        woocommerce_customer_id=customer.woocommerce_customer_id,
-        action="pseudonymize",
-        email=original_email,
-        phone=original_phone,
-        placeholder_email=customer.email,
-    )
-    return {"warnings": list(sync_result.get("warnings") or []), "woo_sync": sync_result}
+    return {"warnings": list(sync_result.get("warnings") or []), "woo_sync": sync_result, "crm_applied": True}
 
 
 async def _execute_restriction(session: AsyncSession, customer: User) -> dict[str, Any]:
@@ -1466,9 +1551,20 @@ async def _execute_request_job(
             execution = await _execute_pseudonymize(session, customer)
             warnings.extend(execution.get("warnings") or [])
             woo_sync = execution.get("woo_sync")
+            crm_applied = bool(execution.get("crm_applied"))
+            woo_status = str((woo_sync or {}).get("status") or "skipped")
             for task in copy_tasks:
                 if task.task_key in {"crm_master", "customer_identity"}:
-                    _set_copy_task_status(task, COPY_TASK_PSEUDONYMIZED, reason="CRM authoritative record pseudonymized.")
+                    if crm_applied:
+                        _set_copy_task_status(task, COPY_TASK_PSEUDONYMIZED, reason="CRM authoritative record pseudonymized.")
+                    elif task.status not in COPY_TASK_TERMINAL_STATES:
+                        # CRM was intentionally left untouched; keep the tasks
+                        # open so the retry re-executes the whole request.
+                        _set_copy_task_status(
+                            task,
+                            COPY_TASK_PENDING,
+                            reason="WooCommerce sync failed before CRM pseudonymize; CRM data preserved, retry pending.",
+                        )
                 elif task.task_key in {"financial_ledger", "local_backups", "offsite_backups"}:
                     _set_copy_task_status(
                         task,
@@ -1476,11 +1572,17 @@ async def _execute_request_job(
                         reason="Retention policy requires keeping this copy; deletion follows the documented retention window.",
                     )
                 elif task.task_key == "woocommerce":
-                    woo_status = str((woo_sync or {}).get("status") or "skipped")
                     if woo_status == "synced":
                         _set_copy_task_status(task, COPY_TASK_PSEUDONYMIZED, reason="WooCommerce customer copy pseudonymized.")
                     elif woo_status == "remote_error":
-                        _set_copy_task_status(task, COPY_TASK_FAILED, reason="WooCommerce privacy sync failed.")
+                        # Transient Woo failure: keep the task non-terminal so
+                        # an admin retry can re-run the request instead of the
+                        # old irreversible "failed" dead end.
+                        _set_copy_task_status(
+                            task,
+                            COPY_TASK_PENDING,
+                            reason="WooCommerce privacy sync failed (transient); retry pending.",
+                        )
                     else:
                         _set_copy_task_status(
                             task,
@@ -1488,11 +1590,16 @@ async def _execute_request_job(
                             reason="WooCommerce copy was not automatically changed; operator action is required.",
                         )
                 elif task.status not in COPY_TASK_TERMINAL_STATES:
+                    if not crm_applied:
+                        continue
                     _set_copy_task_status(
                         task,
                         COPY_TASK_MANUAL_ACTION_REQUIRED,
                         reason="No safe automatic connector exists for this copy.",
                     )
+            if not crm_applied:
+                request.status = "pseudonymize_pending"
+                request.completed_at = None
         elif request.request_type == "objection_restriction":
             if not request.verified_customer_id:
                 raise HTTPException(status_code=422, detail="Restriction için doğrulanmış müşteri gerekli.")
@@ -1525,13 +1632,17 @@ async def _execute_request_job(
         if woo_sync is not None:
             result_json["woo_sync"] = woo_sync
         job.result_json = result_json
+        if request.status == "pseudonymize_pending":
+            executed_message = "WooCommerce privacy sync failed before CRM pseudonymize; CRM data preserved, retry pending."
+        else:
+            executed_message = "GDPR request executed."
         await _append_request_event(
             session,
             request_id=request.id,
             event_type="executed",
             actor_type=actor_type,
             actor_user_id=actor_user_id,
-            message="GDPR request executed.",
+            message=executed_message,
             payload_json={"warnings": warnings, "woo_sync": woo_sync},
         )
     except Exception as exc:
@@ -1561,6 +1672,7 @@ async def run_queued_gdpr_jobs(
     *,
     actor: User | None = None,
     request_id: UUID | None = None,
+    include_cleanup: bool = False,
 ) -> GdprJob:
     audit_job = await _create_runner_audit_job(
         session,
@@ -1599,8 +1711,13 @@ async def run_queued_gdpr_jobs(
             warnings.append(str(exc))
         processed_request_ids.append(str(request.id))
 
-    cleanup_result = await _purge_old_export_archives(session)
-    cleanup_result.update(await _cleanup_expired_tracking_tokens(session))
+    # Export-archive purge and tracking-token cleanup are maintenance work:
+    # they must only run in the explicit batch runner mode, never inside a
+    # single-request execute (and never inside any GET path).
+    cleanup_result: dict[str, Any] = {}
+    if include_cleanup:
+        cleanup_result = await _purge_old_export_archives(session)
+        cleanup_result.update(await _cleanup_expired_tracking_tokens(session))
     audit_job.status = "completed_with_warnings" if warnings else "completed"
     audit_job.completed_at = utc_now()
     audit_job.result_json = {
@@ -1621,6 +1738,7 @@ async def update_gdpr_copy_task(
     actor: User,
     status_value: str,
     reason: str | None = None,
+    override_terminal: bool = False,
 ) -> GdprCopyTask:
     normalized = status_value.strip().lower()
     if normalized not in COPY_TASK_STATES:
@@ -1632,9 +1750,10 @@ async def update_gdpr_copy_task(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GDPR copy task bulunamadı.")
     if normalized in {COPY_TASK_FAILED, COPY_TASK_MANUAL_ACTION_REQUIRED, COPY_TASK_LEGALLY_RETAINED} and not reason:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Bu durum için gerekçe zorunlu.")
-    if task.status in (COPY_TASK_COMPLETION_STATES | {COPY_TASK_FAILED}) and task.status != normalized:
+    is_failed_override = override_terminal and task.status == COPY_TASK_FAILED and normalized != COPY_TASK_FAILED
+    if task.status in (COPY_TASK_COMPLETION_STATES | {COPY_TASK_FAILED}) and task.status != normalized and not is_failed_override:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Terminal copy task durumu değiştirilemez.")
-    _set_copy_task_status(task, normalized, reason=reason)
+    _set_copy_task_status(task, normalized, reason=reason, force=is_failed_override)
     await _append_request_event(
         session,
         request_id=request.id,
@@ -1642,11 +1761,65 @@ async def update_gdpr_copy_task(
         actor_type="admin",
         actor_user_id=actor.id,
         message=f"Copy task {task.task_key} -> {normalized}.",
-        payload_json={"task_id": str(task.id), "task_key": task.task_key, "status": normalized, "reason": reason},
+        payload_json={
+            "task_id": str(task.id),
+            "task_key": task.task_key,
+            "status": normalized,
+            "reason": reason,
+            "override_terminal": bool(is_failed_override),
+        },
     )
-    await _reconcile_copy_task_completion(session, request)
+    unresolved = await _reconcile_copy_task_completion(session, request)
+    if (
+        is_failed_override
+        and unresolved
+        and not any(task.status == COPY_TASK_FAILED for task in unresolved)
+        and request.status in {"manual_action_required", "pseudonymize_pending"}
+    ):
+        # The admin resolved the blocking FAILED copy but work remains: make
+        # the request executable again so POST /execute can re-run it.
+        request.status = "approved"
     await session.flush()
     return task
+
+
+async def retry_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User, reason: str) -> GdprRequest:
+    """Admin recovery path for failed / pseudonymize_pending requests.
+
+    Resets FAILED copy tasks back to pending (terminal override), flips the
+    request back to an executable status and re-runs the queued job. CRM data
+    is safe to re-execute because the Woo sync runs before any CRM mutation.
+    """
+    if request.status not in REQUEST_RETRYABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Yalnızca failed veya pseudonymize_pending durumundaki istekler yeniden denenebilir.",
+        )
+    if not (reason or "").strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Retry için gerekçe zorunlu.")
+    tasks = await _copy_tasks_for_request(session, request.id)
+    for task in tasks:
+        if task.status == COPY_TASK_FAILED:
+            _set_copy_task_status(task, COPY_TASK_PENDING, reason=f"Admin retry: {reason.strip()}", force=True)
+    await _append_request_event(
+        session,
+        request_id=request.id,
+        event_type="retry_requested",
+        actor_type="admin",
+        actor_user_id=actor.id,
+        message=reason.strip(),
+        payload_json={"previous_status": request.status},
+    )
+    request.status = "approved"
+    request.completed_at = None
+    await session.flush()
+    return await execute_gdpr_request(session, request, actor=actor)
+
+
+def serialize_gdpr_job(job: GdprJob) -> GdprJobOut:
+    payload = _job_out(job)
+    assert payload is not None
+    return payload
 
 
 async def execute_gdpr_request(session: AsyncSession, request: GdprRequest, *, actor: User) -> GdprRequest:

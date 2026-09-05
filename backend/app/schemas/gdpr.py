@@ -84,6 +84,9 @@ class GdprCopyTaskOut(AppBaseModel):
 class GdprCopyTaskUpdateIn(AppBaseModel):
     status: str = Field(max_length=40)
     reason: str | None = Field(default=None, max_length=2000)
+    # Admin override: allows moving a FAILED copy task back to a retryable or
+    # resolved state; reason stays mandatory for such transitions.
+    override: bool = False
 
 
 class GdprRequestDetailOut(GdprRequestListItemOut):
@@ -103,6 +106,10 @@ class GdprRequestVerifyIn(AppBaseModel):
 
 class GdprRequestDecisionIn(AppBaseModel):
     reason: str | None = Field(default=None, max_length=2000)
+
+
+class GdprRequestRetryIn(AppBaseModel):
+    reason: str = Field(min_length=3, max_length=2000)
 
 
 class GdprRetentionPolicyOut(AppBaseModel):
@@ -188,6 +195,9 @@ class GdprPublicRequestCreateIn(AppBaseModel):
     subject_phone: str | None = Field(default=None, max_length=30)
     message: str | None = Field(default=None, max_length=4000)
     accepted_privacy: bool = True
+    # Honeypot: real users never fill this hidden field; bots do. A non-empty
+    # value makes the endpoint reject the submission without touching the DB.
+    honeypot: str | None = Field(default=None, max_length=200)
 
 
 class GdprPublicRequestCreateOut(AppBaseModel):

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,7 @@ from app.schemas.gdpr import (
     GdprRequestDecisionIn,
     GdprRequestDetailOut,
     GdprRequestListItemOut,
+    GdprRequestRetryIn,
     GdprRequestVerifyIn,
     GdprRetentionPolicyOut,
     GdprRetentionPolicyUpdateIn,
@@ -43,6 +45,10 @@ from app.services.gdpr_service import (
     list_gdpr_retention_policies,
     reject_gdpr_request,
     resolve_export_path,
+    retry_gdpr_request,
+    run_queued_gdpr_jobs,
+    run_retention_scan,
+    serialize_gdpr_job,
     serialize_gdpr_request_detail,
     submit_public_gdpr_request,
     update_retention_policy,
@@ -52,6 +58,35 @@ from app.services.gdpr_service import (
 
 admin_router = APIRouter()
 public_router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Public request abuse guards (in-memory, per-process; no new dependencies).
+# ---------------------------------------------------------------------------
+_PUBLIC_REQUEST_RATE_LIMIT_MAX = 5
+_PUBLIC_REQUEST_RATE_LIMIT_WINDOW_SECONDS = 3600.0
+_public_request_rate_bucket: dict[str, list[float]] = {}
+
+
+def _enforce_public_request_rate_limit(client_ip: str) -> None:
+    """Fixed-window per-IP limiter for the unauthenticated public endpoint.
+
+    Keeps unbounded writes off the database: the 6th submission from the same
+    IP within one hour is rejected with 429 before any DB work happens.
+    """
+    now = time.monotonic()
+    window_start = now - _PUBLIC_REQUEST_RATE_LIMIT_WINDOW_SECONDS
+    # Opportunistic pruning so the bucket cannot grow without bound.
+    if len(_public_request_rate_bucket) > 1024:
+        for key in [key for key, hits in _public_request_rate_bucket.items() if not hits or hits[-1] <= window_start]:
+            _public_request_rate_bucket.pop(key, None)
+    hits = [hit for hit in _public_request_rate_bucket.get(client_ip, []) if hit > window_start]
+    if len(hits) >= _PUBLIC_REQUEST_RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Çok fazla GDPR başvurusu gönderildi. Lütfen daha sonra tekrar deneyin.",
+        )
+    hits.append(now)
+    _public_request_rate_bucket[client_ip] = hits
 
 
 @admin_router.get("/overview", response_model=GdprOverviewOut)
@@ -107,7 +142,15 @@ async def patch_copy_task(
     admin: User = Depends(require_admin),
 ) -> GdprRequestDetailOut:
     request = await get_gdpr_request_or_404(db, request_id)
-    await update_gdpr_copy_task(db, request, task_id=task_id, actor=admin, status_value=payload.status, reason=payload.reason)
+    await update_gdpr_copy_task(
+        db,
+        request,
+        task_id=task_id,
+        actor=admin,
+        status_value=payload.status,
+        reason=payload.reason,
+        override_terminal=payload.override,
+    )
     await db.commit()
     return await serialize_gdpr_request_detail(db, request)
 
@@ -173,6 +216,49 @@ async def post_enqueue_request(
     request = await enqueue_gdpr_request(db, request, actor=admin)
     await db.commit()
     return await serialize_gdpr_request_detail(db, request)
+
+
+@admin_router.post("/requests/{request_id}/retry", response_model=GdprRequestDetailOut)
+async def post_retry_request(
+    request_id: UUID,
+    payload: GdprRequestRetryIn,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> GdprRequestDetailOut:
+    """Admin override/retry for failed / pseudonymize_pending requests (A8)."""
+    request = await get_gdpr_request_or_404(db, request_id)
+    request = await retry_gdpr_request(db, request, actor=admin, reason=payload.reason)
+    await db.commit()
+    return await serialize_gdpr_request_detail(db, request)
+
+
+@admin_router.post("/run", response_model=GdprJobOut)
+async def post_run_gdpr_jobs(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> GdprJobOut:
+    """Batch runner trigger: executes queued jobs AND the maintenance cleanup.
+
+    This is the only endpoint that runs export-archive purge / tracking-token
+    cleanup; GET endpoints and single-request execute stay read-only for that
+    maintenance work. Wire a periodic scheduler (lifespan) to
+    gdpr_service.run_queued_gdpr_jobs / run_retention_scan in main.py if a
+    nightly trigger is wanted.
+    """
+    job = await run_queued_gdpr_jobs(db, actor=admin, include_cleanup=True)
+    await db.commit()
+    return serialize_gdpr_job(job)
+
+
+@admin_router.post("/retention-scan", response_model=GdprJobOut)
+async def post_retention_scan(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> GdprJobOut:
+    """Admin trigger for the retention scan (SLA review-request creation)."""
+    job = await run_retention_scan(db)
+    await db.commit()
+    return serialize_gdpr_job(job)
 
 
 @admin_router.get("/retention-policies", response_model=list[GdprRetentionPolicyOut])
@@ -257,8 +343,17 @@ async def get_bridge_config() -> GdprPublicBridgeConfigOut:
 @public_router.post("/request", response_model=GdprPublicRequestCreateOut)
 async def post_public_request(
     payload: GdprPublicRequestCreateIn,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> GdprPublicRequestCreateOut:
+    # Unauthenticated endpoint: abuse guards run BEFORE any DB write.
+    client_ip = request.client.host if request.client else "unknown"
+    _enforce_public_request_rate_limit(client_ip)
+    if (payload.honeypot or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="İstek doğrulanamadı.",
+        )
     result = await submit_public_gdpr_request(db, payload)
     await db.commit()
     return result
