@@ -44,11 +44,17 @@ export interface GlobalMarketRatesController {
   draft: GlobalMarketRateDraft;
   isOpen: boolean;
   isLoading: boolean;
+  // GET /defaults başarısız: taslak fallback (demo) değerler taşıyor olabilir,
+  // kayıt tamamen kilitlenir (bkz. save).
+  isFetchError: boolean;
+  // Profil fallback kaynaklı ya da canlı meta bayat — üst barda rozetle işaretlenir.
+  isStale: boolean;
   isSaving: boolean;
   errorMessage: string | null;
   open: () => void;
   close: () => void;
   save: () => void;
+  retryFetch: () => void;
   // R2-06 takibi: "WP'den çek" çekmece AÇIKKEN çalışır; draft yalnız çekmece
   // kapalıyken senkronlandığından sunucudan taze profil çekip draft'ı yazar.
   refreshDraftFromServer: () => Promise<void>;
@@ -132,12 +138,26 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
   const [draft, setDraft] = useState<GlobalMarketRateDraft>(() => toDraft(fallback));
   const [isOpen, setIsOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Çekmece yükleme/hata anında açıldıysa taslak fallback değerler taşıyordur;
+  // gerçek profil ilk kez geldiğinde bir kez daha senkronlanır.
+  const [awaitingServerDraft, setAwaitingServerDraft] = useState(false);
+  const isFetchError = query.isError;
+  const isStale =
+    !query.isLoading &&
+    (query.isError ||
+      Object.values(profile.rate_meta || {}).some((meta) => Boolean(meta?.stale) || meta?.source === 'fallback'));
 
   useEffect(() => {
-    if (!isOpen && query.data) {
+    if (!query.data) return;
+    if (!isOpen) {
       setDraft(toDraft({ ...fallback, ...query.data }));
+      return;
     }
-  }, [fallback, isOpen, query.data]);
+    if (awaitingServerDraft) {
+      setDraft(toDraft({ ...fallback, ...query.data }));
+      setAwaitingServerDraft(false);
+    }
+  }, [awaitingServerDraft, fallback, isOpen, query.data]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -184,6 +204,7 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
   });
 
   const open = () => {
+    setAwaitingServerDraft(query.isLoading || query.isError);
     setDraft(toDraft(profile));
     setErrorMessage(null);
     setIsOpen(true);
@@ -226,12 +247,27 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     draft,
     isOpen,
     isLoading: query.isLoading,
+    isFetchError,
+    isStale,
     isSaving: saveMutation.isPending,
-    errorMessage: errorMessage || (query.isError ? 'Global oran profiline ulaşılamadı.' : null),
+    errorMessage,
     open,
     close,
     refreshDraftFromServer,
+    retryFetch: () => {
+      void query.refetch();
+    },
     save: () => {
+      // GET /defaults hatalıysa taslak 615.50/7.80 fallback'ini taşıyor olabilir —
+      // Kaydet TÜM profili bu demo değerlerle ezer. Kayıt tamamen kilitli.
+      if (query.isError) {
+        setErrorMessage('Global oran profiline ulaşılamadı — kayıt kilitli. Lütfen "Tekrar dene" ile profili yenileyin.');
+        return;
+      }
+      if (query.isLoading) {
+        setErrorMessage('Global oran profili yükleniyor — lütfen kaydetmeden önce bekleyin.');
+        return;
+      }
       if (requiredInvalid) {
         setErrorMessage('Altın karat ve gümüş saflık oranları pozitif olmalı — lütfen boş/0 bırakılan alanları doldurun.');
         return;
@@ -247,7 +283,7 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
       }
       if (rateBandWarning('gold', draft.gold_bar_dkk)) outOfBand.push('Guldbarre');
       if (rateBandWarning('silver', draft.silver_bar_dkk)) outOfBand.push('Sølvbarre');
-      if (rateBandWarning('silver', draft.plet_dkk)) outOfBand.push('Pletsølv');
+      if (rateBandWarning('plet', draft.plet_dkk)) outOfBand.push('Pletsølv');
       if (rateBandWarning('fx', draft.eur_dkk_fx)) outOfBand.push('EUR/DKK');
       if (rateBandWarning('ptpd', draft.platinum_dkk)) outOfBand.push('Platin');
       if (rateBandWarning('ptpd', draft.palladium_dkk)) outOfBand.push('Palladyum');
@@ -283,21 +319,25 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
 // X4: birim/aralık makullük bantları (DKK/g; fx = EUR/DKK). Amaç ons/10g/øre
 // karışıklığını yakalamak: 6392,10 "Guldbarre" ~ons fiyatıdır, gram değil.
 // Bant AŞIMI kaydı engellemez — alan işaretlenir ve Kaydet'te onay istenir.
-const RATE_BANDS: Record<'gold' | 'silver' | 'ptpd' | 'fx', [number, number]> = {
+// Plet bandı backend tek kaynağı wp_priser_service._SCALAR_BANDS["plet_dkk"]
+// ile aynıdır ([0.001, 0.10]) — API bantları dışa açmadığı için burada sabit
+// olarak taşınır (senkron tutulmalı; bkz. A13 notları).
+const RATE_BANDS: Record<'gold' | 'silver' | 'plet' | 'ptpd' | 'fx', [number, number]> = {
   gold: [50, 2000],
   silver: [0.5, 100],
+  plet: [0.001, 0.1],
   ptpd: [20, 2000],
   fx: [5, 10],
 };
 
-function rateBandWarning(kind: 'gold' | 'silver' | 'ptpd' | 'fx', raw: string): string | null {
+function rateBandWarning(kind: 'gold' | 'silver' | 'plet' | 'ptpd' | 'fx', raw: string): string | null {
   const value = Number(String(raw || '').replace(',', '.'));
   if (!Number.isFinite(value) || value <= 0) return null; // boş/geçersiz ayrı denetimde
   const [min, max] = RATE_BANDS[kind];
   if (value < min || value > max) {
-    return kind === 'fx'
-      ? `Beklenen EUR/DKK aralığı ${min}–${max} — değer birim hatası olabilir.`
-      : `Beklenen aralık ${min}–${max} DKK/g — ons/10g/øre karışıklığı olabilir.`;
+    if (kind === 'fx') return `Beklenen EUR/DKK aralığı ${min}–${max} — değer birim hatası olabilir.`;
+    if (kind === 'plet') return `Beklenen Pletsølv aralığı ${min}–${max} DKK/g — kr/kg birim karışıklığı olabilir.`;
+    return `Beklenen aralık ${min}–${max} DKK/g — ons/10g/øre karışıklığı olabilir.`;
   }
   return null;
 }
@@ -341,6 +381,24 @@ function AutoFieldToggle({ on, meta, dark, onToggle }: { on: boolean; meta: Glob
   );
 }
 
+// Profil GET'i sürerken çekmecede gösterilen iskelet — sabit fallback
+// değerlerin (615.50/7.80) gerçek veri gibi görünmesini engeller.
+function DrawerSkeleton({ metaClass }: { metaClass: string }) {
+  return (
+    <div className="space-y-4" aria-busy="true">
+      <p className={metaClass}>Piyasa oranları yükleniyor…</p>
+      {[4, 3, 3, 3].map((lines) => (
+        <div key={lines} className="animate-pulse space-y-3 rounded-sg-md border border-sg-border bg-sg-surface-soft p-4" aria-hidden="true">
+          <div className="h-4 w-40 rounded bg-sg-border" />
+          {Array.from({ length: lines }).map((_, index) => (
+            <div key={index} className="h-9 w-full rounded bg-sg-border opacity-70" />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { controller: GlobalMarketRatesController; variant?: 'modern' | 'classic' }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -362,14 +420,27 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
   const anyAutoDisabled =
     fieldAutoDisabled('eur_dkk_fx') || fieldAutoDisabled('platinum_dkk') || fieldAutoDisabled('palladium_dkk');
   const rateMeta = draft.rate_meta || {};
+  // Yükleme/hata sırasında kayıt ve WP çekimi kilitli — fallback değerlerin
+  // profile yazılması engellenir.
+  const loadBlocked = controller.isLoading || controller.isFetchError;
 
   return (
     <div className="fixed inset-0 z-overlay-top bg-black/30" onClick={controller.close}>
-      <aside className={panelClass} role="dialog" aria-modal="true" aria-labelledby="global-market-rates-title" onClick={(event) => event.stopPropagation()}>
+      <aside className={panelClass} role="dialog" aria-modal="true" aria-labelledby="global-market-rates-title" aria-busy={controller.isLoading || undefined} onClick={(event) => event.stopPropagation()}>
         <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
           <div>
             <p className={dark ? 'text-[10px] font-black uppercase tracking-[0.22em] text-brand-500' : 'text-[11px] font-semibold uppercase tracking-[0.18em] text-sg-accent'}>Global varsayılanlar</p>
-            <h2 id="global-market-rates-title" className={`mt-1 ${titleClass}`}>Piyasa oranları</h2>
+            <h2 id="global-market-rates-title" className={`mt-1 flex items-center gap-2 ${titleClass}`}>
+              Piyasa oranları
+              {controller.isStale && !controller.isLoading ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded-sm border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-normal text-amber-800"
+                  title="Profil canlı kaynaktan doğrulanamadı — değerler fallback veya bayat olabilir."
+                >
+                  <AlertTriangle className="h-3 w-3" /> bayat
+                </span>
+              ) : null}
+            </h2>
             <p className={`mt-1 ${metaClass}`}>Tüm alanlar DKK/g. Yeni alışlar bu profili başlangıç snapshot’ı olarak kullanır.</p>
           </div>
           <button type="button" onClick={controller.close} className={dark ? 'border border-brand-300 bg-white p-2 text-brand-700 hover:bg-brand-50' : 'rounded-sg-sm border border-sg-border p-2 text-sg-text-soft hover:bg-sg-surface-soft'} aria-label="Piyasa oranları çekmecesini kapat">
@@ -378,6 +449,12 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          {/* Yüklemede fallback değerleri GÖSTERME — sabit 615.50/7.80 gerçek
+              veri gibi okunur ve Kaydet'le profile yazılabilir. İskelet + kilitle. */}
+          {controller.isLoading ? (
+            <DrawerSkeleton metaClass={metaClass} />
+          ) : (
+          <>
           <div className={`flex items-start gap-3 border p-3 ${anyAutoDisabled ? (dark ? 'border-sky-300 bg-sky-50' : 'rounded-sg-md border-sg-blue/30 bg-sg-blue-soft') : (dark ? 'border-amber-300 bg-amber-50' : 'rounded-sg-md border-sg-accent/30 bg-sg-accent-soft')}`}>
             {anyAutoDisabled ? <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" /> : <Check className="mt-0.5 h-4 w-4 shrink-0" />}
             <div>
@@ -386,7 +463,22 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             </div>
           </div>
 
-          {controller.errorMessage ? (
+          {controller.isFetchError ? (
+            <div className={`flex items-start gap-3 border p-3 ${dark ? 'border-red-300 bg-red-50 text-red-800' : 'rounded-sg-md border-red-200 bg-red-50 text-red-800'}`}>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold">Global oran profiline ulaşılamadı</p>
+                <p className="mt-1 text-sm">Kayıt, güncel profil sunucudan okunana kadar kilitli — gösterilen değerler yerel fallback olabilir ve kaydedilirse gerçek oranların üzerine yazılırdı.</p>
+                <button
+                  type="button"
+                  onClick={controller.retryFetch}
+                  className={dark ? 'mt-2 inline-flex border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-50' : 'mt-2 inline-flex rounded-sg-sm border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100'}
+                >
+                  Tekrar dene
+                </button>
+              </div>
+            </div>
+          ) : controller.errorMessage ? (
             <div className={`flex items-start gap-3 border p-3 ${dark ? 'border-red-300 bg-red-50 text-red-800' : 'rounded-sg-md border-red-200 bg-red-50 text-red-800'}`}>
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <p className="text-sm">{controller.errorMessage}</p>
@@ -428,7 +520,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Guldbarre 999,9 DKK/g</span><TextRateInput value={draft.gold_bar_dkk} disabled={false} onChange={controller.updateGoldBar} warning={rateBandWarning('gold', draft.gold_bar_dkk)} /></label>
               <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Sølvbarre 999 DKK/g</span><TextRateInput value={draft.silver_bar_dkk} disabled={false} onChange={controller.updateSilverBar} warning={rateBandWarning('silver', draft.silver_bar_dkk)} /></label>
-              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Pletsølv DKK/g</span><TextRateInput value={draft.plet_dkk} disabled={false} onChange={controller.updatePlet} warning={rateBandWarning('silver', draft.plet_dkk)} /></label>
+              <label className="space-y-1"><span className={`block text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>Pletsølv DKK/g</span><TextRateInput value={draft.plet_dkk} disabled={false} onChange={controller.updatePlet} warning={rateBandWarning('plet', draft.plet_dkk)} /></label>
             </div>
             <p className={`mt-2 ${metaClass}`}>Bar fiyatları normal karat/saflık fiyatlarından bağımsızdır; Plet saflık oranıyla hesaplanmaz.</p>
           </section>
@@ -453,6 +545,8 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
           </section>
 
           {anyAutoDisabled ? <button type="button" onClick={() => { controller.close(); navigate('/settings'); }} className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark'}>Ayarları aç</button> : null}
+          </>
+          )}
         </div>
 
         <footer className={`flex items-center justify-end gap-2 border-t px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
@@ -492,11 +586,18 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             }}
             className={dark ? 'mr-auto border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800' : 'mr-auto rounded-sg-sm border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800'}
             title="Karat, gümüş, bar, platin, palladium ve plet fiyatlarını seroguld.dk Priser sayfasından çek"
+            disabled={loadBlocked}
           >
             WP&apos;den çek
           </button>
           <button type="button" onClick={controller.close} className={dark ? 'border border-brand-300 bg-white px-4 py-2 text-sm font-bold text-brand-700' : 'rounded-sg-sm border border-sg-border px-4 py-2 text-sm font-semibold text-sg-text'}>Vazgeç</button>
-          <button type="button" onClick={controller.save} disabled={controller.isSaving} className={dark ? 'inline-flex items-center gap-2 bg-brand-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-50' : 'inline-flex items-center gap-2 rounded-sg-sm bg-sg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50'}>
+          <button
+            type="button"
+            onClick={controller.save}
+            disabled={loadBlocked || controller.isSaving}
+            title={controller.isFetchError ? 'Profil okunamadığı için kayıt kilitli — önce "Tekrar dene"' : controller.isLoading ? 'Profil yükleniyor' : undefined}
+            className={dark ? 'inline-flex items-center gap-2 bg-brand-800 px-4 py-2 text-sm font-bold text-white disabled:opacity-50' : 'inline-flex items-center gap-2 rounded-sg-sm bg-sg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50'}
+          >
             <Save className="h-4 w-4" />{controller.isSaving ? 'Kaydediliyor…' : 'Kaydet'}
           </button>
         </footer>
