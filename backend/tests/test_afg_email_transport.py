@@ -156,3 +156,112 @@ def test_send_afg_email_smtp_transport_skips_bridge(monkeypatch: pytest.MonkeyPa
     )
     assert sent is True
     assert "smtp" in note
+
+
+# ---------------------------------------------------------------------------
+# R2-HIGH — finalize e-posta akışı event loop'u BLOKLAMAMALI
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_email_offloads_blocking_work_off_event_loop(monkeypatch: pytest.MonkeyPatch):
+    """_send_afg_email_best_effort senkron PDF render + transport'u worker
+    thread'e taşır; blok çalışma sürerken event loop yanıt vermeye devam eder.
+
+    Eski hata: httpx.post/smtplib (timeout=20) ve reportlab render loop'ta
+    koştuğu için finalize commit'inden sonra POS dahil TÜM API istekleri
+    20-40 sn donuyordu. DB işi (build_pos_receipt_context / audit commit)
+    loop thread'de kalır; audit akışı (afg_email_sent) değişmez.
+    """
+    import asyncio
+    import threading
+    import time
+
+    from app.config import get_settings
+    from app.models.pos_document_audit import PosDocumentAudit
+    from app.services import email_service
+    from app.services import pos_purchase_finalize
+    from app.services import pos_receipt_renderer
+    from app.services import pos_service
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "afg_email_enabled", True)
+    monkeypatch.setattr(settings, "email_transport", "smtp")
+    monkeypatch.setattr(settings, "smtp_host", "smtp.simply.com")
+    monkeypatch.setattr(settings, "smtp_from_address", "info@seroguld.dk")
+
+    seen: dict[str, int] = {}
+
+    async def fake_context(session, *, pos_session, audience):
+        seen["context_thread"] = threading.get_ident()
+        return {"audience": audience}
+
+    def fake_render(context):
+        seen["render_thread"] = threading.get_ident()
+        time.sleep(0.25)  # senkron reportlab render'ın yerine
+        return b"%PDF-fake"
+
+    def fake_send(**kwargs):
+        seen["send_thread"] = threading.get_ident()
+        time.sleep(0.25)  # senkron httpx.post/smtplib'in yerine
+        assert kwargs["pdf_bytes"] == b"%PDF-fake"
+        assert kwargs["to_address"] == "kunde@example.dk"
+        assert kwargs["document_number"] == "77"
+        return True, "E-posta gönderildi (smtp): kunde@example.dk"
+
+    monkeypatch.setattr(pos_service, "build_pos_receipt_context", fake_context)
+    monkeypatch.setattr(pos_receipt_renderer, "render_pos_receipt_pdf", fake_render)
+    monkeypatch.setattr(email_service, "send_afg_email", fake_send)
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+            self.commits = 0
+
+        def add(self, obj: object) -> None:
+            self.added.append(obj)
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    class _Doc:
+        sequence_no = 77
+        customer_email = "kunde@example.dk"
+        customer_name = "Test Kunde"
+
+    class _Pos:
+        id = 1234
+
+    session = _FakeSession()
+
+    async def scenario() -> tuple[int, int]:
+        loop_thread = threading.get_ident()
+        beats = {"count": 0, "stop": asyncio.Event()}
+
+        async def heartbeat() -> None:
+            while not beats["stop"].is_set():
+                beats["count"] += 1
+                await asyncio.sleep(0.02)
+
+        hb = asyncio.create_task(heartbeat())
+        try:
+            await pos_purchase_finalize._send_afg_email_best_effort(session, _Doc(), _Pos())
+        finally:
+            beats["stop"].set()
+            await hb
+        return loop_thread, beats["count"]
+
+    loop_thread, heartbeat_ticks = asyncio.run(scenario())
+
+    # DB/async işi loop thread'de kaldı; render + transport worker thread'e gitti.
+    assert seen["context_thread"] == loop_thread
+    assert seen["render_thread"] != loop_thread
+    assert seen["send_thread"] != loop_thread
+    # 0.5 sn'lik senkron blok boyunca loop canlı kaldı: heartbeat ~25 tık atar;
+    # bloklanmış bir loop 0-1 tık üretirdi.
+    assert heartbeat_ticks >= 5, f"event loop bloklandı (heartbeat={heartbeat_ticks})"
+    # Exception/audit sözleşmesi aynen: sent → 'afg_email_sent' izi + commit.
+    assert session.commits == 1
+    audits = [a for a in session.added if isinstance(a, PosDocumentAudit)]
+    assert len(audits) == 1
+    assert audits[0].action == "afg_email_sent"
+    assert "gönderildi" in (audits[0].note or "")

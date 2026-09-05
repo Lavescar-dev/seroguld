@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import functools
 import logging
 from decimal import Decimal
 
+import anyio
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
@@ -388,6 +390,10 @@ async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_s
     gönderim düşerse belge geçmişine 'gönderilmedi' düşülür; finalize asla
     e-posta yüzünden başarısız olmaz. PDF customer-audience bağlamından üretilir
     (CPR maskeli).
+
+    R2-HIGH: senkron reportlab render ve transport (httpx.post/smtplib,
+    timeout=20) worker thread'de yürütülür — event loop 20-40 sn bloklanıp
+    POS dahil tüm API istekleri donmaz. DB işi (AsyncSession) loop'ta kalır.
     """
     core = _core()
     from app.services.email_service import afg_email_transport_ready, send_afg_email
@@ -407,14 +413,21 @@ async def _send_afg_email_best_effort(session: AsyncSession, pos_document, pos_s
             context = await core.build_pos_receipt_context(session, pos_session=pos_session, audience="customer")
             from app.services.pos_receipt_renderer import render_pos_receipt_pdf
 
-            pdf_bytes = render_pos_receipt_pdf(context)
+            # R2-HIGH: reportlab render senkron — loop'u bloklamasın diye worker thread.
+            pdf_bytes = await anyio.to_thread.run_sync(render_pos_receipt_pdf, context)
         except Exception as exc:  # PDF üretilemezse ekleme olmadan dene
             LOGGER.warning("AFG e-posta PDF üretilemedi (seq=%s): %s", pos_document.sequence_no, exc)
-        sent, note = send_afg_email(
-            to_address=to_address,
-            customer_name=pos_document.customer_name or "",
-            document_number=str(pos_document.sequence_no),
-            pdf_bytes=pdf_bytes,
+        # R2-HIGH: send_afg_email senkron httpx.post/smtplib (timeout=20) kullanır;
+        # loop'ta koşarsa POS dahil tüm API istekleri 20-40 sn donar. Worker
+        # thread'e taşınır; exception sözleşmesi (asla finalize düşürmez) aynen.
+        sent, note = await anyio.to_thread.run_sync(
+            functools.partial(
+                send_afg_email,
+                to_address=to_address,
+                customer_name=pos_document.customer_name or "",
+                document_number=str(pos_document.sequence_no),
+                pdf_bytes=pdf_bytes,
+            )
         )
     except Exception as exc:  # noqa: BLE001
         note = f"E-posta akışı hatası: {exc}"
