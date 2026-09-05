@@ -17,6 +17,7 @@ import type {
 
 type DecisionPayload = { requestId: string; reason?: string };
 type VerifyPayload = { requestId: string; customerId: string };
+export type GdprCopyTaskUpdatePayload = { requestId: string; taskId: string; status: string; reason?: string | null };
 type RetentionPayload = {
   policyKey: string;
   title?: string;
@@ -163,6 +164,21 @@ export function useGdprMakeState() {
     },
   });
 
+  // Copy-task override/retry: PATCH /requests/{id}/copy-tasks/{task_id} —
+  // manual_action_required / failed / takılı running görevlerinin gerekçeli
+  // kurtarılması için. Yanıt güncel request detail (copy_tasks dahil) döner.
+  const updateCopyTaskMutation = useMutation({
+    mutationFn: ({ requestId, taskId, status, reason }: GdprCopyTaskUpdatePayload) =>
+      apiRequest<GdprRequestDetail>(`/api/v2/gdpr/requests/${requestId}/copy-tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, reason: reason || null }),
+      }),
+    onSuccess: async (detail) => {
+      queryClient.setQueryData(['gdpr-request-detail', detail.id], detail);
+      await invalidateAll();
+    },
+  });
+
   const selectedRequest = useMemo(
     () => requestsQuery.data?.find((item) => item.id === selectedRequestId) || null,
     [requestsQuery.data, selectedRequestId],
@@ -218,7 +234,8 @@ export function useGdprMakeState() {
       rejectMutation.isPending ||
       executeMutation.isPending ||
       enqueueMutation.isPending ||
-      updatePolicyMutation.isPending,
+      updatePolicyMutation.isPending ||
+      updateCopyTaskMutation.isPending,
     onRefresh: invalidateAll,
     onVerify: (requestId: string, customerId: string) => verifyMutation.mutateAsync({ requestId, customerId }),
     onApprove: (requestId: string, reason?: string) => approveMutation.mutateAsync({ requestId, reason }),
@@ -226,5 +243,6 @@ export function useGdprMakeState() {
     onEnqueue: (requestId: string) => enqueueMutation.mutateAsync(requestId),
     onExecute: (requestId: string) => executeMutation.mutateAsync(requestId),
     onUpdatePolicy: (payload: RetentionPayload) => updatePolicyMutation.mutateAsync(payload),
+    onUpdateCopyTask: (payload: GdprCopyTaskUpdatePayload) => updateCopyTaskMutation.mutateAsync(payload),
   };
 }

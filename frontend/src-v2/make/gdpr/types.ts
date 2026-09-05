@@ -60,6 +60,69 @@ export interface GdprJob {
   created_at: string;
 }
 
+// Backend: app/models/gdpr_copy_task.py — completion gate yalnız bu üç durumda açılır.
+export const GDPR_COPY_COMPLETION_STATES: ReadonlyArray<string> = ['deleted', 'pseudonymized', 'legally_retained'];
+// Backend: update_gdpr_copy_task — bu hedef durumlara geçiş için gerekçe zorunlu.
+export const GDPR_COPY_REASON_REQUIRED_STATES: ReadonlyArray<string> = ['failed', 'manual_action_required', 'legally_retained'];
+export const GDPR_COPY_TASK_STATUS_LABELS: Record<string, string> = {
+  pending: 'Bekliyor',
+  running: 'Çalışıyor',
+  deleted: 'Silindi',
+  pseudonymized: 'Pseudonymize edildi',
+  legally_retained: 'Yasal saklamada',
+  manual_action_required: 'Manuel aksiyon gerekli',
+  failed: 'Başarısız',
+};
+
+export function gdprCopyTaskStatusLabel(status: string): string {
+  return GDPR_COPY_TASK_STATUS_LABELS[status] || status;
+}
+
+export function gdprRequestTypeLabel(requestType: string): string {
+  const labels: Record<string, string> = {
+    access_export: 'Erişim / Export',
+    erasure_pseudonymize: 'Silme / Pseudonymize',
+    rectification: 'Düzeltme (rectification)',
+    objection_restriction: 'İtiraz / Kısıtlama',
+    marketing_opt_out: 'Pazarlama çıkışı',
+    cookie_privacy_contact: 'Çerez / gizlilik iletişimi',
+  };
+  return labels[requestType] || requestType;
+}
+
+export function gdprRequestStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    identity_pending: 'Kimlik doğrulaması bekliyor',
+    verified: 'Doğrulandı',
+    approved: 'Onaylandı',
+    queued: 'Kuyrukta',
+    executing: 'Yürütülüyor',
+    completed: 'Tamamlandı',
+    completed_with_warnings: 'Uyarıyla tamamlandı',
+    rejected: 'Reddedildi',
+    failed: 'Başarısız',
+    manual_action_required: 'Manuel aksiyon gerekli',
+  };
+  return labels[status] || status;
+}
+
+export interface GdprCopyTask {
+  id: string;
+  request_id: string;
+  task_key: string;
+  system_name: string;
+  copy_scope: string;
+  applicable: boolean;
+  status: string;
+  is_terminal: boolean;
+  completion_eligible: boolean;
+  reason?: string | null;
+  metadata_json: Record<string, unknown>;
+  resolved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface GdprRequestDetail extends GdprRequestListItem {
   message?: string | null;
   decision_reason?: string | null;
@@ -68,6 +131,7 @@ export interface GdprRequestDetail extends GdprRequestListItem {
   events: GdprRequestEvent[];
   latest_job?: GdprJob | null;
   export_download_path?: string | null;
+  copy_tasks: GdprCopyTask[];
 }
 
 export interface GdprRetentionPolicy {

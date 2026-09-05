@@ -13,11 +13,18 @@ import {
   Trash2,
 } from 'lucide-react';
 
-import { downloadAuthedDocument, localizeApiError } from '@/lib/api';
+import { ApiError, downloadAuthedDocument, localizeApiError } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { useToast } from '@/lib/toast';
 
+import {
+  GDPR_COPY_COMPLETION_STATES,
+  GDPR_COPY_REASON_REQUIRED_STATES,
+  gdprCopyTaskStatusLabel,
+  gdprRequestTypeLabel,
+} from './types';
 import type {
+  GdprCopyTask,
   GdprJob,
   GdprProcessor,
   GdprRequestDetail,
@@ -96,7 +103,21 @@ type GdprPageProps = {
     retention_days?: number;
     is_enabled?: boolean;
   }) => Promise<unknown>;
+  onUpdateCopyTask?: (payload: { requestId: string; taskId: string; status: string; reason?: string | null }) => Promise<unknown>;
 };
+
+type ExecuteRejectKind = 'execute' | 'reject';
+
+type ConfirmActionState = { kind: ExecuteRejectKind; request: GdprRequestDetail };
+
+const COPY_TASK_TARGET_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'pending', label: 'Yeniden kuyruğa al (pending)' },
+  { value: 'pseudonymized', label: 'Pseudonymize edildi' },
+  { value: 'deleted', label: 'Silindi' },
+  { value: 'legally_retained', label: 'Yasal saklamada' },
+  { value: 'manual_action_required', label: 'Manuel aksiyon gerekli' },
+  { value: 'failed', label: 'Başarısız' },
+];
 
 function overviewCard(label: string, value: string | number, tone: string) {
   return (
@@ -213,6 +234,7 @@ export function MakeGdprPage({
   onEnqueue,
   onExecute,
   onUpdatePolicy,
+  onUpdateCopyTask,
 }: GdprPageProps) {
   const toast = useToast();
   const [decisionReason, setDecisionReason] = useState('');
@@ -220,6 +242,8 @@ export function MakeGdprPage({
   const [jobStatusFilter, setJobStatusFilter] = useState<'all' | 'queued' | 'running' | 'failed' | 'completed'>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
+  const [confirmRefInput, setConfirmRefInput] = useState('');
 
   const policyState = (policy: GdprRetentionPolicy) =>
     policyDrafts[policy.policy_key] || {
@@ -285,6 +309,49 @@ export function MakeGdprPage({
       await action();
     } catch (error) {
       toast.error('İşlem başarısız', localizeApiError(error));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // Execute/Reject artık tek tıkla gitmez: önce onay diyaloğu açılır, istek
+  // yalnızca diyaloğun onay butonuyla gönderilir.
+  const openConfirm = (kind: ExecuteRejectKind) => {
+    if (!requestDetail) return;
+    setConfirmRefInput('');
+    setConfirmAction({ kind, request: requestDetail });
+  };
+
+  const confirmReferenceRequired =
+    confirmAction?.kind === 'execute' && confirmAction.request.request_type === 'erasure_pseudonymize';
+  const confirmReferenceMatches =
+    Boolean(confirmAction) && confirmRefInput.trim() === (confirmAction?.request.reference_number ?? '');
+  const confirmDisabled = confirmReferenceRequired && !confirmReferenceMatches;
+
+  const confirmAndRun = async () => {
+    if (!confirmAction) return;
+    const { kind, request } = confirmAction;
+    setConfirmAction(null);
+    setConfirmRefInput('');
+    await runAction(kind, () =>
+      kind === 'execute' ? onExecute(request.id) : onReject(request.id, decisionReason),
+    );
+  };
+
+  // Copy-task override: manual_action_required / failed / takılı pending-running
+  // görevlerin gerekçeli kurtarılması. Uç henüz yayında değilse (404) buton
+  // "uç hazır değil" bildirir; diğer hatalar standart toast ile yüzeye çıkar.
+  const runCopyTaskUpdate = async (taskId: string, status: string, reason: string) => {
+    if (!requestDetail || !onUpdateCopyTask) return;
+    setPendingAction(`copy:${taskId}`);
+    try {
+      await onUpdateCopyTask({ requestId: requestDetail.id, taskId, status, reason });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        toast.error('Uç hazır değil', 'Copy task güncelleme ucu bulunamadı (404); backend dağıtımını kontrol edin.');
+      } else {
+        toast.error('İşlem başarısız', localizeApiError(error));
+      }
     } finally {
       setPendingAction(null);
     }
@@ -412,7 +479,7 @@ export function MakeGdprPage({
                           </span>
                         </div>
                         <div className={`mt-3 flex items-center justify-between text-xs ${active ? 'text-brand-300' : 'text-brand-500'}`}>
-                          <span>{item.request_type}</span>
+                          <span>{gdprRequestTypeLabel(item.request_type)}</span>
                           <span style={monoStyle}>{formatDate(item.submitted_at)}</span>
                         </div>
                       </button>
@@ -505,7 +572,7 @@ export function MakeGdprPage({
                             <button
                               type="button"
                               disabled={activeMutation || pendingAction !== null}
-                              onClick={() => void runAction('reject', () => onReject(requestDetail.id, decisionReason))}
+                              onClick={() => openConfirm('reject')}
                               className="inline-flex items-center gap-2 border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-rose-700 disabled:opacity-60"
                             >
                               <ShieldX className="h-3.5 w-3.5" />
@@ -523,7 +590,7 @@ export function MakeGdprPage({
                             <button
                               type="button"
                               disabled={activeMutation || pendingAction !== null}
-                              onClick={() => void runAction('execute', () => onExecute(requestDetail.id))}
+                              onClick={() => openConfirm('execute')}
                               className="inline-flex items-center gap-2 border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black uppercase tracking-widest text-emerald-700 disabled:opacity-60"
                             >
                               <CheckCircle2 className="h-3.5 w-3.5" />
@@ -569,6 +636,14 @@ export function MakeGdprPage({
                             ))}
                           </div>
                         </div>
+
+                        {(requestDetail.copy_tasks || []).length ? (
+                          <ClassicCopyTaskPanel
+                            tasks={requestDetail.copy_tasks}
+                            disabled={activeMutation || pendingAction !== null}
+                            onUpdate={(taskId, status, reason) => void runCopyTaskUpdate(taskId, status, reason)}
+                          />
+                        ) : null}
 
                         {requestDetail.decision_reason ? (
                           <div className="border border-amber-300 bg-amber-50 p-4">
@@ -852,6 +927,198 @@ export function MakeGdprPage({
             </div>
           </div>
         </section>
+      </div>
+
+      {confirmAction ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-950/60 px-4" role="presentation">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={confirmAction.kind === 'execute' ? 'Execute onayı' : 'Reject onayı'}
+            className="w-full max-w-xl border-2 border-brand-300 bg-white shadow-xl"
+          >
+            <div className="border-b border-brand-200 bg-brand-50 px-5 py-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.26em] text-brand-500">
+                {confirmAction.kind === 'execute' ? 'Execute onayı' : 'Reject onayı'}
+              </p>
+              <h3 className="mt-1 text-xl font-black text-brand-950">
+                {confirmAction.kind === 'execute' ? 'Talep çalıştırılsın mı?' : 'Talep reddedilsin mi?'}
+              </h3>
+            </div>
+            <div className="space-y-3 px-5 py-4 text-sm text-brand-800">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <p>
+                  <span className="font-black uppercase tracking-widest text-brand-500">Talep tipi: </span>
+                  {gdprRequestTypeLabel(confirmAction.request.request_type)}
+                </p>
+                <p>
+                  <span className="font-black uppercase tracking-widest text-brand-500">Konu: </span>
+                  {confirmAction.request.subject_name || 'İsimsiz request'}
+                </p>
+                <p>
+                  <span className="font-black uppercase tracking-widest text-brand-500">Referans: </span>
+                  <span style={monoStyle}>{confirmAction.request.reference_number}</span>
+                </p>
+                <p>
+                  <span className="font-black uppercase tracking-widest text-brand-500">Eşleşen müşteri: </span>
+                  {confirmAction.request.verified_customer_name || 'Yok (doğrulanmadı)'}
+                </p>
+              </div>
+              {confirmAction.kind === 'reject' ? (
+                <p className="border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-600">
+                  Gönderilecek gerekçe: {decisionReason.trim() || 'gerekçe yok'}
+                </p>
+              ) : null}
+              <p className="flex items-start gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {confirmAction.kind === 'execute'
+                  ? 'Yürütme geri alınamaz: müşteri verisi silinir/pseudonymize edilir ve dış sistemlere (Woo/WordPress) privacy sync gönderilir.'
+                  : 'Red kararı geri alınamaz; talep kapatılır ve gerekçe kayda geçer.'}
+              </p>
+              {confirmReferenceRequired ? (
+                <label className="block text-xs font-semibold text-brand-700">
+                  Silme/pseudonymize işlemini onaylamak için talep referans numarasını yazın:{' '}
+                  <span style={monoStyle}>{confirmAction.request.reference_number}</span>
+                  <input
+                    type="text"
+                    value={confirmRefInput}
+                    onChange={(event) => setConfirmRefInput(event.target.value)}
+                    placeholder={confirmAction.request.reference_number}
+                    className="mt-2 w-full border border-brand-300 px-3 py-2 text-sm text-brand-900 outline-none focus:border-brand-700"
+                  />
+                </label>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-brand-200 bg-brand-50 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setConfirmAction(null)}
+                className="border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                disabled={confirmDisabled}
+                onClick={() => void confirmAndRun()}
+                className={`px-3 py-2 text-xs font-black uppercase tracking-widest transition disabled:opacity-50 ${
+                  confirmAction.kind === 'execute'
+                    ? 'border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'border border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                }`}
+              >
+                {confirmAction.kind === 'execute' ? 'Evet, çalıştır' : 'Evet, reddet'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function copyTaskTone(status: string) {
+  switch (status) {
+    case 'deleted':
+    case 'pseudonymized':
+    case 'legally_retained':
+      return 'border-emerald-300 bg-emerald-50 text-emerald-700';
+    case 'failed':
+      return 'border-rose-300 bg-rose-50 text-rose-700';
+    case 'manual_action_required':
+      return 'border-amber-300 bg-amber-50 text-amber-800';
+    case 'running':
+      return 'border-sky-300 bg-sky-50 text-sky-700';
+    default:
+      return 'border-brand-300 bg-white text-brand-700';
+  }
+}
+
+function ClassicCopyTaskPanel({
+  tasks,
+  disabled,
+  onUpdate,
+}: {
+  tasks: GdprCopyTask[];
+  disabled: boolean;
+  onUpdate: (taskId: string, status: string, reason: string) => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, { status: string; reason: string }>>({});
+
+  const draftFor = (task: GdprCopyTask) => drafts[task.id] || { status: '', reason: '' };
+  // Completion durumundaki (deleted/pseudonymized/legally_retained) görevler
+  // backend tarafından terminal sayılır; override yalnız kurtarılabilir
+  // (pending/running/failed/manual_action_required) görevlere açık.
+  const overrideable = (task: GdprCopyTask) => task.applicable && !GDPR_COPY_COMPLETION_STATES.includes(task.status);
+
+  return (
+    <div className="border border-brand-200 bg-white p-4">
+      <p className="text-xs font-black uppercase tracking-[0.22em] text-brand-500">Kopya görevleri</p>
+      <p className="mt-1 text-[11px] text-brand-500">
+        Manuel aksiyon / hata / takılmış görevler gerekçeli override ile kurtarılır; tamamlanmış görevler kilitlidir.
+      </p>
+      <div className="mt-3 grid gap-3">
+        {tasks.map((task) => {
+          const draft = draftFor(task);
+          const reasonRequired = GDPR_COPY_REASON_REQUIRED_STATES.includes(draft.status);
+          const canSave = Boolean(draft.status) && (!reasonRequired || draft.reason.trim().length >= 3);
+          return (
+            <div key={task.id} className={`border p-3 ${copyTaskTone(task.status)}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{task.task_key} · {task.system_name}</p>
+                  <p className="mt-1 text-[11px] opacity-80">{task.copy_scope}</p>
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest" title={task.status}>
+                  {gdprCopyTaskStatusLabel(task.status)}
+                </span>
+              </div>
+              {task.reason ? <p className="mt-2 text-[11px] opacity-90">Gerekçe: {task.reason}</p> : null}
+              <p className="mt-1 text-[11px] opacity-70">
+                {task.resolved_at ? `Çözüm: ${formatDate(task.resolved_at)} · ` : ''}Güncelleme: {formatDate(task.updated_at)}
+              </p>
+              {overrideable(task) ? (
+                <div className="mt-3 grid gap-2 border-t border-current/20 pt-3">
+                  <select
+                    aria-label={`Hedef durum · ${task.task_key}`}
+                    value={draft.status}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      setDrafts((current) => ({ ...current, [task.id]: { ...draft, status: event.target.value } }))
+                    }
+                    className="border border-brand-300 bg-white px-2 py-1.5 text-xs text-brand-900 outline-none focus:border-brand-700"
+                  >
+                    <option value="">Hedef durum seçin…</option>
+                    {COPY_TASK_TARGET_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    aria-label={`Gerekçe · ${task.task_key}`}
+                    value={draft.reason}
+                    disabled={disabled}
+                    placeholder={reasonRequired ? 'Gerekçe zorunlu (en az 3 karakter)' : 'Gerekçe (opsiyonel)'}
+                    onChange={(event) =>
+                      setDrafts((current) => ({ ...current, [task.id]: { ...draft, reason: event.target.value } }))
+                    }
+                    className="border border-brand-300 bg-white px-2 py-1.5 text-xs text-brand-900 outline-none focus:border-brand-700"
+                  />
+                  <button
+                    type="button"
+                    disabled={disabled || !canSave}
+                    onClick={() => onUpdate(task.id, draft.status, draft.reason.trim())}
+                    className="justify-self-start border border-brand-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-brand-700 transition hover:bg-brand-100 disabled:opacity-60"
+                  >
+                    Görevi güncelle
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
