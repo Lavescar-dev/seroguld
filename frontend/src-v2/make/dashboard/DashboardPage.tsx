@@ -24,18 +24,25 @@ import type { DashboardData } from './useDashboardMakeState';
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
 const sansStyle = { fontFamily: "'IBM Plex Sans', system-ui, sans-serif" } as const;
 
+// <html lang> boşsa Intl "Invalid language tag" fırlatıyor; hook tarafındaki
+// money() fallback'iyle aynı varsayılan.
+function uiLang() {
+  const lang = document.documentElement.lang;
+  return lang && lang.trim() ? lang : 'tr-TR';
+}
+
 function fmtKr(value: number) {
-  return `${value.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK`;
+  return `${value.toLocaleString(uiLang(), { minimumFractionDigits: 0, maximumFractionDigits: 0 })} DKK`;
 }
 
 function fmtGram(value: number) {
-  return `${value.toLocaleString(document.documentElement.lang, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} g`;
+  return `${value.toLocaleString(uiLang(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} g`;
 }
 
 function fmtDato(value: string) {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleDateString(document.documentElement.lang, { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return new Date(value).toLocaleDateString(uiLang(), { day: '2-digit', month: '2-digit', year: 'numeric' });
   } catch {
     return value;
   }
@@ -94,6 +101,66 @@ function SectionHeader({ icon, title, action }: { icon: ReactNode; title: string
         <span className="text-xs font-black uppercase tracking-widest text-brand-200">{title}</span>
       </div>
       {action}
+    </div>
+  );
+}
+
+// Pano hatası artık yutulmuyor: "strip" bayat veriyle birlikte üst şerit,
+// "panel" ise ilk yükleme hatasındadır — sıfır dolu sahte pano YERİNE ayrı
+// hata durumu olarak çizilir. Her iki varyantta da refetch ("Tekrar dene") var.
+function DashboardErrorNotice({
+  variant,
+  message,
+  isRetrying,
+  onRetry,
+}: {
+  variant: 'strip' | 'panel';
+  message: string;
+  isRetrying: boolean;
+  onRetry: () => void;
+}) {
+  const isPanel = variant === 'panel';
+  return (
+    <div
+      role="alert"
+      className={`flex flex-col gap-3 border-red-700 bg-red-950 sm:flex-row sm:items-center sm:justify-between ${
+        isPanel ? 'border-2 p-5' : 'border-b-2 px-4 py-3 sm:px-6'
+      }`}
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-400" />
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-widest text-red-300">
+            {/* Panel başlığı mevcut katalog anahtarını yeniden kullanır */}
+            {isPanel ? 'Yönetim özeti yüklenemedi' : 'Pano güncellenemedi'}
+          </p>
+          <p className="mt-1 break-words text-xs text-red-100">{message}</p>
+          {isPanel ? (
+            <p className="mt-1 text-xs text-red-300">
+              Sıfır değerlerle sahte pano gösterilmiyor; bağlantı düzelince veriler otomatik yenilenir.
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <button
+        onClick={onRetry}
+        disabled={isRetrying}
+        className="flex flex-shrink-0 items-center gap-1.5 border border-red-500/60 bg-red-900/40 px-3 py-1.5 text-xs font-black uppercase tracking-wider text-red-200 transition-colors hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${isRetrying ? 'animate-spin' : ''}`} />
+        {isRetrying ? 'Yukleniyor' : 'Tekrar dene'}
+      </button>
+    </div>
+  );
+}
+
+// Sunucudan henüz veri gelmedi (ilk yükleme): sıfır dolu KPI'lar yerine
+// nötr yükleme durumu gösterilir.
+function DashboardLoadingPanel() {
+  return (
+    <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3" role="status">
+      <RefreshCw className="h-6 w-6 animate-spin text-brand-500" />
+      <p className="text-xs font-black uppercase tracking-widest text-brand-500">Pano verileri yükleniyor</p>
     </div>
   );
 }
@@ -200,10 +267,15 @@ function MonthlyBarChart({ aylikAlis }: { aylikAlis: { ay: string; adet: number;
 
 type MakeDashboardPageProps = {
   data: DashboardData;
-  lastRefresh: Date;
+  /** Aktif sorgunun son başarılı veri anı; veri hiç alınmadıysa null → yüzey "—" gösterir. */
+  lastRefresh: Date | null;
   isRefreshing: boolean;
   onRefresh: () => void;
   onNavigate: (path: string) => void;
+  /** Classic sorgunun hatası (yüzeye çıkarılır); hata yoksa null. */
+  errorMessage: string | null;
+  /** Sunucudan hiç veri gelmediyse false → sıfır dolu pano yerine ayrı durum çizilir. */
+  hasServerData: boolean;
 };
 
 export function MakeDashboardPage({
@@ -212,6 +284,8 @@ export function MakeDashboardPage({
   isRefreshing,
   onRefresh,
   onNavigate,
+  errorMessage,
+  hasServerData,
 }: MakeDashboardPageProps) {
   const spotFark = data.depoSpotDeger - data.depoAlisDeger;
   const spotFarkPct = data.depoAlisDeger > 0 ? (spotFark / data.depoAlisDeger) * 100 : 0;
@@ -233,16 +307,18 @@ export function MakeDashboardPage({
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span
             className={`inline-flex items-center gap-1 border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.22em] ${
-              isRefreshing
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
-                : 'border-brand-700 bg-brand-900 text-brand-400'
+              !hasServerData && errorMessage
+                ? 'border-red-500/40 bg-red-500/10 text-red-300'
+                : isRefreshing
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                  : 'border-brand-700 bg-brand-900 text-brand-400'
             }`}
             style={monoStyle}
           >
-            {isRefreshing ? 'Canli yenileniyor' : 'Canli bagli'}
+            {!hasServerData && errorMessage ? 'Baglanti hatasi' : isRefreshing ? 'Canli yenileniyor' : hasServerData ? 'Canli bagli' : 'Baglaniyor'}
           </span>
           <p className="hidden text-xs text-brand-500 sm:block" style={monoStyle}>
-            Son guncelleme: {lastRefresh.toLocaleTimeString(document.documentElement.lang)}
+            Son guncelleme: {lastRefresh ? lastRefresh.toLocaleTimeString(uiLang()) : '—'}
           </p>
           <button
             onClick={onRefresh}
@@ -255,6 +331,13 @@ export function MakeDashboardPage({
         </div>
       </div>
 
+      {errorMessage && hasServerData ? (
+        <DashboardErrorNotice variant="strip" message={errorMessage} isRetrying={isRefreshing} onRetry={onRefresh} />
+      ) : null}
+
+      {/* Sunucudan veri hiç gelmediyse sıfır dolu pano çizilmez: ilk yükleme
+          hatası ayrı hata paneli, henüz yükleniyorsa nötr yükleme durumu. */}
+      {hasServerData ? (
       <div className="space-y-4 p-3 sm:space-y-5 sm:p-5">
         <div className="overflow-hidden border-2 border-brand-300 bg-brand-900">
           <div className="flex items-center gap-2 border-b border-brand-700 px-4 py-2">
@@ -275,7 +358,7 @@ export function MakeDashboardPage({
                 <div>
                   <p className="text-xs font-bold text-brand-400">{market.label}</p>
                   <p className={`font-black ${market.color}`} style={monoStyle}>
-                    {market.price.toLocaleString(document.documentElement.lang)} DKK
+                    {market.price.toLocaleString(uiLang())} DKK
                   </p>
                 </div>
               </div>
@@ -663,10 +746,17 @@ export function MakeDashboardPage({
             <span className="text-xs font-black uppercase tracking-wider text-brand-500">Sero Guld · Kuyumcu Yönetim Sistemi</span>
           </div>
           <span className="text-xs text-brand-400" style={monoStyle}>
-            {new Date().toLocaleDateString(document.documentElement.lang)} — v{data.alisSayisi + data.depoToplamItem + data.musteriSayisi} kayıt
+            {new Date().toLocaleDateString(uiLang())} — v{data.alisSayisi + data.depoToplamItem + data.musteriSayisi} kayıt
           </span>
         </div>
       </div>
+      ) : errorMessage ? (
+        <div className="p-3 sm:p-5">
+          <DashboardErrorNotice variant="panel" message={errorMessage} isRetrying={isRefreshing} onRetry={onRefresh} />
+        </div>
+      ) : (
+        <DashboardLoadingPanel />
+      )}
     </div>
   );
 }

@@ -287,6 +287,24 @@ export async function fetchModernOverview(period: DashboardPeriod) {
   }
 }
 
+// Pano hatasını tek biçimde kullanıcıya okunur satırlara dönüştürür: mesaj +
+// (ApiError ise) uç nokta/status + (tanı varsa) sürüm uyuşmazlığı uyarısı.
+// Hem modern hem classic yüzey aynı üreticiyi kullanır; hata yutulmaz.
+function buildDashboardErrorParts(
+  error: Error | null,
+  diag: { appVersion: string | null; runtimeVersion: string | null } | undefined,
+): string | null {
+  if (!(error instanceof Error)) return null;
+  const parts = [error.message];
+  if (error instanceof ApiError && error.url) {
+    parts.push(`Uç nokta: ${error.url} → HTTP ${error.status}.`);
+  }
+  if (diag?.appVersion && diag?.runtimeVersion && diag.appVersion !== diag.runtimeVersion) {
+    parts.push(`Sürüm uyuşmazlığı: uygulama v${diag.appVersion}, çalışma zamanı v${diag.runtimeVersion} — runtime güncellenmemiş olabilir.`);
+  }
+  return parts.join(' ');
+}
+
 export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
   const navigate = useNavigate();
   const toast = useToast();
@@ -306,11 +324,13 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
     refetchInterval: 60_000,
   });
 
+  const activeQuery = mode === 'modern' ? dashboardQuery : legacyQuery;
+
   // Pano yüklenemediğinde uygulama/runtime sürümlerini karşılaştırıp
   // "eski runtime + yeni arayüz" kaymasını hatanın içinde görünür kılar.
   const versionDiagQuery = useQuery({
     queryKey: ['runtime-version-diagnostic'],
-    enabled: Boolean(dashboardQuery.error),
+    enabled: Boolean(dashboardQuery.error || legacyQuery.error),
     staleTime: Infinity,
     retry: false,
     queryFn: async () => {
@@ -339,27 +359,24 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
 
   const data = dashboardQuery.data?.legacy ?? legacyQuery.data ?? EMPTY_DASHBOARD_DATA;
 
-  const modernError = (() => {
-    const error = dashboardQuery.error;
-    if (!(error instanceof Error)) return null;
-    const parts = [error.message];
-    if (error instanceof ApiError && error.url) {
-      parts.push(`Uç nokta: ${error.url} → HTTP ${error.status}.`);
-    }
-    const diag = versionDiagQuery.data;
-    if (diag?.appVersion && diag?.runtimeVersion && diag.appVersion !== diag.runtimeVersion) {
-      parts.push(`Sürüm uyuşmazlığı: uygulama v${diag.appVersion}, çalışma zamanı v${diag.runtimeVersion} — runtime güncellenmemiş olabilir.`);
-    }
-    return parts.join(' ');
-  })();
+  const modernError = buildDashboardErrorParts(dashboardQuery.error ?? null, versionDiagQuery.data);
+  // Classic yüzey hatası: legacyQuery.isError'ı yutmak yerine yüzeye çıkar.
+  const classicError = buildDashboardErrorParts(legacyQuery.error ?? null, versionDiagQuery.data);
+  // "Sunucudan hiç veri geldi mi?" ayrımı: ilk yükleme hatası (sıfır dolu sahte
+  // pano yerine ayrı hata durumu) ile bayat-veri-yenilenemedi şeridini ayırır.
+  const hasServerData = Boolean(dashboardQuery.data || legacyQuery.data);
 
   return useMemo(() => ({
     data,
     modern: dashboardQuery.data?.view ?? null,
     modernError,
+    errorMessage: classicError,
+    hasServerData,
     period,
     setPeriod,
-    lastRefresh: dashboardQuery.dataUpdatedAt ? new Date(dashboardQuery.dataUpdatedAt) : new Date(),
+    // Sahte saat yok: son yenileme, aktif sorgunun veri aldığı andır; veri hiç
+    // gelmediyse null döner ve yüzey "—" gösterir.
+    lastRefresh: activeQuery.dataUpdatedAt ? new Date(activeQuery.dataUpdatedAt) : null,
     isRefreshing: dashboardQuery.isFetching || legacyQuery.isFetching,
     isConfirmingMarket: confirmationMutation.isPending,
     onConfirmMarketUnchanged: () => confirmationMutation.mutate(),
@@ -369,7 +386,19 @@ export function useDashboardMakeState(mode: 'classic' | 'modern' = 'modern') {
       if (mode === 'classic') void legacyQuery.refetch();
     },
     onNavigate: (path: string) => navigate(path),
-  }), [confirmationMutation.isPending, dashboardQuery, data, legacyQuery, mode, modernError, navigate, period]);
+  }), [
+    activeQuery,
+    classicError,
+    confirmationMutation.isPending,
+    dashboardQuery,
+    data,
+    hasServerData,
+    legacyQuery,
+    mode,
+    modernError,
+    navigate,
+    period,
+  ]);
 }
 
 export type DashboardMakeState = ReturnType<typeof useDashboardMakeState>;
