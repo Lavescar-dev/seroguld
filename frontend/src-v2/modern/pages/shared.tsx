@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, Clock3, Info, ShieldAlert } from 'lucide-react';
 
+import { normalizeRiskLevel } from '@/components/OpmcShared';
 import { formatDate, formatMoney, formatNumber, formatRelativeTime, labelDocumentKind, labelMetalType, labelProductType, labelStatus } from '@/lib/format';
 import {
   ModernBadge,
@@ -21,6 +22,32 @@ export function toneForRisk(value?: number | null): ModernTone {
   if (value >= 45) return 'warning';
   if (value > 0) return 'success';
   return 'neutral';
+}
+
+// M2 — backend risk_level'ını modern tone'a çevirir: eşikler backend'deki
+// ayarlanabilir opmc_*_risk_min ile üretilir; frontend sabit 75/45 eziyor
+// olmasın. Seviye yoksa (whitelist vb.) skor bazlı düşüş yine çalışır.
+export function toneForRiskLevel(level?: string | null): ModernTone {
+  switch (normalizeRiskLevel(level)) {
+    case 'high':
+      return 'danger';
+    case 'medium':
+      return 'warning';
+    case 'low':
+      return 'success';
+    default:
+      return 'neutral';
+  }
+}
+
+/** risk_level öncülük eder; seviye üretilemediyese skora bakar. 'Skor yok'
+ * ile 'düşük risk' ayrımı korunur: ikisi de neutral'a düşer, yeşile değil. */
+export function toneForOrderRisk(
+  order?: { risk_level?: string | null; risk_score?: number | null } | null,
+): ModernTone {
+  const levelTone = toneForRiskLevel(order?.risk_level);
+  if (levelTone !== 'neutral') return levelTone;
+  return toneForRisk(order?.risk_score);
 }
 
 export function toneForText(value?: string | null): ModernTone {

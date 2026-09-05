@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AntiFraudOrder, AntiFraudSummary } from '@/types';
 
-import { ModernOpmcListPage } from '../ModernOpmcPages';
+import { ModernOpmcDetailPage, ModernOpmcListPage } from '../ModernOpmcPages';
 
 const summary: AntiFraudSummary = {
   total_orders: 3,
@@ -109,5 +109,78 @@ describe('ModernOpmcListPage', () => {
 
     expect(screen.getByText('#3003 · Vaka')).toBeInTheDocument();
     expect(screen.getByText('Sinyal yok')).toBeInTheDocument();
+  });
+
+  it('honors backend risk_level over fixed score thresholds and never paints a scoreless row green', () => {
+    renderList({
+      items: [
+        makeItem({ order_id: 4004, requires_manual_review: true, review_queue_status: 'active', risk_level: 'high', risk_score: 50 }),
+        makeItem({ order_id: 5005, risk_level: 'unknown', risk_score: null }),
+      ],
+    });
+
+    // Backend 'high' dedi; frontend sabit 75 eşiği bunu warning'e indirmemeli.
+    const highBadge = screen.getByText('Risk 50').closest('span');
+    expect(highBadge?.className).toContain('text-sg-red');
+
+    // 'Skor yok' ile 'düşük risk' zıt kavramlar: null skor yeşil değil neutral.
+    fireEvent.click(screen.getByRole('button', { name: /Tüm siparişler/ }));
+    const unscoredBadge = screen.getByText('Risk —').closest('span');
+    expect(unscoredBadge?.className).toContain('text-sg-text-soft');
+    expect(unscoredBadge?.className).not.toContain('text-sg-green');
+  });
+});
+
+describe('ModernOpmcDetailPage override guard', () => {
+  const detail = makeItem({
+    order_id: 1001,
+    requires_manual_review: true,
+    review_queue_status: 'active',
+    risk_score: 90,
+  });
+
+  function renderDetail(overrides: Partial<ComponentProps<typeof ModernOpmcDetailPage>> = {}) {
+    const props: ComponentProps<typeof ModernOpmcDetailPage> = {
+      requestedId: '1001',
+      detail,
+      onOverride: vi.fn(),
+      overrideAvailability: { state: 'available' },
+      ...overrides,
+    };
+    return render(<ModernOpmcDetailPage {...props} />);
+  }
+
+  it('locks override buttons without a reason and unlocks once a reason is typed', () => {
+    renderDetail();
+
+    const lowButton = screen.getByRole('button', { name: 'Düşük risk' });
+    expect(lowButton).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText('Kanıt ve karar gerekçesini yazın'), {
+      target: { value: 'yanlış alarm' },
+    });
+    expect(screen.getByRole('button', { name: 'Düşük risk' })).toBeEnabled();
+  });
+
+  it('clears a stale override reason when the refreshed detail arrives', () => {
+    const onOverride = vi.fn();
+    const { rerender } = renderDetail({ onOverride });
+
+    const reasonInput = screen.getByPlaceholderText('Kanıt ve karar gerekçesini yazın');
+    fireEvent.change(reasonInput, { target: { value: 'eski gerekçe' } });
+    expect(reasonInput).toHaveValue('eski gerekçe');
+
+    // Override sonrası wrapper yeni detail nesnesi geçirir → gerekçe sıfırlanır.
+    rerender(
+      <ModernOpmcDetailPage
+        requestedId="1001"
+        detail={{ ...detail }}
+        onOverride={onOverride}
+        overrideAvailability={{ state: 'available' }}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Kanıt ve karar gerekçesini yazın')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Düşük risk' })).toBeDisabled();
   });
 });

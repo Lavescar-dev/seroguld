@@ -35,8 +35,12 @@ function dateTimeLabel(value?: string | null) {
 function statusTone(status?: string | null) {
   const normalized = (status || '').toLowerCase();
   if (normalized.includes('processing') || normalized.includes('işlen')) return 'bg-amber-50 text-amber-800';
+  // M2 — on-hold/failed/refunded artık tanınıyor; default brand rengine düşmez.
+  if (normalized.includes('on-hold') || normalized.includes('beklemeye')) return 'bg-violet-50 text-violet-700';
   if (normalized.includes('pending') || normalized.includes('bekle')) return 'bg-slate-100 text-slate-700';
   if (normalized.includes('completed') || normalized.includes('tamam')) return 'bg-emerald-50 text-emerald-700';
+  if (normalized.includes('failed') || normalized.includes('başarısız')) return 'bg-red-50 text-red-700';
+  if (normalized.includes('refund') || normalized.includes('iade')) return 'bg-slate-100 text-slate-600';
   if (normalized.includes('cancel') || normalized.includes('iptal')) return 'bg-rose-50 text-rose-700';
   return 'bg-brand-100 text-brand-700';
 }
@@ -177,7 +181,7 @@ export function MakeOpmcPage({
               <span className="border-r border-brand-200 bg-brand-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-brand-500">GÜN</span>
               <CommittedNumericInput
                 value={days}
-                rules={{ kind: 'integer', required: true, allowNegative: false, min: 1 }}
+                rules={{ kind: 'integer', required: true, allowNegative: false, min: 1, max: 365 }}
                 onCommit={(value) => { if (value !== null) onDaysChange(value); }}
                 className="w-12 py-1.5 text-center text-xs font-black text-brand-900 outline-none"
                 style={monoStyle}
@@ -211,7 +215,10 @@ export function MakeOpmcPage({
                 <option value="all">Tümü</option>
                 <option value="processing">İşleniyor</option>
                 <option value="pending">Beklemede</option>
+                <option value="on-hold">Beklemeye Alınan</option>
                 <option value="completed">Tamamlandı</option>
+                <option value="failed">Başarısız</option>
+                <option value="refunded">İade</option>
                 <option value="cancelled">İptal</option>
               </select>
             </div>
@@ -293,8 +300,21 @@ export function MakeOpmcPage({
                   </tr>
                 ) : filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center text-sm font-bold text-brand-400">
-                      Filtrelere uygun siparis bulunamadi.
+                    <td colSpan={8} className="px-4 py-16 text-center">
+                      <p className="text-sm font-bold text-brand-400">Filtrelere uygun siparis bulunamadi.</p>
+                      {/* M2 — boş sonuçta tek tıkla filtre sıfırlama yolu. */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onRiskFilterChange('all');
+                          onStatusFilterChange('all');
+                          onManualOnlyChange('all');
+                          onDaysChange(30);
+                        }}
+                        className="mt-3 inline-flex items-center border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-bold text-brand-700 transition-colors hover:bg-brand-100"
+                      >
+                        Filtreleri Sıfırla
+                      </button>
                     </td>
                   </tr>
                 ) : (
@@ -421,6 +441,14 @@ export function MakeOpmcPage({
                 {errorKind === 'transport'
                   ? 'Yerel backend bağlantısı şu an kurulamadığı için inceleme listesi açılamadı.'
                   : 'Manuel inceleme listesi şu an yenilenemedi.'}
+              </div>
+            ) : showLoadingState ? (
+              // M2 — ilk yüklemede ray 'İnceleme bekleyen sipariş yok' demesin;
+              // ana tablodaki 'hazırlanıyor' mesajıyla çelişmesin.
+              <div className="space-y-2" aria-hidden="true">
+                {[0, 1, 2].map((index) => (
+                  <div key={index} className="h-16 animate-pulse border border-brand-200 bg-brand-50/60" />
+                ))}
               </div>
             ) : quickReviewOrders.length === 0 ? (
               <div className="p-4 text-center text-xs font-bold text-brand-400">İnceleme bekleyen sipariş yok.</div>

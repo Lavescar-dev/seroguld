@@ -1,13 +1,16 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
   Bot,
+  Check,
   CheckCircle,
   CircleCheck,
   CircleX,
   ClipboardList,
+  Copy,
   CreditCard,
+  ExternalLink,
   Globe,
   HelpCircle,
   RefreshCw,
@@ -15,10 +18,76 @@ import {
   StickyNote,
   User,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 
+import { apiRequest } from '@/lib/api';
+import { openExternalUrl } from '@/lib/desktop';
 import type { AntiFraudOrder } from '@/types';
 import { formatOrderStatus, monoStyle, normalizeRiskLevel, riskTone } from '@/components/OpmcShared';
+
+/** M2 — Woo admin linki için mağaza adresi; settings sayfasıyla aynı sorgu
+ * anahtarını paylaşır, ikinci bir ayar istekleri zorlamaz. */
+function useWooStoreUrl(): string {
+  const query = useQuery({
+    queryKey: ['settings-v2'],
+    queryFn: () => apiRequest<{ woo_store_url?: string }>('/api/v2/settings'),
+    staleTime: 5 * 60 * 1000,
+  });
+  return (query.data?.woo_store_url || '').trim().replace(/\/+$/, '');
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // execCommand yedeğine düş.
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** M2 — e-posta/IP tek tıkla kopyalanabilir; risk incelemesinin doğal sonraki
+ * adımı (CRM'de arama) için pratik yol. */
+function CopyValueButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const clean = (value || '').trim();
+  if (!clean || clean === '-') return null;
+  return (
+    <button
+      type="button"
+      title={`${label} kopyala`}
+      onClick={async () => {
+        if (await copyText(clean)) {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }
+      }}
+      className={`inline-flex items-center gap-1 border px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider transition-colors ${
+        copied
+          ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+          : 'border-brand-300 bg-white text-brand-600 hover:bg-brand-50'
+      }`}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? 'Kopyalandı' : 'Kopyala'}
+    </button>
+  );
+}
 
 function dateTimeLabel(value?: string | null) {
   if (!value) return '—';
@@ -66,21 +135,24 @@ function InfoRow({
   value,
   mono = false,
   accent = '',
+  action,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   accent?: string;
+  action?: ReactNode;
 }) {
   return (
     <div className="flex items-start border-b border-brand-100 last:border-b-0">
       <div className="w-40 flex-shrink-0 border-r border-brand-200 bg-brand-50 px-3 py-2.5">
         <span className="text-xs font-black uppercase tracking-wider text-brand-600">{label}</span>
       </div>
-      <div className="flex-1 px-3 py-2.5">
+      <div className="flex flex-1 items-center gap-2 px-3 py-2.5">
         <span className={`text-sm font-semibold ${accent || 'text-brand-900'}`} style={mono ? monoStyle : undefined}>
           {value || '—'}
         </span>
+        {action ? <span className="ml-auto flex-shrink-0">{action}</span> : null}
       </div>
     </div>
   );
@@ -126,6 +198,9 @@ export function MakeOpmcDetailPage({
   onOverride,
   overriding,
 }: MakeOpmcDetailPageProps) {
+  // M2 — hook'lar koşullu dönüşlerden ÖNCE çağrılmalı.
+  const [overrideReason, setOverrideReason] = useState('');
+  const wooStoreUrl = useWooStoreUrl();
   const showLoadingState = isLoading && !hasData;
   const showErrorState = isError && !hasData;
   const showWarningRail = isError && hasData;
@@ -223,6 +298,9 @@ export function MakeOpmcDetailPage({
   const tone = riskTone(detail.risk_level);
   const mismatchCountries = detail.billing_country && detail.shipping_country && detail.billing_country !== detail.shipping_country;
   const orderLabel = detail.order_number || detail.order_id;
+  const wooAdminUrl = wooStoreUrl
+    ? `${wooStoreUrl}/wp-admin/post.php?post=${detail.order_id}&action=edit`
+    : null;
 
   return (
     <div className="flex min-h-full flex-col bg-white" style={{ fontFamily: "'IBM Plex Sans', system-ui, sans-serif" }}>
@@ -248,15 +326,32 @@ export function MakeOpmcDetailPage({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={isFetching}
-            className="inline-flex items-center gap-2 border border-brand-900 bg-brand-800 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-brand-900 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
-            Detayı Yenile
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {wooAdminUrl ? (
+              <a
+                href={wooAdminUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openExternalUrl(wooAdminUrl);
+                }}
+                className="inline-flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-bold text-brand-700 transition-colors hover:bg-brand-100"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                WooCommerce'te Aç
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={isFetching}
+              className="inline-flex items-center gap-2 border border-brand-900 bg-brand-800 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-brand-900 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+              Detayı Yenile
+            </button>
+          </div>
         </div>
       </div>
 
@@ -510,32 +605,47 @@ export function MakeOpmcDetailPage({
                     Bu sipariş için hatalı bir risk skoru gördüğünüze inanıyorsanız, manuel olarak
                     risk seviyesini değiştirebilirsiniz. Karar Woo'ya audit ile yazılır.
                   </p>
+                  {/* M2 — klasik varyant artık modern kadar korunuyor: sabit
+                  gerekçe + tek tık yerine zorunlu, düzenlenebilir gerekçe. */}
+                  <label className="block">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-brand-500">Gerekçe (zorunlu)</span>
+                    <input
+                      type="text"
+                      value={overrideReason}
+                      onChange={(event) => setOverrideReason(event.target.value)}
+                      placeholder="Örn. müşterinin 3 başarılı siparişi var, false positive değerlendirildi"
+                      className="mt-1 w-full border border-brand-300 bg-white px-3 py-2 text-sm font-semibold text-brand-900 outline-none focus:border-brand-500"
+                    />
+                  </label>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      disabled={overriding}
-                      onClick={() => onOverride('low', 'Operatör manuel: false-positive')}
+                      disabled={overriding || !overrideReason.trim()}
+                      onClick={() => onOverride('low', overrideReason.trim())}
                       className="inline-flex items-center gap-1 border border-emerald-400 bg-emerald-50 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
                     >
                       Düşük (False Positive)
                     </button>
                     <button
                       type="button"
-                      disabled={overriding}
-                      onClick={() => onOverride('medium', 'Operatör manuel: orta')}
+                      disabled={overriding || !overrideReason.trim()}
+                      onClick={() => onOverride('medium', overrideReason.trim())}
                       className="inline-flex items-center gap-1 border border-amber-400 bg-amber-50 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-amber-800 hover:bg-amber-100 disabled:opacity-50"
                     >
                       Orta
                     </button>
                     <button
                       type="button"
-                      disabled={overriding}
-                      onClick={() => onOverride('high', 'Operatör manuel: yüksek')}
+                      disabled={overriding || !overrideReason.trim()}
+                      onClick={() => onOverride('high', overrideReason.trim())}
                       className="inline-flex items-center gap-1 border border-rose-400 bg-rose-50 px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-800 hover:bg-rose-100 disabled:opacity-50"
                     >
                       Yüksek
                     </button>
                   </div>
+                  {!overrideReason.trim() ? (
+                    <p className="text-[11px] text-brand-400">Gerekçe yazmadan override gönderilemez.</p>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -583,8 +693,20 @@ export function MakeOpmcDetailPage({
               </div>
               <div className="divide-y divide-brand-100">
                 <InfoRow label="Müşteri" value={detail.customer_name || 'Müşteri yok'} accent="font-black text-brand-900" />
-                <InfoRow label="E-posta" value={detail.customer_email || '-'} mono accent="text-sky-700" />
-                <InfoRow label="IP" value={detail.ip_address || '-'} mono accent="text-brand-700" />
+                <InfoRow
+                  label="E-posta"
+                  value={detail.customer_email || '-'}
+                  mono
+                  accent="text-sky-700"
+                  action={<CopyValueButton value={detail.customer_email || ''} label="E-posta" />}
+                />
+                <InfoRow
+                  label="IP"
+                  value={detail.ip_address || '-'}
+                  mono
+                  accent="text-brand-700"
+                  action={<CopyValueButton value={detail.ip_address || ''} label="IP adresi" />}
+                />
                 <div className="flex items-start border-b border-brand-100">
                   <div className="w-40 flex-shrink-0 border-r border-brand-200 bg-brand-50 px-3 py-2.5">
                     <span className="text-xs font-black uppercase tracking-wider text-brand-600">Fatura Ülkesi</span>
@@ -672,6 +794,26 @@ export function MakeOpmcDetailPage({
                 ) : null}
               </div>
             </div>
+
+            {/* M2 — risk_meta_human make detayda hiç basılmıyordu; wc_af_failed_rules
+            çevirisi ve _wc_af_manual_override denetim alanları (kim/zaman/gerekçe)
+            buradan okunur. */}
+            {detail.risk_meta_human.length > 0 ? (
+              <div className="overflow-hidden border border-brand-300">
+                <div className="flex items-center gap-2 border-b border-brand-700 bg-brand-800 px-4 py-2.5">
+                  <ClipboardList className="h-3.5 w-3.5 text-brand-400" />
+                  <span className="text-xs font-black uppercase tracking-widest text-brand-300">Ham Woo Meta (İnsan Dili)</span>
+                </div>
+                <div className="divide-y divide-brand-100 bg-white">
+                  {detail.risk_meta_human.map((field) => (
+                    <div key={field.key} className="flex items-start gap-3 px-3 py-2">
+                      <span className="w-48 flex-shrink-0 text-[10px] font-black uppercase tracking-wider text-brand-500" style={monoStyle}>{field.label}</span>
+                      <span className="flex-1 break-words text-xs font-semibold text-brand-800" style={monoStyle}>{field.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="overflow-hidden border border-brand-300">
               <div className="flex items-center gap-2 border-b border-brand-700 bg-brand-800 px-4 py-2.5">

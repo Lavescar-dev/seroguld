@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -47,10 +49,16 @@ from app.services.antifraud_helpers import (
 from app.services.woocommerce import WooCommerceService
 from app.utils.helpers import utc_now
 
+logger = logging.getLogger(__name__)
+
 
 # O11 — In-memory cache (5 dakika TTL). Process-singleton.
 _ORDERS_CACHE_TTL = timedelta(minutes=5)
-_orders_cache: dict[str, tuple[list[dict[str, Any]], datetime]] = {}
+# M2 — LRU sınırı: her giriş e-posta/IP içeren tam sipariş listesini tutar;
+# days×per_page kombinasyonuyla sınırsız büyümesi (PII'nin RAM'de birikmesi)
+# engellenir.
+_ORDERS_CACHE_MAX_ENTRIES = 16
+_orders_cache: OrderedDict[str, tuple[list[dict[str, Any]], datetime]] = OrderedDict()
 
 _TERMINAL_ORDER_STATUSES = {"completed", "cancelled", "refunded", "failed"}
 
@@ -64,7 +72,12 @@ def _resolve_review_queue_status(order_status: str, requires_review: bool) -> st
 
 
 def _orders_cache_key(days: int, per_page: int) -> str:
-    return f"d={days};p={per_page}"
+    # M2 — per_page anahtardan çıkarıldı: fetch_recent_orders tüm sayfaları
+    # gezip TAM kümeyi döndürdüğü için sonuç sayfa boyutundan bağımsızdır;
+    # ayrı anahtar yalnız önbellek fragmantasyonu ve eşzamanlı çift tarama
+    # üretir. days bilinçli olarak kesin tutulur: kovaya yuvarlamak, istenen
+    # pencereden farklı bir veri kümesine sessiz servis etmek demektir.
+    return f"d={int(days)}"
 
 
 def _orders_cache_get(key: str) -> list[dict[str, Any]] | None:
@@ -76,6 +89,8 @@ def _orders_cache_get(key: str) -> list[dict[str, Any]] | None:
     # anında servis edip tazelemeyi arka plana bırakır (O13 detail fix).
     if datetime.now(timezone.utc) >= expires_at:
         return None
+    # M2 — LRU: isabet eden kayıt en son kullanılan tarafına taşınır.
+    _orders_cache.move_to_end(key)
     return rows
 
 
@@ -89,6 +104,9 @@ def _orders_cache_peek(key: str) -> list[dict[str, Any]] | None:
 
 def _orders_cache_set(key: str, rows: list[dict[str, Any]]) -> None:
     _orders_cache[key] = (rows, datetime.now(timezone.utc) + _ORDERS_CACHE_TTL)
+    _orders_cache.move_to_end(key)
+    while len(_orders_cache) > _ORDERS_CACHE_MAX_ENTRIES:
+        _orders_cache.popitem(last=False)
 
 
 # O13 — SWR arka plan tazelemesi: aynı anahtar için tek task, biten task'lar
@@ -132,6 +150,98 @@ def _orders_cache_invalidate() -> None:
 _RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 0.4
 
+# M2 — kalıcı yapılandırma/yetki hataları retry dışında tutulur: 503'ü üç
+# deneme + backoff sonrası 502'ye çevirmek hem status semantiğini bozar hem
+# gecikmeyi 2-3 kat artırır.
+_NO_RETRY_HTTP_STATUSES = {
+    status.HTTP_503_SERVICE_UNAVAILABLE,
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+}
+
+
+def _raise_config_http_exception(exc: HTTPException) -> None:
+    """Kalıcı 503/401/403'ü korur; istemciye kategorik Türkçe mesaj verir.
+
+    Ham exception/upstream gövdesi istemciye sızmaz, yalnız sunucu loguna
+    yazılır.
+    """
+    logger.error(
+        "OPMC Woo çağrısı kalıcı hatayla reddedildi (status=%s): %s",
+        exc.status_code,
+        exc.detail,
+    )
+    if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail="WooCommerce ayarları eksik; OPMC modülü şu an kullanılamıyor.",
+        ) from exc
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail="WooCommerce kimlik doğrulaması reddedildi; API anahtarlarını kontrol edin.",
+    ) from exc
+
+
+# M2 — single-flight: aynı anahtar için tek uçuş görevi; TTL dolunca
+# eşzamanlı istekler aynı tam taramayı paralel tekrarlamaz, göreve katılır.
+_orders_inflight: dict[str, asyncio.Task[list[dict[str, Any]]]] = {}
+# M2 — boş sonuç önbelleklenmez; Woo anomalisi için anahtar başına tek uyarı.
+_orders_empty_warned: set[str] = set()
+
+
+async def _fetch_recent_orders_uncached(
+    service: WooCommerceService,
+    *,
+    days: int,
+    per_page: int,
+    cache_key: str,
+) -> list[dict[str, Any]]:
+    last_exc: Exception | None = None
+    for attempt in range(_RETRY_MAX_ATTEMPTS):
+        try:
+            rows = await service.fetch_recent_orders(
+                days=days,
+                per_page=per_page,
+                statuses="processing,completed,on-hold,pending,failed,cancelled,refunded",
+            )
+            if rows:
+                _orders_cache_set(cache_key, rows)
+                _orders_empty_warned.discard(cache_key)
+            else:
+                # M2 — Woo anomalisi: boş küme önbelleklenmez; aksi halde CRM
+                # 5 dk boyunca '0 riskli sipariş' gösterir ve kayıt da olmaz.
+                if cache_key not in _orders_empty_warned:
+                    logger.warning(
+                        "OPMC: Woo %s günlük sipariş taraması boş döndü; sonuç önbelleğe alınmadı.",
+                        days,
+                    )
+                    _orders_empty_warned.add(cache_key)
+            return rows
+        except HTTPException as exc:
+            last_exc = exc
+            if exc.status_code in _NO_RETRY_HTTP_STATUSES:
+                _raise_config_http_exception(exc)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+        if attempt < _RETRY_MAX_ATTEMPTS - 1:
+            delay = _RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.2)
+            await asyncio.sleep(delay)
+
+    assert last_exc is not None  # retry döngüsü en az bir hata biriktirdi
+    # M2 — ham exception repr'ı / upstream gövdesi istemciye gömülmez;
+    # ayrıntı sunucu logunda kalır.
+    logger.error(
+        "OPMC Woo taraması %s denemeden sonra başarısız (days=%s, per_page=%s): %s",
+        _RETRY_MAX_ATTEMPTS,
+        days,
+        per_page,
+        last_exc,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Woo sipariş verisi alınamadı. Lütfen birkaç saniye sonra tekrar deneyin.",
+    ) from last_exc
+
 
 async def _fetch_recent_orders_with_retry(
     service: WooCommerceService,
@@ -141,7 +251,7 @@ async def _fetch_recent_orders_with_retry(
     use_cache: bool = True,
     allow_stale: bool = False,
 ) -> list[dict[str, Any]]:
-    """O11 cache + O12 exponential backoff retry.
+    """O11 cache + O12 exponential backoff retry (+M2 LRU/single-flight).
 
     allow_stale=True (SWR): önbellek bayat fakat dolu ise bayat kümeyi
     anında döndürüp tazelemeyi arka plan task'ına bırakır; detay ucu böylece
@@ -158,35 +268,21 @@ async def _fetch_recent_orders_with_retry(
                 _schedule_orders_refresh(service, days=days, per_page=per_page, cache_key=cache_key)
                 return stale
 
-    last_exc: Exception | None = None
-    for attempt in range(_RETRY_MAX_ATTEMPTS):
-        try:
-            rows = await service.fetch_recent_orders(
-                days=days,
-                per_page=per_page,
-                statuses="processing,completed,on-hold,pending,failed,cancelled,refunded",
-            )
-            _orders_cache_set(cache_key, rows)
-            return rows
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            if attempt < _RETRY_MAX_ATTEMPTS - 1:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.2)
-                await asyncio.sleep(delay)
-                continue
+    # M2 — stampede koruması: liste + dashboard + detay aynı anda tetiklense
+    # bile aynı anahtar için tek Woo taraması koşar.
+    inflight = _orders_inflight.get(cache_key)
+    if inflight is not None and not inflight.done():
+        return await inflight
 
-    if isinstance(last_exc, HTTPException):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                "Woo sipariş verisi alınamadı. Lütfen birkaç saniye sonra tekrar deneyin. "
-                f"Ayrıntı: {last_exc.detail}"
-            ),
-        ) from last_exc
-    raise HTTPException(
-        status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=f"Woo sipariş verisi alınamadı. ({last_exc})",
+    task = asyncio.create_task(
+        _fetch_recent_orders_uncached(service, days=days, per_page=per_page, cache_key=cache_key)
     )
+    _orders_inflight[cache_key] = task
+    try:
+        return await task
+    finally:
+        if _orders_inflight.get(cache_key) is task:
+            del _orders_inflight[cache_key]
 
 
 _HISTORY_STATUSES = "processing,completed,on-hold,pending,failed,cancelled,refunded"
@@ -253,20 +349,36 @@ async def _fetch_customer_history_orders_with_retry(
                 page += 1
             _orders_cache_set(cache_key, rows)
             return rows
+        except HTTPException as exc:
+            last_exc = exc
+            if exc.status_code in _NO_RETRY_HTTP_STATUSES:
+                _raise_config_http_exception(exc)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if attempt < _RETRY_MAX_ATTEMPTS - 1:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.2)
-                await asyncio.sleep(delay)
-                continue
+        if attempt < _RETRY_MAX_ATTEMPTS - 1:
+            delay = _RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.2)
+            await asyncio.sleep(delay)
 
+    assert last_exc is not None  # retry döngüsü en az bir hata biriktirdi
+    logger.error(
+        "OPMC müşteri geçmişi %s denemeden sonra alınamadı (customer_id=%s): %s",
+        _RETRY_MAX_ATTEMPTS,
+        customer_id,
+        last_exc,
+    )
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=f"Woo müşteri geçmişi alınamadı. ({last_exc})",
-    )
+        detail="Woo müşteri geçmişi alınamadı. Lütfen birkaç saniye sonra tekrar deneyin.",
+    ) from last_exc
 
 
 # O6 — Customer history pre-empt: ham orders üzerinden in-place hesaplama
+# M2 — include_notes=True yolunda sipariş başına bir Woo notu çağrısı düşer;
+# sıralı await per_page=40 için 40 SERİ upstream isteği demekti. Eşzamanlılık
+# semaphore ile sınırlı tutulur.
+_ORDER_ITEM_CONCURRENCY = 8
+
+
 def _compute_customer_history(
     order: dict[str, Any],
     all_orders: list[dict[str, Any]],
@@ -456,7 +568,8 @@ async def _build_order_item(
         if order_id > 0:
             try:
                 raw_notes = await service.fetch_order_notes(order_id=order_id, per_page=notes_per_order)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — notsuz satırla devam, hata izlenebilir olsun
+                logger.warning("OPMC: sipariş notları alınamadı (order_id=%s): %s", order_id, exc)
                 raw_notes = []
             for note in raw_notes:
                 if not isinstance(note, dict):
@@ -585,19 +698,25 @@ async def list_recent_orders_antifraud(
     active_review = historical_review = 0
     skipped_whitelist = not_scored = ai_alert = 0
 
-    for order in orders:
-        if not isinstance(order, dict):
-            continue
-        item = await _build_order_item(
-            service,
-            order=order,
-            include_notes=include_notes,
-            notes_per_order=notes_per_order,
-            detail_mode=detail_mode,
-            all_orders=orders,
-        )
-        items.append(item)
+    dict_orders = [order for order in orders if isinstance(order, dict)]
+    semaphore = asyncio.Semaphore(_ORDER_ITEM_CONCURRENCY)
 
+    async def _build_one(order: dict[str, Any]) -> AntiFraudOrderOut:
+        # M2 — sipariş satırları paralel kurulur (gather sıralamayı korur);
+        # include_notes yolundaki not çağrıları böylece seri N+1 olmaz.
+        async with semaphore:
+            return await _build_order_item(
+                service,
+                order=order,
+                include_notes=include_notes,
+                notes_per_order=notes_per_order,
+                detail_mode=detail_mode,
+                all_orders=orders,
+            )
+
+    items = list(await asyncio.gather(*[_build_one(order) for order in dict_orders]))
+
+    for item in items:
         if item.assessment_status == "skipped_whitelist":
             skipped_whitelist += 1
         elif item.assessment_status == "not_scored":
@@ -671,7 +790,12 @@ async def get_antifraud_order_detail(
             history_orders = await _fetch_recent_orders_with_retry(
                 service, days=_HISTORY_DAYS, per_page=100, use_cache=True, allow_stale=True
             )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — detay geçmişsiz yaşamaya devam eder, hata izlenebilir olsun
+        logger.warning(
+            "OPMC: müşteri geçmişi alınamadı (order_id=%s): %s — geçmiş boş gösteriliyor",
+            order_id,
+            exc,
+        )
         history_orders = []
 
     return await _build_order_item(
@@ -719,7 +843,9 @@ async def set_antifraud_manual_override(
             value=override_payload,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Woo meta yazılamadı: {exc}") from exc
+        # M2 — ham exception istemciye sızmaz; sunucu loguna yazılır.
+        logger.error("OPMC override meta yazılamadı (order_id=%s): %s", order_id, exc)
+        raise HTTPException(status_code=502, detail="Woo meta yazılamadı; lütfen tekrar deneyin.") from exc
 
     _orders_cache_invalidate()  # UI taze veri görsün
     # Order'ı yeniden fetch et + build et

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Eye, RefreshCw, ShieldAlert, UserRound } from 'lucide-react';
 
+import { CommittedNumericInput } from '@/shared/forms/CommittedNumericInput';
 import {
   ModernBadge,
   ModernButton,
@@ -14,7 +15,7 @@ import {
   ModernField,
 } from '@/modern/design-system';
 
-import { AvailabilityBanner, DetailGrid, formatDate, formatMoney, toneForRisk } from './shared';
+import { AvailabilityBanner, DetailGrid, formatDate, formatMoney, toneForOrderRisk } from './shared';
 import { formatOrderStatus, riskSourceLabel } from '@/components/OpmcShared';
 import type { ModernOpmcDetailPageProps, ModernOpmcListPageProps } from './types';
 
@@ -58,6 +59,8 @@ export function ModernOpmcListPage({
   const visibleItems =
     activeTab === 'history' ? historyItems : activeTab === 'all' ? items : queueItems;
   const selected = visibleItems.find((item) => String(item.order_id) === selectedOrderId) || visibleItems[0] || null;
+  // M2 — backend risk_level'ı öncelikli; 'skor yok' yeşile değil neutral'a düşer.
+  const selectedTone = toneForOrderRisk(selected);
 
   if (isLoading && items.length === 0) {
     return (
@@ -123,11 +126,13 @@ export function ModernOpmcListPage({
               <div className="mt-4 flex flex-wrap items-end gap-3">
                 {onDaysChange ? (
                   <label className="text-xs font-semibold text-sg-text-soft">Gün penceresi
-                    <input
-                      type="number"
-                      min={1}
+                    {/* M2 — commit-on-blur: tuş başına backend taraması ve boş/'0'
+                    girişinin sessizce 30'a dönmesi engellenir; 365 backend le=365
+                    sınırına uygun. */}
+                    <CommittedNumericInput
                       value={days ?? 30}
-                      onChange={(event) => onDaysChange(Number(event.target.value) || 30)}
+                      rules={{ kind: 'integer', required: true, allowNegative: false, min: 1, max: 365 }}
+                      onCommit={(value) => { if (value !== null) onDaysChange(value); }}
                       className="mt-1 block w-24 rounded-sg-md border border-sg-border bg-sg-surface px-3 py-2 text-sm text-sg-text outline-none"
                     />
                   </label>
@@ -149,7 +154,10 @@ export function ModernOpmcListPage({
                       <option value="all">Tümü</option>
                       <option value="processing">İşleniyor</option>
                       <option value="pending">Beklemede</option>
+                      <option value="on-hold">Beklemeye Alınan</option>
                       <option value="completed">Tamamlandı</option>
+                      <option value="failed">Başarısız</option>
+                      <option value="refunded">İade</option>
                       <option value="cancelled">İptal</option>
                     </select>
                   </label>
@@ -168,7 +176,9 @@ export function ModernOpmcListPage({
             ) : null}
             <div className="mt-4 space-y-3">
               {visibleItems.length > 0 ? visibleItems.map((item) => {
-                const scoreTone = toneForRisk(item.risk_score);
+                // M2 — üç-dürtlü çöktürme kaldırıldı: 'skor yok' artık yeşil
+                // değil neutral; eşikler backend risk_level'ından gelir.
+                const scoreTone = toneForOrderRisk(item);
                 const isActive = selected ? String(selected.order_id) === String(item.order_id) : false;
                 return (
                   <button
@@ -179,7 +189,7 @@ export function ModernOpmcListPage({
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0"><p className="font-semibold text-sg-text">#{item.order_number || item.order_id} · {item.customer_name || 'Misafir alıcı'}</p><p className="mt-1 text-xs text-sg-text-soft">{item.date_created ? formatDate(item.date_created) : '—'} · {formatMoney(item.total)} · {formatOrderStatus(item.status)}</p></div>
-                      <ModernBadge tone={scoreTone === 'danger' ? 'danger' : scoreTone === 'warning' ? 'warning' : 'success'} title="Risk skoru 0-100">Risk {item.risk_score ?? '—'}</ModernBadge>
+                      <ModernBadge tone={scoreTone} title="Risk skoru 0-100">Risk {item.risk_score ?? '—'}</ModernBadge>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                       <ModernBadge tone={item.review_queue_status === 'active' ? 'danger' : 'neutral'}>{item.review_queue_status === 'active' ? 'Aktif inceleme' : item.review_queue_status === 'historical' ? 'Geçmiş sinyal' : 'İnceleme dışı'}</ModernBadge>
@@ -196,10 +206,10 @@ export function ModernOpmcListPage({
           </ModernSection>
 
           <ModernSection className="min-w-0">
-            <ModernSectionHeader title={selected ? `#${selected.order_number || selected.order_id} · Vaka` : 'Vaka'} description="Risk skoru, kaynak ve müşteri geçmişi aynı detay panelinde." action={selected ? <ModernBadge tone={toneForRisk(selected.risk_score)}>{selected.risk_score ?? '—'}</ModernBadge> : undefined} />
+            <ModernSectionHeader title={selected ? `#${selected.order_number || selected.order_id} · Vaka` : 'Vaka'} description="Risk skoru, kaynak ve müşteri geçmişi aynı detay panelinde." action={selected ? <ModernBadge tone={selectedTone}>{selected.risk_score ?? '—'}</ModernBadge> : undefined} />
             {selected ? (
               <div className="mt-4 space-y-5">
-                <div className="h-2 overflow-hidden rounded-full bg-sg-surface-soft"><div className={`h-full rounded-full ${toneForRisk(selected.risk_score) === 'danger' ? 'bg-sg-red' : toneForRisk(selected.risk_score) === 'warning' ? 'bg-sg-amber' : 'bg-sg-green'}`} style={{ width: `${Math.min(Math.max(selected.risk_score ?? 0, 0), 100)}%` }} /></div>
+                <div className="h-2 overflow-hidden rounded-full bg-sg-surface-soft"><div className={`h-full rounded-full ${selectedTone === 'danger' ? 'bg-sg-red' : selectedTone === 'warning' ? 'bg-sg-amber' : selectedTone === 'success' ? 'bg-sg-green' : 'bg-sg-text-soft'}`} style={{ width: `${Math.min(Math.max(selected.risk_score ?? 0, 0), 100)}%` }} /></div>
                 <DetailGrid title="Vaka özeti" items={[
                   { label: 'Kaynak', value: riskSourceLabel(selected.risk_score_source), accent: true },
                   { label: 'Müşteri geçmişi', value: selected.customer_history ? `${selected.customer_history.total_orders} sipariş` : 'Yok' },
@@ -239,7 +249,27 @@ export function ModernOpmcDetailPage({
   onOverride,
 }: ModernOpmcDetailPageProps) {
   const [reason, setReason] = useState('');
-  const canOverride = Boolean(onOverride && reason.trim() && overrideAvailability?.state === 'available');
+  // M2 — override uçuşta iken düğmeleri kilitler; mutation onSuccess wrapper
+  // dosyasında olduğu için başarı sinyali olarak detail prop'unun yenilenmesi
+  // kullanılır (backend cache invalidation + setQueryData ile garanti).
+  const [pendingLevel, setPendingLevel] = useState<'low' | 'medium' | 'high' | null>(null);
+
+  useEffect(() => {
+    setReason('');
+    setPendingLevel(null);
+  }, [detail]);
+
+  // Güvenlik kilidi: hata durumunda detail yenilenmese bile butonlar 15 sn
+  // sonra açılır; kullanıcı kilitli kalmaz.
+  useEffect(() => {
+    if (pendingLevel === null) return undefined;
+    const timer = window.setTimeout(() => setPendingLevel(null), 15000);
+    return () => window.clearTimeout(timer);
+  }, [pendingLevel]);
+
+  const canOverride = Boolean(
+    onOverride && reason.trim() && overrideAvailability?.state === 'available' && pendingLevel === null,
+  );
 
   if (isLoading && !detail) {
     return <ModernPage><ModernSection><ModernSectionHeader eyebrow="Risk ve karar · detay" title={`Sipariş ${requestedId || '—'}`} description="Vaka detayı yükleniyor." /><div className="mt-5"><ModernUnavailableState title="Vaka detayı yükleniyor" description="Bağlantı kurulduğunda vaka bilgileri burada açılır." /></div></ModernSection></ModernPage>;
@@ -279,7 +309,7 @@ export function ModernOpmcDetailPage({
                 <ModernField label="Karar gerekçesi" hint="Boş gerekçeyle override düğmeleri kapalıdır."><ModernTextarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Kanıt ve karar gerekçesini yazın" /></ModernField>
                 <AvailabilityBanner availability={overrideAvailability} />
                 <div className="grid gap-2 sm:grid-cols-3">
-                  {(['low', 'medium', 'high'] as const).map((level) => <ModernButton key={level} tone={level === 'high' ? 'danger' : level === 'medium' ? 'warning' : 'success'} onClick={() => onOverride?.(level, reason.trim())} disabled={!canOverride}>{level === 'high' ? 'Yüksek risk' : level === 'medium' ? 'Orta risk' : 'Düşük risk'}</ModernButton>)}
+                  {(['low', 'medium', 'high'] as const).map((level) => <ModernButton key={level} tone={level === 'high' ? 'danger' : level === 'medium' ? 'warning' : 'success'} onClick={() => { setPendingLevel(level); onOverride?.(level, reason.trim()); }} disabled={!canOverride}>{level === 'high' ? 'Yüksek risk' : level === 'medium' ? 'Orta risk' : 'Düşük risk'}</ModernButton>)}
                 </div>
               </div>
             </ModernSection>
@@ -293,6 +323,14 @@ export function ModernOpmcDetailPage({
             <ModernSection>
               <ModernSectionHeader title="Meta ve karar geçmişi" />
               <div className="mt-4 space-y-3">
+                {/* M2 — override denetim zinciri (kim/zaman/gerekçe) modern
+                detayda hiç görünmüyordu; make varyantıyla asimetri kapatıldı. */}
+                {detail.override_reasons?.map((reason, index) => (
+                  <ModernCard key={`override-${index}`} className="border border-sg-accent/30 bg-sg-accent-soft/40">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">Override kaydı</p>
+                    <p className="mt-1 text-sm text-sg-text">{reason}</p>
+                  </ModernCard>
+                ))}
                 {detail.notes_human.map((note, index) => <ModernCard key={`${note}-${index}`} className="bg-sg-surface-soft"><p className="text-sm text-sg-text-soft">{note}</p></ModernCard>)}
                 {detail.risk_meta_human.map((field) => <ModernCard key={field.key} className="bg-sg-surface-soft"><p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sg-text-soft">{field.label}</p><p className="mt-1 text-sm text-sg-text">{String(field.value ?? '—')}</p></ModernCard>)}
                 {detail.notes_human.length === 0 && detail.risk_meta_human.length === 0 ? <ModernUnavailableState title="Kayıt yok" description="Bu vaka için not veya metadata bulunmuyor." /> : null}

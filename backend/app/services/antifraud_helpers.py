@@ -355,6 +355,33 @@ def _has_manual_override(risk_meta: list[AntiFraudRiskMetaOut]) -> tuple[bool, s
     return False, None
 
 
+def _extract_manual_override_audit(risk_meta: list[AntiFraudRiskMetaOut]) -> dict[str, str]:
+    """M2 — `_wc_af_manual_override` meta'sındaki by/at/reason denetim alanları.
+
+    Override'ı kimin, ne zaman ve hangi gerekçeyle verdiğini UI'da
+    gösterebilmek için; sözleşme string[] kaldığı için bilgi okunaklı tek
+    satıra dönüştürülerek override_reasons zinciriyle taşınır.
+    """
+    for item in risk_meta:
+        if item.key.lower().strip() != "_wc_af_manual_override":
+            continue
+        raw = item.value
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                return {}
+        if not isinstance(raw, dict):
+            continue
+        audit: dict[str, str] = {}
+        for field in ("by", "at", "reason"):
+            text = str(raw.get(field) or "").strip()
+            if text:
+                audit[field] = text
+        return audit
+    return {}
+
+
 def _resolve_risk_level(
     score: int | None,
     *,
@@ -390,7 +417,20 @@ def _resolve_effective_risk(
     has_override, override_level = _has_manual_override(risk_meta)
     if has_override and override_level:
         score_map = {"low": 10, "medium": 50, "high": 90}
-        reasons.append(f"Manuel override (operat\u00f6r karar\u0131): {override_level}")
+        # M2 \u2014 kim/ne zaman/gerek\u00e7e denetim bilgisi override_reasons ile y\u00fczeye
+        # ta\u015f\u0131n\u0131r (yap\u0131land\u0131r\u0131lm\u0131\u015f alan s\u00f6zle\u015fmesi de\u011fi\u015ftirilmeden).
+        audit = _extract_manual_override_audit(risk_meta)
+        parts = [f"seviye {override_level}"]
+        if audit.get("by"):
+            parts.append(f"operat\u00f6r {audit['by']}")
+        if audit.get("at"):
+            stamp = _parse_wc_datetime(audit["at"])
+            parts.append(
+                f"zaman {stamp.strftime('%d.%m.%Y %H:%M') if stamp else audit['at']}"
+            )
+        if audit.get("reason"):
+            parts.append(f"gerek\u00e7e: {audit['reason']}")
+        reasons.append("Manuel override (operat\u00f6r karar\u0131): " + " \u00b7 ".join(parts))
         return override_level, score_map.get(override_level, score), reasons
 
     if _is_blacklisted(risk_meta):
