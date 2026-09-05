@@ -18,7 +18,9 @@ import { AvailabilityBanner, DetailGrid, formatDate, formatMoney, toneForRisk } 
 import { formatOrderStatus, riskSourceLabel } from '@/components/OpmcShared';
 import type { ModernOpmcDetailPageProps, ModernOpmcListPageProps } from './types';
 
-type OpmcTab = 'queue' | 'history';
+// 'all' — make varyantındaki gibi filtrelenen tüm siparişler; inceleme
+// gerektirmeyen (review_queue_status === 'none') kayıtlar da burada görünür.
+type OpmcTab = 'queue' | 'all' | 'history';
 
 function riskAverage(items: ModernOpmcListPageProps['items']): number | string {
   const scores = items.map((item) => item.risk_score).filter((score): score is number => typeof score === 'number');
@@ -53,7 +55,8 @@ export function ModernOpmcListPage({
     item.review_queue_status ? item.review_queue_status === 'active' : item.requires_manual_review,
   );
   const historyItems = items.filter((item) => item.review_queue_status === 'historical');
-  const visibleItems = activeTab === 'history' ? historyItems : queueItems;
+  const visibleItems =
+    activeTab === 'history' ? historyItems : activeTab === 'all' ? items : queueItems;
   const selected = visibleItems.find((item) => String(item.order_id) === selectedOrderId) || visibleItems[0] || null;
 
   if (isLoading && items.length === 0) {
@@ -90,8 +93,9 @@ export function ModernOpmcListPage({
 
       <div className="flex flex-wrap gap-1 rounded-sg-lg border border-sg-border bg-sg-surface-soft p-1">
         {[
-          { id: 'queue' as const, label: 'İnceleme kuyruğu' },
-          { id: 'history' as const, label: 'Geçmiş sinyaller' },
+          { id: 'queue' as const, label: 'İnceleme kuyruğu', count: queueItems.length },
+          { id: 'all' as const, label: 'Tüm siparişler', count: items.length },
+          { id: 'history' as const, label: 'Geçmiş sinyaller', count: historyItems.length },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -99,15 +103,22 @@ export function ModernOpmcListPage({
             onClick={() => setActiveTab(tab.id)}
             className={activeTab === tab.id ? 'rounded-sg-md bg-sg-surface px-4 py-2 text-xs font-semibold text-sg-accent shadow-sg-sm' : 'rounded-sg-md px-4 py-2 text-xs font-semibold text-sg-text-soft hover:bg-sg-surface'}
           >
-            {tab.label}
+            {tab.label} · {tab.count}
           </button>
         ))}
       </div>
 
-      {activeTab === 'queue' ? (
+      {activeTab !== 'history' ? (
         <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(320px,0.82fr)_minmax(0,1.18fr)]">
           <ModernSection className="min-w-0">
-            <ModernSectionHeader title="İnceleme kuyruğu" description="Sıra ve durum OPMC sipariş verisinden gelir." />
+            <ModernSectionHeader
+              title={activeTab === 'queue' ? 'İnceleme kuyruğu' : 'Tüm siparişler'}
+              description={
+                activeTab === 'queue'
+                  ? 'Sıra ve durum OPMC sipariş verisinden gelir.'
+                  : 'Filtrelenen tüm siparişler — inceleme gerektirmeyen kayıtlar dahil.'
+              }
+            />
             {hasFilters ? (
               <div className="mt-4 flex flex-wrap items-end gap-3">
                 {onDaysChange ? (
@@ -152,7 +163,7 @@ export function ModernOpmcListPage({
                     </select>
                   </label>
                 ) : null}
-                <ModernBadge tone="neutral">Filtrelenen: {items.length}</ModernBadge>
+                <ModernBadge tone="neutral" title="Bu sekmede görünen / filtrelenen toplam">Filtrelenen: {visibleItems.length}/{items.length}</ModernBadge>
               </div>
             ) : null}
             <div className="mt-4 space-y-3">
@@ -171,12 +182,16 @@ export function ModernOpmcListPage({
                       <ModernBadge tone={scoreTone === 'danger' ? 'danger' : scoreTone === 'warning' ? 'warning' : 'success'} title="Risk skoru 0-100">Risk {item.risk_score ?? '—'}</ModernBadge>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      <ModernBadge tone={item.review_queue_status === 'active' ? 'danger' : 'neutral'}>{item.review_queue_status === 'active' ? 'Aktif inceleme' : 'Geçmiş sinyal'}</ModernBadge>
+                      <ModernBadge tone={item.review_queue_status === 'active' ? 'danger' : 'neutral'}>{item.review_queue_status === 'active' ? 'Aktif inceleme' : item.review_queue_status === 'historical' ? 'Geçmiş sinyal' : 'İnceleme dışı'}</ModernBadge>
                       <a href={`#/opmc/${item.order_id}`} onClick={(event) => event.stopPropagation()} className="text-sm font-semibold text-sg-accent hover:underline">Detaya git</a>
                     </div>
                   </button>
                 );
-              }) : <ModernUnavailableState title="İnceleme kuyruğu boş" description="Şu an inceleme bekleyen sipariş yok. Yeni risk sinyalleri burada listelenir." />}
+              }) : activeTab === 'queue' ? (
+                <ModernUnavailableState title="İnceleme kuyruğu boş" description="Şu an inceleme bekleyen sipariş yok. Yeni risk sinyalleri burada listelenir." />
+              ) : (
+                <ModernUnavailableState title="Sipariş bulunamadı" description="Filtrelere uygun sipariş yok. Gün penceresini büyütüp veya filtreleri gevşetip yeniden deneyin." />
+              )}
             </div>
           </ModernSection>
 

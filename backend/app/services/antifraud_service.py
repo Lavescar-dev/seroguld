@@ -72,14 +72,56 @@ def _orders_cache_get(key: str) -> list[dict[str, Any]] | None:
     if entry is None:
         return None
     rows, expires_at = entry
+    # Süresi dolan kayıt SİLİNMEZ: stale-while-revalidate bayat veriyi
+    # anında servis edip tazelemeyi arka plana bırakır (O13 detail fix).
     if datetime.now(timezone.utc) >= expires_at:
-        _orders_cache.pop(key, None)
         return None
     return rows
 
 
+def _orders_cache_peek(key: str) -> list[dict[str, Any]] | None:
+    """Süresi dolmuş (bayat) kayıt dahil döndürür — SWR servisi için."""
+    entry = _orders_cache.get(key)
+    if entry is None:
+        return None
+    return entry[0]
+
+
 def _orders_cache_set(key: str, rows: list[dict[str, Any]]) -> None:
     _orders_cache[key] = (rows, datetime.now(timezone.utc) + _ORDERS_CACHE_TTL)
+
+
+# O13 — SWR arka plan tazelemesi: aynı anahtar için tek task, biten task'lar
+# GC olmasın diye tutulur.
+_orders_refresh_inflight: set[str] = set()
+_orders_refresh_background: set[asyncio.Task[None]] = set()
+
+
+def _schedule_orders_refresh(
+    service: WooCommerceService,
+    *,
+    days: int,
+    per_page: int,
+    cache_key: str,
+) -> None:
+    """Bayat 365 günlük kümeyi arka planda tazeler; çağrıyı bekletmez."""
+
+    async def _run() -> None:
+        try:
+            await _fetch_recent_orders_with_retry(
+                service, days=days, per_page=per_page, use_cache=False
+            )
+        except Exception:  # noqa: BLE001 — arka plan yenilemesi bayat veriyle yaşamaya devam eder
+            pass
+        finally:
+            _orders_refresh_inflight.discard(cache_key)
+
+    if cache_key in _orders_refresh_inflight:
+        return
+    _orders_refresh_inflight.add(cache_key)
+    task = asyncio.create_task(_run())
+    _orders_refresh_background.add(task)
+    task.add_done_callback(_orders_refresh_background.discard)
 
 
 def _orders_cache_invalidate() -> None:
@@ -97,13 +139,24 @@ async def _fetch_recent_orders_with_retry(
     days: int,
     per_page: int,
     use_cache: bool = True,
+    allow_stale: bool = False,
 ) -> list[dict[str, Any]]:
-    """O11 cache + O12 exponential backoff retry."""
+    """O11 cache + O12 exponential backoff retry.
+
+    allow_stale=True (SWR): önbellek bayat fakat dolu ise bayat kümeyi
+    anında döndürüp tazelemeyi arka plan task'ına bırakır; detay ucu böylece
+    her çağrıda 365 günlük tüm Woo siparişlerini senkron sayfalamaz.
+    """
     cache_key = _orders_cache_key(days, per_page)
     if use_cache:
         cached = _orders_cache_get(cache_key)
         if cached is not None:
             return cached
+        if allow_stale:
+            stale = _orders_cache_peek(cache_key)
+            if stale is not None:
+                _schedule_orders_refresh(service, days=days, per_page=per_page, cache_key=cache_key)
+                return stale
 
     last_exc: Exception | None = None
     for attempt in range(_RETRY_MAX_ATTEMPTS):
@@ -133,6 +186,83 @@ async def _fetch_recent_orders_with_retry(
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=f"Woo sipariş verisi alınamadı. ({last_exc})",
+    )
+
+
+_HISTORY_STATUSES = "processing,completed,on-hold,pending,failed,cancelled,refunded"
+_HISTORY_DAYS = 365
+
+
+def _customer_history_cache_key(customer_id: int, days: int, per_page: int) -> str:
+    return f"cust={customer_id};d={days};p={per_page}"
+
+
+async def _fetch_customer_history_orders_with_retry(
+    service: WooCommerceService,
+    *,
+    customer_id: int,
+    days: int = _HISTORY_DAYS,
+    per_page: int = 100,
+) -> list[dict[str, Any]]:
+    """Kayıtlı müşterinin geçmişini WOO /orders?customer= dar sorgusundan çeker.
+
+    365 günlük TÜM siparişleri sayfalamanın yerine müşteri filtreli sorgu
+    kullanılır; Woo çekirdeği `customer` parametresini kayıtlı kullanıcılar
+    için destekler. Misafir siparişlerde e-posta araması Woo sürümüne göre
+    değiştiğinden (doğrulanmadı) burada KULLANILMAZ — o yol
+    `get_antifraud_order_detail` içindeki paylaşımlı önbelleğe düşer.
+    """
+    cache_key = _customer_history_cache_key(customer_id, days, per_page)
+    cached = _orders_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    after = (utc_now() - timedelta(days=days)).isoformat()
+    page_size = max(1, min(per_page, 100))
+    last_exc: Exception | None = None
+    for attempt in range(_RETRY_MAX_ATTEMPTS):
+        try:
+            rows: list[dict[str, Any]] = []
+            seen_page_ids: set[tuple[Any, ...]] = set()
+            page = 1
+            while True:
+                payload = await service._wc_request(
+                    "GET",
+                    "/orders",
+                    params={
+                        "customer": customer_id,
+                        "status": _HISTORY_STATUSES,
+                        "per_page": page_size,
+                        "orderby": "date",
+                        "order": "desc",
+                        "after": after,
+                        "page": page,
+                    },
+                )
+                if not isinstance(payload, list):
+                    break
+                page_rows = [item for item in payload if isinstance(item, dict)]
+                page_ids = tuple(item.get("id") for item in page_rows)
+                if page_ids and page_ids in seen_page_ids:
+                    break
+                if page_ids:
+                    seen_page_ids.add(page_ids)
+                rows.extend(page_rows)
+                if len(payload) < page_size:
+                    break
+                page += 1
+            _orders_cache_set(cache_key, rows)
+            return rows
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt < _RETRY_MAX_ATTEMPTS - 1:
+                delay = _RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.2)
+                await asyncio.sleep(delay)
+                continue
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Woo müşteri geçmişi alınamadı. ({last_exc})",
     )
 
 
@@ -526,11 +656,21 @@ async def get_antifraud_order_detail(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sipariş bulunamadı.") from exc
         raise
 
-    # O6 — Customer history için son 365 gün penceresi
+    # O6 — Customer history için son 365 gün penceresi.
+    # Kayıtlı müşteride dar /orders?customer= sorgusu; misafirde e-posta
+    # araması Woo sürümüne göre değiştiğinden paylaşımlı 365 günlük önbellek
+    # SWR ile servis edilir (tazeleme arka planda). Her iki yolda da ikinci
+    # çağrı TTL dolana kadar Woo'ya gitmez.
+    customer_id = _to_int(order.get("customer_id")) or 0
     try:
-        history_orders = await _fetch_recent_orders_with_retry(
-            service, days=365, per_page=100, use_cache=True
-        )
+        if customer_id > 0:
+            history_orders = await _fetch_customer_history_orders_with_retry(
+                service, customer_id=customer_id, days=_HISTORY_DAYS
+            )
+        else:
+            history_orders = await _fetch_recent_orders_with_retry(
+                service, days=_HISTORY_DAYS, per_page=100, use_cache=True, allow_stale=True
+            )
     except Exception:
         history_orders = []
 

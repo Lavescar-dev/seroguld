@@ -18,7 +18,7 @@ export function useOpmcDetailMakeState() {
     queryFn: () => apiRequest<AntiFraudOrder>(`/api/v2/opmc/orders/${orderId}`),
     retry: (failureCount, error) => error instanceof TransportError && failureCount < 2,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // OPMC detay zinciri (order+history) sekme odağında yeniden tetiklenmesin; refetchOnMount her gezinmede tazeliyor (denetim bulgusu 43).
     refetchOnReconnect: true,
   });
 
