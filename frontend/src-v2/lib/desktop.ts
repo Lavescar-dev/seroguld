@@ -462,6 +462,23 @@ export async function stopIdentityWatch(): Promise<IdentityWatchStatus> {
 }
 
 /**
+ * M2: Rust tarafındaki kalıcı klasör izleme durumunu sorgular. Panel yeniden
+ * mount edildiğinde (ya da uygulama yeniden başladığında) izleme hâlâ aktifse
+ * UI 'Klasör izleme açık' rozetini ve Durdur yolunu gösterebilsin; aksi halde
+ * WATCH_ALREADY_ACTIVE ile kullanıcı izlemeyi durduramadan kilitlenir.
+ * Köprü yoksa/hata varsa null döner — çağıran sessizce atlayabilir.
+ */
+export async function getIdentityWatchStatus(): Promise<IdentityWatchStatus | null> {
+  if (!isTauriRuntime()) return null;
+  try {
+    const status = await invokeDesktop<IdentityWatchStatus>('get_identity_watch_status');
+    return status && typeof status === 'object' ? status : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `identity-watch-scan` / `identity-watch-error` olaylarına abone olur.
  * Tarama yükü mevcut IdentityScanResult sözleşmesidir (yeni parse yok);
  * hata yükü IdentityScannerErrorPayload'dır.

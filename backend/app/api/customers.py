@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from math import ceil
 import re
 import secrets
@@ -20,7 +21,9 @@ from app.models.customer_activity import CustomerActivityEvent
 from app.models.customer_identity import CustomerIdentityDocument
 from app.models.customer_note import CustomerNote, CustomerNoteRevision
 from app.models.pos_document import PosDocument
+from app.models.pos_document_audit import PosDocumentAudit
 from app.models.pos_session import PosSession
+from app.models.pos_session_line import PosSessionLine
 from app.models.pos_session_product_link import PosSessionProductLink
 from app.models.product import Product
 from app.models.product_history import ProductHistory
@@ -46,12 +49,18 @@ from app.schemas.customer import (
     CustomerUpdate,
 )
 from app.schemas.pos import PosDocumentListItemOut
-from app.services.customer_service import create_customer, get_customer_detail, to_customer_out, update_customer
+from app.services.customer_service import (
+    create_customer,
+    get_customer_detail,
+    to_customer_out,
+    to_customer_out_list,
+    update_customer,
+)
 from app.services.customer_statement_renderer import render_customer_statement_pdf
 from app.services.pos_document_service import document_title_tr, format_document_number
 from app.services.pos_workspace_state import _parse_workspace_note_payload, _workspace_calculators_from_note
 from app.services.woocommerce import WooCommerceService
-from app.utils.security import hash_cpr, hash_sensitive_value
+from app.utils.security import get_password_hash, hash_cpr, hash_sensitive_value
 
 router = APIRouter()
 
@@ -175,14 +184,44 @@ async def _delete_mock_customers(db: AsyncSession) -> int:
     await db.execute(update(AIUsageLog).where(AIUsageLog.performed_by.in_(candidate_ids)).values(performed_by=None))
 
     session_ids = list((await db.scalars(select(PosSession.id).where(PosSession.customer_id.in_(candidate_ids)))).all())
+
+    # M2: silme sırası FK'lara saygılı — ondelete tanımsız referanslar
+    # (transactions.pos_session_id, transactions.customer_id, pos_documents,
+    # pos_session_lines, pos_document_audits, customer_activity_events)
+    # oturum/kullanıcı silinmeden temizlenir; aksi halde IntegrityError → 500.
+    # Mock temizliği artık commit atmadan çağıranın transaction'ında kalır:
+    # Woo verisi başarıyla çekilmeden veri silinmez.
+    transaction_filters = [Transaction.customer_id.in_(candidate_ids)]
     if session_ids:
+        transaction_filters.append(Transaction.pos_session_id.in_(session_ids))
+    transaction_ids = list(
+        (await db.scalars(select(Transaction.id).where(or_(*transaction_filters)))).all()
+    )
+    if transaction_ids:
+        await db.execute(delete(TransactionLine).where(TransactionLine.transaction_id.in_(transaction_ids)))
+        await db.execute(delete(Transaction).where(Transaction.id.in_(transaction_ids)))
+
+    if session_ids:
+        await db.execute(delete(PosDocumentAudit).where(PosDocumentAudit.pos_session_id.in_(session_ids)))
+        await db.execute(delete(PosSessionLine).where(PosSessionLine.pos_session_id.in_(session_ids)))
+
+    activity_filters = [CustomerActivityEvent.customer_id.in_(candidate_ids)]
+    if session_ids:
+        activity_filters.append(CustomerActivityEvent.pos_session_id.in_(session_ids))
+    await db.execute(delete(CustomerActivityEvent).where(or_(*activity_filters)))
+
+    if session_ids:
+        await db.execute(delete(PosDocument).where(PosDocument.pos_session_id.in_(session_ids)))
         await db.execute(delete(PosSessionProductLink).where(PosSessionProductLink.pos_session_id.in_(session_ids)))
         await db.execute(delete(PosSession).where(PosSession.id.in_(session_ids)))
 
-    await db.execute(delete(CustomerActivityEvent).where(CustomerActivityEvent.customer_id.in_(candidate_ids)))
+    # Nullable kullanıcı referansları (denetçi bulgusu): mock kullanıcıya
+    # işaret eden audit kolonları silmeden NULL'a çekilir.
+    await db.execute(update(PosDocumentAudit).where(PosDocumentAudit.actor_user_id.in_(candidate_ids)).values(actor_user_id=None))
+    await db.execute(update(Transaction).where(Transaction.clerk_user_id.in_(candidate_ids)).values(clerk_user_id=None))
+
     await db.execute(delete(CustomerIdentityDocument).where(CustomerIdentityDocument.user_id.in_(candidate_ids)))
     await db.execute(delete(User).where(User.id.in_(candidate_ids)))
-    await db.commit()
     return len(candidate_ids)
 
 
@@ -223,7 +262,9 @@ async def get_customers(
 
     rows = await db.scalars(base.offset((page - 1) * page_size).limit(page_size))
 
-    items = [await to_customer_out(db, user) for user in rows.all()]
+    # M2: liste yüzeyi maskeli + tek toplu identity sorgusu (plaintext CPR
+    # ifşası ve N+1 decrypt sorgu maliyeti birlikte giderilir).
+    items = await to_customer_out_list(db, rows.all(), masked=True)
     total_int = int(total or 0)
     return CustomerListResponse(
         items=items,
@@ -343,7 +384,8 @@ async def search_customers(
     rows = await db.scalars(
         select(User).where(and_(*predicates)).order_by(relevance.asc(), User.created_at.desc()).limit(25)
     )
-    return [await to_customer_out(db, item) for item in rows.all()]
+    # M2: arama yüzeyi de maskeli + toplu identity eşlemesi.
+    return await to_customer_out_list(db, rows.all(), masked=True)
 
 
 @router.post("/import/woocommerce-live", response_model=CustomerWooImportResponse)
@@ -352,13 +394,16 @@ async def import_woocommerce_customers(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> CustomerWooImportResponse:
+    wc_service = WooCommerceService()
+    wc_customers = await wc_service.fetch_customers(limit=payload.limit)
+
+    # M2: mock temizliği Woo verisi başarıyla çekildikten SONRA yapılır ve
+    # commit atmadan içe aktarım transaction'ında kalır — fetch 502 dönerse
+    # mock veri silinmiş ama import'suz kalmış durum oluşmaz.
     if payload.replace_mock_seed:
         deleted_mock_seed = await _delete_mock_customers(db)
     else:
         deleted_mock_seed = 0
-
-    wc_service = WooCommerceService()
-    wc_customers = await wc_service.fetch_customers(limit=payload.limit)
 
     created = 0
     updated = 0
@@ -371,6 +416,12 @@ async def import_woocommerce_customers(
     # değiştirmeye zorlanır.
     env_password = _env_value("CUSTOMER_IMPORT_DEFAULT_PASSWORD")
     import_password = env_password or secrets.token_urlsafe(16)
+    # M2: bcrypt yüzlerce ms sürer — hash İÇE AKTARIM BAŞINA BİR KEZ üretilir,
+    # her satırda senkron olarak yeniden hesaplanmaz.
+    import_password_hash = await asyncio.to_thread(get_password_hash, import_password)
+
+    import_commit_batch = 100
+    pending_import_rows = 0
 
     for wc_customer in wc_customers:
         wc_id = int(wc_customer.get("id") or 0)
@@ -385,56 +436,65 @@ async def import_woocommerce_customers(
             phone = _wc_customer_phone(wc_customer)
             address = _wc_customer_address(wc_customer)
 
-            existing = await db.scalar(select(User).where(User.role == RoleEnum.CUSTOMER, User.email == email))
-            if not existing and phone:
-                existing = await db.scalar(
-                    select(User).where(User.role == RoleEnum.CUSTOMER, User.phone == phone, User.name == name).limit(1)
-                )
+            # M2: satır başına savepoint — hatalı satır yalnız kendisini geri
+            # alır; parça bekleyen satırlar korunur ve sayaçlar doğru kalır.
+            # Per-row commit/refresh yerine 100'lük partilerde tek commit:
+            # istek süresi kısalır, bağlantı koparsa en fazla bir parti kayıptır.
+            async with db.begin_nested():
+                existing = await db.scalar(select(User).where(User.role == RoleEnum.CUSTOMER, User.email == email))
+                if not existing and phone:
+                    existing = await db.scalar(
+                        select(User).where(User.role == RoleEnum.CUSTOMER, User.phone == phone, User.name == name).limit(1)
+                    )
 
-            if existing:
-                # A6-2: güncelleme payload'ı yalnız Woo'dan GELEN dolu alanlarla
-                # kurulur — eksik Woo alanı (None) yerel değeri NULL'a çekmez,
-                # is_active üzerine yazılmaz (pasif müşteri sessizce açılmaz).
-                # Kaynaktan zorla eşitleme ancak açık bayrakla (force_source_values).
-                update_fields: dict[str, Any] = {"name": name, "email": email}
-                if payload.force_source_values:
-                    update_fields["phone"] = phone
-                    update_fields["address"] = address
-                    update_fields["is_active"] = True
-                else:
-                    if phone is not None:
+                if existing:
+                    # A6-2: güncelleme payload'ı yalnız Woo'dan GELEN dolu alanlarla
+                    # kurulur — eksik Woo alanı (None) yerel değeri NULL'a çekmez,
+                    # is_active üzerine yazılmaz (pasif müşteri sessizce açılmaz).
+                    # Kaynaktan zorla eşitleme ancak açık bayrakla (force_source_values).
+                    update_fields: dict[str, Any] = {"name": name, "email": email}
+                    if payload.force_source_values:
                         update_fields["phone"] = phone
-                    if address is not None:
                         update_fields["address"] = address
-                update_payload = CustomerUpdate(**update_fields)
-                updated_user = await update_customer(db, existing, update_payload)
-                updated_user.woocommerce_customer_id = str(wc_id) if wc_id > 0 else updated_user.woocommerce_customer_id
-                await db.commit()
-                await db.refresh(updated_user)
-                updated += 1
-                imported_customer_ids.append(str(updated_user.id))
-                continue
+                        update_fields["is_active"] = True
+                    else:
+                        if phone is not None:
+                            update_fields["phone"] = phone
+                        if address is not None:
+                            update_fields["address"] = address
+                    update_payload = CustomerUpdate(**update_fields)
+                    updated_user = await update_customer(db, existing, update_payload)
+                    updated_user.woocommerce_customer_id = str(wc_id) if wc_id > 0 else updated_user.woocommerce_customer_id
+                    row_user_id = updated_user.id
+                    updated += 1
+                else:
+                    create_payload = CustomerCreate(
+                        name=name,
+                        email=email,
+                        phone=phone,
+                        address=address,
+                        password=import_password,
+                    )
+                    created_user = await create_customer(db, create_payload, password_hash=import_password_hash)
+                    created_user.woocommerce_customer_id = str(wc_id) if wc_id > 0 else None
+                    created_user.must_change_password = True
+                    row_user_id = created_user.id
+                    created += 1
 
-            create_payload = CustomerCreate(
-                name=name,
-                email=email,
-                phone=phone,
-                address=address,
-                password=import_password,
-            )
-            created_user = await create_customer(db, create_payload)
-            created_user.woocommerce_customer_id = str(wc_id) if wc_id > 0 else None
-            created_user.must_change_password = True
-            await db.commit()
-            await db.refresh(created_user)
-            created += 1
-            imported_customer_ids.append(str(created_user.id))
+            imported_customer_ids.append(str(row_user_id))
+            pending_import_rows += 1
+            if pending_import_rows >= import_commit_batch:
+                await db.commit()
+                pending_import_rows = 0
         except Exception as exc:
-            await db.rollback()
+            # Savepoint hatalı satırı zaten geri aldı; parça commit'i bozulmaz.
             if wc_id <= 0:
                 skipped += 1
             else:
                 errors.append(f"wc_customer_id={wc_id}: {exc}")
+
+    if pending_import_rows or deleted_mock_seed:
+        await db.commit()
 
     return CustomerWooImportResponse(
         fetched=len(wc_customers),
@@ -767,15 +827,37 @@ async def put_customer_note(customer_id: UUID, note_id: UUID, payload: CustomerN
     note = await db.scalar(select(CustomerNote).where(CustomerNote.id == note_id, CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)))
     if not note:
         raise HTTPException(status_code=404, detail="Not bulunamadı")
-    if note.version != payload.base_version:
-        raise HTTPException(status_code=409, detail="Not başka bir kullanıcı tarafından güncellendi")
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="Not boş bırakılamaz")
-    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="updated", body_snapshot=note.body, version=note.version))
-    note.body = body
-    note.author_user_id = admin.id
-    note.version += 1
+    # M2: atomik compare-and-swap — version kontrolü tek UPDATE ... WHERE
+    # version=:base ifadesindedir (check-then-write race'i kapalıdır). Aynı
+    # base_version ile koşan iki istekten yalnız biri geçer; diğeri 409 alır
+    # ve revizyon zincirine aynı version'la iki 'updated' snapshot düşemez.
+    previous_body = note.body
+    previous_version = note.version
+    result = await db.execute(
+        update(CustomerNote)
+        .where(
+            CustomerNote.id == note_id,
+            CustomerNote.customer_id == customer_id,
+            CustomerNote.deleted_at.is_(None),
+            CustomerNote.version == payload.base_version,
+        )
+        .values(body=body, author_user_id=admin.id, version=CustomerNote.version + 1)
+    )
+    if result.rowcount == 0:
+        still_there = await db.scalar(
+            select(CustomerNote).where(
+                CustomerNote.id == note_id,
+                CustomerNote.customer_id == customer_id,
+                CustomerNote.deleted_at.is_(None),
+            )
+        )
+        if still_there is None:
+            raise HTTPException(status_code=404, detail="Not bulunamadı")
+        raise HTTPException(status_code=409, detail="Not başka bir kullanıcı tarafından güncellendi")
+    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="updated", body_snapshot=previous_body, version=previous_version))
     await db.commit()
     await db.refresh(note)
     return (await _note_payloads(db, [note]))[0]
@@ -786,11 +868,31 @@ async def delete_customer_note(customer_id: UUID, note_id: UUID, base_version: i
     note = await db.scalar(select(CustomerNote).where(CustomerNote.id == note_id, CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)))
     if not note:
         raise HTTPException(status_code=404, detail="Not bulunamadı")
-    if note.version != base_version:
+    # M2: silmede de atomik CAS (put ile aynı gerekçe).
+    previous_body = note.body
+    previous_version = note.version
+    result = await db.execute(
+        update(CustomerNote)
+        .where(
+            CustomerNote.id == note_id,
+            CustomerNote.customer_id == customer_id,
+            CustomerNote.deleted_at.is_(None),
+            CustomerNote.version == base_version,
+        )
+        .values(deleted_at=func.now(), version=CustomerNote.version + 1)
+    )
+    if result.rowcount == 0:
+        still_there = await db.scalar(
+            select(CustomerNote).where(
+                CustomerNote.id == note_id,
+                CustomerNote.customer_id == customer_id,
+                CustomerNote.deleted_at.is_(None),
+            )
+        )
+        if still_there is None:
+            raise HTTPException(status_code=404, detail="Not bulunamadı")
         raise HTTPException(status_code=409, detail="Not başka bir kullanıcı tarafından güncellendi")
-    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="deleted", body_snapshot=note.body, version=note.version))
-    note.deleted_at = func.now()
-    note.version += 1
+    db.add(CustomerNoteRevision(note_id=note.id, customer_id=customer_id, actor_user_id=admin.id, action="deleted", body_snapshot=previous_body, version=previous_version))
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -6,6 +6,8 @@ export type CustomerDraft = {
   phone: string;
   address: string;
   postal_code: string;
+  /** M2: OCR'ın okuyup backend'in sakladığı şehir — klasik formda buharlaştırılıyordu. */
+  city: string;
   cpr_number: string;
   identity_doc_type: string;
   identity_doc_number: string;
@@ -18,10 +20,13 @@ export const EMPTY_DRAFT: CustomerDraft = {
   phone: '',
   address: '',
   postal_code: '',
+  city: '',
   cpr_number: '',
   identity_doc_type: '',
   identity_doc_number: '',
-  identity_doc_country: 'DK',
+  // M2: ISO-3 konvansiyonu — OCR hattı 'DNK' yazıyor; manuel default 'DK' ile
+  // aynı alanda iki konvansiyon birikiyordu.
+  identity_doc_country: 'DNK',
 };
 
 export interface CustomerHistoryLogMeta {

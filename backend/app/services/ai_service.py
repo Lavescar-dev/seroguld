@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from dataclasses import dataclass
+import logging
 import mimetypes
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -16,6 +18,8 @@ from app.services.photo_service import sorted_photos_for_publish
 from app.models.product import Product
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+logger = logging.getLogger(__name__)
 
 
 PRODUCT_TYPE_DA = {
@@ -279,10 +283,12 @@ class AIService:
                 try:
                     response = httpx.get(value, timeout=self.timeout, follow_redirects=True)
                     if response.status_code >= 400:
+                        logger.warning("AI foto indirilemedi (%s): HTTP %s", value, response.status_code)
                         continue
                     content_type = (response.headers.get("content-type") or "application/octet-stream").split(";")[0]
                     return response.content, content_type
-                except Exception:
+                except Exception as exc:
+                    logger.warning("AI foto indirme hatası (%s): %s", value, exc)
                     continue
 
             path = self._resolve_media_path_from_url(value)
@@ -293,7 +299,8 @@ class AIService:
                     data = path.read_bytes()
                     guessed = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
                     return data, guessed
-            except Exception:
+            except Exception as exc:
+                logger.warning("AI foto okunamadı (%s): %s", path, exc)
                 continue
 
         return None
@@ -315,19 +322,28 @@ class AIService:
                 detail=f"Fotoğraf AI analizine hazırlanamadı: {exc}",
             ) from exc
 
-    def _build_user_content(self, product: Product) -> tuple[list[dict[str, Any]], int]:
+    def _load_photo_data_url(self, photo: dict[str, Any]) -> str | None:
+        """Tek fotoğrafı okuyup JPEG data URL'ine çevirir (tamamı bloklayan IO)."""
+        loaded = self._read_photo_bytes(photo)
+        if not loaded:
+            return None
+        raw_bytes, _content_type = loaded
+        try:
+            return self._to_jpeg_data_url(raw_bytes)
+        except HTTPException:
+            return None
+
+    async def _build_user_content(self, product: Product) -> tuple[list[dict[str, Any]], int]:
+        # M2: foto okuma (disk/httpx) ve PIL re-encode saniyeler sürebilen
+        # bloklayan işler — aksi halde ai-describe isteği boyunca event loop
+        # kilitlenir. Her foto worker thread'de yüklenir; sıra korunur.
         content: list[dict[str, Any]] = [{"type": "text", "text": self._build_prompt(product)}]
         photos = self._sorted_photos(product)
         images_sent = 0
 
         for photo in photos[: self.max_images]:
-            loaded = self._read_photo_bytes(photo)
-            if not loaded:
-                continue
-            raw_bytes, _content_type = loaded
-            try:
-                data_url = self._to_jpeg_data_url(raw_bytes)
-            except HTTPException:
+            data_url = await asyncio.to_thread(self._load_photo_data_url, photo)
+            if not data_url:
                 continue
             content.append(
                 {
@@ -398,7 +414,7 @@ class AIService:
                 detail="OPENAI_API_KEY tanımlı değil. AI açıklama üretilemedi.",
             )
 
-        user_content, images_sent = self._build_user_content(product)
+        user_content, images_sent = await self._build_user_content(product)
         payload: dict[str, Any] = {
             "model": self.model,
             "response_format": self._response_format(),

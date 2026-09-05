@@ -1,5 +1,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Calendar,
   Check,
   ChevronDown,
@@ -8,6 +10,7 @@ import {
   ExternalLink,
   FileText,
   IdCard,
+  Loader2,
   Mail,
   MapPin,
   Pencil,
@@ -20,15 +23,19 @@ import {
   X,
 } from 'lucide-react';
 
-import { printAuthedDocument, localizeApiError } from '@/lib/api';
+import { apiRequest, fetchAuthedPdfBlob, printAuthedDocument, localizeApiError } from '@/lib/api';
+import { exportDocumentBytes, isTauriRuntime } from '@/lib/desktop';
 import {
   formatDate,
   formatMoney,
   formatNumber,
   labelProductType,
 } from '@/lib/format';
+import { normalizePostalCode } from '@/make/alis/addressAutocomplete';
+import { useCustomerMatch } from '@/make/alis/customerMatch';
+import type { EditableCustomer } from '@/make/alis/types';
 import { useToast } from '@/lib/toast';
-import type { PosDocumentDetail, PosDocumentListItem } from '@/types';
+import type { PosDocumentDetail, PosDocumentListItem, PosPostalLookup } from '@/types';
 
 import { useConfirm } from '@/components/ConfirmDialog';
 import type { CustomerDraft, CustomerHistoryLogMeta, CustomersPageProps } from './types';
@@ -74,6 +81,17 @@ function labelIdentityDocType(value?: string | null) {
   }
 }
 
+/**
+ * M2: backend CustomerOut artık `city` döndürüyor; paylaşılan FE CustomerOut
+ * tipi (src-v2/types.ts) henüz tanımlamadığı için yerel okuma yardımcısı.
+ * (Tip düzeltmesi types.ts'e ayrı iş olarak yapılmalı.)
+ */
+function customerCity(customer: unknown): string {
+  if (!customer || typeof customer !== 'object') return '';
+  const city = (customer as { city?: unknown }).city;
+  return typeof city === 'string' ? city : '';
+}
+
 function LabelCell({ children }: { children: ReactNode }) {
   return (
     <th className="whitespace-nowrap border border-brand-300 bg-brand-100 px-3 py-3 text-left text-xs font-black uppercase tracking-wider text-brand-700">
@@ -107,6 +125,32 @@ function DraftRow({
     }
   };
   const saveHint = isSaving ? 'Kaydediliyor…' : canSave ? undefined : 'Ad soyad zorunlu';
+
+  // M2: AFG'deki posta kodu → şehir otomasyonuyla aynı kural — 4 haneli
+  // posta kodunda şehir boşsa postal-lookup'tan doldurulur; elle yazılan
+  // şehir asla ezilmez.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const postalDigits = normalizePostalCode(draft.postal_code);
+  useEffect(() => {
+    if (postalDigits.length !== 4) return;
+    const timeoutId = window.setTimeout(() => {
+      void apiRequest<PosPostalLookup>(`/api/v2/alis/postal-lookup/${postalDigits}`)
+        .then((response) => {
+          const latest = draftRef.current;
+          if (normalizePostalCode(latest.postal_code) !== postalDigits) return;
+          if (latest.city.trim()) return;
+          const nextCity = String(response.postal_district || '').trim();
+          if (response.found && nextCity) onChange('city', nextCity);
+        })
+        .catch(() => undefined);
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+    // yalnız posta kodu değişince tetiklenir; onChange ilk render'daki
+    // closure'dan gelse de parent state güncelleyici olduğu için güvenlidir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postalDigits]);
+
   return (
     <tr className="bg-amber-50" onKeyDown={handleRowKeyDown}>
       <td className="border border-brand-300 px-3 py-2 text-center text-xs font-bold text-brand-600">+</td>
@@ -129,6 +173,10 @@ function DraftRow({
         <input aria-label="Posta kodu" value={draft.postal_code} onChange={(event) => onChange('postal_code', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
+        {/* M2: şehir alanı — OCR'ın okuyup backend'in sakladığı değer artık görünür. */}
+        <input aria-label="Şehir" value={draft.city} onChange={(event) => onChange('city', event.target.value)} className={cellInput} placeholder="By" />
+      </td>
+      <td className="border border-brand-300 px-1 py-1.5">
         <div className="grid gap-1">
           <select aria-label="Belge tipi" value={draft.identity_doc_type} onChange={(event) => onChange('identity_doc_type', event.target.value)} className={cellInput}>
             <option value="">Belge tipi</option>
@@ -136,13 +184,24 @@ function DraftRow({
             <option value="passport">Pas</option>
             <option value="id_card">Kimlik</option>
           </select>
-          <input
-            aria-label="Belge numarası"
-            value={draft.identity_doc_number}
-            onChange={(event) => onChange('identity_doc_number', event.target.value)}
-            className={cellInput}
-            placeholder="Belge no"
-          />
+          <div className="flex gap-1">
+            <input
+              aria-label="Belge numarası"
+              value={draft.identity_doc_number}
+              onChange={(event) => onChange('identity_doc_number', event.target.value)}
+              className={cellInput}
+              placeholder="Belge no"
+            />
+            {/* M2: görünür ülke kodu (ISO-3, örn. DNK) — iki konvansiyon karışması biter. */}
+            <input
+              aria-label="Belge ülkesi"
+              value={draft.identity_doc_country}
+              onChange={(event) => onChange('identity_doc_country', event.target.value.toUpperCase().slice(0, 3))}
+              className={`${cellInput} w-16 text-center font-mono`}
+              placeholder="DNK"
+              title="Belge ülke kodu (ISO-3, örn. DNK)"
+            />
+          </div>
         </div>
       </td>
       <td className="border border-brand-300 px-2 py-2 text-xs text-brand-500">
@@ -670,7 +729,63 @@ export function CustomersPage({
   onPreviewClose,
 }: CustomersPageProps) {
   const confirm = useConfirm();
+  const toast = useToast();
   const isSearchMode = search.trim().length >= 2;
+  const [statementPending, setStatementPending] = useState(false);
+
+  // M2: canlı mükerrer müşteri kontrolü — AFG editöründeki useCustomerMatch
+  // hattı yeni-kayıt formuna bağlandı (yalnız CPR/belge no doluyken sorgular).
+  const matchCustomer: EditableCustomer = {
+    name: '',
+    email: '',
+    phone: '',
+    address: '',
+    postal_code: '',
+    city: '',
+    cpr_number: showNewRow ? newDraft.cpr_number : '',
+    identity_doc_type: '',
+    identity_doc_number: showNewRow ? newDraft.identity_doc_number : '',
+    identity_doc_country: 'DNK',
+  };
+  const customerMatch = useCustomerMatch(matchCustomer);
+
+  const ocrTarget = editingId ? 'edit' : showNewRow ? 'new' : null;
+
+  // M2: backend'in ürettiği 30 günlük risk analizi ve istatistikler artık
+  // klasik detayda da görünüyor (detay sorgusu CustomerDetailOut döndürür).
+  const detailRisk = selectedCustomer && 'risk' in selectedCustomer ? selectedCustomer.risk : null;
+  const detailStats = selectedCustomer && 'stats' in selectedCustomer ? selectedCustomer.stats : null;
+
+  const openStatementPdf = async () => {
+    if (!selectedCustomer) return;
+    setStatementPending(true);
+    try {
+      // Hesap özeti PDF'i klasik yüzeyde ikinci veri çıkışı — tarayıcıda yeni
+      // sekmede, masaüstünde (window.open çalışmaz) kaydet diyaloğuyla.
+      const { blob } = await fetchAuthedPdfBlob(`/api/customers/${selectedCustomer.id}/statement.pdf`);
+      if (isTauriRuntime()) {
+        const dataBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = String(reader.result || '');
+            resolve(result.includes(',') ? result.split(',')[1] ?? '' : result);
+          };
+          reader.onerror = () => reject(reader.error ?? new Error('PDF okunamadı'));
+          reader.readAsDataURL(blob);
+        });
+        await exportDocumentBytes('hesap-ozeti.pdf', dataBase64);
+      } else {
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank', 'noopener,noreferrer');
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+    } catch (error) {
+      toast.error('Hesap özeti açılamadı', localizeApiError(error));
+    } finally {
+      setStatementPending(false);
+    }
+  };
+
   return (
     <div className="flex min-h-full flex-col bg-white">
       {previewSequenceNo !== null ? (
@@ -712,15 +827,54 @@ export function CustomersPage({
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className={`flex min-h-0 flex-col overflow-hidden ${selectedCustomer ? 'w-3/5 border-r-2 border-brand-200' : 'flex-1'}`}>
-          {showNewRow ? (
+          {ocrTarget ? (
             <div className="flex-shrink-0 px-4 pt-3">
+              {/* M2: panel hedef-bilinçli — düzenleme modunda da (pas/kort
+                  değişen müşteri için) tarama yapılabilir ve onApply doğru
+                  taslağa (new/edit) yazılır. */}
               <CustomerOcrPanel
+                targetLabel={ocrTarget === 'edit' ? 'Düzenleme' : 'Yeni kayıt'}
                 onApply={(fields) => {
+                  const change = ocrTarget === 'edit' ? onEditDraftChange : onNewDraftChange;
                   (Object.entries(fields) as Array<[keyof typeof fields, string | undefined]>).forEach(([field, value]) => {
-                    if (value) onNewDraftChange(field, value);
+                    if (value) change(field, value);
                   });
                 }}
               />
+              {showNewRow && (customerMatch.loading || customerMatch.response || customerMatch.error) ? (
+                <div
+                  className={`mb-3 border px-3 py-1.5 text-xs ${
+                    customerMatch.response?.status === 'conflict' || customerMatch.error
+                      ? 'border-amber-300 bg-amber-50 text-amber-800'
+                      : 'border-brand-200 bg-brand-50 text-brand-600'
+                  }`}
+                >
+                  {customerMatch.loading ? 'Müşteri eşleşmesi kontrol ediliyor...' : null}
+                  {customerMatch.error ? 'Müşteri eşleşmesi şu an kontrol edilemedi.' : null}
+                  {customerMatch.response?.status === 'none'
+                    ? 'Mevcut müşteri eşleşmesi yok; yeni kayıt yalnız operatör onayıyla oluşturulur.'
+                    : null}
+                  {customerMatch.response?.status === 'single' ? (
+                    <span>
+                      Eşleşen müşteri: <strong>{customerMatch.response.matches[0]?.name}</strong>
+                      {customerMatch.response.matches[0] ? (
+                        <button
+                          type="button"
+                          onClick={() => onSelectCustomer(customerMatch.response!.matches[0]!.id)}
+                          className="ml-2 inline-flex items-center border border-amber-400 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 hover:bg-amber-200"
+                        >
+                          Bu kayda geç
+                        </button>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  {customerMatch.response?.status === 'conflict' ? (
+                    <span>
+                      <strong>Çakışan kayıtlar:</strong> {customerMatch.response.matches.map((item) => item.name).join(', ')}. Kaydı seçip inceleyin.
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="flex flex-shrink-0 flex-wrap items-center gap-4 bg-brand-800 px-4 py-2">
@@ -768,6 +922,7 @@ export function CustomersPage({
                   <LabelCell>E-mail</LabelCell>
                   <LabelCell>Adresse</LabelCell>
                   <LabelCell>Postnr.</LabelCell>
+                  <LabelCell>By</LabelCell>
                   <LabelCell>Kørekort / Pas</LabelCell>
                   <LabelCell>Kayıt Tarihi</LabelCell>
                   <th className="w-20 border border-brand-300 bg-brand-100 px-3 py-2" />
@@ -788,7 +943,7 @@ export function CustomersPage({
                 {!customers.length && !showNewRow && customersLoading ? (
                   [0, 1, 2, 3, 4].map((row) => (
                     <tr key={`customers-skeleton-${row}`} aria-hidden="true">
-                      {Array.from({ length: 10 }, (_cell, cell) => (
+                      {Array.from({ length: 11 }, (_cell, cell) => (
                         <td key={cell} className="border border-brand-200 px-3 py-3">
                           <div className="h-3.5 w-full animate-pulse bg-brand-100" />
                         </td>
@@ -799,7 +954,7 @@ export function CustomersPage({
 
                 {!customers.length && !showNewRow && customersError ? (
                   <tr>
-                    <td colSpan={10} className="px-6 py-8 text-center">
+                    <td colSpan={11} className="px-6 py-8 text-center">
                       <p className="text-sm font-semibold text-red-700">Müşteriler yüklenemedi</p>
                       <p className="mt-1 text-xs text-brand-500">Bağlantı sorunu olabilir; listeyi tekrar çekmeyi deneyin.</p>
                       <button
@@ -816,7 +971,7 @@ export function CustomersPage({
 
                 {!customers.length && !showNewRow && !customersLoading && !customersError ? (
                   <tr>
-                    <td colSpan={10} className="px-6 py-12 text-center text-sm text-brand-400">
+                    <td colSpan={11} className="px-6 py-12 text-center text-sm text-brand-400">
                       {isSearchMode ? 'Arama sonucu bulunamadı' : 'Henüz kayıtlı müşteri yok'}
                     </td>
                   </tr>
@@ -878,6 +1033,9 @@ export function CustomersPage({
                       </td>
                       <td className={`border border-brand-200 px-3 py-2.5 font-mono ${isSelected ? 'border-brand-700 text-brand-200' : 'text-brand-600'}`}>
                         {customer.postal_code || '-'}
+                      </td>
+                      <td className={`border border-brand-200 px-3 py-2.5 ${isSelected ? 'border-brand-700 text-brand-300' : 'text-brand-700'}`}>
+                        {customerCity(customer) || '-'}
                       </td>
                       <td className={`border border-brand-200 px-3 py-2.5 font-mono ${isSelected ? 'border-brand-700 text-brand-200' : 'text-brand-600'}`}>
                         {customer.identity_doc_number || customer.identity_doc_number_masked || '-'}
@@ -1013,7 +1171,52 @@ export function CustomersPage({
                   GDPR Dossier
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
+                <button
+                  type="button"
+                  onClick={() => void openStatementPdf()}
+                  disabled={statementPending}
+                  className="inline-flex items-center gap-1.5 border border-brand-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-widest text-brand-700 transition hover:border-brand-700 hover:bg-brand-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {statementPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                  Hesap özeti (PDF)
+                </button>
               </div>
+
+              {detailStats ? (
+                <p className="mt-3 text-[11px] text-brand-500">
+                  Mağaza alışı: <span className="font-bold text-brand-700">{detailStats.total_sold_to_shop} işlem · {formatMoney(detailStats.total_purchase_value_dkk)}</span>
+                  {'  ·  '}
+                  Mağaza satışı: <span className="font-bold text-brand-700">{detailStats.total_bought_from_shop} işlem · {formatMoney(detailStats.total_sale_value_dkk)}</span>
+                </p>
+              ) : null}
+
+              {detailRisk ? (
+                <div
+                  className={`mt-3 border px-3 py-2 ${
+                    detailRisk.level === 'high'
+                      ? 'border-rose-300 bg-rose-50 text-rose-800'
+                      : detailRisk.level === 'medium'
+                        ? 'border-amber-300 bg-amber-50 text-amber-800'
+                        : 'border-brand-200 bg-brand-50 text-brand-600'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangle className={`h-3.5 w-3.5 ${detailRisk.level === 'low' ? 'text-brand-400' : ''}`} />
+                    <span className="text-[11px] font-black uppercase tracking-widest">
+                      Risk {detailRisk.level === 'high' ? 'YÜKSEK' : detailRisk.level === 'medium' ? 'ORTA' : 'düşük'} · skor {detailRisk.score} (30 gün)
+                    </span>
+                  </div>
+                  {detailRisk.warnings.length ? (
+                    <ul className="mt-1 space-y-0.5">
+                      {detailRisk.warnings.map((warning) => (
+                        <li key={warning} className="text-xs font-semibold">• {warning}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-0.5 text-xs">Son 30 günde dikkat gerektiren örüntü yok.</p>
+                  )}
+                </div>
+              ) : null}
             </div>
 
             <div className="max-h-[320px] flex-shrink-0 overflow-y-auto border-b-2 border-brand-200">
@@ -1035,6 +1238,8 @@ export function CustomersPage({
                   <IdentityRow icon={Mail} label="E-mail" value={selectedCustomer.email} accent="sky" />
                   <IdentityRow icon={MapPin} label="Adresse" value={selectedCustomer.address} />
                   <IdentityRow icon={MapPin} label="Postnr." value={selectedCustomer.postal_code} />
+                  {/* M2: backend'in sakladığı şehir klasik detayda da görünür. */}
+                  <IdentityRow icon={MapPin} label="By / Şehir" value={customerCity(selectedCustomer)} />
                   <IdentityRow icon={Calendar} label="Kayıt Tarihi" value={formatDate(selectedCustomer.created_at)} accent="emerald" />
                 </tbody>
               </table>

@@ -38,10 +38,11 @@ const EMPTY_DRAFT: CustomerDraft = {
   phone: '',
   address: '',
   postal_code: '',
+  city: '',
   cpr_number: '',
   identity_doc_type: '',
   identity_doc_number: '',
-  identity_doc_country: 'DK',
+  identity_doc_country: 'DNK',
 };
 
 function buildState(overrides: Partial<CustomersPageProps> = {}): CustomersPageProps {

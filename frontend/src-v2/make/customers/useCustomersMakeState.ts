@@ -23,6 +23,7 @@ function cleanDraft(draft: CustomerDraft) {
     phone: draft.phone.trim() || undefined,
     address: draft.address.trim() || undefined,
     postal_code: draft.postal_code.trim() || undefined,
+    city: draft.city.trim() || undefined,
     cpr_number: draft.cpr_number.trim() || undefined,
     identity_doc_type: draft.identity_doc_type || undefined,
     identity_doc_number: draft.identity_doc_number.trim() || undefined,
@@ -55,6 +56,10 @@ export function useCustomersMakeState(): CustomersPageProps {
   const [showNewRow, setShowNewRow] = useState(false);
   const [newDraft, setNewDraft] = useState<CustomerDraft>(EMPTY_DRAFT);
   const [editDraft, setEditDraft] = useState<CustomerDraft>(EMPTY_DRAFT);
+  // M2: "Yeni Müşteri" düzenleme modunu keserse yarım düzenleme taslağı burada
+  // saklanır; aynı müşteride düzenlemeye dönülünce geri yüklenir (Vazgeç/Kaydet
+  // temizler). Taslak artık toggle/ekran kapanışında uyarısız silinmez.
+  const [editDraftStash, setEditDraftStash] = useState<{ customerId: string; draft: CustomerDraft } | null>(null);
 
   useEffect(() => {
     const customerId = searchParams.get('customer');
@@ -139,6 +144,7 @@ export function useCustomersMakeState(): CustomersPageProps {
       }),
     onSuccess: async (_, customerId) => {
       setEditingId(null);
+      setEditDraftStash((current) => (current?.customerId === customerId ? null : current));
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
       await queryClient.invalidateQueries({ queryKey: ['customers', 'detail', customerId] });
     },
@@ -159,6 +165,7 @@ export function useCustomersMakeState(): CustomersPageProps {
       if (editingId === customerId) {
         setEditingId(null);
       }
+      setEditDraftStash((current) => (current?.customerId === customerId ? null : current));
       await queryClient.invalidateQueries({ queryKey: ['customers'] });
       await queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
     },
@@ -283,26 +290,31 @@ export function useCustomersMakeState(): CustomersPageProps {
     },
     selectedId,
     onSelectCustomer: (customerId) => {
-      // R2-02: müşteri seçimi yeni-müşteri formunu kapatır (tek mod).
+      // R2-02 (M2 revizyonu): seçim yeni-müşteri formunu kapatır ama doldurulmuş
+      // taslak (OCR verisi dahil) korunur — yeniden açılışta kaldığı yerden gelir.
       if (customerId) {
         setShowNewRow(false);
-        setNewDraft(EMPTY_DRAFT);
       }
       setSelectedCustomerId(customerId);
     },
     editingId,
     showNewRow,
     onToggleNewRow: () => {
-      setEditingId(null);
       setShowNewRow((current) => {
         const next = !current;
-        if (!next) {
-          setNewDraft(EMPTY_DRAFT);
-        } else {
+        if (next) {
+          // M2: açılış — düzenleme modundaysa yarım taslağı kaybedip silmek
+          // yerine stash'e koy (aynı müşteride düzenlemeye dönüşte geri gelir).
+          if (editingId) {
+            setEditDraftStash({ customerId: editingId, draft: editDraft });
+            setEditingId(null);
+          }
           // R1-04: yeni-müşteri moduna geçerken seçili müşteri temizlenir —
           // "seçili + boş NY KUNDE formu aynı anda" durumu (R2-02) biter.
           setSelectedCustomerId(null);
         }
+        // M2: kapanış artık newDraft'ı EMPTY_DRAFT'a sıfırlamaz — kimlik OCR
+        // çıktısıyla dolu form X ile uyarısız kaybolmaz.
         return next;
       });
     },
@@ -314,20 +326,32 @@ export function useCustomersMakeState(): CustomersPageProps {
     onEditDraftChange: (field, value) => setEditDraft((current) => ({ ...current, [field]: value })),
     onSaveEdit: (customerId) => updateMutation.mutate(customerId),
     isUpdatingCustomer: updateMutation.isPending,
-    onCancelEdit: () => setEditingId(null),
+    // M2: Vazgeç = taslağı at (stash dahil); yeniden düzenleme kayıttan kurulur.
+    onCancelEdit: () => {
+      setEditingId(null);
+      setEditDraftStash(null);
+    },
     onStartEdit: (customer) => {
       setEditingId(customer.id);
       setShowNewRow(false);
+      // M2: "Yeni Müşteri" tarafından kesilmiş yarım düzenleme varsa onu geri yükle.
+      if (editDraftStash?.customerId === customer.id) {
+        setEditDraft(editDraftStash.draft);
+        setEditDraftStash(null);
+        return;
+      }
       setEditDraft({
         name: customer.name || '',
         email: customer.email || '',
         phone: customer.phone || '',
         address: customer.address || '',
         postal_code: customer.postal_code || '',
+        // FE CustomerOut tipi henüz city tanımlamıyor (types.ts düzeltmesi ayrı iş).
+        city: (customer as CustomerOut & { city?: string | null }).city || '',
         cpr_number: customer.cpr_number || '',
         identity_doc_type: customer.identity_doc_type || '',
         identity_doc_number: customer.identity_doc_number || '',
-        identity_doc_country: customer.identity_doc_country || 'DK',
+        identity_doc_country: customer.identity_doc_country || 'DNK',
       });
     },
     // A6-6: deletingId yalnız ilgili satırı kilitler; diğer satırlar erişilebilir kalır.

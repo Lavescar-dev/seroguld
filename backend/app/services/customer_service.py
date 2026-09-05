@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 import uuid
+from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
 
@@ -104,9 +106,38 @@ def _validate_customer_identity_inputs(
         )
 
 
-def _customer_out(user: User, identity: CustomerIdentityDocument | None) -> CustomerOut:
-    cpr_plain = decrypt_field(user.cpr_number_encrypted)
+def _masked_cpr_for_list(user: User) -> str | None:
+    """Liste yüzeyi CPR maskesi — decrypt edilebilirken cpr_last4'ten türetilir.
+
+    M2: liste/arama yanıtları artık plaintext CPR taşımıyor; maske çoğu
+    satırda hiç decrypt yapmadan üretilir (yalnız cpr_last4'süz eski satırda
+    bir kez decrypt edilir).
+    """
+    if not user.cpr_number_encrypted:
+        return None
+    if user.cpr_last4:
+        return "*" * 6 + user.cpr_last4
+    return mask_cpr(decrypt_field(user.cpr_number_encrypted))
+
+
+def _customer_out(
+    user: User,
+    identity: CustomerIdentityDocument | None,
+    *,
+    include_sensitive: bool = True,
+) -> CustomerOut:
+    if include_sensitive:
+        cpr_plain = decrypt_field(user.cpr_number_encrypted)
+        cpr_masked = mask_cpr(cpr_plain)
+    else:
+        # Liste/arama yüzeyi: plaintext dönmez (GDPR minimizasyonu) ve CPR
+        # decrypt maliyeti de düşer; maske yine dolu gelir.
+        cpr_plain = None
+        cpr_masked = _masked_cpr_for_list(user)
     address_plain = decrypt_field(user.address_encrypted)
+    # Maskeli kimlik belge numarası için last4 kolonu yok; maske yalnız
+    # decrypt ile üretilebildiğinden burada tek decrypt kalır (şema düzeltmesi
+    # ayrı iş).
     identity_number = decrypt_field(identity.identity_doc_number_encrypted) if identity else None
 
     return CustomerOut(
@@ -117,10 +148,10 @@ def _customer_out(user: User, identity: CustomerIdentityDocument | None) -> Cust
         address=address_plain,
         postal_code=user.postal_code,
         city=user.city,
-        cpr_number=cpr_plain,
-        cpr_number_masked=mask_cpr(cpr_plain),
+        cpr_number=(cpr_plain if include_sensitive else None),
+        cpr_number_masked=cpr_masked,
         identity_doc_type=(identity.identity_doc_type if identity else None),
-        identity_doc_number=identity_number,
+        identity_doc_number=(identity_number if include_sensitive else None),
         identity_doc_number_masked=mask_last4(identity_number),
         identity_doc_country=(identity.identity_doc_country if identity else None),
         identity_photo_refs=(identity.identity_photo_refs if identity else []),
@@ -291,8 +322,16 @@ async def customer_identity_match(
     return CustomerMatchOut(status=match_status, matches=matches)
 
 
-async def create_customer(session: AsyncSession, payload: CustomerCreate) -> User:
-    email = payload.email or _normalize_generated_email()
+async def create_customer(
+    session: AsyncSession,
+    payload: CustomerCreate,
+    *,
+    password_hash: str | None = None,
+) -> User:
+    # M2: e-posta karşılaştırma/saklama artık normalize (strip + lower) —
+    # 'Ada@X.dk' ile 'ada@x.dk' aynı kayda gider. (Mevcut karma harfli eski
+    # kayıtlar için tek seferlik lower migration ayrı iş.)
+    email = (str(payload.email).strip().lower() if payload.email else _normalize_generated_email())
     phone = _normalize_phone(payload.phone)
     postal_code = _normalize_postal_code(payload.postal_code)
     city = _normalize_city(payload.city)
@@ -300,13 +339,32 @@ async def create_customer(session: AsyncSession, payload: CustomerCreate) -> Use
     identity_doc_number = payload.identity_doc_number.strip() if payload.identity_doc_number else None
     _validate_customer_identity_inputs(phone=phone, cpr=cpr, identity_doc_number=identity_doc_number)
 
-    existing = await session.scalar(select(User).where(User.email == email))
+    existing = await session.scalar(select(User).where(func.lower(User.email) == email))
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı")
 
     if phone:
+        # M2: telefon çakışması artık tabloyu Python'a çekmeden sorgulanır —
+        # POS'un sıcak yolu. Yazım yolu _normalize_phone ile normalize
+        # sakladığından indeksli eşitlik ana yolu kapsar; serbest-format eski
+        # kayıtlar için boşluk/tire temizliği + son 6 rakam ILIKE ile ön
+        # filtrelenmiş SINIRLI aday kümesi Python'da karşılaştırılır.
+        phone_tail = phone.lstrip("+")[-6:]
+        cleaned_phone = func.replace(func.replace(User.phone, " ", ""), "-", "")
         phone_candidates = (
-            await session.scalars(select(User).where(User.role == RoleEnum.CUSTOMER, User.phone.is_not(None)))
+            await session.scalars(
+                select(User)
+                .where(
+                    User.role == RoleEnum.CUSTOMER,
+                    User.phone.is_not(None),
+                    or_(
+                        User.phone == phone,
+                        cleaned_phone == phone,
+                        cleaned_phone.ilike(f"%{phone_tail}%"),
+                    ),
+                )
+                .limit(50)
+            )
         ).all()
         for candidate in phone_candidates:
             if _normalize_phone(candidate.phone) == phone:
@@ -333,9 +391,14 @@ async def create_customer(session: AsyncSession, payload: CustomerCreate) -> Use
                 cpr=cpr,
                 identity_doc_number=identity_doc_number,
             )
+            # M2: bcrypt_sha256 yüzlerce ms sürebilir — async yolda event
+            # loop'u kilitlememesi için worker thread'de çalıştırılır. Woo
+            # içe aktarımı gibi toplu çağıranlar hash'i bir kez öretip
+            # password_hash ile geçebilir.
+            resolved_password_hash = password_hash or await asyncio.to_thread(get_password_hash, password)
             user = User(
                 email=email,
-                password_hash=get_password_hash(password),
+                password_hash=resolved_password_hash,
                 name=payload.name,
                 role=RoleEnum.CUSTOMER,
                 phone=phone,
@@ -366,7 +429,7 @@ async def create_customer(session: AsyncSession, payload: CustomerCreate) -> Use
             )
             await session.flush()
     except IntegrityError as exc:
-        concurrent_email = await session.scalar(select(User.id).where(User.email == email))
+        concurrent_email = await session.scalar(select(User.id).where(func.lower(User.email) == email))
         if concurrent_email is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı") from exc
         await _ensure_identity_values_available(
@@ -417,11 +480,17 @@ async def _apply_customer_update(session: AsyncSession, user: User, payload: Cus
     fields = payload.model_fields_set
     if "name" in fields and payload.name is not None:
         user.name = payload.name
-    if "email" in fields and payload.email is not None and payload.email != user.email:
-        existing = await session.scalar(select(User).where(User.email == payload.email, User.id != user.id))
-        if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı")
-        user.email = payload.email
+    if "email" in fields and payload.email is not None:
+        # M2: güncellemede de normalize (strip + lower) saklanır ve karşılaştırma
+        # case-sensitive eşitlikle değil lower eşitliğiyle yapılır.
+        normalized_email = str(payload.email).strip().lower()
+        if normalized_email != user.email:
+            existing = await session.scalar(
+                select(User).where(func.lower(User.email) == normalized_email, User.id != user.id)
+            )
+            if existing:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email zaten kayıtlı")
+            user.email = normalized_email
     if "phone" in fields:
         phone = _normalize_phone(payload.phone)
         _validate_customer_identity_inputs(phone=phone, cpr=None, identity_doc_number=None)
@@ -503,6 +572,33 @@ async def get_customer_detail(session: AsyncSession, user: User) -> CustomerDeta
 async def to_customer_out(session: AsyncSession, user: User) -> CustomerOut:
     identity = await _get_identity(session, user.id)
     return _customer_out(user, identity)
+
+
+async def to_customer_out_list(
+    session: AsyncSession,
+    users: Sequence[User],
+    *,
+    masked: bool = False,
+) -> list[CustomerOut]:
+    """Liste/arama yanıtları için toplu dönüşüm.
+
+    M2: satır başına identity sorgusu (N+1) yerine tek ``user_id IN (...)``
+    sorgusuyla sözlükten eşler; ``masked=True`` liste yüzeyinde plaintext
+    CPR/belge numarası döndürmez.
+    """
+    identities: dict = {}
+    user_ids = [user.id for user in users]
+    if user_ids:
+        rows = (
+            await session.scalars(
+                select(CustomerIdentityDocument).where(CustomerIdentityDocument.user_id.in_(user_ids))
+            )
+        ).all()
+        identities = {row.user_id: row for row in rows}
+    return [
+        _customer_out(user, identities.get(user.id), include_sensitive=not masked)
+        for user in users
+    ]
 
 
 def _build_customer_risk(
