@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
+import logging
 from math import ceil
 import secrets
 import time
@@ -18,6 +19,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.product import Product
 from app.models.woocommerce_catalog import WooCommerceCatalogItem, WooCommerceCatalogState
+from app.models.woocommerce_log import WooCommerceSyncLog
 from app.schemas.woocommerce import (
     WooCatalogItemDetailOut,
     WooCatalogItemOut,
@@ -41,6 +43,52 @@ REMOTE_PAGE_SIZE = 100
 MAX_REMOTE_PAGES = 1000
 PREVIEW_TTL_SECONDS = 900.0
 MAX_CACHED_PREVIEWS = 8
+
+logger = logging.getLogger(__name__)
+
+
+async def _log_local_commit_failure(
+    db: AsyncSession,
+    *,
+    catalog_item_id: UUID,
+    wc_product_id: int,
+    linked_product_id: UUID | None,
+    action: str,
+    error: Exception,
+) -> None:
+    """Uzak Woo yazımı BAŞARILI olduktan sonraki yerel commit hatasını izler.
+
+    DİKKAT: çağıran rollback sonrası ORM nesneleri expire olur; bu yüzden
+    kimlik alanları çağrıdan ÖNCE skaler olarak yakılanır (async oturumda
+    expire edilmiş attribute erişimi MissingGreenlet patlatır).
+    WooSyncLog yalnız bağlı ürün için yazılabilir (product_id NOT NULL);
+    log yazımı kendi içinde güvenlidir — DB tamamen down ise yalnız loglanır.
+    """
+    logger.error(
+        "Woo uzak yazımı başarılı, yerel commit başarısız (catalog_item=%s, woo=%s, action=%s): %s",
+        catalog_item_id,
+        wc_product_id,
+        action,
+        error,
+    )
+    if linked_product_id is None:
+        return
+    try:
+        db.add(
+            WooCommerceSyncLog(
+                product_id=linked_product_id,
+                action="local_commit_failed",
+                wc_product_id=wc_product_id,
+                request_payload=None,
+                response_payload=None,
+                status="partial",
+                error_message=str(error)[:500] or "yerel commit başarısız",
+            )
+        )
+        await db.commit()
+    except Exception:  # noqa: BLE001 — log yazımı asıl hatayı maskelemesin
+        await db.rollback()
+        logger.exception("local_commit_failed WooSyncLog kaydı yazılamadı.")
 
 
 @dataclass(frozen=True)
@@ -724,26 +772,46 @@ async def update_catalog_item_content(
     service = WooCommerceService()
     result = await service._wc_request("PUT", f"/products/{item.woocommerce_product_id}", json_payload=wc_payload)
 
-    # Yerel snapshot: Woo yanıtı otoritedir (kendi normalize ettigi HTML doner).
-    if isinstance(result, dict):
-        for field in ("name", "short_description", "description"):
-            if field in result:
-                payload[field] = result.get(field)
-        if isinstance(result.get("meta_data"), list):
-            payload["meta_data"] = result["meta_data"]
-        elif meta_updates:
-            merged = {str(e.get("key")): e for e in existing_meta if isinstance(e, dict)}
-            for entry in meta_updates:
-                merged[entry["key"]] = entry
-            payload["meta_data"] = list(merged.values())
-        item.source_payload_json = dict(payload)
-        # JSON kolonu: eski/yeni dict ayni nesne soyundan gelirse degisiklik
-        # gorulmez — products.py photos ile ayni tuzak; acikca isaretle.
-        flag_modified(item, "source_payload_json")
-        if wc_payload.get("name"):
-            item.name = str(result.get("name") or wc_payload["name"])[:255]
-    await _bump_revision(db)
-    await db.commit()
+    # M3 — rollback sonrası item expire olur; kimlik alanlarını ÖNDE yakala.
+    _item_id, _woo_id, _linked_id = item.id, item.woocommerce_product_id, item.linked_product_id
+    try:
+        # Yerel snapshot: Woo yanıtı otoritedir (kendi normalize ettigi HTML doner).
+        if isinstance(result, dict):
+            for field in ("name", "short_description", "description"):
+                if field in result:
+                    payload[field] = result.get(field)
+            if isinstance(result.get("meta_data"), list):
+                payload["meta_data"] = result["meta_data"]
+            elif meta_updates:
+                merged = {str(e.get("key")): e for e in existing_meta if isinstance(e, dict)}
+                for entry in meta_updates:
+                    merged[entry["key"]] = entry
+                payload["meta_data"] = list(merged.values())
+            item.source_payload_json = dict(payload)
+            # JSON kolonu: eski/yeni dict ayni nesne soyundan gelirse degisiklik
+            # gorulmez — products.py photos ile ayni tuzak; acikca isaretle.
+            flag_modified(item, "source_payload_json")
+            if wc_payload.get("name"):
+                item.name = str(result.get("name") or wc_payload["name"])[:255]
+        await _bump_revision(db)
+        await db.commit()
+    except Exception as exc:
+        # M3 — uzak yazım başarılı, yerel commit başarısız: CRM eski snapshot
+        # gösterir ama sitede içerik güncel. Durum WooSyncLog'a 'partial' olarak
+        # yazılır ve telafi olarak katalog senkronizasyonuna işaret edilir.
+        await db.rollback()
+        await _log_local_commit_failure(
+            db,
+            catalog_item_id=_item_id,
+            wc_product_id=_woo_id,
+            linked_product_id=_linked_id,
+            action="content_update",
+            error=exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="İçerik sitede güncellendi ancak yerel katalog kaydı güncellenemedi — katalog senkronizasyonunu çalıştırın.",
+        ) from exc
     # onupdate kolonları (updated_at) commit'te expire olur; async erişim
     # senkron lazy-refresh'e izin vermez — açıkça yenile.
     await db.refresh(item)
@@ -764,9 +832,29 @@ async def unpublish_catalog_item(
     if not skip_remote:
         service = WooCommerceService()
         await service.unpublish_product(item.woocommerce_product_id)
-    item.remote_status = "draft"
-    item.is_active = False
-    await _bump_revision(db)
-    await db.commit()
+    # M3 — rollback sonrası item expire olur; kimlik alanlarını ÖNDE yakala.
+    _item_id, _woo_id, _linked_id = item.id, item.woocommerce_product_id, item.linked_product_id
+    try:
+        item.remote_status = "draft"
+        item.is_active = False
+        await _bump_revision(db)
+        await db.commit()
+    except Exception as exc:
+        # M3 — uzak unpublish başarılı, yerel commit başarısız: ürün sitede
+        # TASLAK kalır ama CRM 'yayında' gösterir. WooSyncLog'a 'partial'
+        # yazılır; sonraki katalog senkronizasyonu durumu onarır.
+        await db.rollback()
+        await _log_local_commit_failure(
+            db,
+            catalog_item_id=_item_id,
+            wc_product_id=_woo_id,
+            linked_product_id=_linked_id,
+            action="unpublish",
+            error=exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Ürün sitede taslağa çekildi ancak yerel katalog kaydı güncellenemedi — katalog senkronizasyonunu çalıştırın.",
+        ) from exc
     await db.refresh(item)
     return catalog_item_out(item)

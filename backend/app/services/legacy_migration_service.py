@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -125,7 +126,15 @@ def _purity(values: list[object], section: str, name: str) -> tuple[str | None, 
     return None, None
 
 
-def parse_legacy_inventory(content: bytes, source_hash: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def parse_legacy_inventory(
+    content: bytes, source_hash: str
+) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+    """Lager sayfasını çözümler → (records, market_snapshot, skipped_zero_stock).
+
+    Üçüncü değer, bölüm başlığı görüldükten sonra adet/gram olarak SIFIR
+    olduğu için atlanan gerçek satır sayısıdır (M3 — özet artık 420 sabitinden
+    uydurulmuyor, operatör taşıma kararını gerçek sayıya göre veriyor).
+    """
     workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
     if "Lager" not in workbook.sheetnames:
         raise ValueError("Depolama dosyasında Lager sayfası bulunamadı.")
@@ -139,6 +148,7 @@ def parse_legacy_inventory(content: bytes, source_hash: str) -> tuple[list[dict[
     }
     current_section: str | None = None
     records: list[dict[str, Any]] = []
+    skipped_zero_stock = 0
     for row_idx in range(1, sheet.max_row + 1):
         values = [sheet.cell(row_idx, col).value for col in range(1, 12)]
         detected = _section(" ".join(_normalized(value) for value in values[:4]))
@@ -153,6 +163,11 @@ def parse_legacy_inventory(content: bytes, source_hash: str) -> tuple[list[dict[
         if total_weight <= 0 and unit_weight > 0 and unit_count_raw > 0:
             total_weight = unit_weight * unit_count_raw
         if unit_count_raw <= 0 and total_weight <= 0:
+            # Yalnız İÇERİKLİ satırlar "sıfır stokta atlandı" sayılır; boş
+            # satırlar ve yalnız K sütununda piyasa anlık görüntüsü (K4-K7)
+            # hücresi taşıyan satırlar sayaca girmesin.
+            if any(_clean_text(value) for value in values[:6]):
+                skipped_zero_stock += 1
             continue
         unit_count = max(1, int(unit_count_raw or 1))
         if unit_weight <= 0 and total_weight > 0:
@@ -241,7 +256,7 @@ def parse_legacy_inventory(content: bytes, source_hash: str) -> tuple[list[dict[
         )
     if not records:
         raise ValueError("Lager sayfasında pozitif adet veya gram içeren gerçek stok satırı bulunamadı.")
-    return records, market_snapshot
+    return records, market_snapshot, skipped_zero_stock
 
 
 async def get_run(db: AsyncSession, run_id: uuid.UUID) -> LegacyMigrationRun:
@@ -290,7 +305,9 @@ async def store_file(
     root.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(file_name).name)[:180] or f"upload{extension}"
     path = root / f"{source_hash[:16]}-{safe_name}"
-    path.write_bytes(content)
+    # M3 — workers=1'de senkron disk yazısı event loop'u bloklamaz (tek
+    # yüklemede 500 dosyaya kadar).
+    await asyncio.to_thread(path.write_bytes, content)
     record = LegacyMigrationFile(
         run_id=run.id,
         phase=phase,
@@ -345,9 +362,13 @@ async def analyze_phase(db: AsyncSession, run_id: uuid.UUID, phase: str) -> None
         file.error_text = None
         await db.commit()
         try:
-            content = Path(file.stored_path).read_bytes()
+            # M3 — ağır senkron IO/parse (read_bytes + openpyxl) event loop'u
+            # bloklamasın: workers=1'de POS/webhook dahil her şey beklerdi.
+            content = await asyncio.to_thread(Path(file.stored_path).read_bytes)
             if phase == "afg":
-                upload = HistoricalAfgUpload.from_content(filename=file.file_name, content=content)
+                upload = await asyncio.to_thread(
+                    HistoricalAfgUpload.from_content, filename=file.file_name, content=content
+                )
                 preview = await preview_historical_afg_import(db, uploads=[upload])
                 item = preview.items[0]
                 row = item.model_dump(mode="json")
@@ -356,7 +377,9 @@ async def analyze_phase(db: AsyncSession, run_id: uuid.UUID, phase: str) -> None
                 file.summary_json = preview.model_dump(mode="json")
                 file.status = item.status
             elif phase == "inventory":
-                rows, market_snapshot = parse_legacy_inventory(content, file.sha256)
+                rows, market_snapshot, skipped_zero_stock = await asyncio.to_thread(
+                    parse_legacy_inventory, content, file.sha256
+                )
                 for row in rows:
                     reference = row["product"].get("reference_number")
                     if reference:
@@ -370,13 +393,17 @@ async def analyze_phase(db: AsyncSession, run_id: uuid.UUID, phase: str) -> None
                     "record_count": len(rows),
                     "ready_count": sum(row["status"] == "ready" for row in rows),
                     "blocked_count": sum(row["status"] == "blocked" for row in rows),
-                    "skipped_zero_stock": max(0, 420 - len(rows)),
+                    # M3 — GERÇEK sayaç: parse'ın sıfır adet/gram atladığı satır
+                    # sayısı (eskiden 420 sabitinden uyduruluyordu).
+                    "skipped_zero_stock": skipped_zero_stock,
                 }
                 file.status = "blocked" if any(row["status"] == "blocked" for row in rows) else "ready"
             else:
                 year = int((run.settings_json or {}).get("log_year") or _now().year)
                 workspace = await build_log_workspace(db, q=None, limit=10000, year=year)
-                parsed = parse_log_workbook_inputs_from_workbook(content, year=year, current_workspace=workspace)
+                parsed = await asyncio.to_thread(
+                    parse_log_workbook_inputs_from_workbook, content, year=year, current_workspace=workspace
+                )
                 source_key = f"log:{file.sha256}:{year}"
                 status = "already_imported" if await _linked(db, source_key) else "ready"
                 row = {
@@ -448,10 +475,14 @@ async def apply_phase(db: AsyncSession, run: LegacyMigrationRun, phase: str, act
     ready = [record for record in records if record.status == "ready"]
     if phase == "afg" and ready:
         ready_hashes = {record.source_key.split(":", 1)[1] for record in ready}
+        ready_files = [file for file in files if file.sha256 in ready_hashes]
+        # M3 — dosya okuma + workbook parse event loop dışında (to_thread).
+        contents = await asyncio.gather(
+            *[asyncio.to_thread(Path(file.stored_path).read_bytes) for file in ready_files]
+        )
         uploads = [
-            HistoricalAfgUpload.from_content(filename=file.file_name, content=Path(file.stored_path).read_bytes())
-            for file in files
-            if file.sha256 in ready_hashes
+            await asyncio.to_thread(HistoricalAfgUpload.from_content, filename=file.file_name, content=content)
+            for file, content in zip(ready_files, contents)
         ]
         result = await apply_historical_afg_import(db, uploads=uploads, selected_hashes=sorted(ready_hashes), actor=actor)
         if result.failed_count or result.skipped_count:
@@ -475,7 +506,8 @@ async def apply_phase(db: AsyncSession, run: LegacyMigrationRun, phase: str, act
             record = next((item for item in ready if item.source_key == f"log:{file.sha256}:{year}"), None)
             if record is None:
                 continue
-            await _apply_log_workbook_artifact_inputs(db, year=year, workbook_bytes=Path(file.stored_path).read_bytes(), create_snapshot=True)
+            workbook_bytes = await asyncio.to_thread(Path(file.stored_path).read_bytes)
+            await _apply_log_workbook_artifact_inputs(db, year=year, workbook_bytes=workbook_bytes, create_snapshot=True)
             record.status = "applied"
             db.add(LegacyMigrationLink(run_id=run.id, record_id=record.id, source_key=record.source_key, entity_type="log_workbook", entity_id=str(year), before_json={}, after_json=record.payload_json))
     for file in files:

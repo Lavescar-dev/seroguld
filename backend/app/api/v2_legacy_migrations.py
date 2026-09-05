@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
 from app.database import get_db
-from app.models.legacy_migration import LegacyMigrationRecord
+from app.models.legacy_migration import LegacyMigrationFile, LegacyMigrationRecord, LegacyMigrationRun
 from app.models.user import User
 from app.services.legacy_migration_service import (
     PHASES,
@@ -24,6 +26,23 @@ from app.services.legacy_migration_service import (
 
 
 router = APIRouter(prefix="/legacy-migrations", tags=["legacy-migrations"])
+logger = logging.getLogger(__name__)
+
+# M3 — 'analyzing' kilidi TTL'i: analiz işi süreç ölümüyle yarıda kalırsa
+# run.status DB'de 'analyzing' kalır ve analiz süresiz 409 dönerdi. Bu süre
+# kadar hiçbir dosya güncellenmemişse kilit bayat sayılır ve yeni analiz
+# alabilir (workers=1 tek süreç varsayımıyla güvenli).
+ANALYZING_LOCK_TTL_SECONDS = 30 * 60
+
+
+def _utc_age(moment: datetime | None, fallback: datetime | None) -> timedelta:
+    """DB'den gelen datetime (naive olabilir) için UTC yaşı döndürür."""
+    value = moment or fallback
+    if value is None:
+        return timedelta(0)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - value
 
 
 class MigrationRunCreate(BaseModel):
@@ -97,6 +116,30 @@ async def post_migration_analyze(
     if resolved_phase != run.current_phase:
         raise HTTPException(status_code=409, detail=f"Önce {run.current_phase} adımı tamamlanmalı.")
     if run.status == "analyzing":
+        # M3 — TTL aşımı: 'analyzing' kilidi bayatsa (süreç analiz sırasında
+        # ölmüşse) kilidi 'failed'a düşürüp yeni analize izin ver; aksi halde
+        # kurtarma yalnız manuel DB güncellemesiyle mümkündü.
+        lock_age = _utc_age(run.updated_at, run.created_at)
+        if lock_age >= timedelta(seconds=ANALYZING_LOCK_TTL_SECONDS):
+            logger.warning(
+                "Bayat 'analyzing' kilidi sıfırlandı (run=%s, age=%s).",
+                run.id,
+                lock_age,
+            )
+            run.status = "failed"
+            await db.commit()
+        else:
+            raise HTTPException(status_code=409, detail="Bir analiz işi zaten çalışıyor.")
+    # M3 — CAS geçişi: status oku-yaz yarışını kilitle; eşzamanlı ikinci
+    # tetiklemede rowcount 0 döner ve temiz 409 verilir (IntegrityError +
+    # tam rollback iş gücü kaybı yerine).
+    claimed = await db.execute(
+        update(LegacyMigrationRun)
+        .where(LegacyMigrationRun.id == run.id, LegacyMigrationRun.status != "analyzing")
+        .values(status="analyzing")
+    )
+    if claimed.rowcount != 1:
+        await db.rollback()
         raise HTTPException(status_code=409, detail="Bir analiz işi zaten çalışıyor.")
     run.status = "analyzing"
     await db.commit()
@@ -126,7 +169,14 @@ async def patch_migration_conflict(
     _: User = Depends(require_admin),
 ):
     await get_run(db, run_id)
-    record = await db.get(LegacyMigrationRecord, record_id)
+    # M3 — kayıt run_id ile SCOPE lanır: başka bir taşıma çalışmasının
+    # record_id'si bilinerek status/resolution değiştirilemez (apply_phase'in
+    # 'blocked kayıt varsa uygula' kontrolü bu yolla etkilenemesin).
+    record = await db.scalar(
+        select(LegacyMigrationRecord)
+        .join(LegacyMigrationFile, LegacyMigrationFile.id == LegacyMigrationRecord.file_id)
+        .where(LegacyMigrationRecord.id == record_id, LegacyMigrationFile.run_id == run_id)
+    )
     if record is None:
         raise HTTPException(status_code=404, detail="Taşıma kaydı bulunamadı.")
     record.resolution_json = payload.model_dump(mode="json")
@@ -153,6 +203,14 @@ async def post_migration_apply(
         await db.rollback()
         raise
     except Exception as exc:
+        # M3 — apply tek transaction + rollback ile veri kaybı yaşamaz; ama
+        # beklenmeyen hata İSTEMCİ hatası (400) değildir: ham str(exc) iç
+        # path/tablo ipuçları sızdırır. Sunucu loguna tam iz yazılır,
+        # istemciye 500 + genel mesaj döner.
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.exception("Taşıma apply beklenmeyen hata (run=%s, phase=%s).", run_id, phase)
+        raise HTTPException(
+            status_code=500,
+            detail="Taşıma uygulanamadı; değişiklikler geri alındı. Sunucu loglarını kontrol edin.",
+        ) from exc
     return await serialize_run(db, run)

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 import re
 import html
 import json
+from contextlib import asynccontextmanager
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import HTTPException, status
@@ -16,6 +18,15 @@ from app.models.product import Product
 from app.services.photo_service import sorted_photos_for_publish
 from app.services.woocommerce_profiles import effective_publish_profile, profile_traits
 from app.utils.helpers import quantize_2, to_decimal, utc_now
+
+
+logger = logging.getLogger(__name__)
+
+# M3 — fetch_recent_orders güvenlik üst sınırı: pencere (days) ne olursa olsun
+# en fazla bu kadar sayfa gezilir (50 × 100 = 5.000 sipariş). Upstream
+# sayfalaması bozulup aynı sayfayı sonsuz döndürdüğünde isteği asılı
+# bırakmamak için.
+MAX_ORDER_PAGES = 50
 
 
 PRODUCT_TYPE_DA = {
@@ -984,6 +995,34 @@ class WooCommerceService:
         self.wp_app_username = settings.wp_app_username.strip()
         self.wp_app_password = settings.wp_app_password.replace(" ", "").strip()
 
+        # M3 — tek istek/publish zinciri boyunca paylaşılan httpx client'ı:
+        # her dış çağrıda yeni client + TLS el sıkışması yerine bağlantı
+        # havuzu. En dıştaki `async with` çıkışında kapanır (socket sızmaz).
+        self._shared_client: httpx.AsyncClient | None = None
+        self._client_depth = 0
+
+    @asynccontextmanager
+    async def _http_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """İç içe çağrılarda TEK client döndürür; en dış çıkışta kapatır.
+
+        publish_product fotoğraf başına 2-3 ayrı client açıyordu (3 TLS el
+        sıkışması); `async with self._http_client():` ile sarılan zincirde
+        tüm çağrılar aynı havuzu kullanır.
+        """
+        if self._shared_client is None:
+            self._shared_client = httpx.AsyncClient(
+                timeout=self.timeout,
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        self._client_depth += 1
+        try:
+            yield self._shared_client
+        finally:
+            self._client_depth -= 1
+            if self._client_depth == 0:
+                client, self._shared_client = self._shared_client, None
+                await client.aclose()
+
     def _ensure_wc_config(self) -> None:
         if not self.wc_base_url or not self.consumer_key or not self.consumer_secret:
             raise HTTPException(
@@ -1021,7 +1060,7 @@ class WooCommerceService:
         self._ensure_wc_config()
         url = f"{self.wc_base_url}/{path.lstrip('/')}"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._http_client() as client:
                 response = await client.request(
                     method,
                     url,
@@ -1031,22 +1070,34 @@ class WooCommerceService:
                     headers={"User-Agent": "SeroGuldCRM/1.0"},
                 )
         except Exception as exc:
+            # M3 — ham exception metni (iç URL/host dahil) istemciye sızmaz;
+            # tam neden sunucu logunda, yanıtta kategorik mesaj + hata tipi.
+            logger.warning("WooCommerce isteği başarısız: %s %s — %s", method, url, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"WooCommerce bağlantı hatası: {exc}",
+                detail=f"WooCommerce'a ulaşılamadı ({type(exc).__name__}).",
             ) from exc
 
         if response.status_code >= 400:
-            upstream_message = response.text[:500]
             try:
                 payload = response.json()
             except json.JSONDecodeError:
                 payload = None
 
+            upstream_message = ""
             if isinstance(payload, dict):
-                candidate = str(payload.get("message") or "").strip()
-                if candidate:
-                    upstream_message = candidate
+                upstream_message = str(payload.get("message") or "").strip()
+            # M3 — upstream gövdesi artık yanıta kopyalanmaz (Woo'nun kendi
+            # "message" alanı hariç); ham gövde sunucu logunda kalır.
+            logger.warning(
+                "WooCommerce upstream hata: %s %s -> %s body=%s",
+                method,
+                path,
+                response.status_code,
+                response.text[:500],
+            )
+            if not upstream_message:
+                upstream_message = "WooCommerce beklenmeyen bir yanıt döndürdü."
 
             if response.status_code == status.HTTP_404_NOT_FOUND:
                 raise HTTPException(
@@ -1062,7 +1113,7 @@ class WooCommerceService:
 
     async def _load_photo_bytes(self, photo_url: str) -> tuple[bytes, str]:
         if photo_url.startswith("http://") or photo_url.startswith("https://"):
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._http_client() as client:
                 response = await client.get(photo_url, follow_redirects=True)
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "application/octet-stream")
@@ -1116,7 +1167,9 @@ class WooCommerceService:
         try:
             content, content_type = await self._load_photo_bytes(photo_url)
         except Exception as exc:  # noqa: BLE001 - uyarı olarak yüzeye taşınır
-            return None, f"{photo_label}: dosya okunamadı ({exc})."
+            # M3 — ham exception (yerel yol dahil olabilir) uyarıya kopyalanmaz.
+            logger.warning("WP medya kaynağı okunamadı: %s — %s", photo_label, exc)
+            return None, f"{photo_label}: dosya okunamadı."
 
         source_name = Path(photo_url.split("?")[0]).name or "seroguld-product.jpg"
         guessed_type = mimetypes.guess_type(source_name)[0]
@@ -1131,7 +1184,7 @@ class WooCommerceService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._http_client() as client:
                 response = await client.post(
                     media_url,
                     auth=(self.wp_app_username, self.wp_app_password),
@@ -1139,11 +1192,30 @@ class WooCommerceService:
                     content=content,
                 )
         except Exception as exc:  # noqa: BLE001
-            return None, f"{photo_label} ({source_name}): WP medya isteği başarısız ({exc})."
+            logger.warning("WP medya isteği başarısız: %s (%s) — %s", photo_label, source_name, exc)
+            return None, f"{photo_label} ({source_name}): WP medya isteği başarısız ({type(exc).__name__})."
 
         if response.status_code >= 400:
-            body_head = response.text[:200]
-            return None, f"{photo_label} ({source_name}): WP medya {response.status_code} döndürdü: {body_head}"
+            # M3 — WP'nin KENDİ JSON "message" alanı uyarıya taşınır (operatör
+            # tanısı için); ham gövde başı yalnız sunucu loguna yazılır.
+            logger.warning(
+                "WP medya reddetti: %s (%s) -> %s body=%s",
+                photo_label,
+                source_name,
+                response.status_code,
+                response.text[:200],
+            )
+            wp_message = ""
+            try:
+                payload = response.json()
+            except (json.JSONDecodeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                wp_message = str(payload.get("message") or "").strip()
+            suffix = f": {wp_message}" if wp_message else " (detay sunucu logunda)."
+            if not suffix.endswith("."):
+                suffix = f"{suffix}."
+            return None, f"{photo_label} ({source_name}): WP medya {response.status_code} döndürdü{suffix}"
 
         payload = response.json()
         media_id = payload.get("id")
@@ -1170,74 +1242,78 @@ class WooCommerceService:
     ) -> tuple[dict[str, Any], list[str]]:
         warnings: list[str] = []
 
-        # is_primary önce → Woo images[0] öne çıkan görsel olur.
-        photos = sorted_photos_for_publish(product)
-        images: list[dict[str, Any]] = []
-        if photos and not self._can_upload_media():
-            warnings.append(
-                "WP uygulama parolası eksik (WORDPRESS_BASE_URL / WP_APP_USERNAME / WP_APP_PASSWORD) — fotoğraflar gönderilmedi."
+        # M3 — foto yükleme + ürün yazma TEK httpx client'ı üzerinden: her
+        # çağrıda yeni client/TLS yerine tek bağlantı havuzu (foto başına
+        # 2-3 client açılıyordu).
+        async with self._http_client():
+            # is_primary önce → Woo images[0] öne çıkan görsel olur.
+            photos = sorted_photos_for_publish(product)
+            images: list[dict[str, Any]] = []
+            if photos and not self._can_upload_media():
+                warnings.append(
+                    "WP uygulama parolası eksik (WORDPRESS_BASE_URL / WP_APP_USERNAME / WP_APP_PASSWORD) — fotoğraflar gönderilmedi."
+                )
+            else:
+                for photo_item in photos:
+                    uploaded, warning = await self._upload_media(photo_item)
+                    if uploaded:
+                        images.append(uploaded)
+                    if warning:
+                        warnings.append(warning)
+            if photos and not images and self._can_upload_media():
+                warnings.append("Hiçbir fotoğraf yüklenemedi — ürün görselsiz yayınlandı.")
+
+            payload, payload_warnings = build_publish_payload(
+                product=product,
+                regular_price_dkk=regular_price_dkk,
+                name=name,
+                images=images,
+                settings=get_settings(),
+                mark_as_new=mark_as_new,
             )
-        else:
-            for photo_item in photos:
-                uploaded, warning = await self._upload_media(photo_item)
-                if uploaded:
-                    images.append(uploaded)
-                if warning:
-                    warnings.append(warning)
-        if photos and not images and self._can_upload_media():
-            warnings.append("Hiçbir fotoğraf yüklenemedi — ürün görselsiz yayınlandı.")
+            warnings.extend(payload_warnings)
 
-        payload, payload_warnings = build_publish_payload(
-            product=product,
-            regular_price_dkk=regular_price_dkk,
-            name=name,
-            images=images,
-            settings=get_settings(),
-            mark_as_new=mark_as_new,
-        )
-        warnings.extend(payload_warnings)
-
-        try:
-            if product.woocommerce_product_id:
-                result = await self._wc_request(
-                    "PUT",
-                    f"/products/{product.woocommerce_product_id}",
-                    json_payload=payload,
-                )
-            else:
-                result = await self._wc_request("POST", "/products", json_payload=payload)
-        except HTTPException as exc:
-            # Sitede elle silinmiş medya: kayıtlı wc_media_id'ler geçersizse
-            # Woo "invalid image id" döner — id'leri temizleyip TEK yeniden
-            # yükleme denemesi yapılır; ikinci hata normal akışla yükselir.
-            detail = str(exc.detail).lower()
-            reused_ids = [photo for photo in photos if photo.get("wc_media_id")]
-            if not reused_ids or ("image" not in detail and "attachment" not in detail):
-                raise
-            warnings.append("Sitedeki medya kayıtları geçersizdi; fotoğraflar yeniden yüklendi.")
-            for photo_item in reused_ids:
-                photo_item.pop("wc_media_id", None)
-                photo_item.pop("wc_media_uploaded_at", None)
-            retry_images: list[dict[str, Any]] = []
-            for photo_item in photos:
-                uploaded, warning = await self._upload_media(photo_item)
-                if uploaded:
-                    retry_images.append(uploaded)
-                if warning:
-                    warnings.append(warning)
-            if retry_images:
-                payload["images"] = retry_images
-            else:
-                payload.pop("images", None)
-            if product.woocommerce_product_id:
-                result = await self._wc_request(
-                    "PUT",
-                    f"/products/{product.woocommerce_product_id}",
-                    json_payload=payload,
-                )
-            else:
-                result = await self._wc_request("POST", "/products", json_payload=payload)
-        return result, warnings
+            try:
+                if product.woocommerce_product_id:
+                    result = await self._wc_request(
+                        "PUT",
+                        f"/products/{product.woocommerce_product_id}",
+                        json_payload=payload,
+                    )
+                else:
+                    result = await self._wc_request("POST", "/products", json_payload=payload)
+            except HTTPException as exc:
+                # Sitede elle silinmiş medya: kayıtlı wc_media_id'ler geçersizse
+                # Woo "invalid image id" döner — id'leri temizleyip TEK yeniden
+                # yükleme denemesi yapılır; ikinci hata normal akışla yükselir.
+                detail = str(exc.detail).lower()
+                reused_ids = [photo for photo in photos if photo.get("wc_media_id")]
+                if not reused_ids or ("image" not in detail and "attachment" not in detail):
+                    raise
+                warnings.append("Sitedeki medya kayıtları geçersizdi; fotoğraflar yeniden yüklendi.")
+                for photo_item in reused_ids:
+                    photo_item.pop("wc_media_id", None)
+                    photo_item.pop("wc_media_uploaded_at", None)
+                retry_images: list[dict[str, Any]] = []
+                for photo_item in photos:
+                    uploaded, warning = await self._upload_media(photo_item)
+                    if uploaded:
+                        retry_images.append(uploaded)
+                    if warning:
+                        warnings.append(warning)
+                if retry_images:
+                    payload["images"] = retry_images
+                else:
+                    payload.pop("images", None)
+                if product.woocommerce_product_id:
+                    result = await self._wc_request(
+                        "PUT",
+                        f"/products/{product.woocommerce_product_id}",
+                        json_payload=payload,
+                    )
+                else:
+                    result = await self._wc_request("POST", "/products", json_payload=payload)
+            return result, warnings
 
     async def list_categories(self) -> list[dict[str, Any]]:
         """Sitedeki TÜM ürün kategorilerini sayfalayarak çeker (probe kalıbı)."""
@@ -1342,6 +1418,14 @@ class WooCommerceService:
         per_page: int = 50,
         statuses: str = "processing,completed",
     ) -> list[dict[str, Any]]:
+        """Sipariş penceresinin TAMAMINI döndürür (sayfa sayfa gezerek).
+
+        ``per_page`` yalnız UPSTREAM sayfa boyutudur — yanıt limiti değildir;
+        Woo sayfaladığı için ilk sayfada durmak dönem toplamlarını bozar.
+        Güvenlik üst sınırı: en fazla ``MAX_ORDER_PAGES`` sayfa gezilir
+        (50 × 100 = 5.000 sipariş); aşımında liste kesilir ve sunucu loguna
+        uyarı yazılır.
+        """
         page_size = max(1, min(per_page, 100))
         params: dict[str, Any] = {
             "status": statuses,
@@ -1361,6 +1445,13 @@ class WooCommerceService:
         # Woo paginates orders; stopping at the first page corrupts period totals.
         page = 1
         while True:
+            if page > MAX_ORDER_PAGES:
+                logger.warning(
+                    "fetch_recent_orders pencere sayfa sınırına ulasti (days=%s, pages=%s) — liste kesildi.",
+                    days,
+                    MAX_ORDER_PAGES,
+                )
+                break
             params["page"] = page
             payload = await self._wc_request("GET", "/orders", params=params)
             if not isinstance(payload, list):
@@ -1407,34 +1498,18 @@ class WooCommerceService:
         meta_key: str,
         value: Any,
     ) -> dict[str, Any]:
-        """Tek bir meta_data alanını günceller (upsert).
+        """Tek bir meta_data alanını ATOMİK upsert yazar.
 
-        Önce mevcut order'ı çekip aynı `meta_key`'i bulup günceller; yoksa ekler.
-        Diğer meta'ları korumak için PUT /orders/{id} `meta_data` array'ini
-        gönderir.
+        Woo REST, meta_data girdisini key+value ile aldığında aynı key varsa
+        günceller, yoksa ekler. Yalnız tek girdilik payload gönderilerek eski
+        oku-değiştir-tümünü-yaz deseni kaldırıldı: fetch ile PUT arasına
+        giren bir yazım (Woo admin/eklenti/ikinci operatör) artık ezilmez ve
+        gereksiz ön GET yapılmaz.
         """
-        existing = await self.fetch_order(order_id=order_id)
-        meta_list = existing.get("meta_data") or []
-        if not isinstance(meta_list, list):
-            meta_list = []
-        updated_list: list[dict[str, Any]] = []
-        found = False
-        for item in meta_list:
-            if not isinstance(item, dict):
-                updated_list.append(item)  # passthrough
-                continue
-            if str(item.get("key") or "") == meta_key:
-                updated_list.append({**item, "key": meta_key, "value": value})
-                found = True
-            else:
-                updated_list.append(item)
-        if not found:
-            updated_list.append({"key": meta_key, "value": value})
-
         payload = await self._wc_request(
             "PUT",
             f"/orders/{int(order_id)}",
-            json_payload={"meta_data": updated_list},
+            json_payload={"meta_data": [{"key": meta_key, "value": value}]},
         )
         if not isinstance(payload, dict):
             raise HTTPException(

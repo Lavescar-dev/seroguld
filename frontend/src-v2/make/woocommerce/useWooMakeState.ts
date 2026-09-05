@@ -258,7 +258,12 @@ export interface WooMakeState {
   isSyncing: boolean;
   isUploadingPhotos: boolean;
   isDeletingPhoto: boolean;
+  /** M3 — hangi fotoğraf siliniyor? Tüm kartlarda ortak spinner yerine kart bazlı. */
+  deletingPhotoId: string | null;
   isCreatingProduct: boolean;
+  /** M3 — son N günün Woo siparişlerini toplu uzlaştırır (sync-recent). */
+  syncRecentOrders: (days: number) => void;
+  isSyncingRecent: boolean;
   refreshWorkspace: () => Promise<void>;
   generateAi: () => void;
   saveAi: (approved: boolean) => void;
@@ -338,6 +343,32 @@ export function resolveWooSelectedProductId(
 ): string | null {
   if (requestedProductId && items.some((item) => item.id === requestedProductId)) return requestedProductId;
   return items[0]?.id ?? null;
+}
+
+// M3 — sihirbaz zinciri (ürün POST → foto → AI → publish) ortasında hata:
+// ürün OLUŞTURULMUŞ olabilir. Bu hata partial durumu taşır; arayüz ürünü
+// seçip 'detaydan tamamla' yolunu gösterir, retry yeniden ürün YARATMAZ.
+export class WooPartialCreateError extends Error {
+  readonly createdProduct: ProductOut;
+  readonly failedStep: string;
+
+  constructor(message: string, createdProduct: ProductOut, failedStep: string) {
+    super(message);
+    this.name = 'WooPartialCreateError';
+    this.createdProduct = createdProduct;
+    this.failedStep = failedStep;
+  }
+}
+
+function wooDraftSignature(draft: NewWooProductDraft): string {
+  return JSON.stringify([
+    draft.secilenStokId,
+    draft.stokNo.trim(),
+    draft.urunAdi.trim(),
+    draft.metal,
+    draft.tip,
+    draft.alimFiyati,
+  ]);
 }
 
 export function emptySeoData(): SeoData {
@@ -604,6 +635,13 @@ export function useWooMakeState(): WooMakeState {
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
+  // M3 — workspace araması da ~300ms debounce ile koşar (catalogSearch ile
+  // aynı kalıp): her tuşvuruşu tam workspace fetch'i tetiklemesin.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(handle);
+  }, [search]);
   const [filter, setFilter] = useState<WooFilter>('all');
   const [publishPrice, setPublishPrice] = useState('');
   // Woo otomatik metal fiyatı: markup YÜZDE (35 = %35), min fiyat opsiyonel.
@@ -640,9 +678,11 @@ export function useWooMakeState(): WooMakeState {
   });
 
   const workspaceQuery = useQuery({
-    queryKey: ['woocommerce', 'workspace', search],
+    queryKey: ['woocommerce', 'workspace', debouncedSearch],
     queryFn: () =>
-      apiRequest<WooWorkspace>(`/api/v2/woocommerce/workspace${search.trim() ? `?q=${encodeURIComponent(search.trim())}` : ''}`),
+      apiRequest<WooWorkspace>(
+        `/api/v2/woocommerce/workspace${debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}` : ''}`,
+      ),
   });
 
   const catalogStatusQuery = useQuery({
@@ -882,6 +922,27 @@ export function useWooMakeState(): WooMakeState {
     onError: (error) => toast.error('Woo satış kontrolü başarısız', extractApiMessage(error, 'Sunucu hatası')),
   });
 
+  // M3 — POST /woocommerce/sync-recent artık UI'dan çağrılabilir: webhook
+  // kaçırma veya sitede elle kapatılan siparişler için toplu uzlaştırma.
+  const syncRecentMutation = useMutation({
+    mutationFn: (days: number) =>
+      apiRequest<{ ok: boolean; orders_scanned: number; line_items_scanned: number; processed: number; ignored: number }>(
+        `/api/webhooks/woocommerce/sync-recent?days=${Math.max(1, Math.min(days, 90))}`,
+        { method: 'POST' },
+      ),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: wooCatalogQueryKeys.root }),
+        invalidateProduct(),
+      ]);
+      toast.success(
+        'Woo sipariş senkronizasyonu tamamlandı',
+        `${result.orders_scanned} sipariş tarandı · ${result.processed} satış işlendi · ${result.ignored} atlandı.`,
+      );
+    },
+    onError: (error) => toast.error('Woo sipariş senkronizasyonu başarısız', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
   const uploadPhotosMutation = useMutation({
     mutationFn: async ({ productId, files }: { productId: string; files: File[] }) => {
       const formData = new FormData();
@@ -908,60 +969,103 @@ export function useWooMakeState(): WooMakeState {
     onError: (error) => toast.error('Fotoğraf silinemedi', extractApiMessage(error, 'Sunucu hatası')),
   });
 
+  // M3 — kısmi oluşturma belleği: ürün POST'u başarılı olduktan sonra bir
+  // sonraki adım patlarsa imza+id burada tutulur; operatör tekrar bastığında
+  // zincir KALAN adımlardan devam eder, ikinci ürün kaydı oluşmaz.
+  const createdDraftRef = useRef<{ signature: string; product: ProductOut; photosDone: boolean; aiDone: boolean } | null>(
+    null,
+  );
+
   const createProductMutation = useMutation({
     mutationFn: async (draft: NewWooProductDraft) => {
-      const created = await apiRequest<ProductOut>('/api/v2/depolama/products', {
-        method: 'POST',
-        body: JSON.stringify(toCreatePayload(draft)),
-      });
+      const signature = wooDraftSignature(draft);
+      const remembered = createdDraftRef.current?.signature === signature ? createdDraftRef.current : null;
+      const created =
+        remembered?.product ??
+        (await apiRequest<ProductOut>('/api/v2/depolama/products', {
+          method: 'POST',
+          body: JSON.stringify(toCreatePayload(draft)),
+        }));
+      const partial = remembered ?? { signature, product: created, photosDone: false, aiDone: false };
+      createdDraftRef.current = partial;
 
-      let current = created;
+      try {
+        let current = created;
 
-      if (draft.fotograflar.length > 0) {
-        const formData = new FormData();
-        for (const photo of draft.fotograflar) {
-          formData.append('files', photo.file);
+        if (draft.fotograflar.length > 0 && !partial.photosDone) {
+          const formData = new FormData();
+          for (const photo of draft.fotograflar) {
+            formData.append('files', photo.file);
+          }
+          current = await apiRequest<ProductOut>(`/api/v2/woocommerce/products/${created.id}/photos`, {
+            method: 'POST',
+            body: formData,
+          });
         }
-        current = await apiRequest<ProductOut>(`/api/v2/woocommerce/products/${created.id}/photos`, {
-          method: 'POST',
-          body: formData,
-        });
-      }
+        partial.photosDone = true;
 
-      const wantsApprovedAi = draft.aiOnaylandi || draft.wooYayin === 'Yayında';
-      const hasDraftAi = draft.aiAciklama.trim().length >= 10;
-      if (hasDraftAi) {
-        current = await apiRequest<ProductOut>(`/api/v2/woocommerce/products/${created.id}/ai`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            ai_description: draft.aiAciklama.trim(),
-            ai_description_approved: wantsApprovedAi,
-          }),
-        });
-      }
+        const wantsApprovedAi = draft.aiOnaylandi || draft.wooYayin === 'Yayında';
+        const hasDraftAi = draft.aiAciklama.trim().length >= 10;
+        if (hasDraftAi && !partial.aiDone) {
+          current = await apiRequest<ProductOut>(`/api/v2/woocommerce/products/${created.id}/ai`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              ai_description: draft.aiAciklama.trim(),
+              ai_description_approved: wantsApprovedAi,
+            }),
+          });
+        }
+        partial.aiDone = true;
 
-      if (draft.wooYayin === 'Yayında') {
-        const payload = await apiRequest<ProductPublishResponse>(`/api/v2/woocommerce/products/${created.id}/publish`, {
-          method: 'POST',
-          body: JSON.stringify({
-            regular_price_dkk: Number(draft.satisHasJiyati || draft.alimFiyati || '0'),
-            name: draft.urunAdi.trim() || undefined,
-            category_ids: draft.kategoriIds,
-            // R1-21: wizard yayını tanımı gereği ilk yayın — rozet işaretli.
-            mark_as_new: true,
-          }),
-        });
-        current = payload.product;
-      }
+        if (draft.wooYayin === 'Yayında') {
+          const payload = await apiRequest<ProductPublishResponse>(
+            `/api/v2/woocommerce/products/${created.id}/publish`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                regular_price_dkk: Number(draft.satisHasJiyati || draft.alimFiyati || '0'),
+                // M3 — sihirbaz adım 4'ündeki markup/min fiyat alanları buraya
+                // yazılır (panel yayını ile aynı yüzde→fraksiyon sözleşmesi).
+                woo_markup_rate:
+                  Number(draft.wooMarkupRate || '0') > 0 ? Number(draft.wooMarkupRate) / 100 : undefined,
+                woo_min_price_dkk: Number(draft.wooMinPrice || '0') > 0 ? Number(draft.wooMinPrice) : undefined,
+                name: draft.urunAdi.trim() || undefined,
+                category_ids: draft.kategoriIds,
+                // R1-21: wizard yayını tanımı gereği ilk yayın — rozet işaretli.
+                mark_as_new: true,
+              }),
+            },
+          );
+          current = payload.product;
+        }
 
-      return current;
+        createdDraftRef.current = null; // zincir tamamen tamamlandı
+        return current;
+      } catch {
+        // Ürün VAR — kaydı koru ki retry kalan adımlardan devam etsin.
+        createdDraftRef.current = partial;
+        throw new WooPartialCreateError('Ürün oluşturuldu ancak sonraki adım başarısız oldu.', created, 'fotoğraf/AI/yayın');
+      }
     },
     onSuccess: async (product) => {
       setSecilenId(product.id);
       await invalidateProduct(product.id);
       toast.success('Ürün oluşturuldu', product.product_number || product.display_name || undefined);
     },
-    onError: (error) => toast.error('Ürün oluşturulamadı', extractApiMessage(error, 'Sunucu hatası')),
+    onError: async (error) => {
+      if (error instanceof WooPartialCreateError) {
+        // M3 — kısmi başarı: paneli hata balonuyla açık bırak; ürünü seç,
+        // tekrar basmak yeniden ÜRÜN yaratmaz (kalan adımlardan devam eder).
+        setSecilenId(error.createdProduct.id);
+        await invalidateProduct(error.createdProduct.id);
+        toast.warning(
+          'Ürün oluşturuldu, sonraki adım başarısız',
+          'Tekrar denerseniz kalan adımlardan devam edilir — ürün ikinci kez oluşturulmaz.',
+        );
+        return;
+      }
+      toast.error('Ürün oluşturulamadı', extractApiMessage(error, 'Sunucu hatası'));
+    },
   });
 
   const catalogPreviewMutation = useMutation({
@@ -1083,7 +1187,16 @@ export function useWooMakeState(): WooMakeState {
   }
 
   async function refreshCatalog() {
-    await Promise.all([catalogStatusQuery.refetch(), catalogQuery.refetch()]);
+    // M3 — status ucu 45 sn TTL cache'li; 'Yenile' bilinçli bir aksiyon
+    // olduğundan ?refresh=true ile cache atlanır (refreshCategories kalıbı).
+    const statusPromise = apiRequest<WooCatalogStatus>('/api/v2/woocommerce/status?refresh=true')
+      .then((payload) => {
+        queryClient.setQueryData(wooCatalogQueryKeys.status, payload);
+      })
+      .catch(() => {
+        // Sorgunun kendi error state'i korunur.
+      });
+    await Promise.all([statusPromise, catalogQuery.refetch()]);
   }
 
   return {
@@ -1130,7 +1243,15 @@ export function useWooMakeState(): WooMakeState {
     isSyncing: syncSaleMutation.isPending,
     isUploadingPhotos: uploadPhotosMutation.isPending,
     isDeletingPhoto: deletePhotoMutation.isPending,
+    deletingPhotoId:
+      deletePhotoMutation.isPending && deletePhotoMutation.variables?.photoId
+        ? deletePhotoMutation.variables.photoId
+        : null,
     isCreatingProduct: createProductMutation.isPending,
+    syncRecentOrders: (days: number) => {
+      if (!syncRecentMutation.isPending) syncRecentMutation.mutate(days);
+    },
+    isSyncingRecent: syncRecentMutation.isPending,
     refreshWorkspace,
     generateAi: () => {
       if (detailQuery.data) {

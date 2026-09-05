@@ -39,6 +39,10 @@ class _FakeAsyncClient:
     async def __aexit__(self, *args: Any) -> None:
         return None
 
+    async def aclose(self) -> None:
+        """M3 — servis artık paylaşılan client'ı burst sonunda kapatır."""
+        return None
+
     async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
         type(self).calls.append({"url": url, **kwargs})
         if type(self).response_queue:

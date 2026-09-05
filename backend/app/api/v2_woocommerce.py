@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 import time
@@ -74,10 +75,34 @@ from app.utils.helpers import utc_now
 from app.services.product_service import get_product_or_404, to_product_out
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Kategori listesi kısa süre cache'lenir — picker her açılışta WP'yi yormasın.
 _CATEGORY_CACHE_TTL_SECONDS = 120.0
 _category_cache: dict = {"flat": None, "fetched_at": None, "expires_at": 0.0}
+
+# M3 — /woocommerce/status erişilebilirlik+sayaç sonucu kısa TTL ile
+# tutulur: frontend sürekli polling yaptığı için her istekte canlı Woo
+# çağrısı tekrarlanan sessiz yük üretiyordu. ?refresh=true cache'i atlar.
+_STATUS_CACHE_TTL_SECONDS = 45.0
+_status_cache: dict = {"expires_at": 0.0, "count": None, "error": None}
+
+
+def _cached_remote_status() -> tuple[int | None, str | None] | None:
+    """(count, error_type) döndürür; cache bayat/boşsa None."""
+    if time.monotonic() >= _status_cache["expires_at"] or _status_cache["expires_at"] == 0.0:
+        return None
+    return _status_cache["count"], _status_cache["error"]
+
+
+def _store_remote_status(count: int | None, error: str | None) -> None:
+    _status_cache.update(
+        {
+            "expires_at": time.monotonic() + _STATUS_CACHE_TTL_SECONDS,
+            "count": count,
+            "error": error,
+        }
+    )
 
 
 def _flatten_category_tree(raw: list[dict]) -> list[WooCategoryOut]:
@@ -151,6 +176,7 @@ async def get_woocommerce_categories_v2(
 
 @router.get("/woocommerce/status", response_model=WooCatalogStatusOut)
 async def get_woocommerce_status_v2(
+    refresh: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> WooCatalogStatusOut:
@@ -175,30 +201,47 @@ async def get_woocommerce_status_v2(
             checked_at=checked_at,
             message="WooCommerce bağlantı ayarları eksik.",
         )
-    try:
-        remote_published_count = await WooCommerceService().fetch_published_product_count()
-    except Exception:
-        return WooCatalogStatusOut(
-            configured=True,
-            reachable=False,
-            remote_published_count=None,
-            local_active_count=local_active,
-            local_inactive_count=local_inactive,
-            catalog_revision=int(state_row.revision),
-            last_synced_at=state_row.last_synced_at,
-            checked_at=checked_at,
-            message="WooCommerce bağlantısı kurulamadı.",
-        )
+
+    remote_published_count: int | None = None
+    reachable = False
+    message = "WooCommerce bağlantısı kurulamadı."
+    cached = None if refresh else _cached_remote_status()
+    if cached is not None:
+        cached_count, cached_error = cached
+        if cached_error is None and cached_count is not None:
+            reachable = True
+            remote_published_count = cached_count
+            message = "WooCommerce bağlantısı sağlıklı."
+        else:
+            message = cached_error or "WooCommerce bağlantısı kurulamadı."
+    else:
+        try:
+            remote_published_count = await WooCommerceService().fetch_published_product_count()
+        except HTTPException as exc:
+            # M3 — Woo 401/403 ile DNS/timeout aynı mesaja ezilmez: detail
+            # korunur, kalan hatalar loglanır.
+            logger.warning("WooCommerce status kontrolü başarısız: %s", exc.detail)
+            message = str(exc.detail)
+            _store_remote_status(None, message)
+        except Exception as exc:
+            logger.warning("WooCommerce status kontrolü beklenmeyen hata: %s", exc)
+            message = "WooCommerce bağlantısı kurulamadı."
+            _store_remote_status(None, message)
+        else:
+            reachable = True
+            message = "WooCommerce bağlantısı sağlıklı."
+            _store_remote_status(remote_published_count, None)
+
     return WooCatalogStatusOut(
         configured=True,
-        reachable=True,
+        reachable=reachable,
         remote_published_count=remote_published_count,
         local_active_count=local_active,
         local_inactive_count=local_inactive,
         catalog_revision=int(state_row.revision),
         last_synced_at=state_row.last_synced_at,
         checked_at=checked_at,
-        message="WooCommerce bağlantısı sağlıklı.",
+        message=message,
     )
 
 

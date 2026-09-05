@@ -1,5 +1,6 @@
 import asyncio
 
+from app.services import woocommerce as woocommerce_module
 from app.services.woocommerce import WooCommerceService
 
 
@@ -57,3 +58,23 @@ def test_fetch_recent_orders_stops_if_woo_repeats_a_full_page():
 
     assert [row["id"] for row in rows] == [1, 2]
     assert requested_pages == [1, 2]
+
+
+def test_fetch_recent_orders_stops_at_max_page_bound():
+    """M3 — upstream sayfalaması bozulup hep dolu sayfa döndürdüğünde döngü
+    MAX_ORDER_PAGES'te kesilir; istek asılı kalmaz."""
+
+    service = object.__new__(WooCommerceService)
+    requested_pages: list[int] = []
+
+    async def fake_wc_request(method, path, *, params=None, **kwargs):
+        page = int(params["page"])
+        requested_pages.append(page)
+        return [{"id": page}]  # per_page=1 için hep 'dolu' sayfa → sonsuz döngü tuzağı
+
+    service._wc_request = fake_wc_request
+    rows = asyncio.run(service.fetch_recent_orders(days=0, per_page=1))
+
+    bound = woocommerce_module.MAX_ORDER_PAGES
+    assert requested_pages == list(range(1, bound + 1))
+    assert [row["id"] for row in rows] == list(range(1, bound + 1))

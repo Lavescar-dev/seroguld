@@ -237,6 +237,61 @@ export function isPublishReady(state: WooMakeState['detail']) {
   );
 }
 
+// M3 — yayın önizlemesi HTML'i DOM'a basılmadan önce allowlist'e göre
+// YENİDEN kurulur: yalnız izinli etiketler + http(s) href/src dışında hiçbir
+// öznitelik (on* / javascript: / style tamamen düşer) çıktıya girer.
+// dangerouslySetInnerHTML ham ai_description'ı doğrudan basıyordu.
+const PREVIEW_ALLOWED_TAGS = new Set([
+  'P', 'BR', 'HR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'STRONG', 'EM', 'B', 'I', 'U', 'S', 'SMALL', 'SUB', 'SUP', 'SPAN', 'DIV',
+  'UL', 'OL', 'LI', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH',
+  'A', 'IMG', 'FIGURE', 'FIGCAPTION', 'BLOCKQUOTE',
+]);
+
+export function sanitizePreviewHtml(value: string): string {
+  const html = value || '';
+  if (!html.trim() || typeof window === 'undefined' || typeof DOMParser === 'undefined') return '';
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+
+  const appendChildren = (source: Element, target: Element) => {
+    for (const child of Array.from(source.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        target.appendChild(document.createTextNode(child.textContent || ''));
+        continue;
+      }
+      if (child.nodeType !== Node.ELEMENT_NODE) continue; // yorumlar vs. düşer
+      const el = child as Element;
+      const tag = el.tagName;
+      if (['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META', 'BASE', 'FORM'].includes(tag)) continue;
+      if (!PREVIEW_ALLOWED_TAGS.has(tag)) {
+        appendChildren(el, target); // izinli olmayan kapsayıcı düzleştirilir
+        continue;
+      }
+      const clone = document.createElement(tag.toLowerCase());
+      if (tag === 'A') {
+        const href = el.getAttribute('href') || '';
+        if (/^https?:\/\//i.test(href)) {
+          clone.setAttribute('href', href);
+          clone.setAttribute('target', '_blank');
+          clone.setAttribute('rel', 'noopener noreferrer nofollow');
+        }
+      } else if (tag === 'IMG') {
+        const src = el.getAttribute('src') || '';
+        if (/^https?:\/\//i.test(src)) {
+          clone.setAttribute('src', src);
+          clone.setAttribute('alt', el.getAttribute('alt') || '');
+        }
+      }
+      appendChildren(el, clone);
+      target.appendChild(clone);
+    }
+  };
+
+  const container = document.createElement('div');
+  appendChildren(parsed.body, container);
+  return container.innerHTML;
+}
+
 function slugify(input: string) {
   return input
     .toLocaleLowerCase('tr-TR')
@@ -358,12 +413,22 @@ export function YeniUrunPanel({
   stokList,
   urunler,
   pending,
+  categories,
+  categoriesLoading,
+  categoriesError,
+  onRefreshCategories,
   onKapat,
   onKaydet,
 }: {
   stokList: StokItem[];
   urunler: WooMakeState['urunler'];
   pending: boolean;
+  // M3 — klasik sihirbaza modern'deki yetenekler: kategori seçimi + Woo
+  // otomatik fiyat alanları (payload'da zaten vardı, input yoktu).
+  categories: WooMakeState['categories'];
+  categoriesLoading: boolean;
+  categoriesError: string | null;
+  onRefreshCategories: () => void;
   onKapat: () => void;
   onKaydet: (draft: NewWooProductDraft) => Promise<void>;
 }) {
@@ -374,14 +439,22 @@ export function YeniUrunPanel({
   const [photoDragActive, setPhotoDragActive] = useState(false);
   const [form, setForm] = useState<NewWooProductDraft>(defaultNewWooProductDraft());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // M3 — güncel fotoğraf listesi ref'te tutulur; revoke YALNIZ unmount'ta.
+  // Eski cleanup `form.fotograflar` her değiştiğinde ÖNCEKİ diziyi
+  // revoke ediyordu: 2. foto eklenince 1. fotoğrafın src'si ölüyordu
+  // (ModernWooProductWizard'daki photosRef kalıbının aynısı).
+  const photosRef = useRef<DraftPhoto[]>([]);
 
   useEffect(() => {
-    return () => {
-      for (const item of form.fotograflar) {
-        URL.revokeObjectURL(item.url);
-      }
-    };
+    photosRef.current = form.fotograflar;
   }, [form.fotograflar]);
+
+  useEffect(
+    () => () => {
+      photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url));
+    },
+    [],
+  );
 
   const linkedStockIds = useMemo(() => new Set(urunler.map((item) => item.depoStokId).filter(Boolean)), [urunler]);
 
@@ -395,6 +468,19 @@ export function YeniUrunPanel({
   }, [linkedStockIds, stokArama, stokList]);
 
   const seoEksik = useMemo(() => missingSeoFields(form.seo as SeoBundle), [form.seo]);
+
+  // M3 — onamsız kapanış kilidi: 4 adımlık form + foto + SEO paketi
+  // kaybolmasın; pending'de kapanma hiç olmasın.
+  const formDirty = useMemo(
+    () => JSON.stringify(form) !== JSON.stringify(defaultNewWooProductDraft()),
+    [form],
+  );
+
+  function requestClose() {
+    if (pending) return;
+    if (formDirty && !window.confirm('Yeni ürün formunda kaydedilmemiş bilgi var. Pencere kapatılsın mı?')) return;
+    onKapat();
+  }
 
   function patch(values: Partial<NewWooProductDraft>) {
     setForm((current) => ({ ...current, ...values }));
@@ -494,7 +580,7 @@ export function YeniUrunPanel({
 
   return (
     <div className="fixed inset-0 z-drawer flex" style={sansStyle}>
-      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={onKapat} />
+      <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={requestClose} />
 
       <div className="flex h-full w-[680px] max-w-[95vw] flex-col overflow-hidden border-l-4 border-amber-500 bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b-2 border-brand-700 bg-brand-900 px-5 py-4">
@@ -505,7 +591,7 @@ export function YeniUrunPanel({
               <p className="font-black text-white">Yeni Ürün Ekle</p>
             </div>
           </div>
-          <button type="button" aria-label="Yeni ürün penceresini kapat" onClick={onKapat} className="border border-brand-700 p-1.5 transition-colors hover:bg-brand-700">
+          <button type="button" aria-label="Yeni ürün penceresini kapat" onClick={requestClose} className="border border-brand-700 p-1.5 transition-colors hover:bg-brand-700">
             <X className="h-4 w-4 text-brand-300" />
           </button>
         </div>
@@ -686,13 +772,17 @@ export function YeniUrunPanel({
           {adim === 3 ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-3">
+                {/* M3 — bu buton GERÇEK AI değil, buildAiPreview sabit Danca
+                şablonu doldurur; dürüst adlandırma. Gerçek AI detay
+                sayfasındaki 'AI Açıklama Üret' butonudur. */}
                 <button
                   type="button"
                   onClick={generateDraftAi}
+                  title="Gerçek AI üretimi değildir: ürün bilgilerinden Danca şablon metin doldurur"
                   className="inline-flex items-center gap-2 border border-indigo-900 bg-indigo-900 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white"
                 >
                   <Bot className="h-3.5 w-3.5" />
-                  AI Açıklama Üret
+                  Şablon Açıklama Doldur
                 </button>
                 <label className="inline-flex items-center gap-2 text-xs font-bold text-brand-700">
                   <input
@@ -788,9 +878,57 @@ export function YeniUrunPanel({
                   <input type="radio" checked={form.wooYayin === 'Taslak'} onChange={() => patch({ wooYayin: 'Taslak' })} />
                   Taslak oluştur
                 </label>
+                {/* M3 — otomatik aiOnaylandi=true kaldırıldı: operatör metni
+                okumadan şablon onaylanıp yayına gidiyordu. Onay adım 3'te
+                bilinçli yapılır; işaretlenmemişse submit uyarı verir. */}
                 <label className="inline-flex items-center gap-2 text-xs font-bold text-brand-700">
-                  <input type="radio" checked={form.wooYayin === 'Yayında'} onChange={() => patch({ wooYayin: 'Yayında', aiOnaylandi: true })} />
+                  <input type="radio" checked={form.wooYayin === 'Yayında'} onChange={() => patch({ wooYayin: 'Yayında' })} />
                   Oluşturunca yayınla
+                </label>
+              </div>
+
+              {/* M3 — klasik sihirbazda hiç inputu olmayan Woo alanları
+              (kategori / markup / min fiyat): modern sihirbazla yetenek
+              eşitlemesi. Seçilmezse backend harita/markup davranışına döner. */}
+              <WooCategoryPicker
+                categories={categories}
+                selectedIds={form.kategoriIds}
+                onToggle={(id) =>
+                  patch({
+                    kategoriIds: form.kategoriIds.includes(id)
+                      ? form.kategoriIds.filter((value) => value !== id)
+                      : [...form.kategoriIds, id],
+                  })
+                }
+                onMakePrimary={(id) => patch({ kategoriIds: [id, ...form.kategoriIds.filter((value) => value !== id)] })}
+                onRefresh={onRefreshCategories}
+                loading={categoriesLoading}
+                error={categoriesError}
+                variant="classic"
+              />
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="space-y-1">
+                  <span className="text-xs font-black uppercase tracking-wider text-brand-600">Woo Markup (%)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.wooMarkupRate}
+                    onChange={(event) => patch({ wooMarkupRate: event.target.value })}
+                    className="w-full border border-brand-300 px-3 py-2 text-sm outline-none focus:border-amber-500"
+                    style={monoStyle}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-black uppercase tracking-wider text-brand-600">Woo Min Fiyat (DKK, opsiyonel)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={form.wooMinPrice}
+                    onChange={(event) => patch({ wooMinPrice: event.target.value })}
+                    className="w-full border border-brand-300 px-3 py-2 text-sm outline-none focus:border-amber-500"
+                    style={monoStyle}
+                  />
                 </label>
               </div>
 
@@ -830,7 +968,7 @@ export function YeniUrunPanel({
         {hata ? <div className="border-t border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700">{hata}</div> : null}
 
         <div className="flex items-center justify-between border-t-2 border-brand-200 bg-white px-5 py-4">
-          <button type="button" onClick={onKapat} className="border border-brand-300 px-4 py-2 text-xs font-bold uppercase tracking-wider text-brand-600 hover:bg-brand-50">
+          <button type="button" onClick={requestClose} className="border border-brand-300 px-4 py-2 text-xs font-bold uppercase tracking-wider text-brand-600 hover:bg-brand-50">
             Vazgeç
           </button>
 
@@ -876,6 +1014,9 @@ export function YeniUrunPanel({
 export function MakeWooCommercePage({
   filter,
   setFilter,
+  search,
+  setSearch,
+  refreshWorkspace,
   urunler,
   secilenId,
   setSecilenId,
@@ -897,7 +1038,9 @@ export function MakeWooCommercePage({
   stokList,
   bootstrap,
   loadingWorkspace,
+  workspaceError,
   loadingDetail,
+  detailError,
   isGeneratingAi,
   isSavingAi,
   isApprovingReview,
@@ -916,6 +1059,10 @@ export function MakeWooCommercePage({
   uploadPhotos,
   deletePhoto,
   createProductFromDraft,
+  publishProfile,
+  setPublishProfile,
+  publishYear,
+  setPublishYear,
   ...catalogState
 }: WooMakeState) {
   const toast = useToast();
@@ -924,13 +1071,26 @@ export function MakeWooCommercePage({
   const [seoGoster, setSeoGoster] = useState(false);
   const [hamDuzenle, setHamDuzenle] = useState(false);
   const [surface, setSurface] = useState<'catalog' | 'local'>('catalog');
+  // M3 — 'Önizleme' isteği uçarken buton kilitlenir (paralel çift istek yok).
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   // R1-10: yayın öncesi şablon önizleme (saf payload; Woo'ya istek atılmaz).
   const [publishPreview, setPublishPreview] = useState<PublishPreview | null>(null);
   // Woo otomatik fiyat önizlemesi: canlı WP priser kaynağı (tek kaynak).
-  const [wooSpotRates, setWooSpotRates] = useState<{ gold_24k_dkk?: string; silver_dkk?: string } | null>(null);
+  // M3 — platin/palladyum kendi spot kuruyla hesaplanır (metal bazlı kur).
+  const [wooSpotRates, setWooSpotRates] = useState<{
+    gold_24k_dkk?: string;
+    silver_dkk?: string;
+    platinum_dkk?: string;
+    palladium_dkk?: string;
+  } | null>(null);
   useEffect(() => {
     let cancelled = false;
-    apiRequest<{ gold_24k_dkk?: string; silver_dkk?: string }>('/api/v2/market-rates/defaults')
+    apiRequest<{
+      gold_24k_dkk?: string;
+      silver_dkk?: string;
+      platinum_dkk?: string;
+      palladium_dkk?: string;
+    }>('/api/v2/market-rates/defaults')
       .then((data) => {
         if (!cancelled) setWooSpotRates(data);
       })
@@ -944,7 +1104,18 @@ export function MakeWooCommercePage({
   const wooPricePreview = useMemo(() => {
     if (!wooSpotRates) return null;
     const metal = detail?.metal_type || '';
-    const rate = metal === 'silver' ? Number(wooSpotRates.silver_dkk || '0') : Number(wooSpotRates.gold_24k_dkk || '0');
+    // M3 — metal bazlı kur: platin/palladyum artık ALTIN kuruyla değil kendi
+    // spot kuruyla hesaplanır; kur tanımlı değilse önizleme hiç çıkmaz
+    // ('kur yok' durumu) ve 'Fiyata uygula' görünmez.
+    const rate = Number(
+      (metal === 'silver'
+        ? wooSpotRates.silver_dkk
+        : metal === 'platinum'
+          ? wooSpotRates.platinum_dkk
+          : metal === 'palladium'
+            ? wooSpotRates.palladium_dkk
+            : wooSpotRates.gold_24k_dkk) || '0',
+    );
     const weight = Number(detail?.weight_grams || '0');
     const purity = (Number(detail?.purity_percentage || '0') || 0) / 100;
     const markup = (Number(publishMarkupRate || '0') || 0) / 100;
@@ -1079,18 +1250,44 @@ export function MakeWooCommercePage({
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex w-72 shrink-0 flex-col overflow-hidden border-r-2 border-brand-200">
-          <div className="flex items-center justify-between border-b border-brand-700 bg-brand-800 px-3 py-2">
+          <div className="flex items-center justify-between gap-2 border-b border-brand-700 bg-brand-800 px-3 py-2">
             <span className="text-xs font-black uppercase tracking-widest text-brand-300">Ürünler</span>
-            <select
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as WooFilter)}
-              className="border border-brand-600 bg-brand-700 px-1.5 py-0.5 text-xs font-bold text-brand-300 focus:outline-none"
-            >
-              <option value="all">Tümü</option>
-              <option value="published">Yayında</option>
-              <option value="draft">Taslak</option>
-              <option value="unpublished">Yayınlanmadı</option>
-            </select>
+            <div className="flex items-center gap-1.5">
+              {/* M3 — klasik yüzeye modern'deki arama + yenile yeteneği (hook
+              ?q= destekliyordu ama klasikte input hiç yoktu). */}
+              <select
+                value={filter}
+                onChange={(event) => setFilter(event.target.value as WooFilter)}
+                className="border border-brand-600 bg-brand-700 px-1.5 py-0.5 text-xs font-bold text-brand-300 focus:outline-none"
+              >
+                <option value="all">Tümü</option>
+                <option value="published">Yayında</option>
+                <option value="draft">Taslak</option>
+                <option value="unpublished">Yayınlanmadı</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => void refreshWorkspace()}
+                disabled={loadingWorkspace}
+                aria-label="Çalışma alanını yenile"
+                title="Çalışma alanını yenile"
+                className="border border-brand-600 bg-brand-700 p-1 text-brand-200 transition-colors hover:bg-brand-600 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3 w-3 ${loadingWorkspace ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          <div className="border-b border-brand-200 bg-brand-50 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Search className="h-3.5 w-3.5 shrink-0 text-brand-400" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Stok no, ürün, üretici ara"
+                className="w-full border border-brand-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-brand-700"
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-auto">
@@ -1098,6 +1295,20 @@ export function MakeWooCommercePage({
               <div className="px-4 py-10 text-center">
                 <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Çalışma alanı</p>
                 <p className="mt-2 text-sm text-brand-600">Woo urun listesi hazirlaniyor.</p>
+              </div>
+            ) : workspaceError && urunler.length === 0 ? (
+              // M3 — sorgu hatası artık 'liste boş' sanılmaz: hata + tekrar dene.
+              <div className="px-4 py-10 text-center">
+                <AlertCircle className="mx-auto h-5 w-5 text-red-500" />
+                <p className="mt-2 text-xs font-bold text-red-700">Çalışma alanı yüklenemedi</p>
+                <p className="mt-1 break-words text-xs text-brand-500">{workspaceError}</p>
+                <button
+                  type="button"
+                  onClick={() => void refreshWorkspace()}
+                  className="mt-3 border border-brand-300 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-brand-700 hover:bg-brand-50"
+                >
+                  Yeniden dene
+                </button>
               </div>
             ) : urunler.length === 0 ? (
               <div className="px-4 py-10 text-center">
@@ -1173,6 +1384,23 @@ export function MakeWooCommercePage({
             <div className="px-8 py-12 text-center">
               <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Detay</p>
               <p className="mt-2 text-sm text-brand-600">Soldan bir urun secildiginde detay workspace burada acilir.</p>
+            </div>
+          ) : detailError && !detail ? (
+            // M3 — detay sorgusu hata verirse akış 'seçim yok' boş-durumuna
+            // düşüyordu; operatör backend hatasını görsün.
+            <div className="mx-auto max-w-4xl p-5">
+              <div className="border-2 border-red-200 bg-red-50 px-5 py-8 text-center">
+                <AlertCircle className="mx-auto h-5 w-5 text-red-500" />
+                <p className="mt-2 text-sm font-bold text-red-700">Ürün detayı yüklenemedi</p>
+                <p className="mt-1 break-words text-xs text-red-600">{detailError}</p>
+                <button
+                  type="button"
+                  onClick={() => void refreshWorkspace()}
+                  className="mt-3 border border-red-300 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-red-700 hover:bg-red-100"
+                >
+                  Yeniden dene
+                </button>
+              </div>
             </div>
           ) : loadingDetail && !detail ? (
             <div className="mx-auto max-w-4xl p-5">
@@ -1351,8 +1579,20 @@ export function MakeWooCommercePage({
                               <Eye className="h-3.5 w-3.5 text-white" />
                             </button>
                             {photo.id ? (
-                              <button type="button" onClick={() => deletePhoto(photo.id!)} className="bg-red-500/80 p-1.5 hover:bg-red-600">
-                                {isDeletingPhoto ? <LoaderCircle className="h-3.5 w-3.5 animate-spin text-white" /> : <Trash2 className="h-3.5 w-3.5 text-white" />}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // M3 — onamsız silme kapatıldı; spinner yalnız
+                                  // silinmekte olan kartta döner.
+                                  if (window.confirm('Bu fotoğraf silinsin mi?')) deletePhoto(photo.id!);
+                                }}
+                                className="bg-red-500/80 p-1.5 hover:bg-red-600"
+                              >
+                                {isDeletingPhoto && catalogState.deletingPhotoId === photo.id ? (
+                                  <LoaderCircle className="h-3.5 w-3.5 animate-spin text-white" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5 text-white" />
+                                )}
                               </button>
                             ) : null}
                           </div>
@@ -1370,7 +1610,8 @@ export function MakeWooCommercePage({
                   <button
                     type="button"
                     onClick={() => uploadInputRef.current?.click()}
-                    className="flex items-center gap-2 border border-brand-800 bg-brand-700 px-4 py-2 text-xs font-bold text-white hover:bg-brand-800"
+                    disabled={isUploadingPhotos}
+                    className="flex items-center gap-2 border border-brand-800 bg-brand-700 px-4 py-2 text-xs font-bold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {isUploadingPhotos ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                     Fotoğraf Yükle
@@ -1391,7 +1632,8 @@ export function MakeWooCommercePage({
                     <button
                       type="button"
                       onClick={generateAi}
-                      className="flex items-center gap-2 border border-indigo-900 bg-indigo-800 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-900"
+                      disabled={isGeneratingAi}
+                      className="flex items-center gap-2 border border-indigo-900 bg-indigo-800 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-900 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isGeneratingAi ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Bot className="h-3.5 w-3.5" />}
                       {isGeneratingAi ? 'Üretiliyor...' : 'AI Açıklama Üret'}
@@ -1399,7 +1641,7 @@ export function MakeWooCommercePage({
                     <button
                       type="button"
                       onClick={() => saveAi(false)}
-                      disabled={aiDraft.trim().length < 10}
+                      disabled={aiDraft.trim().length < 10 || isSavingAi}
                       className="flex items-center gap-2 border border-brand-300 bg-white px-4 py-2 text-xs font-bold text-brand-700 hover:bg-brand-50 disabled:opacity-50"
                     >
                       {isSavingAi ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -1408,7 +1650,7 @@ export function MakeWooCommercePage({
                     <button
                       type="button"
                       onClick={() => saveAi(true)}
-                      disabled={aiDraft.trim().length < 10}
+                      disabled={aiDraft.trim().length < 10 || isSavingAi}
                       className="flex items-center gap-2 border border-emerald-700 bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50"
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
@@ -1563,6 +1805,40 @@ export function MakeWooCommercePage({
                       )}
                     </div>
 
+                    {/* M3 — publishProfile/publishYear her yayında sessizce
+                    ''/0 gidiyordu; klasik operatör artık görebilir/düzeltebilir
+                    (modern'deki şablon select + koşullu yıl alanı). */}
+                    <div className="flex flex-wrap items-end gap-4">
+                      <label className="space-y-1">
+                        <span className="block text-xs font-black uppercase tracking-wider text-brand-700">Yayın şablonu</span>
+                        <select
+                          value={publishProfile}
+                          onChange={(event) => setPublishProfile(event.target.value)}
+                          className="border border-brand-300 bg-white px-2 py-1.5 text-xs font-bold text-brand-800 outline-none focus:border-brand-700"
+                        >
+                          <option value="">Ürüne göre (otomatik)</option>
+                          <option value="jewelry">Smykke (takı)</option>
+                          <option value="bar">Barre (külçe · yatırım)</option>
+                          <option value="coin">Mønt (sikke)</option>
+                          <option value="platinum">Platin / Palladium</option>
+                        </select>
+                      </label>
+                      {publishProfile === 'coin' ? (
+                        <label className="space-y-1">
+                          <span className="block text-xs font-black uppercase tracking-wider text-brand-700">Årstal (üretim yılı)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="örn. 2024"
+                            value={publishYear}
+                            onChange={(event) => setPublishYear(event.target.value)}
+                            className="w-32 border border-brand-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-700"
+                            style={monoStyle}
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+
                     <label className="flex items-center gap-2 text-xs font-bold text-brand-700">
                       <input
                         type="checkbox"
@@ -1614,16 +1890,23 @@ export function MakeWooCommercePage({
                         onClick={() => {
                           // R1-10: yayın öncesi şablon önizleme — panelin güncel
                           // (kaydedilmemiş dahil) durumuyla, ağ erişimsiz saf payload.
+                          // M3 — istek uçuşurken buton kilitli (çift istek yok).
+                          if (isPreviewLoading) return;
+                          setIsPreviewLoading(true);
                           void (async () => {
-                            const preview = await catalogState.fetchPublishPreview();
-                            if (preview) setPublishPreview(preview);
-                            else toast.error('Önizleme alınamadı');
+                            try {
+                              const preview = await catalogState.fetchPublishPreview();
+                              if (preview) setPublishPreview(preview);
+                              else toast.error('Önizleme alınamadı');
+                            } finally {
+                              setIsPreviewLoading(false);
+                            }
                           })();
                         }}
-                        disabled={!detail}
+                        disabled={!detail || isPreviewLoading}
                         className="flex items-center gap-2 border border-brand-300 bg-white px-4 py-2.5 text-xs font-black text-brand-700 hover:bg-brand-50 disabled:opacity-50"
                       >
-                        <Eye className="h-3.5 w-3.5" />
+                        {isPreviewLoading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
                         Önizleme
                       </button>
 
@@ -1713,6 +1996,10 @@ export function MakeWooCommercePage({
           stokList={stokList}
           urunler={urunler}
           pending={isCreatingProduct}
+          categories={catalogState.categories}
+          categoriesLoading={catalogState.categoriesLoading}
+          categoriesError={catalogState.categoriesError}
+          onRefreshCategories={() => void catalogState.refreshCategories()}
           onKapat={() => setYeniPanelAcik(false)}
           onKaydet={async (draft) => {
             await createProductFromDraft(draft);
@@ -1728,6 +2015,11 @@ export function MakeWooCommercePage({
               <button type="button" onClick={() => setPublishPreview(null)} className="text-xs font-black text-brand-500 hover:text-brand-800">Kapat ✕</button>
             </div>
             <div className="space-y-4 px-5 py-4">
+              {/* M3 — 'prose' sınıfları typography eklentisi olmadan hiçbir
+              şey üretmiyordu (ölü sınıf); lokal tipografi scope'u ile başlık/
+              liste/tablo hiyerarşisi geri geldi. İçerik sanitizePreviewHtml
+              ile allowlist'e göre yeniden kurulur (XSS'i kapatan duyarsızlaştırma). */}
+              <style>{`.woo-preview-prose{line-height:1.55}.woo-preview-prose h1,.woo-preview-prose h2,.woo-preview-prose h3,.woo-preview-prose h4{font-weight:800;line-height:1.25;margin:.8em 0 .35em}.woo-preview-prose h1{font-size:1.25rem}.woo-preview-prose h2{font-size:1.125rem}.woo-preview-prose h3{font-size:1rem}.woo-preview-prose p{margin:.5em 0}.woo-preview-prose ul,.woo-preview-prose ol{margin:.5em 0;padding-left:1.4em}.woo-preview-prose ul{list-style:disc}.woo-preview-prose ol{list-style:decimal}.woo-preview-prose table{width:100%;border-collapse:collapse;margin:.6em 0}.woo-preview-prose td,.woo-preview-prose th{border:1px solid #ddd6c8;padding:4px 8px}.woo-preview-prose a{color:#1d4ed8;text-decoration:underline}.woo-preview-prose blockquote{border-left:3px solid #ddd6c8;margin:.6em 0;padding-left:.8em;color:#57534e}.woo-preview-prose hr{margin:.8em 0;border-color:#ddd6c8}`}</style>
               <div>
                 <h3 className="text-lg font-black text-brand-900">{publishPreview.name || '—'}</h3>
                 <p className="text-xs text-brand-500" style={monoStyle}>
@@ -1744,11 +2036,17 @@ export function MakeWooCommercePage({
               ) : null}
               <div>
                 <p className="mb-1 text-xs font-black uppercase tracking-wider text-brand-500">Kısa açıklama</p>
-                <div className="prose prose-sm max-w-none border border-brand-200 bg-brand-50/40 px-4 py-3 text-sm" dangerouslySetInnerHTML={{ __html: publishPreview.short_description || '<p>—</p>' }} />
+                <div
+                  className="woo-preview-prose border border-brand-200 bg-brand-50/40 px-4 py-3 text-sm"
+                  dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(publishPreview.short_description || '') || '<p>—</p>' }}
+                />
               </div>
               <div>
                 <p className="mb-1 text-xs font-black uppercase tracking-wider text-brand-500">Uzun açıklama</p>
-                <div className="prose prose-sm max-w-none border border-brand-200 px-4 py-3 text-sm" dangerouslySetInnerHTML={{ __html: publishPreview.description || '<p>—</p>' }} />
+                <div
+                  className="woo-preview-prose border border-brand-200 px-4 py-3 text-sm"
+                  dangerouslySetInnerHTML={{ __html: sanitizePreviewHtml(publishPreview.description || '') || '<p>—</p>' }}
+                />
               </div>
               {publishPreview.attributes.length ? (
                 <div>

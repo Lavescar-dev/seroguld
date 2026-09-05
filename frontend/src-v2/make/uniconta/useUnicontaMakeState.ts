@@ -353,7 +353,15 @@ export function useUnicontaMakeState(): UseUnicontaMakeStateResult {
       toast.warning('Bağlı değil', 'Önce Uniconta\'ya bağlanın.');
       return;
     }
-    void invoicesQuery.refetch().then(() => toast.success('Fatura listesi yenilendi'));
+    // M3 — react-query v5'te refetch reject etmez, { error } ile resolve
+    // eder: ağ hatasında da başarı toast'ı basılıyordu. Sonucu kontrol et.
+    void invoicesQuery.refetch().then((result) => {
+      if (result.error) {
+        toast.error('Fatura listesi yenilenemedi', extractApiMessage(result.error, 'Bağlantı hatası'));
+        return;
+      }
+      toast.success('Fatura listesi yenilendi');
+    });
     void queryClient.invalidateQueries({ queryKey: ['uniconta', 'sync-summary'] });
     void queryClient.invalidateQueries({ queryKey: ['uniconta', 'failed-syncs'] });
     void queryClient.invalidateQueries({ queryKey: ['uniconta', 'health'] });
