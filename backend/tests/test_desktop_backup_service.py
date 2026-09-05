@@ -64,6 +64,8 @@ def test_snapshot_uses_online_sqlite_backup_and_verified_manifest(backup_env: _S
 
     assert manifest["migration_head"] == "0034_market_rate_confirmation"
     assert manifest["file_count"] == 4
+    # Kurtarma-zorunlu anahtar girdi; kurtarma günü sürpriz olmasın.
+    assert manifest["config_included"] is True
     with zipfile.ZipFile(result.snapshot_path) as archive:
         names = set(archive.namelist())
         assert "database/seroguld.db" in names
@@ -86,6 +88,63 @@ def test_snapshot_uses_online_sqlite_backup_and_verified_manifest(backup_env: _S
     status = service.backup_status()
     assert status["restore_drill_due"] is False
     assert status["latest_restore_drill_at"] is not None
+
+    # Bütünlük kopyaları sistem temp'ine değil yedek alanına gider ve
+    # başarılı verify sonrası kalıntı bırakmaz.
+    temp_root = backup_env.backup_root_path() / "temp"
+    assert temp_root.exists()
+    assert list(temp_root.iterdir()) == []
+
+
+def test_snapshot_without_field_encryption_key_is_flagged_not_silent(
+    backup_env: _Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FIELD_ENCRYPTION_KEY yedeğe giremediğinde verify sessizce 'başarılı'
+    geçmemeli: manifest'te config_included=false olmalı."""
+
+    keyless_env = tmp_path / "config-keyless" / "runtime.env"
+    keyless_env.parent.mkdir()
+    keyless_env.write_text("JWT_SECRET_KEY=jwt-secret\n", encoding="utf-8")
+    monkeypatch.setattr(service, "ROOT_ENV_FILE", keyless_env)
+
+    result = service.create_snapshot(reason="manual", actor="info@seroguld.dk")
+    manifest = service.verify_snapshot(result.snapshot_path)
+    assert manifest["config_included"] is False
+
+
+def test_backup_status_survives_vanishing_files(backup_env: _Settings) -> None:
+    """glob ile listelenip stat anında silinen dosya ham OSError/500 üretmemeli."""
+
+    assert service._safe_stat(None) is None
+    assert service._safe_stat(backup_env.backup_root_path() / "daily" / "missing.sgbackup") is None
+
+    daily = backup_env.backup_root_path() / "daily"
+    daily.mkdir(parents=True)
+    (daily / "seroguld-20260813.sgbackup").write_bytes(b"encrypted")
+    status = service.backup_status()
+    assert status["latest_local_backup_name"] == "seroguld-20260813.sgbackup"
+
+    # stat edilemeyen kayıt listeden düşer; status yine tutarlı sözlük döner.
+    (daily / "seroguld-20260813.sgbackup").unlink()
+    status = service.backup_status()
+    assert status["latest_local_backup_name"] is None
+    assert status["backup_due"] is True
+
+
+def test_cleanup_staging_prunes_verify_temp_leftovers(backup_env: _Settings) -> None:
+    import os
+    import time
+
+    temp_dir = backup_env.backup_root_path() / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    stale = temp_dir / "verify-stale.sqlite3"
+    stale.write_bytes(b"leftover")
+
+    old = time.time() - 48 * 3600
+    os.utime(stale, (old, old))
+
+    service.cleanup_staging(max_age_hours=24)
+    assert not stale.exists()
 
 
 def test_snapshot_path_cannot_escape_staging(backup_env: _Settings, tmp_path: Path) -> None:

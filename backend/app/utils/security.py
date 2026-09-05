@@ -4,10 +4,12 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -16,6 +18,8 @@ from passlib.exc import UnknownHashError
 from app.config import get_settings
 
 settings = get_settings()
+
+logger = logging.getLogger(__name__)
 # bcrypt-sha256 prehashes UTF-8 input before bcrypt, so newly chosen desktop
 # passwords are not subject to bcrypt's 72-byte limit.  Plain bcrypt remains
 # accepted for databases created by older Sero Guld releases.
@@ -95,14 +99,36 @@ def encrypt_field(value: str | None) -> str | None:
 
 
 def decrypt_field(value: str | None) -> str | None:
+    """Decrypt an ``encrypt_field`` payload; corrupt/undecryptable rows yield None.
+
+    A single malformed row (legacy format, key rotation, manual edit) must never
+    turn every workspace/display/receipt/login flow that touches it into an
+    unhandled 500 — the same convention as verify_password above.  Failures are
+    logged as a warning with a content fingerprint so the affected rows can be
+    located and re-encrypted, without ever writing plaintext or ciphertext to
+    the log.
+    """
+
     if not value:
         return None
-    decoded = base64.urlsafe_b64decode(value.encode("utf-8"))
-    payload = json.loads(decoded.decode("utf-8"))
-    nonce = base64.urlsafe_b64decode(payload["n"].encode("utf-8"))
-    ciphertext = base64.urlsafe_b64decode(payload["c"].encode("utf-8"))
-    plaintext = _aesgcm().decrypt(nonce, ciphertext, None)
-    return plaintext.decode("utf-8")
+    try:
+        decoded = base64.urlsafe_b64decode(value.encode("utf-8"))
+        payload = json.loads(decoded.decode("utf-8"))
+        nonce = base64.urlsafe_b64decode(payload["n"].encode("utf-8"))
+        ciphertext = base64.urlsafe_b64decode(payload["c"].encode("utf-8"))
+        plaintext = _aesgcm().decrypt(nonce, ciphertext, None)
+        return plaintext.decode("utf-8")
+    except (ValueError, KeyError, TypeError, InvalidTag) as exc:
+        # binascii.Error/JSONDecodeError/UnicodeDecodeError are ValueError
+        # subclasses; InvalidTag covers AES-GCM authentication failure.
+        fingerprint = hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()[:12]
+        logger.warning(
+            "decrypt_field failed for encrypted value (fingerprint=%s, length=%d): %s",
+            fingerprint,
+            len(value),
+            exc,
+        )
+        return None
 
 
 def hash_sensitive_value(value: str | None) -> str | None:

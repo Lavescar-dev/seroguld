@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
@@ -8,7 +8,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _to_user_out
-from app.api.deps import require_password_change_complete
+from app.api.deps import require_admin
 from app.database import get_db
 from app.models.enums import ProductStatusEnum, RoleEnum
 from app.models.pos_document import PosDocument
@@ -63,10 +63,33 @@ async def product_summary_counts(db: AsyncSession, month_start: datetime) -> tup
     return summary_row.one()
 
 
+async def woocommerce_sync_counters(db: AsyncSession, since: datetime) -> tuple:
+    """24 saatlik Woo senkron sayaçları.
+
+    dashboard.py /integrations ile aynı ``created_at >= now - 24h`` penceresi;
+    filtresiz sorgu "24h" alanlarını yaşam boyu birikimli sayaca çeviriyordu.
+    last_sync_at bilinçli olarak penceresizdir (son senkron zamanıdır).
+    """
+
+    counters = await db.execute(
+        select(
+            func.sum(case((WooCommerceSyncLog.status == "success", 1), else_=0)),
+            func.sum(case((WooCommerceSyncLog.status == "failed", 1), else_=0)),
+        ).where(WooCommerceSyncLog.created_at >= since)
+    )
+    sync_success_24h, sync_failed_24h = counters.one()
+    last_sync_at = await db.scalar(select(func.max(WooCommerceSyncLog.created_at)))
+    return sync_success_24h, sync_failed_24h, last_sync_at
+
+
 @router.get("", response_model=DesktopBootstrapOut)
 async def get_bootstrap(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_password_change_complete),
+    # Rol denetimi burada, fonksiyon üzerinde yapılır: /api/bootstrap ve
+    # /api/v2/bootstrap aynı fonksiyona delege olduğu için CUSTOMER token'ı
+    # iki uçta da ciro/stok/backup telemetrisini okuyamaz. must_change_password
+    # kapısı require_admin zinciri üzerinden korunmaya devam eder.
+    current_user: User = Depends(require_admin),
 ) -> DesktopBootstrapOut:
     settings = get_settings()
     now = utc_now()
@@ -93,7 +116,23 @@ async def get_bootstrap(
         select(func.coalesce(func.sum(Product.sale_price_dkk), Decimal("0"))).where(Product.sale_date >= day_start, visible_product_clause())
     )
 
-    ops_rows = await db.scalars(select(Product).where(visible_product_clause()))
+    # Ops metrikleri yalnız dokuz kolona ihtiyaç duyar; tüm Product satırını
+    # ORM entity olarak (photos JSON + ai_description dahil ~40 kolon) hydrate
+    # etmek yerine kolon projeksiyonu kullanılır — metric mantığı birebir aynı
+    # kalır, bellek/ayak izi ürün tablosuyla büyümez.
+    ops_rows = await db.execute(
+        select(
+            Product.status,
+            Product.photos,
+            Product.needs_cleaning,
+            Product.ai_description,
+            Product.ai_description_approved,
+            Product.is_gdpr_locked,
+            Product.gdpr_release_date,
+            Product.is_published_to_site,
+            Product.purchase_date,
+        ).where(visible_product_clause())
+    )
     ops_items = ops_rows.all()
     active_items = [
         item for item in ops_items if item.status in active_statuses
@@ -153,14 +192,8 @@ async def get_bootstrap(
         )
     ).one()
 
-    integrations_rows = await db.execute(
-        select(
-            func.sum(case((WooCommerceSyncLog.status == "success", 1), else_=0)),
-            func.sum(case((WooCommerceSyncLog.status == "failed", 1), else_=0)),
-            func.max(WooCommerceSyncLog.created_at),
-        )
-    )
-    sync_success_24h, sync_failed_24h, last_sync_at = integrations_rows.one()
+    sync_since = now - timedelta(hours=24)
+    sync_success_24h, sync_failed_24h, last_sync_at = await woocommerce_sync_counters(db, sync_since)
 
     total_published_products = await db.scalar(
         select(func.count(Product.id)).where(Product.is_published_to_site.is_(True), visible_product_clause())

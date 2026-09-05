@@ -17,9 +17,12 @@ from app.schemas.auth import LoginRequest, PasswordChangeRequest
 from app.utils.security import get_password_hash, verify_password
 
 
-def test_password_policy_allows_same_as_old_password_for_legacy_desktop_flow() -> None:
-    assert _password_policy_error("admin") is None
+def test_password_policy_requires_minimum_length_and_rejects_blank() -> None:
     assert _password_policy_error("  ") is not None
+    assert _password_policy_error("admin") is not None  # minimum uzunluk
+    assert _password_policy_error("1234567") is not None
+    assert _password_policy_error("12345678") is None
+    assert _password_policy_error("Parola-ü密码安全" * 80) is None
 
 
 def test_password_change_schema_accepts_long_unicode_values() -> None:
@@ -35,6 +38,8 @@ def test_password_change_schema_accepts_long_unicode_values() -> None:
 
 
 def test_login_with_unknown_hash_returns_401_instead_of_crashing() -> None:
+    from app.api import auth as auth_module
+
     user = User(
         email="broken-hash@example.com",
         name="Broken Hash",
@@ -47,16 +52,22 @@ def test_login_with_unknown_hash_returns_401_instead_of_crashing() -> None:
         async def scalar(self, _statement):
             return user
 
+    class FakeRequest:
+        client = None
+
+    auth_module._login_attempts.clear()
     with pytest.raises(HTTPException) as captured:
         asyncio.run(
             login(
                 LoginRequest(email="broken-hash@example.com", password="admin"),
+                FakeRequest(),  # type: ignore[arg-type]
                 StaticSession(),  # type: ignore[arg-type]
             )
         )
 
     assert captured.value.status_code == 401
     assert captured.value.detail == "Email veya şifre hatalı"
+    auth_module._login_attempts.clear()
 
 
 def test_clean_bootstrap_seeds_once_and_upgrade_database_is_untouched(monkeypatch) -> None:

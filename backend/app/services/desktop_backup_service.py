@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -12,10 +13,13 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 from urllib.parse import unquote, urlsplit
 
 from app.config import ROOT_ENV_FILE, get_settings
 
+
+logger = logging.getLogger(__name__)
 
 BACKUP_FORMAT_VERSION = 1
 SNAPSHOT_PREFIX = "seroguld-snapshot-"
@@ -33,6 +37,9 @@ def _redacted_runtime_env(config_file: Path, target: Path) -> Path | None:
     try:
         raw_lines = config_file.read_text(encoding="utf-8-sig").splitlines()
     except OSError:
+        # Sessiz None, "config'siz yedek" görünümünü log'suz bırakıyordu;
+        # kurtarma günü eksik anahtar sürprizi olmasın diye iz bırak.
+        logger.warning("Yedek için runtime.env okunamadı: %s", config_file, exc_info=True)
         return None
     kept: list[str] = [
         "# Sero Guld yedek kopyası — yalnız geri yükleme için zorunlu anahtarlar.",
@@ -46,6 +53,13 @@ def _redacted_runtime_env(config_file: Path, target: Path) -> Path | None:
         if key in BACKUP_ENV_ALLOWLIST:
             kept.append(line)
     if len(kept) == 2:
+        # FIELD_ENCRYPTION_KEY satırı hiç yok: bu yedek tek başına şifreli
+        # alanları kurtaramaz. Verify'dan sessizce geçmemesi için manifest'e
+        # config_included=false yazılır ve burada uyarı loglanır.
+        logger.warning(
+            "Runtime env'de kurtarma-zorunlu anahtarlar yok (BACKUP_ENV_ALLOWLIST boş kaldı): %s",
+            config_file,
+        )
         return None
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(kept) + "\n", encoding="utf-8")
@@ -145,10 +159,14 @@ def create_snapshot(*, reason: str, actor: str) -> SnapshotResult:
         for source, relative in _safe_members(uploads) or []:
             source_entries.append((source, (Path("uploads") / relative).as_posix()))
         config_file = Path(ROOT_ENV_FILE).expanduser().resolve()
+        config_included = False
         if config_file.is_file():
             redacted = _redacted_runtime_env(config_file, temp_root / "config" / "runtime.env")
             if redacted is not None:
                 source_entries.append((redacted, "config/runtime.env"))
+                config_included = True
+        else:
+            logger.warning("Runtime env dosyası bulunamadı, yedek config'siz oluşuyor: %s", config_file)
 
         files: list[dict[str, object]] = []
         total_bytes = 0
@@ -165,6 +183,9 @@ def create_snapshot(*, reason: str, actor: str) -> SnapshotResult:
             "actor": actor[:200],
             "migration_head": _migration_head(database_copy),
             "database": "database/seroguld.db",
+            # FIELD_ENCRYPTION_KEY yedeğe giremediyse false: bu snapshot
+            # tek başına şifreli CPR/adres alanlarını kurtaramaz.
+            "config_included": config_included,
             "files": files,
             "file_count": len(files),
             "total_bytes": total_bytes,
@@ -199,6 +220,16 @@ def _validated_staging_path(path: Path) -> Path:
     return candidate
 
 
+def _verify_temp_root() -> Path:
+    # DB bütünlük kontrolü için geçici kopya SİSTEM temp'ine değil yedek alanı
+    # içine yazılır: delete=False dosyası süreç iki nokta arasında çökerse
+    # şifreli CPR içeren tam üretim DB'si app-data dışında kalmasın. Kalıntılar
+    # cleanup_staging tarafından temizlenir.
+    temp_root = get_settings().backup_root_path().resolve() / "temp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    return temp_root
+
+
 def verify_snapshot(path: Path, *, require_staging: bool = True) -> dict[str, object]:
     candidate = _validated_staging_path(path) if require_staging else path.resolve()
     try:
@@ -213,17 +244,27 @@ def verify_snapshot(path: Path, *, require_staging: bool = True) -> dict[str, ob
                 name = str(record.get("path") or "")
                 if not name or name not in members or name.startswith(("/", "\\")) or ".." in Path(name).parts:
                     raise BackupError("Snapshot manifestinde geçersiz dosya yolu var.")
-                payload = archive.read(name)
-                if len(payload) != int(record.get("size") or -1):
+                # Üyeyi RAM'e tam yüklemeden akışlı özetle; GB ölçeğinde
+                # yedekte bellek tepesini arşiv boyutu belirlemesin.
+                expected_size = int(record.get("size") or -1)
+                digest = hashlib.sha256()
+                actual_size = 0
+                with archive.open(name) as member:
+                    for block in iter(lambda: member.read(1024 * 1024), b""):
+                        actual_size += len(block)
+                        digest.update(block)
+                if actual_size != expected_size:
                     raise BackupError("Snapshot dosya boyutu manifest ile eşleşmiyor.")
-                if hashlib.sha256(payload).hexdigest() != record.get("sha256"):
+                if digest.hexdigest() != record.get("sha256"):
                     raise BackupError("Snapshot dosya özeti manifest ile eşleşmiyor.")
 
-            database_bytes = archive.read(str(manifest.get("database")))
-            with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as handle:
-                handle.write(database_bytes)
-                database_temp = Path(handle.name)
+            database_temp = _verify_temp_root() / f"verify-{uuid.uuid4().hex}.sqlite3"
             try:
+                with (
+                    archive.open(str(manifest.get("database"))) as source,
+                    database_temp.open("wb") as target_handle,
+                ):
+                    shutil.copyfileobj(source, target_handle, length=1024 * 1024)
                 with closing(sqlite3.connect(f"file:{database_temp.as_posix()}?mode=ro", uri=True)) as connection:
                     result = connection.execute("PRAGMA integrity_check").fetchone()
                     if not result or str(result[0]).lower() != "ok":
@@ -235,60 +276,86 @@ def verify_snapshot(path: Path, *, require_staging: bool = True) -> dict[str, ob
     return manifest
 
 
-def cleanup_staging(*, max_age_hours: int = 24) -> None:
-    staging = get_settings().backup_root_path().resolve() / "staging"
-    if not staging.exists():
+def _prune_expired(directory: Path, *, max_age_hours: int) -> None:
+    if not directory.exists():
         return
     cutoff = datetime.now(timezone.utc).timestamp() - max_age_hours * 3600
-    for candidate in staging.iterdir():
+    for candidate in directory.iterdir():
         try:
-            if candidate.is_file() and candidate.stat().st_mtime < cutoff:
+            if candidate.stat().st_mtime >= cutoff:
+                continue
+            if candidate.is_file():
                 candidate.unlink(missing_ok=True)
+            elif candidate.is_dir():
+                shutil.rmtree(candidate, ignore_errors=True)
         except OSError:
             continue
+
+
+def cleanup_staging(*, max_age_hours: int = 24) -> None:
+    backup_root = get_settings().backup_root_path().resolve()
+    _prune_expired(backup_root / "staging", max_age_hours=max_age_hours)
+    # verify_snapshot'ın bütünlük kopyaları crash anında burada kalabilir.
+    _prune_expired(backup_root / "temp", max_age_hours=max_age_hours)
+
+
+def _safe_stat(path: Path | None) -> os.stat_result | None:
+    if path is None:
+        return None
+    try:
+        return path.stat()
+    except OSError:
+        # glob ile listelenip stat anında silinen dosya ham 500 üretmesin.
+        return None
+
+
+def _sorted_by_mtime_desc(paths: Iterable[Path]) -> list[Path]:
+    stamped: list[tuple[float, float, Path]] = []
+    for path in paths:
+        stat_result = _safe_stat(path)
+        if stat_result is not None:
+            # mtime eşitliğinde dosya adı ikincil anahtar; sıralama deterministik kalsın.
+            stamped.append((stat_result.st_mtime, stat_result.st_mtime_ns, path))
+    return [path for _, _, path in sorted(stamped, key=lambda item: (item[0], item[1]), reverse=True)]
 
 
 def backup_status() -> dict[str, object]:
     root = get_settings().backup_root_path().resolve()
     daily = root / "daily"
-    encrypted = sorted(daily.glob(f"*{ENCRYPTED_SUFFIX}"), key=lambda path: path.stat().st_mtime, reverse=True) if daily.exists() else []
+    encrypted = _sorted_by_mtime_desc(daily.glob(f"*{ENCRYPTED_SUFFIX}")) if daily.exists() else []
     latest = encrypted[0] if encrypted else None
+    latest_stat = _safe_stat(latest)
     restore_root = get_settings().backup_restore_drill_path().resolve()
-    restore_drills = sorted(
-        (path for path in restore_root.glob("restore-*") if path.is_dir()),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    ) if restore_root.exists() else []
-    latest_restore = restore_drills[0] if restore_drills else None
-    restore_age = (
-        datetime.now(timezone.utc).timestamp() - latest_restore.stat().st_mtime
-        if latest_restore
-        else None
+    restore_drills = (
+        _sorted_by_mtime_desc(path for path in restore_root.glob("restore-*") if path.is_dir())
+        if restore_root.exists()
+        else []
     )
+    latest_restore = restore_drills[0] if restore_drills else None
+    latest_restore_stat = _safe_stat(latest_restore)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    restore_age = now_ts - latest_restore_stat.st_mtime if latest_restore_stat else None
     return {
         "local_backup_count": len(encrypted),
-        "latest_local_backup_at": datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat() if latest else None,
-        "latest_local_backup_name": latest.name if latest else None,
-        "latest_local_backup_size": latest.stat().st_size if latest else None,
-        "backup_due": latest is None or (datetime.now(timezone.utc).timestamp() - latest.stat().st_mtime) >= 24 * 3600,
-        "latest_restore_drill_at": datetime.fromtimestamp(latest_restore.stat().st_mtime, tz=timezone.utc).isoformat() if latest_restore else None,
+        "latest_local_backup_at": (
+            datetime.fromtimestamp(latest_stat.st_mtime, tz=timezone.utc).isoformat()
+            if latest_stat
+            else None
+        ),
+        "latest_local_backup_name": latest.name if latest is not None and latest_stat else None,
+        "latest_local_backup_size": latest_stat.st_size if latest_stat else None,
+        "backup_due": latest_stat is None or (now_ts - latest_stat.st_mtime) >= 24 * 3600,
+        "latest_restore_drill_at": (
+            datetime.fromtimestamp(latest_restore_stat.st_mtime, tz=timezone.utc).isoformat()
+            if latest_restore_stat
+            else None
+        ),
         "restore_drill_due": restore_age is None or restore_age >= 7 * 24 * 3600,
     }
 
 
 def delete_snapshot(path: Path) -> None:
     _validated_staging_path(path).unlink(missing_ok=True)
-
-
-def inspect_snapshot(path: Path) -> tuple[dict[str, object], dict[str, bytes]]:
-    candidate = _validated_staging_path(path)
-    manifest = verify_snapshot(candidate)
-    with zipfile.ZipFile(candidate, "r") as archive:
-        files = {
-            str(record["path"]): archive.read(str(record["path"]))
-            for record in manifest.get("files") or []
-        }
-    return manifest, files
 
 
 def stage_restore(path: Path) -> dict[str, object]:
@@ -300,17 +367,22 @@ def stage_restore(path: Path) -> dict[str, object]:
     """
 
     candidate = _validated_staging_path(path)
-    manifest, files = inspect_snapshot(candidate)
+    manifest = verify_snapshot(candidate)
     restore_root = get_settings().backup_restore_drill_path().resolve()
     target = restore_root / f"restore-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}"
     target.mkdir(parents=True, exist_ok=False)
     try:
-        for name, payload in files.items():
-            destination = (target / name).resolve()
-            if target not in destination.parents:
-                raise BackupError("Restore manifestinde geçersiz yol var.")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(payload)
+        # Üyeler RAM'e tam yüklenip oradan yazılmaz; arşivden diske akışlı
+        # kopyalanır (GB ölçeğinde yedekte OOM ve 2-3x I/O önlendi).
+        with zipfile.ZipFile(candidate, "r") as archive:
+            for record in manifest.get("files") or []:
+                name = str(record.get("path") or "")
+                destination = (target / name).resolve()
+                if target not in destination.parents:
+                    raise BackupError("Restore manifestinde geçersiz yol var.")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(name) as source, destination.open("wb") as destination_handle:
+                    shutil.copyfileobj(source, destination_handle, length=1024 * 1024)
         (target / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )

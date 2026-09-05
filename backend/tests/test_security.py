@@ -16,6 +16,34 @@ def test_encrypt_decrypt_roundtrip():
     assert decrypt_field(encrypted) == source
 
 
+def test_decrypt_field_returns_none_instead_of_raising_on_corrupt_values():
+    """Bozuk/legacy şifreli değer tek müşteri kaydında her workspace, display
+    ve login akışını 500'e düşürmemeli — None + log (uygulama konvansiyonu:
+    verify_password ile aynı güvenli hata semantiği)."""
+
+    import base64
+    import json
+
+    encrypted = encrypt_field("secret-cpr")
+
+    # base64 kırığı
+    assert decrypt_field("not-base64-!!!") is None
+    # base64 geçerli ama JSON değil
+    assert decrypt_field(base64.urlsafe_b64encode(b"not-json").decode()) is None
+    # JSON ama payload anahtarları eksik
+    assert decrypt_field(base64.urlsafe_b64encode(b"{}").decode()) is None
+    # şifreli gövde bozulmuş (AES-GCM InvalidTag)
+    payload = json.loads(base64.urlsafe_b64decode(encrypted.encode()))
+    payload["c"] = ("B" if payload["c"][0] != "B" else "C") + payload["c"][1:]
+    tampered = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    assert decrypt_field(tampered) is None
+    # None/boş değerler aynen None kalır
+    assert decrypt_field(None) is None
+    assert decrypt_field("") is None
+    # sağlam değer etkilenmez
+    assert decrypt_field(encrypted) == "secret-cpr"
+
+
 def test_mask_cpr():
     assert mask_cpr("1234567890") == "******7890"
 
