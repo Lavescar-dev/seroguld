@@ -5,6 +5,7 @@ import { WooPhotoThumb } from '@/make/woocommerce/WooPhotoThumb';
 import { type Dispatch, type FormEvent, type SetStateAction, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
+  AlertTriangle,
   Camera,
   ChevronDown,
   ChevronUp,
@@ -1171,6 +1172,11 @@ function InventoryDetailDrawer({
 
 export interface DepolamaPageProps {
   loading: boolean;
+  /** Workspace liste isteği başarısız — boş liste yerine hata paneli göster */
+  workspaceError: boolean;
+  onRetryWorkspace: () => void;
+  /** Filtrelenmiş toplam kayıt; rows limit ile kesildiyse stokList.length'ten büyük */
+  workspaceTotal: number | null;
   activeView: InventorySurfaceView;
   setActiveView: Dispatch<SetStateAction<InventorySurfaceView>>;
   stokList: StokItem[];
@@ -1235,6 +1241,9 @@ export interface DepolamaPageProps {
 
 export function DepolamaPage({
   loading,
+  workspaceError,
+  onRetryWorkspace,
+  workspaceTotal,
   activeView,
   setActiveView,
   stokList,
@@ -1364,7 +1373,25 @@ export function DepolamaPage({
   const selectedDraft = selectedProductId ? stokList.find((item) => item.id === selectedProductId) ?? null : null;
   const isInitialLoading = loading && stokList.length === 0;
 
-  const systemContent = (
+  const systemContent = workspaceError ? (
+    // LogPage deseni: liste isteği patladıysa sıfır KPI/boş liste yanıltmasın —
+    // hata paneli + Tekrar Dene; "Yeni Ürün Ekle" CTA'sı render edilmez.
+    <div className="flex-1 overflow-auto">
+      <div className="border-b-2 border-rose-200 bg-rose-50 px-6 py-12 text-center">
+        <AlertTriangle className="mx-auto h-6 w-6 text-rose-500" />
+        <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-rose-600">Depolama</p>
+        <p className="mt-1 text-sm text-rose-700">Stok listesi alınamadı. Bağlantıyı kontrol edin.</p>
+        <button
+          type="button"
+          onClick={onRetryWorkspace}
+          className="mt-4 inline-flex items-center gap-2 border border-rose-400 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 hover:bg-rose-100"
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Tekrar Dene
+        </button>
+      </div>
+    </div>
+  ) : (
     <>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 border-b-2 border-brand-300 flex-shrink-0">
         <SummaryCell label="Finguld i alt" value={`${totals.finguld.toFixed(2)} g`} sub={`${totals.goldVal.toFixed(0)} DKK`} color="amber" />
@@ -1373,6 +1400,12 @@ export function DepolamaPage({
         <SummaryCell label="Toplam Alış" value={`${totals.alisToplam.toFixed(0)} DKK`} color="brand" />
         <SummaryCell label="Spot Metal Değeri" value={`${totals.total.toFixed(0)} DKK`} sub={`${totals.items} ürün`} color="emerald" highlight />
       </div>
+
+      {workspaceTotal != null && workspaceTotal > stokList.length ? (
+        <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
+          Sonuç listesi sınır nedeniyle kesildi: {stokList.length} / {workspaceTotal} ürün gösteriliyor. Görüntülemek istediğiniz aralığı filtrelerle daraltın.
+        </div>
+      ) : null}
 
       {!editing ? (
         <InventoryFilters
@@ -1729,14 +1762,16 @@ export function DepolamaPage({
                 {autoLinkingWoo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
                 Woo bağla
               </button>
-              <button
-                type="button"
-                onClick={startNew}
-                className="flex items-center px-5 py-2 bg-brand-800 text-white text-sm font-bold hover:bg-brand-900 transition-colors border border-brand-900"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Yeni Ürün
-              </button>
+              {workspaceError ? null : (
+                <button
+                  type="button"
+                  onClick={startNew}
+                  className="flex items-center px-5 py-2 bg-brand-800 text-white text-sm font-bold hover:bg-brand-900 transition-colors border border-brand-900"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Yeni Ürün
+                </button>
+              )}
             </>
           ) : null}
         </div>

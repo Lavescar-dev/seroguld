@@ -34,6 +34,7 @@ from app.schemas.product import (
 )
 from app.services.ai_service import AIService
 from app.services.photo_service import PhotoService
+from app.services.product_service import infer_inventory_categories
 from app.services.product_service import (
     calculate_pure_gold_grams,
     get_product_or_404,
@@ -241,6 +242,7 @@ async def import_woocommerce_live_products(
                 imported_product_ids.append(str(existing.id))
                 continue
 
+            cat = infer_inventory_categories(metal_type, product_type)
             product = Product(
                 product_number=await _get_next_product_number(db),
                 reference_number=reference_number,
@@ -273,6 +275,10 @@ async def import_woocommerce_live_products(
                 notes=composed_notes,
                 storage_location="WooCommerce canlı stok",
                 needs_cleaning=False,
+                # Woo'dan gelen kayıt da depo kategorisi tek kaynağından türesin —
+                # NULL kategori satırları workspace filtresine düşmüyor (0035 backfill).
+                inventory_category=cat[0],
+                inventory_subcategory=cat[1],
             )
             db.add(product)
             await db.flush()

@@ -13,6 +13,16 @@ import type {
   ProductSourceAfg,
 } from '@/types';
 
+// Paylaşılan types.ts kataloğu ortak dosya olduğundan genişletme BURADA yerel
+// tutulur: backend'in satır/workspace alanları (updated_at, total_rows).
+interface WorkspaceRow extends InventoryGridRow {
+  updated_at?: string | null;
+}
+
+interface WorkspacePayload extends InventoryWorkspace {
+  total_rows?: number | null;
+}
+
 import type { DepolamaPageProps } from './DepolamaPage';
 import type {
   InventoryFilterState,
@@ -75,7 +85,8 @@ function toMarketPrices(workspace: InventoryWorkspace | null | undefined): Marke
   };
 }
 
-function rowToStokItem(row: InventoryGridRow): StokItem {
+/** Satır → form modeli eşlemesi; testler ve varyant yüzeyleri kullanır. */
+export function rowToStokItem(row: WorkspaceRow): StokItem {
   const mainKat = row.main_category as MainCategory;
   const spotDegeri = numeric(row.spot_degeri_dkk);
   return {
@@ -113,6 +124,9 @@ function rowToStokItem(row: InventoryGridRow): StokItem {
     primaryPhoto: row.primary_photo ?? null,
     photoCount: row.photo_count ?? 0,
     wooLinked: Boolean(row.is_woo_linked),
+    // Satırdan gelen zaman damgası: düzenleme yolunda expected_updated_at
+    // olarak geri gider (detay prefetch'siz optimistic concurrency).
+    updatedAt: row.updated_at ?? undefined,
   };
 }
 
@@ -250,7 +264,8 @@ function toCreatePayload(item: StokItem) {
   };
 }
 
-function toPatchPayload(item: StokItem) {
+/** PATCH gövdesi; testler fixture doğrulaması için dışa açıktır. */
+export function toPatchPayload(item: StokItem) {
   const spec = categorySpec(item);
   return {
     reference_number: item.mainKat === 'taki' ? item.stokNo || null : item.referenceNumber || null,
@@ -261,6 +276,9 @@ function toPatchPayload(item: StokItem) {
     purity_karat: spec.metal_type === 'yellow_gold' ? goldKaratForSaflik(item.saflik) : null,
     purity_percentage: item.saflik ? item.saflik * 100 : null,
     unit_count: Math.max(1, item.adet || 1),
+    // "Lager Dato" düzenlemesi satıra yazılsın (create yolundakiyle aynı format);
+    // yoksa tarih alanı PATCH'te sessizce kayboluyordu.
+    purchase_date: toDateTime(item.lagerDato),
     purchase_price_dkk: item.alisFiyati || null,
     notes: item.notlar || null,
     storage_location: item.storageLocation || null,
@@ -372,7 +390,7 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
 
   const workspaceQuery = useQuery({
     queryKey: ['depolama', 'workspace', workspaceParams],
-    queryFn: () => apiRequest<InventoryWorkspace>(`/api/v2/depolama/workspace?${workspaceParams}`),
+    queryFn: () => apiRequest<WorkspacePayload>(`/api/v2/depolama/workspace?${workspaceParams}`),
   });
 
   // Durum filtresi seçiliyse backend zaten tam o durumu döndürür (satılmış/
@@ -718,9 +736,11 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
     }
     const exists = stokList.some((item) => item.id === editing.id);
     if (exists) {
-      // Optimistic concurrency için detailQuery'den updated_at iletilir
+      // Optimistic concurrency: öncelik satırdan gelen updatedAt (workspace
+      // her kayıtta updated_at döndürür); detailQuery yalnız yedek.
       const detail = detailQuery.data;
-      const updatedAt = detail && detail.id === editing.id ? detail.updated_at ?? undefined : undefined;
+      const detailUpdatedAt = detail && detail.id === editing.id ? detail.updated_at ?? undefined : undefined;
+      const updatedAt = editing.updatedAt ?? detailUpdatedAt;
       updateProductMutation.mutate({
         productId: editing.id,
         item: { ...editing, updatedAt },
@@ -770,6 +790,14 @@ export function useDepolamaMakeState(options: { showAllCategoriesInitially?: boo
 
   return {
     loading: workspaceQuery.isLoading,
+    // Workspace liste isteği hatalıysa yüzeyler boş liste yerine hata paneli +
+    // Tekrar Dene gösterir; "Yeni Ürün" CTA'sı bu durumda render edilmez.
+    workspaceError: workspaceQuery.isError,
+    onRetryWorkspace: () => {
+      void workspaceQuery.refetch();
+    },
+    // Filtrelenmiş toplam kayıt — rows limit yüzünden kesildiyse yüzey uyarı basar
+    workspaceTotal: workspaceQuery.data?.total_rows ?? null,
     activeView,
     setActiveView,
     stokList,

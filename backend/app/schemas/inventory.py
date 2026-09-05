@@ -40,6 +40,8 @@ class InventoryGridRowOut(AppBaseModel):
     product_type: str
     metal_type: str
     status: str
+    # Satır bazlı optimistic concurrency için ISO zaman damgası
+    updated_at: str | None = None
     operation_destination: str | None = None
     operation_classification: str | None = None
     lager_dato: str
@@ -80,3 +82,5 @@ class InventoryWorkspaceOut(AppBaseModel):
     market_prices: InventoryMarketPricesOut
     summary: InventoryWorkspaceSummaryOut
     rows: list[InventoryGridRowOut] = Field(default_factory=list)
+    # Filtrelenmiş toplam kayıt — rows limit ile kesildiyse tam büyüklüğü gösterir
+    total_rows: int = 0

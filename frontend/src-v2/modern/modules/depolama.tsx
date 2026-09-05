@@ -148,7 +148,10 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
             {state.autoLinkingWoo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
             Woo bağla
           </button>
-          <button type="button" onClick={state.startNew} className={shellButtonClass('primary')}>Yeni Ürün</button>
+          {/* Liste isteği hatalıysa yeni ürün CTA'sı gösterme — yanlış "her şey yolunda" izlenimi verir */}
+          {state.workspaceError ? null : (
+            <button type="button" onClick={state.startNew} className={shellButtonClass('primary')}>Yeni Ürün</button>
+          )}
           <InventoryWorkbookImport variant="modern" />
           <button type="button" onClick={state.onOpenWorkbookPreview} className={shellButtonClass('secondary')}>
             <FileSpreadsheet className="h-4 w-4" />
@@ -221,10 +224,24 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
         </ModernSection>
       ) : null}
 
-      <ModernStatGrid items={viewModel.stats} />
+      {viewModel.phase === 'error' ? (
+        <EmptyState
+          title="Depolama listesi yüklenemedi"
+          message="Stok verisi alınamadı. Bağlantınızı kontrol edip tekrar deneyin; kayıtlarınız kaybolmadı."
+          action={
+            <button type="button" onClick={state.onRetryWorkspace} className={shellButtonClass('primary')}>
+              <RefreshCcw className="h-4 w-4" />Tekrar dene
+            </button>
+          }
+        />
+      ) : null}
 
-      {viewModel.phase === 'loading' ? <LoadingState label="Depolama workspace yükleniyor" /> : null}
-      {viewModel.phase === 'empty' ? (() => {
+      {viewModel.phase !== 'error' ? (
+        <>
+          <ModernStatGrid items={viewModel.stats} />
+
+          {viewModel.phase === 'loading' ? <LoadingState label="Depolama workspace yükleniyor" /> : null}
+          {viewModel.phase === 'empty' ? (() => {
         const activeFilters = describeActiveInventoryFilters(state.filters, categoryScope);
         return (
           <EmptyState
@@ -326,7 +343,9 @@ export function ModernDepolamaModule({ viewModel }: { viewModel: ModernDepolamaV
           </div>
         </ModernSection>
 
-      </div>
+          </div>
+        </>
+      ) : null}
 
       <ModernDrawer
         open={Boolean(state.selectedProductId || state.loadingSelectedProduct)}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Iterable
 from uuid import UUID
@@ -28,6 +29,7 @@ from app.services.product_service import (
     ACTIVE_STATUSES,
     create_product,
     get_product_or_404,
+    infer_inventory_categories,
     soft_delete_product,
     update_product,
     visible_product_clause,
@@ -143,6 +145,9 @@ def _inventory_row(product: Product, prices: InventoryMarketPricesOut, linked_id
         product_type=product.product_type.value,
         metal_type=product.metal_type.value,
         status=product.status.value,
+        # Optimistic concurrency: satırın updated_at'ı düzenleme yolunda
+        # expected_updated_at olarak geri gider (detay prefetch'i olmadan).
+        updated_at=(product.updated_at.isoformat() if product.updated_at else None),
         operation_destination=product.operation_destination,
         operation_classification=product.operation_classification,
         lager_dato=product.purchase_date.date().isoformat(),
@@ -223,6 +228,34 @@ def _normalize_decimal_filter(value: object) -> Decimal | None:
     return None
 
 
+def _escape_like(value: str) -> str:
+    """LIKE jokerlerini (yüzde ve alt çizgi) literal yap; aksi halde '%100'
+    araması her '100...' satırını eşleşirdi."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _day_bound(value: object, *, end: bool) -> datetime | None:
+    """YYYY-MM-DD (veya datetime) → tz-aware datetime sınırı.
+
+    purchase_date kolonu DateTime(timezone=True): string bind (Postgres'te
+    'timestamp >= text' hatası) yerine gerçek datetime karşılaştır.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, date):
+        day = value
+    elif isinstance(value, str):
+        try:
+            day = date.fromisoformat(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return datetime.combine(day, time.max if end else time.min, tzinfo=timezone.utc)
+
+
 @router.get("/market-prices", response_model=InventoryMarketPricesOut)
 async def get_inventory_market_prices(_: object = Depends(require_admin)) -> InventoryMarketPricesOut:
     return _get_market_prices()
@@ -263,13 +296,11 @@ async def get_inventory_workspace(
     weight_max: Decimal | None = Query(default=None, ge=0),
     price_min: Decimal | None = Query(default=None, ge=0),
     price_max: Decimal | None = Query(default=None, ge=0),
-    limit: int = Query(default=500, ge=1, le=2000),
+    limit: int | None = Query(default=None, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: object = Depends(require_admin),
 ) -> InventoryWorkspaceOut:
-    from sqlalchemy import and_
-
     q = _normalize_text_filter(q)
     category = _normalize_text_filter(category)
     status = _normalize_text_filter(status)
@@ -283,8 +314,11 @@ async def get_inventory_workspace(
     weight_max = _normalize_decimal_filter(weight_max)
     price_min = _normalize_decimal_filter(price_min)
     price_max = _normalize_decimal_filter(price_max)
-    limit = limit if isinstance(limit, int) else 500
-    offset = offset if isinstance(offset, int) else 0
+    # limit=None → TÜM eşleşen satırlar (varsayılan 500 sessizce kesiyordu;
+    # KPI'lar ve depolama.xlsx projeksiyonu eksik kalıyordu). limit yalnızca
+    # çağıran açıkça sayfalama istiyorsa satır penceresi olarak uygulanır.
+    safe_limit = limit if isinstance(limit, int) and limit > 0 else None
+    safe_offset = offset if isinstance(offset, int) and offset > 0 else 0
 
     prices = _get_market_prices()
     # Varsayılan liste yalnız aktif stok gösterir; operatör açıkça bir durum
@@ -300,15 +334,15 @@ async def get_inventory_workspace(
         .order_by(Product.purchase_date.desc(), Product.product_number.desc())
     )
     if q and q.strip():
-        pattern = f"%{q.strip()}%"
+        pattern = f"%{_escape_like(q.strip())}%"
         stmt = stmt.where(
             or_(
-                Product.product_number.ilike(pattern),
-                Product.reference_number.ilike(pattern),
-                Product.display_name.ilike(pattern),
-                Product.producer.ilike(pattern),
-                Product.notes.ilike(pattern),
-                Product.storage_location.ilike(pattern),
+                Product.product_number.ilike(pattern, escape="\\"),
+                Product.reference_number.ilike(pattern, escape="\\"),
+                Product.display_name.ilike(pattern, escape="\\"),
+                Product.producer.ilike(pattern, escape="\\"),
+                Product.notes.ilike(pattern, escape="\\"),
+                Product.storage_location.ilike(pattern, escape="\\"),
             )
         )
     if category:
@@ -316,15 +350,17 @@ async def get_inventory_workspace(
     if subcategory:
         stmt = stmt.where(Product.inventory_subcategory == subcategory)
     if location:
-        stmt = stmt.where(Product.storage_location.ilike(f"%{location.strip()}%"))
+        stmt = stmt.where(Product.storage_location.ilike(f"%{_escape_like(location.strip())}%", escape="\\"))
     if needs_cleaning is not None:
         stmt = stmt.where(Product.needs_cleaning == needs_cleaning)
     if gdpr_locked is not None:
         stmt = stmt.where(Product.is_gdpr_locked == gdpr_locked)
-    if date_from:
-        stmt = stmt.where(Product.purchase_date >= f"{date_from}T00:00:00")
-    if date_to:
-        stmt = stmt.where(Product.purchase_date <= f"{date_to}T23:59:59")
+    date_from_bound = _day_bound(date_from, end=False)
+    date_to_bound = _day_bound(date_to, end=True)
+    if date_from_bound is not None:
+        stmt = stmt.where(Product.purchase_date >= date_from_bound)
+    if date_to_bound is not None:
+        stmt = stmt.where(Product.purchase_date <= date_to_bound)
     if weight_min is not None:
         stmt = stmt.where(Product.weight_grams >= weight_min)
     if weight_max is not None:
@@ -334,14 +370,16 @@ async def get_inventory_workspace(
     if price_max is not None:
         stmt = stmt.where(Product.purchase_price_dkk <= price_max)
 
-    stmt = stmt.limit(limit).offset(offset)
-    products = list((await db.scalars(stmt)).unique().all())
-    # Bu sayfadaki ürünlerden hangileri bir Woo katalog kaydına bağlı?
+    # Tam filtrelenmiş küme çekilir: summary ve total_rows HER ZAMAN bütün
+    # veriyi yansıtır; limit/offset yalnız dönen satır penceresini böler.
+    products_all = list((await db.scalars(stmt)).unique().all())
+    total_rows = len(products_all)
+    # Eşleşen ürünlerden hangileri bir Woo katalog kaydına bağlı?
     linked_ids: set = set()
-    if products:
+    if products_all:
         from app.models.woocommerce_catalog import WooCommerceCatalogItem
 
-        product_ids = [p.id for p in products]
+        product_ids = [p.id for p in products_all]
         linked_ids = {
             pid for (pid,) in (await db.execute(
                 select(WooCommerceCatalogItem.linked_product_id).where(
@@ -349,11 +387,17 @@ async def get_inventory_workspace(
                 )
             )).all()
         }
-    rows = [_inventory_row(item, prices, linked_ids) for item in products]
+    all_rows = [_inventory_row(item, prices, linked_ids) for item in products_all]
+    rows = (
+        all_rows[safe_offset : safe_offset + safe_limit]
+        if safe_limit is not None
+        else all_rows[safe_offset:]
+    )
     return InventoryWorkspaceOut(
         market_prices=prices,
-        summary=_summary(rows),
+        summary=_summary(all_rows),
         rows=rows,
+        total_rows=total_rows,
     )
 
 

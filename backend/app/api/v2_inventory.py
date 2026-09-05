@@ -88,7 +88,9 @@ async def get_depolama_workspace_v2(
     weight_max: float | None = Query(default=None, ge=0),
     price_min: float | None = Query(default=None, ge=0),
     price_max: float | None = Query(default=None, ge=0),
-    limit: int = Query(default=500, ge=1, le=2000),
+    # limit=None → tüm eşleşen satırlar (legacy workspace ile aynı sözleşme);
+    # varsayılan 500 v2 yüzeyinde de sessiz kesmeye yol açıyordu.
+    limit: int | None = Query(default=None, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
