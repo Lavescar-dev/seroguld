@@ -456,6 +456,28 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "UC DIŞI": { en: "UC N/A", da: "UC N/A" },
   "Alış belgeleri Uniconta'ya gönderilmez (satış modülü gelince satışta senkron çalışacak)": { en: "Purchase documents are not sent to Uniconta (sync runs for sales once the sales module lands)", da: "Købsdokumenter sendes ikke til Uniconta (sync kører for salg når salgsmodulet kommer)" },
 
+  "Hesap özeti PDF aç": { en: "Open account statement PDF", da: "Åbn kontooversigt PDF" },
+  "Belge detayları yüklenemedi": { en: "Could not load document details", da: "Dokumentdetaljer kunne ikke indlæses" },
+  "Belge yüklenemedi (#$": { en: "Could not load document (#", da: "Dokument kunne ikke indlæses (#" },
+  "Müşteri durum filtresi": { en: "Customer status filter", da: "Kundestatusfilter" },
+  "Müşteriler yüklenemedi": { en: "Could not load customers", da: "Kunder kunne ikke indlæses" },
+  "Bağlantı sorunu olabilir; listeyi tekrar çekmeyi deneyin.": { en: "This may be a connection issue; try reloading the list.", da: "Dette kan være et forbindelsesproblem; prøv at hente listen igen." },
+  "Pasif": { en: "Inactive", da: "Inaktiv" },
+  "Yeniden aktifleştir": { en: "Reactivate", da: "Genaktiver" },
+  "Önceki müşteri sayfası": { en: "Previous customers page", da: "Forrige kundeside" },
+  "Sonraki müşteri sayfası": { en: "Next customers page", da: "Næste kundeside" },
+  "Alış geçmişi yükleniyor…": { en: "Loading purchase history…", da: "Indlæser købshistorik…" },
+  "Alış geçmişi yüklenemedi": { en: "Could not load purchase history", da: "Købshistorik kunne ikke indlæses" },
+  "Stok listesi alınamadı. Bağlantıyı kontrol edin.": { en: "Could not load stock list. Check your connection.", da: "Lagerlisten kunne ikke hentes. Tjek forbindelsen." },
+  "Sonuç listesi sınır nedeniyle kesildi:": { en: "Result list truncated due to limit:", da: "Resultatlisten er afkortet pga. grænse:" },
+  "ürün gösteriliyor. Görüntülemek istediğiniz aralığı filtrelerle daraltın.": { en: "products shown. Narrow the range you want to view with filters.", da: "produkter vises. Afgræns det ønskede interval med filtre." },
+  "Ad soyad zorunludur.": { en: "Full name is required.", da: "Fulde navn er påkrævet." },
+  "Müşteriler yükleniyor": { en: "Loading customers", da: "Indlæser kunder" },
+  "Sonuç Bulunamadı": { en: "No results found", da: "Ingen resultater fundet" },
+  "Depolama listesi yüklenemedi": { en: "Could not load storage list", da: "Lagerlisten kunne ikke indlæses" },
+  "Alış geçmişi yükleniyor": { en: "Loading purchase history", da: "Indlæser købshistorik" },
+  "Belge yüklenemedi": { en: "Could not load document", da: "Dokument kunne ikke indlæses" },
+  "Belge detayı alınırken bir sorun oluştu.": { en: "Something went wrong while fetching the document detail.", da: "Der opstod et problem ved hentning af dokumentdetaljen." },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {
