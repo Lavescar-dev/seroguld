@@ -771,7 +771,14 @@ async def get_pos_receipt(
     context = await build_pos_receipt_context(db, pos_session=pos_session, audience=audience)
 
     if format == "html":
-        return HTMLResponse(content=render_pos_receipt_html(context))
+        # XSS için ikinci katman: escape'e rağmen belge kendi statik gömülü
+        # script'ini çalıştırmasın (renderer zaten kullanıcı verisini kaçırıyor).
+        return HTMLResponse(
+            content=render_pos_receipt_html(context),
+            headers={
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+            },
+        )
 
     pdf_payload = render_pos_receipt_pdf(context)
     document_number = str(context.get("document_number") or pos_session.session_code).replace("/", "-").replace(" ", "")

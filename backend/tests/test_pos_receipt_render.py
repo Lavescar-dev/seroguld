@@ -117,3 +117,40 @@ def test_render_pos_receipt_pdf_payload():
     payload = render_pos_receipt_pdf(_sample_context("customer"))
     assert payload.startswith(b"%PDF")
     assert len(payload) > 1000
+
+
+def test_render_pos_receipt_html_admin_escapes_user_free_text():
+    """Stored XSS fix: serbest metin müşteri alanları HTML'e kaçışlı gömülür.
+
+    Purchase anında '<img src=x onerror=...>' gibi bir müşteri adı eski
+    halinde operatör tarayıcısında çalışıyordu (stored XSS); artık escape'li
+    metin olarak görünür, etiket olarak parse edilmez."""
+    ctx = _sample_context("admin")
+    ctx["customer"] = {
+        **ctx["customer"],  # type: ignore[assignment]
+        "name": "<img src=x onerror=alert(1)>",
+        "address": 'Stege <b>vej</b> & "hus"',
+    }
+    ctx["notes"] = "<script>alert('not')</script>"
+    ctx["session_code"] = "POS<1>"
+
+    html = render_pos_receipt_html(ctx)
+    assert "<img src=x" not in html
+    assert "<script>" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "Stege &lt;b&gt;vej&lt;/b&gt; &amp; &quot;hus&quot;" in html
+    assert "&lt;script&gt;alert(&#x27;not&#x27;)&lt;/script&gt;" in html
+    assert "POS&lt;1&gt;" in html
+
+
+def test_render_pos_receipt_pdf_admin_survives_angle_bracket_free_text():
+    """'<' içeren müşteri adı/not reportlab mini-HTML parser'ını düşürmemeli
+    (eski halinde Paragraph parse hatası 500 üretirdi)."""
+    ctx = _sample_context("admin")
+    ctx["customer"] = {
+        **ctx["customer"],  # type: ignore[assignment]
+        "name": "Ada <Lovelace> & Søn",
+    }
+    ctx["notes"] = "Not <test> & veri"
+    payload = render_pos_receipt_pdf(ctx)
+    assert payload.startswith(b"%PDF")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape as _html_escape
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,22 @@ def _format_datetime(value: Any) -> str:
     return str(value or "-")
 
 
+def _esc(value: Any) -> str:
+    """HTML/XML metin kaçışı — kullanıcı kaynaklı TÜM değerler için zorunlu.
+
+    Stored XSS fix: müşteri ad/adres/telefon/e-posta/korekort, notlar ve
+    marka/şube alanları serbest metindir; kaçışsız f-string gömümü stored
+    XSS'e açıktır (ör. '<img src=x onerror=...>' müşteri adı). Aynı kaçış
+    reportlab Paragraph mini-XML parser'ı için de geçerlidir ('<' içeren
+    ad parser'ı düşürür) — quote=True reportlab 4.x'te güvenli.
+
+    DİKKAT: yalnız Paragraph(...) İÇİNE ve HTML f-string'lerine uygulayın;
+    reportlab Table düz string hücreleri entity parse ETMEZ — orada kaçış
+    çıktıyı bozar ('&amp;' diye basar). afg_document_renderer._esc ikizidir.
+    """
+    return _html_escape(str(value), quote=True)
+
+
 def render_pos_receipt_html(context: dict[str, Any]) -> str:
     # AFG-P1: müşteri kopyası orijinal şablon düzeninde (Afregningsbilag)
     # basılır; admin fişi değişmez. Önizleme == e-posta eki düzeni.
@@ -97,17 +114,17 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
     line_rows = "".join(
         (
             "<tr>"
-            f"<td>{line.get('line_no', '-')}</td>"
-            f"<td>{line.get('product_number', '-')}</td>"
-            f"<td>{line.get('reference_number', '-')}</td>"
-            f"<td>{line.get('product_type', '-')}</td>"
-            f"<td>{display_metal_type_da(line.get('metal_type'))}</td>"
-            f"<td>{line.get('fineness_label', '-')}</td>"
-            f"<td>{line.get('weight_grams', '-')} g</td>"
-            f"<td>{line.get('pure_metal_grams', '-')} g</td>"
-            f"<td>{line.get('rate_dkk', '-')}</td>"
-            f"<td>{line.get('margin_percent', '-')}%</td>"
-            f"<td>{line.get('line_total_dkk', '-')} {context['currency_code']}</td>"
+            f"<td>{_esc(line.get('line_no', '-'))}</td>"
+            f"<td>{_esc(line.get('product_number', '-'))}</td>"
+            f"<td>{_esc(line.get('reference_number', '-'))}</td>"
+            f"<td>{_esc(line.get('product_type', '-'))}</td>"
+            f"<td>{_esc(display_metal_type_da(line.get('metal_type')))}</td>"
+            f"<td>{_esc(line.get('fineness_label', '-'))}</td>"
+            f"<td>{_esc(line.get('weight_grams', '-'))} g</td>"
+            f"<td>{_esc(line.get('pure_metal_grams', '-'))} g</td>"
+            f"<td>{_esc(line.get('rate_dkk', '-'))}</td>"
+            f"<td>{_esc(line.get('margin_percent', '-'))}%</td>"
+            f"<td>{_esc(line.get('line_total_dkk', '-'))} {_esc(context['currency_code'])}</td>"
             "</tr>"
         )
         for line in lines
@@ -117,7 +134,7 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{context['receipt_number']}</title>
+  <title>{_esc(context['receipt_number'])}</title>
   <style>
     body {{ font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }}
     .wrap {{ max-width: 860px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 20px; }}
@@ -142,25 +159,25 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
   <div class="wrap">
     <div class="top">
       <div>
-        <h1>{context['shop_name']}</h1>
-        <div class="muted">{context['shop_address']}</div>
-        <div class="muted">CVR: {context['shop_cvr']}</div>
-        <div class="muted">Tel: {context['shop_phone']} · E-posta: {context['shop_email']}</div>
+        <h1>{_esc(context['shop_name'])}</h1>
+        <div class="muted">{_esc(context['shop_address'])}</div>
+        <div class="muted">CVR: {_esc(context['shop_cvr'])}</div>
+        <div class="muted">Tel: {_esc(context['shop_phone'])} · E-posta: {_esc(context['shop_email'])}</div>
       </div>
       <div style="text-align:right;">
-        <h1>{context['document_title']}</h1>
-        <div class="muted">No: {context['document_number']}</div>
-        <div class="muted">Düzenleme: {generated_at_str}</div>
-        <div class="muted">Teslim/İşlem: {supply_at_str}</div>
-        <div class="muted">Kopya: {context['copy_label']}</div>
+        <h1>{_esc(context['document_title'])}</h1>
+        <div class="muted">No: {_esc(context['document_number'])}</div>
+        <div class="muted">Düzenleme: {_esc(generated_at_str)}</div>
+        <div class="muted">Teslim/İşlem: {_esc(supply_at_str)}</div>
+        <div class="muted">Kopya: {_esc(context['copy_label'])}</div>
       </div>
     </div>
 
     <table class="line-table">
-      <tr><th>{context['customer_party_label']}</th><td>{customer['name']}</td><th>Telefon</th><td>{customer['phone']}</td></tr>
-      <tr><th>E-posta</th><td>{customer['email']}</td><th>CPR</th><td>{customer['cpr_masked']}</td></tr>
-      <tr><th>Kimlik Tipi</th><td>{customer['identity_type']}</td><th>Kimlik No</th><td>{customer['identity_number_masked']}</td></tr>
-      <tr><th>Kimlik Ülkesi</th><td>{customer['identity_country']}</td><th>Adres</th><td>{customer['address']}</td></tr>
+      <tr><th>{_esc(context['customer_party_label'])}</th><td>{_esc(customer['name'])}</td><th>Telefon</th><td>{_esc(customer['phone'])}</td></tr>
+      <tr><th>E-posta</th><td>{_esc(customer['email'])}</td><th>CPR</th><td>{_esc(customer['cpr_masked'])}</td></tr>
+      <tr><th>Kimlik Tipi</th><td>{_esc(customer['identity_type'])}</td><th>Kimlik No</th><td>{_esc(customer['identity_number_masked'])}</td></tr>
+      <tr><th>Kimlik Ülkesi</th><td>{_esc(customer['identity_country'])}</td><th>Adres</th><td>{_esc(customer['address'])}</td></tr>
     </table>
 
     <table>
@@ -175,14 +192,14 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
     </table>
 
     <table>
-      <tr><th>Kur (DKK/g)</th><td>{context['rate_dkk']}</td><th>Marj (%)</th><td>{context['margin_percent_internal']}</td></tr>
-      <tr><th>Ara Toplam</th><td>{context['net_amount_dkk']} {context['currency_code']}</td><th>KDV Oranı</th><td>{context['vat_rate_percent']}%</td></tr>
-      <tr><th>KDV Tutarı</th><td>{context['vat_amount_dkk']} {context['currency_code']}</td><th>POS Kodu</th><td>{context['session_code']}</td></tr>
-      <tr><th>Saf Gram</th><td>{context['pure_gold_grams']}</td><th>Kalem Sayısı</th><td>{context.get('line_count', len(lines))}</td></tr>
+      <tr><th>Kur (DKK/g)</th><td>{_esc(context['rate_dkk'])}</td><th>Marj (%)</th><td>{_esc(context['margin_percent_internal'])}</td></tr>
+      <tr><th>Ara Toplam</th><td>{_esc(context['net_amount_dkk'])} {_esc(context['currency_code'])}</td><th>KDV Oranı</th><td>{_esc(context['vat_rate_percent'])}%</td></tr>
+      <tr><th>KDV Tutarı</th><td>{_esc(context['vat_amount_dkk'])} {_esc(context['currency_code'])}</td><th>POS Kodu</th><td>{_esc(context['session_code'])}</td></tr>
+      <tr><th>Saf Gram</th><td>{_esc(context['pure_gold_grams'])}</td><th>Kalem Sayısı</th><td>{_esc(context.get('line_count', len(lines)))}</td></tr>
     </table>
 
-    <div class="total">{context.get('amount_label', 'Toplam Tutar')}: {context['gross_amount_dkk']} {context['currency_code']}</div>
-    <div class="note">Not: {context['notes']}</div>
+    <div class="total">{_esc(context.get('amount_label', 'Toplam Tutar'))}: {_esc(context['gross_amount_dkk'])} {_esc(context['currency_code'])}</div>
+    <div class="note">Not: {_esc(context['notes'])}</div>
   </div>
 </body>
 </html>"""
@@ -233,20 +250,20 @@ def render_pos_receipt_pdf(context: dict[str, Any]) -> bytes:
     supply_at_str = _format_datetime(context.get("supply_at"))
 
     elements: list[Any] = []
-    elements.append(Paragraph(f"<b>{context['shop_name']}</b>", styles["Title"]))
+    elements.append(Paragraph(f"<b>{_esc(context['shop_name'])}</b>", styles["Title"]))
     elements.append(
         Paragraph(
-            f"{context['shop_address']} · CVR: {context['shop_cvr']} · Tel: {context['shop_phone']} · E-posta: {context['shop_email']}",
+            f"{_esc(context['shop_address'])} · CVR: {_esc(context['shop_cvr'])} · Tel: {_esc(context['shop_phone'])} · E-posta: {_esc(context['shop_email'])}",
             styles["Normal"],
         )
     )
     elements.append(Spacer(1, 8))
-    elements.append(Paragraph(f"<b>{context['document_title']}:</b> {context['document_number']}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Düzenleme:</b> {generated_at_str}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Teslim/İşlem:</b> {supply_at_str}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>{_esc(context['document_title'])}:</b> {_esc(context['document_number'])}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Düzenleme:</b> {_esc(generated_at_str)}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Teslim/İşlem:</b> {_esc(supply_at_str)}", styles["Normal"]))
     elements.append(
         Paragraph(
-            f"<b>Kopya:</b> {context['copy_label']}",
+            f"<b>Kopya:</b> {_esc(context['copy_label'])}",
             styles["Normal"],
         )
     )
@@ -354,11 +371,11 @@ def render_pos_receipt_pdf(context: dict[str, Any]) -> bytes:
     elements.append(Spacer(1, 10))
     elements.append(
         Paragraph(
-            f"<b>{context.get('amount_label', 'Toplam Tutar')}:</b> {context['gross_amount_dkk']} {context['currency_code']}",
+            f"<b>{_esc(context.get('amount_label', 'Toplam Tutar'))}:</b> {_esc(context['gross_amount_dkk'])} {_esc(context['currency_code'])}",
             styles["Heading3"],
         )
     )
-    elements.append(Paragraph(f"Not: {context['notes']}", styles["Normal"]))
+    elements.append(Paragraph(f"Not: {_esc(context['notes'])}", styles["Normal"]))
 
     document.build(elements)
     payload.seek(0)

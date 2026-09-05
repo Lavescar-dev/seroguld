@@ -349,3 +349,49 @@ def test_render_pos_receipt_admin_keeps_receipt_layout():
     assert "Afregningsbilag" not in html
     pdf = render_pos_receipt_pdf(ctx)
     assert pdf.startswith(b"%PDF")
+
+
+def test_render_afg_html_escapes_customer_free_text():
+    """Stored XSS fix: purchase anında serbest metin girilen müşteri adı/
+    adresi HTML'e kaçışlı gömülür — '<img src=x onerror=...>' etiket olarak
+    parse edilemez. afregningsnr da kaçışlı basılır."""
+    ctx = _sample_context()
+    # afg.customer override'ı temizle → customer_ctx (gerçek giriş yolu) kullanılsın
+    afg_dict = dict(ctx["afg"])  # type: ignore[arg-type]
+    afg_dict["customer"] = {
+        **afg_dict["customer"],  # type: ignore[index]
+        "navn": None,
+        "adresse": None,
+    }
+    afg_dict["afregningsnr"] = "SG-2026<1>"
+    ctx["afg"] = afg_dict
+    ctx["customer"] = {
+        **ctx["customer"],  # type: ignore[assignment]
+        "name": "<img src=x onerror=alert(1)>",
+        "address": 'Nørre <b>gade</b> & "2. tv"',
+    }
+
+    html = render_afg_document_html(ctx)  # type: ignore[arg-type]
+    assert "<img src=x" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "Nørre &lt;b&gt;gade&lt;/b&gt; &amp; &quot;2. tv&quot;" in html
+    assert "SG-2026&lt;1&gt;" in html
+    # Şablon düzeni bozulmadı: Danca başlık + normal değerler yerinde.
+    assert "Afregningsbilag" in html
+    assert "Sterling sølv" in html
+
+
+def test_render_afg_pdf_survives_angle_bracket_customer_name():
+    """'<' içeren müşteri adı/kørekort reportlab mini-HTML parser'ını
+    düşürmemeli (eski halinde Paragraph parse hatası → 500)."""
+    ctx = _sample_context()
+    afg_dict = dict(ctx["afg"])  # type: ignore[arg-type]
+    afg_dict["customer"] = {
+        **afg_dict["customer"],  # type: ignore[index]
+        "navn": "Ada <Lovelace> & Søn",
+        "korekort": "KK<123>",
+    }
+    ctx["afg"] = afg_dict
+    payload = render_afg_document_pdf(ctx)  # type: ignore[arg-type]
+    assert payload.startswith(b"%PDF")
+    assert _pdf_page_count(payload) == 1

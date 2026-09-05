@@ -25,6 +25,7 @@ tarihi bölümüyle yazılır (`cpr_birth_part` — Excel yoluyla aynı minimiza
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from html import escape as _html_escape
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,22 @@ def _to_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, TypeError):
         return None
+
+
+def _esc(value: Any) -> str:
+    """HTML/XML metin kaçışı — kullanıcı kaynaklı TÜM değerler için zorunlu.
+
+    Stored XSS fix: AFG belgesindeki navn/adresse/tlf/email/kørekort ve
+    afregningsnr serbest metindir; kaçışsız f-string gömümü stored XSS'e
+    açıktır (ör. '<img src=x onerror=...>' müşteri adı). Aynı kaçış reportlab
+    Paragraph mini-XML parser'ı için de geçerlidir ('<' içeren ad PDF'i
+    düşürür) — quote=True reportlab 4.x'te güvenli.
+
+    DİKKAT: yalnız Paragraph(...) İÇİNE ve HTML f-string'lerine uygulayın;
+    reportlab Table düz string hücreleri entity parse ETMEZ — orada kaçış
+    çıktıyı bozar ('&amp;' diye basar). pos_receipt_renderer._esc ikizidir.
+    """
+    return _html_escape(str(value), quote=True)
 
 
 def _da_amount(value: Decimal | str | int | float | None, *, dash: str | None = None) -> str:
@@ -399,7 +416,7 @@ def render_afg_document_pdf(context: dict[str, Any]) -> bytes:
         brand_img.hAlign = "CENTER"
         story.append(brand_img)
         story.append(Spacer(1, 2))
-    brand_text = f"<para align='center'><b>{view['shop_name'].replace(' og Sølv ApS', '')}</b></para>"
+    brand_text = f"<para align='center'><b>{_esc(view['shop_name'].replace(' og Sølv ApS', ''))}</b></para>"
     story.append(Paragraph(brand_text, body_bold))
     story.append(
         Paragraph(
@@ -413,10 +430,10 @@ def render_afg_document_pdf(context: dict[str, Any]) -> bytes:
     story.append(
         Table(
             [
-                ["Navn:", Paragraph(str(customer["navn"]), body), "CPR nr.", Paragraph(str(customer["cpr"]), body)],
-                ["Adresse:", Paragraph(str(customer["adresse"]), body), customer["korekort_etiket"], Paragraph(str(customer["korekort"]), body)],
-                ["Postnr.:", Paragraph(str(customer["postnr"]), body), "Tlf.", Paragraph(str(customer["tlf"]), body)],
-                ["", "", "E-mail", Paragraph(str(customer["email"]), body)],
+                ["Navn:", Paragraph(_esc(customer["navn"]), body), "CPR nr.", Paragraph(_esc(customer["cpr"]), body)],
+                ["Adresse:", Paragraph(_esc(customer["adresse"]), body), customer["korekort_etiket"], Paragraph(_esc(customer["korekort"]), body)],
+                ["Postnr.:", Paragraph(_esc(customer["postnr"]), body), "Tlf.", Paragraph(_esc(customer["tlf"]), body)],
+                ["", "", "E-mail", Paragraph(_esc(customer["email"]), body)],
             ],
             colWidths=[54, 230, 78, 144],
             style=TableStyle(
@@ -441,9 +458,9 @@ def render_afg_document_pdf(context: dict[str, Any]) -> bytes:
     story.append(
         Table(
             [
-                [Paragraph(f"<b>{view['payment_label']}</b>", body_bold), _da_amount(view["overfoersel"]), "", "Subtotal", _da_amount(view["subtotal"])],
-                [Paragraph("<b>Reg.nr.</b>", body_bold), Paragraph(str(view["reg_display"] or ""), body), "", "Moms", _da_amount(view["moms"])],
-                [Paragraph("<b>Kontonr.:</b>", body_bold), Paragraph(str(view["konto_display"] or ""), body), "", Paragraph("<b>I alt</b>", body_bold), _da_amount(view["ialt"])],
+                [Paragraph(f"<b>{_esc(view['payment_label'])}</b>", body_bold), _da_amount(view["overfoersel"]), "", "Subtotal", _da_amount(view["subtotal"])],
+                [Paragraph("<b>Reg.nr.</b>", body_bold), Paragraph(_esc(view["reg_display"] or ""), body), "", "Moms", _da_amount(view["moms"])],
+                [Paragraph("<b>Kontonr.:</b>", body_bold), Paragraph(_esc(view["konto_display"] or ""), body), "", Paragraph("<b>I alt</b>", body_bold), _da_amount(view["ialt"])],
             ],
             colWidths=[70, 150, 20, 70, 96],
             style=TableStyle(
@@ -463,16 +480,17 @@ def render_afg_document_pdf(context: dict[str, Any]) -> bytes:
     story.append(Spacer(1, 16))
     story.append(Paragraph("Underskrift: ______________________________", body))
     story.append(Spacer(1, 8))
-    story.append(Paragraph(str(view["declaration_header"]), body))
+    story.append(Paragraph(_esc(view["declaration_header"]), body))
     for item in view["declaration_items"]:
-        story.append(Paragraph(item, small))
+        story.append(Paragraph(_esc(item), small))
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=1.4, color=colors.black))
     story.append(Spacer(1, 4))
+    # Footer bold bölme ham string üzerinde yapılır; parçalar ayrı kaçılır.
     shop_bold_name = str(view["shop_name"]).split(" og")[0]
     rest_of_line1 = str(view["footer_line1"])[len(shop_bold_name):]
-    story.append(Paragraph(f"<b>{shop_bold_name}</b>{rest_of_line1}", small))
-    story.append(Paragraph(f"<para align='center'>{view['footer_line2']}</para>", small))
+    story.append(Paragraph(f"<b>{_esc(shop_bold_name)}</b>{_esc(rest_of_line1)}", small))
+    story.append(Paragraph(f"<para align='center'>{_esc(view['footer_line2'])}</para>", small))
 
     frame_story = [
         KeepInFrame(
@@ -558,27 +576,27 @@ def render_afg_document_html(context: dict[str, Any]) -> str:
         row_open = f"<tr style=\"background:{fill}\">"
         rows_html.append(
             f"{row_open}"
-            f"<td>{row.get('type', '')}</td>"
-            f"<td>{row.get('karat', '')}</td>"
-            f"<td>{row.get('lodighed', '')}</td>"
-            f"<td>{_da_grams(weight)}</td>"
-            f"<td>{_da_amount(row.get('unit_price'), dash='–')}</td>"
-            f"<td>{_da_amount(total, dash='–') if filled else '–'}</td>"
+            f"<td>{_esc(row.get('type', ''))}</td>"
+            f"<td>{_esc(row.get('karat', ''))}</td>"
+            f"<td>{_esc(row.get('lodighed', ''))}</td>"
+            f"<td>{_esc(_da_grams(weight))}</td>"
+            f"<td>{_esc(_da_amount(row.get('unit_price'), dash='–'))}</td>"
+            f"<td>{_esc(_da_amount(total, dash='–') if filled else '–')}</td>"
             "</tr>"
         )
     rows_html.append(
         "<tr class=\"total\">"
         "<td><b>I alt</b></td><td></td><td></td>"
-        f"<td>{_da_grams(view['total_weight']) if view['total_weight'] else ''}</td><td></td>"
-        f"<td><b>{_da_amount(view['total_amount'], dash='')}</b></td>"
+        f"<td>{_esc(_da_grams(view['total_weight']) if view['total_weight'] else '')}</td><td></td>"
+        f"<td><b>{_esc(_da_amount(view['total_amount'], dash=''))}</b></td>"
         "</tr>"
     )
-    declaration_items = "".join(f"<div>{item}</div>" for item in view["declaration_items"])
+    declaration_items = "".join(f"<div>{_esc(item)}</div>" for item in view["declaration_items"])
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
   <meta charset="UTF-8" />
-  <title>Afregningsbilag {view['afregningsnr']}</title>
+  <title>Afregningsbilag {_esc(view['afregningsnr'])}</title>
   <style>
     @page {{ size: A4; margin: 12mm; }}
     body {{ font-family: Arial, sans-serif; margin: 24px; color: #111; }}
@@ -606,32 +624,32 @@ def render_afg_document_html(context: dict[str, Any]) -> str:
 <body>
   <div class="wrap">
     <h1>Afregningsbilag</h1>
-    <div class="nr">Afregningsnr. <b>{view['afregningsnr']}</b><br />Dato: {view['dato']}</div>
+    <div class="nr">Afregningsnr. <b>{_esc(view['afregningsnr'])}</b><br />Dato: {_esc(view['dato'])}</div>
     <div class="brand">
-      <div class="name">{view['shop_name'].split(' og')[0]}</div>
+      <div class="name">{_esc(view['shop_name'].split(' og')[0])}</div>
       <div class="tag">Din professionelle forhandler</div>
     </div>
     <table class="customer">
-      <tr><td>Navn:</td><td>{customer['navn']}</td><td>CPR nr.</td><td>{customer['cpr']}</td></tr>
-      <tr><td>Adresse:</td><td>{customer['adresse']}</td><td>{customer['korekort_etiket']}</td><td>{customer['korekort']}</td></tr>
-      <tr><td>Postnr.:</td><td>{customer['postnr']}</td><td>Tlf.</td><td>{customer['tlf']}</td></tr>
-      <tr><td></td><td></td><td>E-mail</td><td>{customer['email']}</td></tr>
+      <tr><td>Navn:</td><td>{_esc(customer['navn'])}</td><td>CPR nr.</td><td>{_esc(customer['cpr'])}</td></tr>
+      <tr><td>Adresse:</td><td>{_esc(customer['adresse'])}</td><td>{_esc(customer['korekort_etiket'])}</td><td>{_esc(customer['korekort'])}</td></tr>
+      <tr><td>Postnr.:</td><td>{_esc(customer['postnr'])}</td><td>Tlf.</td><td>{_esc(customer['tlf'])}</td></tr>
+      <tr><td></td><td></td><td>E-mail</td><td>{_esc(customer['email'])}</td></tr>
     </table>
     <table class="metal">
       <tr><th>Type</th><th>Karat / % Finhed</th><th>Lødighed</th><th>Vægt i g</th><th>Enhedspris / g</th><th>I alt</th></tr>
       {''.join(rows_html)}
     </table>
     <table class="pay">
-      <tr><td><b>{view['payment_label']}</b></td><td>{_da_amount(view['overfoersel'])}</td><td></td><td>Subtotal</td><td>{_da_amount(view['subtotal'])}</td></tr>
-      <tr><td><b>Reg.nr.</b></td><td>{view['reg_display']}</td><td></td><td>Moms</td><td>{_da_amount(view['moms'])}</td></tr>
-      <tr><td><b>Kontonr.:</b></td><td>{view['konto_display']}</td><td></td><td><b>I alt</b></td><td><b>{_da_amount(view['ialt'])}</b></td></tr>
+      <tr><td><b>{_esc(view['payment_label'])}</b></td><td>{_esc(_da_amount(view['overfoersel']))}</td><td></td><td>Subtotal</td><td>{_esc(_da_amount(view['subtotal']))}</td></tr>
+      <tr><td><b>Reg.nr.</b></td><td>{_esc(view['reg_display'])}</td><td></td><td>Moms</td><td>{_esc(_da_amount(view['moms']))}</td></tr>
+      <tr><td><b>Kontonr.:</b></td><td>{_esc(view['konto_display'])}</td><td></td><td><b>I alt</b></td><td><b>{_esc(_da_amount(view['ialt']))}</b></td></tr>
     </table>
     <div class="und">Underskrift: ______________________________</div>
     <div class="decl">
-      <div>{view['declaration_header']}</div>
+      <div>{_esc(view['declaration_header'])}</div>
       {declaration_items}
     </div>
-    <footer><b>{str(view['footer_line1']).split(' - ')[0]}</b> - {' - '.join(str(view['footer_line1']).split(' - ')[1:])}<br />{view['footer_line2']}</footer>
+    <footer><b>{_esc(str(view['footer_line1']).split(' - ')[0])}</b> - {_esc(' - '.join(str(view['footer_line1']).split(' - ')[1:]))}<br />{_esc(view['footer_line2'])}</footer>
   </div>
 </body>
 </html>"""
