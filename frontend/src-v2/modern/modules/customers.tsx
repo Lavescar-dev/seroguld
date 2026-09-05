@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { Check, ChevronDown, ChevronRight, Eye, Pencil, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Eye, Loader2, Pencil, Plus, RotateCcw, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 import type { ModernCustomersViewModel } from '@/modern/adapters/customers';
 import { formatDate, formatMoney, formatNumber, formatRelativeTime, labelMetalType } from '@/lib/format';
-import type { CustomerDraft } from '@/make/customers/types';
+import { deriveCustomersPhase } from '@/make/customers/useCustomersMakeState';
+import type { CustomerDraft, CustomerStatusFilter } from '@/make/customers/types';
 import type { PosDocumentDetail } from '@/types';
 import { CustomerWorkspacePanel } from '@/components/CustomerWorkspacePanel';
 
@@ -20,6 +21,7 @@ function CustomerDraftForm({
   onChange,
   onSave,
   onCancel,
+  isPending,
 }: {
   idPrefix: string;
   title: string;
@@ -27,7 +29,12 @@ function CustomerDraftForm({
   onChange: (field: keyof CustomerDraft, value: string) => void;
   onSave: () => void;
   onCancel: () => void;
+  isPending?: boolean;
 }) {
+  // A6-6: isPending hem tıkı hem form submit'ini (Enter) keser; zorunlu alan
+  // (ad, en az 2 karakter) dolmadan kaydet kapalıdır.
+  const pending = Boolean(isPending);
+  const canSave = draft.name.trim().length >= 2;
   const field = (key: keyof CustomerDraft, label: string, type = 'text') => {
     const id = `${idPrefix}-${key}`;
     return (
@@ -40,7 +47,10 @@ function CustomerDraftForm({
   return (
     <form
       className="mt-4 grid gap-3 rounded-sg-xl border border-sg-amber/20 bg-sg-amber-soft p-4 sm:grid-cols-2"
-      onSubmit={(event) => { event.preventDefault(); onSave(); }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!pending && canSave) onSave();
+      }}
     >
       <div className="sm:col-span-2"><p className="text-sm font-semibold text-sg-text">{title}</p></div>
       {field('name', 'Ad soyad')}
@@ -59,9 +69,15 @@ function CustomerDraftForm({
         </select>
       </label>
       {field('identity_doc_number', 'Belge numarası')}
-      <div className="flex items-end justify-end gap-2 sm:col-span-2">
-        <button type="button" onClick={onCancel} className={shellButtonClass('secondary')}><X className="h-4 w-4" />Vazgeç</button>
-        <button type="submit" className={shellButtonClass('primary')}><Check className="h-4 w-4" />Kaydet</button>
+      <div className="flex items-end justify-between gap-2 sm:col-span-2">
+        {!canSave ? <p className="text-xs text-sg-text-soft">Ad soyad zorunludur.</p> : <span />}
+        <div className="flex gap-2">
+          <button type="button" onClick={onCancel} disabled={pending} className={shellButtonClass('secondary')}><X className="h-4 w-4" />Vazgeç</button>
+          <button type="submit" disabled={pending || !canSave} className={shellButtonClass('primary')}>
+            {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            {pending ? 'Kaydediliyor…' : 'Kaydet'}
+          </button>
+        </div>
       </div>
     </form>
   );
@@ -72,6 +88,8 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
   const selected = state.selectedCustomer;
   const selectedPanelRef = useRef<HTMLDivElement | null>(null);
   const selectedId = state.selectedId ?? null;
+  // A6-5: loading / empty / no-results / ready — "veri yok" ile "veri alınamadı" ayrışır.
+  const phase = deriveCustomersPhase(state);
   useEffect(() => {
     // "Seç" panele odak: seçim küçük ekranlarda görünmeden değişebiliyordu.
     if (selectedId) selectedPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -91,8 +109,22 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
     >
       <ModernStatGrid items={viewModel.stats} />
 
-      {viewModel.phase === 'empty' ? (
+      {state.customersError ? (
+        <div className="rounded-sg-lg border border-sg-red/30 bg-sg-red-soft px-4 py-3">
+          <p className="text-sm font-semibold text-sg-red">Müşteriler yüklenemedi</p>
+          <p className="mt-1 text-xs text-sg-text-soft">Bağlantı sorunu olabilir; listeyi tekrar çekmeyi deneyin.</p>
+          <button type="button" onClick={state.onRetryCustomers} disabled={state.customersLoading} className={`${shellButtonClass('secondary')} mt-2`}>
+            Tekrar dene
+          </button>
+        </div>
+      ) : null}
+
+      {phase === 'loading' ? <LoadingState label="Müşteriler yükleniyor" /> : null}
+      {phase === 'empty' ? (
         <EmptyState title="Müşteri Yok" message="Henüz müşteri kaydı bulunmuyor. Yeni müşteri formunu açıp ilk kaydı ekleyebilirsiniz." />
+      ) : null}
+      {phase === 'no-results' ? (
+        <EmptyState title="Sonuç Bulunamadı" message={`"${state.search.trim()}" aramasıyla eşleşen müşteri yok.`} />
       ) : null}
 
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,0.85fr)]">
@@ -107,8 +139,23 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
             />
           </div>
 
-          {state.showNewRow ? <CustomerDraftForm idPrefix="new-customer" title="Yeni müşteri" draft={state.newDraft} onChange={state.onNewDraftChange} onSave={state.onSaveNew} onCancel={state.onToggleNewRow} /> : null}
-          {state.editingId ? <CustomerDraftForm idPrefix={`edit-customer-${state.editingId}`} title="Müşteriyi düzenle" draft={state.editDraft} onChange={state.onEditDraftChange} onSave={() => state.onSaveEdit(state.editingId!)} onCancel={state.onCancelEdit} /> : null}
+          {/* A6-3: pasif müşteriler filtresi — pasif kayıtlar listede soluk görünür. */}
+          <div className="mt-3 flex items-center gap-1" role="group" aria-label="Müşteri durum filtresi">
+            {([['active', 'Aktif'], ['inactive', 'Pasif'], ['all', 'Tümü']] as Array<[CustomerStatusFilter, string]>).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={state.customerStatus === value}
+                onClick={() => state.onCustomerStatusChange(value)}
+                className={state.customerStatus === value ? 'rounded-full bg-sg-accent px-3 py-1.5 text-xs font-semibold text-white' : 'rounded-full border border-sg-border px-3 py-1.5 text-xs text-sg-text-soft transition hover:bg-sg-surface-soft'}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {state.showNewRow ? <CustomerDraftForm idPrefix="new-customer" title="Yeni müşteri" draft={state.newDraft} onChange={state.onNewDraftChange} onSave={state.onSaveNew} onCancel={state.onToggleNewRow} isPending={state.isSavingNew} /> : null}
+          {state.editingId ? <CustomerDraftForm idPrefix={`edit-customer-${state.editingId}`} title="Müşteriyi düzenle" draft={state.editDraft} onChange={state.onEditDraftChange} onSave={() => state.onSaveEdit(state.editingId!)} onCancel={state.onCancelEdit} isPending={state.isUpdatingCustomer} /> : null}
 
           <div className="mt-4 hidden overflow-hidden rounded-sg-lg border border-sg-border lg:block">
             <table className="w-full table-fixed text-sm">
@@ -131,9 +178,11 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
               <tbody>
                 {state.customers.map((customer) => {
                   const isSelected = customer.id === state.selectedId;
+                  const isRowDeleting = state.deletingId === customer.id;
+                  const isRowReactivating = state.reactivatingId === customer.id;
                   return (
-                    <tr key={customer.id} className={`border-b border-sg-border-soft transition last:border-b-0 hover:bg-sg-surface-soft ${isSelected ? 'bg-sg-surface-accent shadow-[inset_3px_0_0_var(--sg-accent)]' : ''}`}>
-                      <td className="px-4 py-3.5 font-semibold text-sg-text"><span className="block truncate" title={customer.name || undefined}>{customer.name || '—'}</span></td>
+                    <tr key={customer.id} className={`border-b border-sg-border-soft transition last:border-b-0 hover:bg-sg-surface-soft ${isSelected ? 'bg-sg-surface-accent shadow-[inset_3px_0_0_var(--sg-accent)]' : ''} ${!customer.is_active && !isSelected ? 'opacity-60 saturate-50' : ''}`}>
+                      <td className="px-4 py-3.5 font-semibold text-sg-text"><span className="block truncate" title={customer.name || undefined}>{customer.name || '—'}{!customer.is_active ? <span className="ml-2 rounded-full border border-sg-border bg-sg-surface px-2 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft">Pasif</span> : null}</span></td>
                       <td className="px-3 py-3.5 font-mono text-xs tabular-nums text-sg-text">{customer.cpr_number || customer.cpr_number_masked || '—'}</td>
                       <td className="whitespace-nowrap px-3 py-3.5 text-sg-text-soft">{customer.phone || '—'}</td>
                       <td className="px-3 py-3.5 text-sg-text-soft"><span className="block truncate" title={customer.email || undefined}>{customer.email || '—'}</span></td>
@@ -141,7 +190,15 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                         <div className="flex items-center justify-end gap-1.5">
                           <button type="button" onClick={() => state.onSelectCustomer(customer.id)} className={shellButtonClass(isSelected ? 'secondary' : 'ghost')}>{isSelected ? 'Seçili' : 'Seç'}</button>
                           <button type="button" title="Düzenle" aria-label={`${customer.name || 'Müşteri'} düzenle`} onClick={() => state.onStartEdit(customer)} className={customerIconActionClass}><Pencil className="h-3.5 w-3.5" /></button>
-                          <button type="button" title="Pasife al" aria-label={`${customer.name || 'Müşteri'} pasife al`} onClick={() => { if (window.confirm(`${customer.name || 'Bu müşteri'} pasife alınsın mı?`)) state.onDelete(customer); }} className={customerIconActionClass}><Trash2 className="h-3.5 w-3.5" /></button>
+                          {!customer.is_active ? (
+                            <button type="button" title="Yeniden aktifleştir" aria-label={`${customer.name || 'Müşteri'} yeniden aktifleştir`} onClick={() => state.onReactivate(customer)} disabled={isRowReactivating} className={customerIconActionClass}>
+                              <RotateCcw className={`h-3.5 w-3.5 ${isRowReactivating ? 'animate-spin' : ''}`} />
+                            </button>
+                          ) : (
+                            <button type="button" title="Pasife al" aria-label={`${customer.name || 'Müşteri'} pasife al`} disabled={isRowDeleting} onClick={() => { if (window.confirm(`${customer.name || 'Bu müşteri'} pasife alınsın mı?`)) state.onDelete(customer); }} className={customerIconActionClass}>
+                              <Trash2 className={`h-3.5 w-3.5 ${isRowDeleting ? 'animate-pulse' : ''}`} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -154,14 +211,17 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
           <div className="mt-4 grid gap-3 lg:hidden">
             {state.customers.map((customer) => {
               const isSelected = customer.id === state.selectedId;
+              const isRowDeleting = state.deletingId === customer.id;
+              const isRowReactivating = state.reactivatingId === customer.id;
               return (
-                <article key={customer.id} className={`rounded-sg-lg border bg-sg-surface p-4 shadow-sm ${isSelected ? 'border-sg-accent/45 ring-2 ring-sg-accent/10' : 'border-sg-border'}`}>
+                <article key={customer.id} className={`rounded-sg-lg border bg-sg-surface p-4 shadow-sm ${isSelected ? 'border-sg-accent/45 ring-2 ring-sg-accent/10' : 'border-sg-border'} ${!customer.is_active && !isSelected ? 'opacity-60 saturate-50' : ''}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-base font-semibold text-sg-text">{customer.name || '—'}</p>
                       <p className="mt-1 font-mono text-xs tabular-nums text-sg-text-soft">{customer.cpr_number || customer.cpr_number_masked || 'CPR yok'}</p>
                     </div>
                     {isSelected ? <span className="rounded-full bg-sg-surface-accent px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-accent-dark">Seçili</span> : null}
+                    {!customer.is_active ? <span className="rounded-full border border-sg-border bg-sg-surface-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-sg-text-soft">Pasif</span> : null}
                   </div>
                   <dl className="mt-4 grid gap-2 border-t border-sg-border-soft pt-3 text-sm sm:grid-cols-2">
                     <MobileRow label="Telefon" value={customer.phone || '—'} />
@@ -170,7 +230,15 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                   <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-sg-border-soft pt-3">
                     <button type="button" onClick={() => state.onSelectCustomer(customer.id)} className={shellButtonClass(isSelected ? 'secondary' : 'primary')}>{isSelected ? 'Seçili müşteri' : 'Müşteriyi seç'}</button>
                     <button type="button" aria-label={`${customer.name || 'Müşteri'} düzenle`} onClick={() => state.onStartEdit(customer)} className={customerIconActionClass}><Pencil className="h-3.5 w-3.5" /></button>
-                    <button type="button" aria-label={`${customer.name || 'Müşteri'} pasife al`} onClick={() => { if (window.confirm(`${customer.name || 'Bu müşteri'} pasife alınsın mı?`)) state.onDelete(customer); }} className={customerIconActionClass}><Trash2 className="h-3.5 w-3.5" /></button>
+                    {!customer.is_active ? (
+                      <button type="button" aria-label={`${customer.name || 'Müşteri'} yeniden aktifleştir`} onClick={() => state.onReactivate(customer)} disabled={isRowReactivating} className={customerIconActionClass}>
+                        <RotateCcw className={`h-3.5 w-3.5 ${isRowReactivating ? 'animate-spin' : ''}`} />
+                      </button>
+                    ) : (
+                      <button type="button" aria-label={`${customer.name || 'Müşteri'} pasife al`} disabled={isRowDeleting} onClick={() => { if (window.confirm(`${customer.name || 'Bu müşteri'} pasife alınsın mı?`)) state.onDelete(customer); }} className={customerIconActionClass}>
+                        <Trash2 className={`h-3.5 w-3.5 ${isRowDeleting ? 'animate-pulse' : ''}`} />
+                      </button>
+                    )}
                   </div>
                 </article>
               );
@@ -248,8 +316,21 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
               <CustomerWorkspacePanel customerId={selected.id} customerName={selected.name || 'Müşteri'} />
 
               <div className="mt-4 grid gap-3">
+                {/* A6-5: geçmiş sorgusu hata + ortak retry; "kayıt yok" ile karışmaz. */}
+                {state.isHistoryError ? (
+                  <div className="rounded-sg-lg border border-sg-red/30 bg-sg-red-soft px-4 py-3 text-center">
+                    <p className="text-sm font-semibold text-sg-red">Alış geçmişi yüklenemedi</p>
+                    <button type="button" onClick={() => state.onRetryDocumentQuery('history')} disabled={state.isHistoryLoading} className={`${shellButtonClass('secondary')} mt-2`}>
+                      Tekrar dene
+                    </button>
+                  </div>
+                ) : null}
+                {!state.isHistoryError && state.isHistoryLoading && !state.historyItems.length ? (
+                  <LoadingState label="Alış geçmişi yükleniyor" />
+                ) : null}
                 {state.historyItems.map((item) => {
                   const isExpanded = state.expandedSequenceNo === item.sequence_no;
+                  const isPreviewPending = state.previewLoading && state.previewSequenceNo === item.sequence_no;
                   return (
                     <div key={item.sequence_no} className="rounded-sg-lg border border-sg-border bg-sg-surface-soft p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -262,8 +343,8 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                             {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                             Detay
                           </button>
-                          <button type="button" onClick={() => state.onPreviewOpen(item.sequence_no)} className={shellButtonClass('secondary')}>
-                            <Eye className="h-4 w-4" />
+                          <button type="button" onClick={() => state.onPreviewOpen(item.sequence_no)} disabled={isPreviewPending} className={shellButtonClass('secondary')}>
+                            {isPreviewPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
                             Önizleme
                           </button>
                         </div>
@@ -275,7 +356,14 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
                       </dl>
                       {isExpanded ? (
                         <div className="mt-3 border-t border-sg-border pt-3">
-                          {!state.expandedDetail ? (
+                          {state.expandedDetailError ? (
+                            <div>
+                              <p className="text-sm font-semibold text-sg-red">Belge detayı yüklenemedi.</p>
+                              <button type="button" onClick={() => state.onRetryDocumentQuery('expanded-detail')} disabled={state.expandedDetailLoading} className={`${shellButtonClass('secondary')} mt-2`}>
+                                Tekrar dene
+                              </button>
+                            </div>
+                          ) : !state.expandedDetail ? (
                             <p className="text-sm text-sg-text-soft">Belge detayı yükleniyor…</p>
                           ) : state.expandedDetail.lines.length === 0 ? (
                             <p className="text-sm text-sg-text-soft">Bu belgede ürün satırı yok.</p>
@@ -311,8 +399,11 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
 
       {state.previewSequenceNo !== null ? (
         <ModernAfgPreviewDrawer
+          sequenceNo={state.previewSequenceNo}
           detail={state.previewDetail}
           loading={state.previewLoading}
+          error={state.previewError}
+          onRetry={() => state.onRetryDocumentQuery('preview')}
           onClose={state.onPreviewClose}
         />
       ) : null}
@@ -321,22 +412,38 @@ export function ModernCustomersModule({ viewModel }: { viewModel: ModernCustomer
 }
 
 function ModernAfgPreviewDrawer({
+  sequenceNo,
   detail,
   loading,
+  error,
+  onRetry,
   onClose,
 }: {
+  sequenceNo: number;
   detail: PosDocumentDetail | null;
   loading: boolean;
+  error: boolean;
+  onRetry: () => void;
   onClose: () => void;
 }) {
   return (
     <ModernDrawer
-      open={Boolean(detail)}
-      title={detail?.document_number || 'Belge önizleme'}
+      // A6-7: drawer detay gelene kadar da AÇIKTIR — loading/error yüzeyiyle;
+      // hata sessiz kalmaz, Önceki "detay yok → drawer hiç açılmıyor" tuzağı bitti.
+      open
+      title={detail?.document_number || `Belge önizleme #${sequenceNo}`}
       description={detail ? `${formatDate(detail.issued_at)} · ${detail.customer_name || '—'}` : undefined}
       onClose={onClose}
     >
-      {loading || !detail ? (
+      {error ? (
+        <div className="rounded-sg-lg border border-sg-red/30 bg-sg-red-soft p-4 text-center">
+          <p className="text-sm font-semibold text-sg-red">Belge yüklenemedi</p>
+          <p className="mt-1 text-xs text-sg-text-soft">Belge detayı alınırken bir sorun oluştu.</p>
+          <button type="button" onClick={onRetry} disabled={loading} className={`${shellButtonClass('secondary')} mt-2`}>
+            Tekrar dene
+          </button>
+        </div>
+      ) : loading || !detail ? (
         <LoadingState label="Belge yükleniyor" />
       ) : (
         <>

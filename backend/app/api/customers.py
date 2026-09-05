@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from math import ceil
 import re
+import secrets
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -233,13 +234,40 @@ async def get_customers(
     )
 
 
+async def _inactive_email_conflict_or_original(db: AsyncSession, email: str | None, exc: HTTPException) -> HTTPException:
+    """A6-3: 409 e-posta çakışmasını pasif kayıt ipucuyla zenginleştir.
+
+    Pasife alınan müşteriye aynı e-postayla yeni kayıt açılamaz (unique e-posta);
+    mesaj bunun pasif bir kayıt olduğunu ve yeniden aktifleştirme yolunu gösterir.
+    """
+    if exc.status_code != status.HTTP_409_CONFLICT:
+        return exc
+    normalized = (email or "").strip().lower()
+    if not normalized:
+        return exc
+    await db.rollback()
+    existing = await db.scalar(select(User).where(User.role == RoleEnum.CUSTOMER, User.email == normalized))
+    if existing is not None and not existing.is_active:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Bu e-posta pasife alınmış bir müşteri kaydında kayıtlı. Yeni kayıt açmak yerine "
+                "müşteriyi 'Pasif' filtresinden bulup 'Yeniden aktifleştir' ile geri açabilirsiniz."
+            ),
+        )
+    return exc
+
+
 @router.post("", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)
 async def post_customer(
     payload: CustomerCreate,
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> CustomerOut:
-    customer = await create_customer(db, payload)
+    try:
+        customer = await create_customer(db, payload)
+    except HTTPException as exc:
+        raise await _inactive_email_conflict_or_original(db, str(payload.email) if payload.email else None, exc) from exc
     await db.commit()
     await db.refresh(customer)
     return await to_customer_out(db, customer)
@@ -337,7 +365,12 @@ async def import_woocommerce_customers(
     skipped = 0
     imported_customer_ids: list[str] = []
     errors: list[str] = []
-    default_password = _env_value("CUSTOMER_IMPORT_DEFAULT_PASSWORD") or "WooImport123!"
+    # A6-1: kod içine gömülü "WooImport123!" fallback'i kaldırıldı. .env okunamazsa
+    # içe aktarım sessizce bilinen bir şifreye düşemez — tek seferlik rastgele şifre
+    # üretilir ve içe aktarılan müşteri must_change_password ile ilk girişte
+    # değiştirmeye zorlanır.
+    env_password = _env_value("CUSTOMER_IMPORT_DEFAULT_PASSWORD")
+    import_password = env_password or secrets.token_urlsafe(16)
 
     for wc_customer in wc_customers:
         wc_id = int(wc_customer.get("id") or 0)
@@ -359,13 +392,21 @@ async def import_woocommerce_customers(
                 )
 
             if existing:
-                update_payload = CustomerUpdate(
-                    name=name,
-                    email=email,
-                    phone=phone,
-                    address=address,
-                    is_active=True,
-                )
+                # A6-2: güncelleme payload'ı yalnız Woo'dan GELEN dolu alanlarla
+                # kurulur — eksik Woo alanı (None) yerel değeri NULL'a çekmez,
+                # is_active üzerine yazılmaz (pasif müşteri sessizce açılmaz).
+                # Kaynaktan zorla eşitleme ancak açık bayrakla (force_source_values).
+                update_fields: dict[str, Any] = {"name": name, "email": email}
+                if payload.force_source_values:
+                    update_fields["phone"] = phone
+                    update_fields["address"] = address
+                    update_fields["is_active"] = True
+                else:
+                    if phone is not None:
+                        update_fields["phone"] = phone
+                    if address is not None:
+                        update_fields["address"] = address
+                update_payload = CustomerUpdate(**update_fields)
                 updated_user = await update_customer(db, existing, update_payload)
                 updated_user.woocommerce_customer_id = str(wc_id) if wc_id > 0 else updated_user.woocommerce_customer_id
                 await db.commit()
@@ -379,10 +420,11 @@ async def import_woocommerce_customers(
                 email=email,
                 phone=phone,
                 address=address,
-                password=default_password,
+                password=import_password,
             )
             created_user = await create_customer(db, create_payload)
             created_user.woocommerce_customer_id = str(wc_id) if wc_id > 0 else None
+            created_user.must_change_password = True
             await db.commit()
             await db.refresh(created_user)
             created += 1
@@ -555,7 +597,10 @@ async def put_customer(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
-    customer = await update_customer(db, customer, payload)
+    try:
+        customer = await update_customer(db, customer, payload)
+    except HTTPException as exc:
+        raise await _inactive_email_conflict_or_original(db, str(payload.email) if payload.email else None, exc) from exc
     await db.commit()
     await db.refresh(customer)
     return await to_customer_out(db, customer)

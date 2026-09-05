@@ -6,7 +6,15 @@ import { apiRequest, localizeApiError } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import type { CustomerDetailOut, CustomerOut, LogWorkspace, PaginatedResponse, PosDocumentDetail, PosDocumentListItem } from '@/types';
 
-import { EMPTY_DRAFT, type CustomerDraft, type CustomerHistoryLogMeta, type CustomersPageProps } from './types';
+import {
+  EMPTY_DRAFT,
+  type CustomerDraft,
+  type CustomerDocumentQueryTarget,
+  type CustomerHistoryLogMeta,
+  type CustomersPageProps,
+  type CustomersPhase,
+  type CustomerStatusFilter,
+} from './types';
 
 function cleanDraft(draft: CustomerDraft) {
   return {
@@ -22,6 +30,14 @@ function cleanDraft(draft: CustomerDraft) {
   };
 }
 
+/** A6-5: adapter phase — yükleniyor / boş / arama boş / hazır ayrımı. */
+export function deriveCustomersPhase(state: Pick<CustomersPageProps, 'customersLoading' | 'customersError' | 'customers' | 'search'>): CustomersPhase {
+  if (state.customersError) return 'ready';
+  if (state.customersLoading) return 'loading';
+  if (state.customers.length > 0) return 'ready';
+  return state.search.trim().length >= 2 ? 'no-results' : 'empty';
+}
+
 export function useCustomersMakeState(): CustomersPageProps {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -29,8 +45,11 @@ export function useCustomersMakeState(): CustomersPageProps {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
+  const [customerStatus, setCustomerStatus] = useState<CustomerStatusFilter>('active');
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('customer'));
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
   const [expandedSequenceNo, setExpandedSequenceNo] = useState<number | null>(null);
   const [previewSequenceNo, setPreviewSequenceNo] = useState<number | null>(null);
   const [showNewRow, setShowNewRow] = useState(false);
@@ -53,13 +72,15 @@ export function useCustomersMakeState(): CustomersPageProps {
   }
 
   const customersQuery = useQuery({
-    queryKey: ['customers', search, customerPage],
+    queryKey: ['customers', search, customerPage, customerStatus],
     queryFn: async () => {
       if (search.trim().length >= 2) {
-        return await apiRequest<CustomerOut[]>(`/api/v2/musteriler/search?q=${encodeURIComponent(search.trim())}`);
+        return await apiRequest<CustomerOut[]>(
+          `/api/v2/musteriler/search?q=${encodeURIComponent(search.trim())}&status=${customerStatus}`,
+        );
       }
       return await apiRequest<PaginatedResponse<CustomerOut>>(
-        `/api/v2/musteriler?page=${customerPage}&page_size=100`,
+        `/api/v2/musteriler?page=${customerPage}&page_size=100&status=${customerStatus}`,
       );
     },
   });
@@ -143,6 +164,22 @@ export function useCustomersMakeState(): CustomersPageProps {
     },
     onError: (error) => {
       toast.error('Müşteri pasife alınamadı', localizeApiError(error));
+    },
+  });
+
+  // A6-3: pasife alınan kaydı geri açma (PUT is_active=true).
+  const reactivateMutation = useMutation({
+    mutationFn: (customerId: string) =>
+      apiRequest<CustomerOut>(`/api/v2/musteriler/${customerId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_active: true }),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
+      await queryClient.invalidateQueries({ queryKey: ['customers', 'detail'] });
+    },
+    onError: (error) => {
+      toast.error('Müşteri aktifleştirilemedi', localizeApiError(error));
     },
   });
 
@@ -233,6 +270,17 @@ export function useCustomersMakeState(): CustomersPageProps {
     onCustomerPageChange: (page) => {
       setCustomerPage(Math.max(1, Math.min(page, customerTotalPages)));
     },
+    // A6-5: liste yüzeyi — iskelet + hata bandı + retry.
+    customersLoading: customersQuery.isLoading,
+    customersError: customersQuery.isError,
+    onRetryCustomers: () => {
+      void customersQuery.refetch();
+    },
+    customerStatus,
+    onCustomerStatusChange: (nextStatus) => {
+      setCustomerStatus(nextStatus);
+      setCustomerPage(1);
+    },
     selectedId,
     onSelectCustomer: (customerId) => {
       // R2-02: müşteri seçimi yeni-müşteri formunu kapatır (tek mod).
@@ -282,10 +330,40 @@ export function useCustomersMakeState(): CustomersPageProps {
         identity_doc_country: customer.identity_doc_country || 'DK',
       });
     },
-    onDelete: (customer) => deleteMutation.mutate(customer.id),
+    // A6-6: deletingId yalnız ilgili satırı kilitler; diğer satırlar erişilebilir kalır.
+    onDelete: (customer) => {
+      setDeletingId(customer.id);
+      deleteMutation.mutate(customer.id, {
+        onSettled: () => {
+          setDeletingId((current) => (current === customer.id ? null : current));
+        },
+      });
+    },
     isDeletingCustomer: deleteMutation.isPending,
+    deletingId,
+    onReactivate: (customer) => {
+      setReactivatingId(customer.id);
+      reactivateMutation.mutate(customer.id, {
+        onSettled: () => {
+          setReactivatingId((current) => (current === customer.id ? null : current));
+        },
+      });
+    },
+    reactivatingId,
     selectedCustomer,
     historyItems,
+    // A6-5: geçmiş / detay-satırı / preview için isError+refetch tabanlı ortak retry.
+    isHistoryLoading: historyQuery.isLoading,
+    isHistoryError: historyQuery.isError,
+    onRetryDocumentQuery: (target: CustomerDocumentQueryTarget) => {
+      if (target === 'history') {
+        void historyQuery.refetch();
+      } else if (target === 'expanded-detail') {
+        void expandedDetailQuery.refetch();
+      } else {
+        void previewDetailQuery.refetch();
+      }
+    },
     historySummary,
     historyLogMeta,
     expandedSequenceNo,
@@ -295,12 +373,15 @@ export function useCustomersMakeState(): CustomersPageProps {
       expandedSequenceNo !== null && expandedDetailQuery.data?.sequence_no === expandedSequenceNo
         ? expandedDetailQuery.data
         : null,
+    expandedDetailLoading: expandedSequenceNo !== null && expandedDetailQuery.isLoading,
+    expandedDetailError: expandedSequenceNo !== null && expandedDetailQuery.isError,
     previewSequenceNo,
     previewDetail:
       previewSequenceNo !== null && previewDetailQuery.data?.sequence_no === previewSequenceNo
         ? previewDetailQuery.data
         : null,
     previewLoading: previewSequenceNo !== null && previewDetailQuery.isLoading,
+    previewError: previewSequenceNo !== null && previewDetailQuery.isError,
     onPreviewOpen: setPreviewSequenceNo,
     onPreviewClose: () => setPreviewSequenceNo(null),
   };

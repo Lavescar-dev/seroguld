@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import {
   Calendar,
   Check,
@@ -14,6 +14,7 @@ import {
   Phone,
   Plus,
   Printer,
+  RotateCcw,
   Search,
   Trash2,
   X,
@@ -96,11 +97,21 @@ function DraftRow({
   saveLabel: string;
   isSaving?: boolean;
 }) {
+  // A6-6: zorunlu alan (ad, en az 2 karakter) dolmadan ve istek sürerken kaydet kapalı;
+  // isPending hem tıkı hem Enter'ı keser.
+  const canSave = draft.name.trim().length >= 2;
+  const handleRowKeyDown = (event: ReactKeyboardEvent<HTMLTableRowElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      if (!isSaving && canSave) onSave();
+    }
+  };
+  const saveHint = isSaving ? 'Kaydediliyor…' : canSave ? undefined : 'Ad soyad zorunlu';
   return (
-    <tr className="bg-amber-50">
+    <tr className="bg-amber-50" onKeyDown={handleRowKeyDown}>
       <td className="border border-brand-300 px-3 py-2 text-center text-xs font-bold text-brand-600">+</td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input aria-label="Müşteri adı" value={draft.name} onChange={(event) => onChange('name', event.target.value)} className={cellInput} />
+        <input aria-label="Müşteri adı" required value={draft.name} onChange={(event) => onChange('name', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
         <input aria-label="CPR" value={draft.cpr_number} onChange={(event) => onChange('cpr_number', event.target.value)} className={cellInput} />
@@ -134,10 +145,21 @@ function DraftRow({
           />
         </div>
       </td>
-      <td className="border border-brand-300 px-2 py-2 text-xs text-brand-500">{saveLabel}</td>
+      <td className="border border-brand-300 px-2 py-2 text-xs text-brand-500">
+        {saveLabel}
+        {saveHint ? <span className="block text-[10px] text-amber-700">{saveHint}</span> : null}
+      </td>
       <td className="border border-brand-300 px-2 py-2">
         <div className="flex items-center justify-center space-x-1">
-          <button type="button" aria-label={`${saveLabel} kaydet`} title={`${saveLabel} kaydet`} onClick={onSave} disabled={isSaving} className="p-1 text-green-700 transition-colors hover:text-green-900 disabled:cursor-not-allowed disabled:opacity-50">
+          <button
+            type="button"
+            aria-label={`${saveLabel} kaydet`}
+            title={canSave ? `${saveLabel} kaydet (Enter)` : 'Ad soyad zorunlu (en az 2 karakter)'}
+            onClick={onSave}
+            disabled={isSaving || !canSave}
+            aria-disabled={isSaving || !canSave}
+            className="p-1 text-green-700 transition-colors hover:text-green-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             <Check className="h-4 w-4" />
           </button>
           <button type="button" aria-label="Düzenlemeyi iptal et" title="Düzenlemeyi iptal et" onClick={onCancel} className="p-1 text-brand-400 transition-colors hover:text-brand-700">
@@ -153,11 +175,15 @@ function AfgPreviewModal({
   sequenceNo,
   detail,
   isLoading,
+  isError,
+  onRetry,
   onClose,
 }: {
   sequenceNo: number;
   detail: PosDocumentDetail | null;
   isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -208,9 +234,23 @@ function AfgPreviewModal({
           <div className="p-6">
             <div className="border border-brand-200 bg-brand-50 px-4 py-5 text-center">
               <p className="text-[10px] font-black uppercase tracking-widest text-brand-500">Belge Durumu</p>
-              <p className="mt-2 text-sm font-semibold text-brand-700">
-                {isLoading ? 'Belge detaylari hazirlaniyor' : `Belge bulunamadi (#${sequenceNo})`}
-              </p>
+              {isError ? (
+                <>
+                  <p className="mt-2 text-sm font-semibold text-red-700">Belge yüklenemedi (#${sequenceNo})</p>
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={isLoading}
+                    className="mt-3 border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Tekrar dene
+                  </button>
+                </>
+              ) : (
+                <p className="mt-2 text-sm font-semibold text-brand-700">
+                  {isLoading ? 'Belge detaylari hazirlaniyor' : `Belge bulunamadi (#${sequenceNo})`}
+                </p>
+              )}
             </div>
           </div>
         ) : (
@@ -393,6 +433,9 @@ function IdentityRow({
 function FragmentRow({
   summary,
   detail,
+  detailLoading,
+  detailError,
+  onRetryDetail,
   logMeta,
   isEven,
   isExpanded,
@@ -401,6 +444,9 @@ function FragmentRow({
 }: {
   summary: PosDocumentListItem;
   detail: PosDocumentDetail | null;
+  detailLoading?: boolean;
+  detailError?: boolean;
+  onRetryDetail?: () => void;
   logMeta?: CustomerHistoryLogMeta;
   isEven: boolean;
   isExpanded: boolean;
@@ -460,7 +506,21 @@ function FragmentRow({
                 <p className="mb-2 text-xs font-black uppercase tracking-widest text-brand-500">Urunler / Produkter</p>
                 {!detail ? (
                   <div className="border border-brand-200 bg-white px-3 py-2 text-xs text-brand-500">
-                    Belge detaylari yuklenirken history satiri acik tutuluyor.
+                    {detailError ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-red-700">Belge detayı yüklenemedi.</span>
+                        <button
+                          type="button"
+                          onClick={onRetryDetail}
+                          disabled={detailLoading}
+                          className="border border-brand-300 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Tekrar dene
+                        </button>
+                      </div>
+                    ) : (
+                      'Belge detaylari yuklenirken history satiri acik tutuluyor.'
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -561,6 +621,15 @@ export function CustomersPage({
   search,
   onSearchChange,
   customers,
+  totalCustomers,
+  customerPage,
+  customerTotalPages,
+  onCustomerPageChange,
+  customersLoading,
+  customersError,
+  onRetryCustomers,
+  customerStatus,
+  onCustomerStatusChange,
   selectedId,
   onSelectCustomer,
   editingId,
@@ -578,20 +647,30 @@ export function CustomersPage({
   onStartEdit,
   onDelete,
   isDeletingCustomer,
+  deletingId,
+  onReactivate,
+  reactivatingId,
   selectedCustomer,
   historyItems,
+  isHistoryLoading,
+  isHistoryError,
+  onRetryDocumentQuery,
   historySummary,
   historyLogMeta,
   expandedSequenceNo,
   onToggleHistory,
   expandedDetail,
+  expandedDetailLoading,
+  expandedDetailError,
   previewSequenceNo,
   previewDetail,
   previewLoading,
+  previewError,
   onPreviewOpen,
   onPreviewClose,
 }: CustomersPageProps) {
   const confirm = useConfirm();
+  const isSearchMode = search.trim().length >= 2;
   return (
     <div className="flex min-h-full flex-col bg-white">
       {previewSequenceNo !== null ? (
@@ -599,6 +678,8 @@ export function CustomersPage({
           sequenceNo={previewSequenceNo}
           detail={previewDetail}
           isLoading={previewLoading}
+          isError={previewError}
+          onRetry={() => onRetryDocumentQuery('preview')}
           onClose={onPreviewClose}
         />
       ) : null}
@@ -642,15 +723,38 @@ export function CustomersPage({
               />
             </div>
           ) : null}
-          <div className="flex flex-shrink-0 items-center bg-brand-800 px-4 py-2">
+          <div className="flex flex-shrink-0 flex-wrap items-center gap-4 bg-brand-800 px-4 py-2">
             <span className="text-xs font-semibold text-brand-400">
-              Toplam: <span className="font-mono font-black text-brand-200">{customers.length}</span> müşteri
+              {/* A6-4: rozet sayfalanan toplamı gösterir, yalnız elde edilen sayfayı değil. */}
+              Toplam: <span className="font-mono font-black text-brand-200">{totalCustomers}</span> müşteri
             </span>
-            {search ? (
-              <span className="ml-4 text-xs text-brand-400">
+            {isSearchMode ? (
+              <span className="text-xs text-brand-400">
                 Filtre: <span className="font-mono font-black text-brand-200">{customers.length}</span>
               </span>
             ) : null}
+            {/* A6-3: pasif müşteriler filtresi — listede soluk görünür, geri açılabilir. */}
+            <div className="ml-auto flex items-center gap-1" role="group" aria-label="Müşteri durum filtresi">
+              {([
+                ['active', 'Aktif'],
+                ['inactive', 'Pasif'],
+                ['all', 'Tümü'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onCustomerStatusChange(value)}
+                  aria-pressed={customerStatus === value}
+                  className={`px-2 py-0.5 text-xs font-bold transition-colors ${
+                    customerStatus === value
+                      ? 'bg-amber-500 text-brand-900'
+                      : 'text-brand-400 hover:bg-brand-700 hover:text-brand-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto">
@@ -681,10 +785,39 @@ export function CustomersPage({
                   />
                 ) : null}
 
-                {!customers.length && !showNewRow ? (
+                {!customers.length && !showNewRow && customersLoading ? (
+                  [0, 1, 2, 3, 4].map((row) => (
+                    <tr key={`customers-skeleton-${row}`} aria-hidden="true">
+                      {Array.from({ length: 10 }, (_cell, cell) => (
+                        <td key={cell} className="border border-brand-200 px-3 py-3">
+                          <div className="h-3.5 w-full animate-pulse bg-brand-100" />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                ) : null}
+
+                {!customers.length && !showNewRow && customersError ? (
+                  <tr>
+                    <td colSpan={10} className="px-6 py-8 text-center">
+                      <p className="text-sm font-semibold text-red-700">Müşteriler yüklenemedi</p>
+                      <p className="mt-1 text-xs text-brand-500">Bağlantı sorunu olabilir; listeyi tekrar çekmeyi deneyin.</p>
+                      <button
+                        type="button"
+                        onClick={onRetryCustomers}
+                        disabled={customersLoading}
+                        className="mt-3 border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Tekrar dene
+                      </button>
+                    </td>
+                  </tr>
+                ) : null}
+
+                {!customers.length && !showNewRow && !customersLoading && !customersError ? (
                   <tr>
                     <td colSpan={10} className="px-6 py-12 text-center text-sm text-brand-400">
-                      {search ? 'Arama sonucu bulunamadı' : 'Henüz kayıtlı müşteri yok'}
+                      {isSearchMode ? 'Arama sonucu bulunamadı' : 'Henüz kayıtlı müşteri yok'}
                     </td>
                   </tr>
                 ) : null}
@@ -692,6 +825,8 @@ export function CustomersPage({
                 {customers.map((customer, index) => {
                   const isSelected = selectedId === customer.id;
                   const isEditing = editingId === customer.id;
+                  const isRowDeleting = deletingId === customer.id;
+                  const isRowReactivating = reactivatingId === customer.id;
                   const rowTone = isSelected
                     ? 'bg-brand-800 text-white'
                     : index % 2 === 0
@@ -716,13 +851,18 @@ export function CustomersPage({
                     <tr
                       key={customer.id}
                       onClick={() => onSelectCustomer(customer.id)}
-                      className={`cursor-pointer border-b border-brand-200 transition-colors ${rowTone}`}
+                      className={`cursor-pointer border-b border-brand-200 transition-colors ${rowTone} ${!customer.is_active && !isSelected ? 'opacity-60 saturate-50' : ''}`}
                     >
                       <td className={`border px-3 py-2.5 text-center text-xs font-bold ${isSelected ? 'border-brand-700 border-l-4 border-l-amber-400 bg-brand-900 text-amber-300' : 'border-brand-200 text-brand-500'}`}>
                         {index + 1}
                       </td>
                       <td className={`border border-brand-200 px-3 py-2.5 font-bold ${isSelected ? 'border-brand-700 text-white' : 'text-brand-900'}`}>
                         {customer.name || '-'}
+                        {!customer.is_active ? (
+                          <span className={`ml-2 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider ${isSelected ? 'bg-brand-600 text-brand-100' : 'border border-brand-300 bg-brand-100 text-brand-500'}`}>
+                            Pasif
+                          </span>
+                        ) : null}
                       </td>
                       <td className={`border border-brand-200 px-3 py-2.5 font-mono ${isSelected ? 'border-brand-700 text-brand-200' : 'text-brand-700'}`}>
                         {customer.cpr_number || customer.cpr_number_masked || '-'}
@@ -757,24 +897,42 @@ export function CustomersPage({
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              const ok = await confirm({
-                                title: 'Müşteriyi pasife al',
-                                message: `${customer.name} kaydını pasife almak istiyor musunuz?`,
-                                confirmText: 'Pasife al',
-                                variant: 'warning',
-                              });
-                              if (!ok) return;
-                              onDelete(customer);
-                            }}
-                            disabled={isDeletingCustomer}
-                            className={`p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${isSelected ? 'text-red-300 hover:text-red-100' : 'text-red-400 hover:text-red-700'}`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {!customer.is_active ? (
+                            <button
+                              type="button"
+                              aria-label={`${customer.name || 'Müşteri'} yeniden aktifleştir`}
+                              title="Yeniden aktifleştir"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onReactivate(customer);
+                              }}
+                              disabled={isRowReactivating || isDeletingCustomer}
+                              className={`p-1 transition-colors disabled:cursor-wait disabled:opacity-50 ${isSelected ? 'text-emerald-300 hover:text-emerald-100' : 'text-emerald-600 hover:text-emerald-800'}`}
+                            >
+                              <RotateCcw className={`h-3.5 w-3.5 ${isRowReactivating ? 'animate-spin' : ''}`} />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              aria-label={`${customer.name || 'Müşteri'} pasife al`}
+                              title="Pasife al"
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                const ok = await confirm({
+                                  title: 'Müşteriyi pasife al',
+                                  message: `${customer.name} kaydını pasife almak istiyor musunuz?`,
+                                  confirmText: 'Pasife al',
+                                  variant: 'warning',
+                                });
+                                if (!ok) return;
+                                onDelete(customer);
+                              }}
+                              disabled={isRowDeleting || isRowReactivating}
+                              className={`p-1 transition-colors disabled:cursor-wait disabled:opacity-50 ${isSelected ? 'text-red-300 hover:text-red-100' : 'text-red-400 hover:text-red-700'}`}
+                            >
+                              <Trash2 className={`h-3.5 w-3.5 ${isRowDeleting ? 'animate-pulse' : ''}`} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -784,8 +942,34 @@ export function CustomersPage({
             </table>
           </div>
 
-          <div className="flex flex-shrink-0 items-center space-x-6 border-t-2 border-brand-300 bg-brand-100 px-4 py-2">
+          <div className="flex flex-shrink-0 flex-wrap items-center gap-4 border-t-2 border-brand-300 bg-brand-100 px-4 py-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-brand-600">{customers.length} kayit gosteriliyor</span>
+            {/* A6-4: arama modunda gizli sayfalama — Önceki/Sonraki + "X/Y kayıt". */}
+            {!isSearchMode ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label="Önceki müşteri sayfası"
+                  onClick={() => onCustomerPageChange(customerPage - 1)}
+                  disabled={customerPage <= 1 || customersLoading}
+                  className="border border-brand-300 bg-white px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Önceki
+                </button>
+                <span className="font-mono text-xs font-bold text-brand-700">
+                  {customerPage}/{customerTotalPages} — {totalCustomers} kayıt
+                </span>
+                <button
+                  type="button"
+                  aria-label="Sonraki müşteri sayfası"
+                  onClick={() => onCustomerPageChange(customerPage + 1)}
+                  disabled={customerPage >= customerTotalPages || customersLoading}
+                  className="border border-brand-300 bg-white px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Sonraki
+                </button>
+              </div>
+            ) : null}
             {selectedCustomer ? (
               <span className="text-xs text-brand-500">
                 Seçili: <span className="font-black text-brand-800">{selectedCustomer.name}</span>
@@ -862,7 +1046,27 @@ export function CustomersPage({
                 <span className="bg-brand-200 px-2 py-0.5 font-mono text-xs font-black text-brand-500">{historySummary.count} işlem</span>
               </div>
 
-              {!historyItems.length ? (
+              {!historyItems.length && isHistoryLoading ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <p className="text-sm text-brand-300">Alış geçmişi yükleniyor…</p>
+                </div>
+              ) : null}
+
+              {!historyItems.length && isHistoryError ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+                  <p className="text-sm font-semibold text-red-700">Alış geçmişi yüklenemedi</p>
+                  <button
+                    type="button"
+                    onClick={() => onRetryDocumentQuery('history')}
+                    disabled={isHistoryLoading}
+                    className="border border-brand-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-brand-700 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Tekrar dene
+                  </button>
+                </div>
+              ) : null}
+
+              {!historyItems.length && !isHistoryLoading && !isHistoryError ? (
                 <div className="flex flex-1 items-center justify-center">
                   <p className="text-sm text-brand-300">Bu müşteriye ait alış kaydı yok</p>
                 </div>
@@ -883,6 +1087,9 @@ export function CustomersPage({
                           key={item.sequence_no}
                           summary={item}
                           detail={expandedSequenceNo === item.sequence_no ? expandedDetail : null}
+                          detailLoading={expandedDetailLoading}
+                          detailError={expandedDetailError}
+                          onRetryDetail={() => onRetryDocumentQuery('expanded-detail')}
                           logMeta={historyLogMeta[item.sequence_no]}
                           isEven={index % 2 === 0}
                           isExpanded={expandedSequenceNo === item.sequence_no}

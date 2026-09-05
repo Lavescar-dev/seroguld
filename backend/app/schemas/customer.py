@@ -42,6 +42,13 @@ class CustomerUpdate(AppBaseModel):
 class CustomerWooImportRequest(AppBaseModel):
     limit: int = Field(default=1000, ge=1, le=5000)
     replace_mock_seed: bool = True
+    # A6-2: varsayılan yeniden içe aktarım yerel düzenlemeleri korur (eksik Woo
+    # alanı yerel değeri silmez, pasif müşteri otomatik açılmaz). Ancak bu bayrak
+    # açıkça gönderilirse Woo alanları kaynaktan zorla uygulanır.
+    force_source_values: bool = Field(
+        default=False,
+        description="Woo'dan gelen değerleri (boş alanlar dahil) yerel düzenlemelerin üzerine zorla yaz.",
+    )
 
 
 class CustomerWooImportResponse(AppBaseModel):
