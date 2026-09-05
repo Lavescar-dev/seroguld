@@ -21,6 +21,8 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     onPrintDetail: () => undefined,
     onOpenDetailExcelPreview: () => undefined,
     detailActionPending: false,
+    detailError: null,
+    onRetryDetail: () => undefined,
     workspace: {
       session: { id: 'w1', session_code: 'S-1', display_token: 'd', trade_side: 'buy_from_customer', rate_source: 'live', margin_percent_internal: '0', status: 'draft', created_at: '', updated_at: '' },
       customer: { name: 'Ada' },
@@ -60,6 +62,8 @@ function buildAlisState(partial: Partial<AlisPageProps>): AlisPageProps {
     onCancelUnicontaInvoice: () => undefined,
     cancelPendingSequenceNo: null,
     listLoading: false,
+    listError: null,
+    onRetryDocuments: () => undefined,
     actionPendingSequenceNo: null,
     customerMode: null,
     setCustomerMode: () => undefined,

@@ -175,10 +175,9 @@ export function ModernAlisModule({
     state.onStartBlankWorkspace();
   }
 
-  function cancelWorkspace() {
-    if (!window.confirm('Bu Alış taslağı iptal edilecek. Devam edilsin mi?')) return;
-    state.onCancelWorkspace();
-  }
+  // Taslak iptal onayı hook tarafındaki cancelWorkspaceWithConfirm'de tek
+  // kaynaktan sorulur (klasik butonlar + Esc ile aynı diyalo); burada ikinci
+  // bir window.confirm açmak çift diyalog üretirdi.
 
   // Düzenleme kipinde (çalışma alanında kaydedilmemiş değişiklik varken) detay
   // kapama yolu arka plan tıklamasıyla sessizce iptal edemez; onay ister.
@@ -281,7 +280,7 @@ export function ModernAlisModule({
                       expandedGroups={expandedGroups}
                       onToggleGroup={(group) => setExpandedGroups((current) => { const next = new Set(current); if (next.has(group)) next.delete(group); else next.add(group); return next; })}
                       onOpenTool={(nextTool) => { if (nextTool === 'customer' && !state.customerMode) state.setCustomerMode('existing'); setTool(nextTool); }}
-                      onCancel={cancelWorkspace}
+                      onCancel={state.onCancelWorkspace}
                     />
                   ) : (
                     <AlisStartPanel state={state} onStart={startBlankWorkspace} onResume={() => { state.onResumeDraft(); setPane('workspace'); }} onOpenHistory={() => setPane('history')} />
@@ -327,7 +326,7 @@ export function ModernAlisModule({
       <HistoricalAfgImportDrawer
         open={historicalImportOpen}
         onClose={() => setHistoricalImportOpen(false)}
-        onImported={() => { void state.onRetryDocuments?.(); setPane('history'); }}
+        onImported={() => { void state.onRetryDocuments(); setPane('history'); }}
       />
     </ModernModuleShell>
   );

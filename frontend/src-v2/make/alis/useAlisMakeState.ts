@@ -1032,6 +1032,11 @@ export function useAlisMakeState(): AlisPageProps {
         queryClient.invalidateQueries({ queryKey: ['pos', 'alis', 'list'] }),
       ]);
     },
+    // "Yeni Alış Başlat" üç giriş noktasından da (buton, satır aksiyonu,
+    // Ctrl+N) bu mutation üzerinden akar — hata sessizce yutulmasın.
+    onError: (error) => {
+      toast.error('Alış başlatılamadı', localizeApiError(error));
+    },
   });
 
   const editDocumentMutation = useMutation({
@@ -1646,6 +1651,22 @@ export function useAlisMakeState(): AlisPageProps {
     },
   });
 
+  // Taslak iptali için tek onay kaynağı. Klasik iki "İptal Et" butonu, global
+  // Esc kısayolu ve modern varyantın cancelWorkspace'i hep buradan geçer;
+  // tek tıkla sunucu taslağı + yerel snapshot artık onaysız yok edilmez.
+  function cancelWorkspaceWithConfirm() {
+    if (cancelMutation.isPending) return;
+    void confirm({
+      title: 'Taslak iptal edilsin mi?',
+      message: 'Girilen veriler kaydedilmeyecek.',
+      confirmText: 'Taslağı iptal et',
+      cancelText: 'Vazgeç',
+      variant: 'danger',
+    }).then((ok) => {
+      if (ok === true) cancelMutation.mutate();
+    });
+  }
+
   useEffect(() => {
     if (!workspace) {
       setDraftWorkspace(workspaceQuery.data || null);
@@ -2088,16 +2109,9 @@ export function useAlisMakeState(): AlisPageProps {
         return;
       }
       // Esc — taslak iptal (workspace varsa, input içinde değilse, overlay yoksa)
+      // Onay diyaloğu cancelWorkspaceWithConfirm'den gelir — buton yolu ile aynı kaynak.
       if (event.key === 'Escape' && hasWorkspace && !editable && !cancelMutation.isPending && !hasOpenOverlay()) {
-        void confirm({
-          title: 'Taslak iptal edilsin mi?',
-          message: 'Girilen veriler kaydedilmeyecek.',
-          confirmText: 'Taslağı iptal et',
-          cancelText: 'Vazgeç',
-          variant: 'warning',
-        }).then((ok) => {
-          if (ok) cancelMutation.mutate();
-        });
+        cancelWorkspaceWithConfirm();
       }
     };
     window.addEventListener('keydown', handler);
@@ -2866,7 +2880,7 @@ export function useAlisMakeState(): AlisPageProps {
       );
     },
     onOpenWorkspaceExcelPreview: handleOpenWorkspaceExcelPreview,
-    onCancelWorkspace: () => cancelMutation.mutate(),
+    onCancelWorkspace: cancelWorkspaceWithConfirm,
     onFinalizeWorkspace: async () => {
       finalizeInFlightRef.current = true;
       try {

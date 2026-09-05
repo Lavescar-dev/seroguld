@@ -208,6 +208,8 @@ type SavedPurchaseListActionProps = {
 type SavedPurchaseListRendererProps = SavedPurchaseListActionProps & {
   documents: PosSavedPurchaseListItem[];
   listLoading: boolean;
+  listError: string | null;
+  onRetryDocuments: () => void;
   sortConfig?: SavedPurchaseSortState;
   onToggleSort?: (key: SavedPurchaseSortKey) => void;
 };
@@ -241,8 +243,8 @@ export type AlisPageProps = {
   onPrintDetail: () => void;
   onOpenDetailExcelPreview: () => void;
   detailActionPending: boolean;
-  detailError?: string | null;
-  onRetryDetail?: () => void;
+  detailError: string | null;
+  onRetryDetail: () => void;
   workspace: PosWorkspace | null;
   draftWorkspace: PosWorkspace | null;
   onResumeDraft: () => void;
@@ -264,8 +266,8 @@ export type AlisPageProps = {
   onCancelUnicontaInvoice: (item: PosSavedPurchaseListItem) => void;
   cancelPendingSequenceNo: number | null;
   listLoading: boolean;
-  listError?: string | null;
-  onRetryDocuments?: () => void;
+  listError: string | null;
+  onRetryDocuments: () => void;
   actionPendingSequenceNo: number | null;
   customerMode: 'existing' | 'new' | null;
   setCustomerMode: Dispatch<SetStateAction<'existing' | 'new' | null>>;
@@ -358,6 +360,8 @@ export function AlisPage(props: AlisPageProps) {
     onPrintDetail,
     onOpenDetailExcelPreview,
     detailActionPending,
+    detailError,
+    onRetryDetail,
     workspace,
     draftWorkspace,
     onResumeDraft,
@@ -379,6 +383,8 @@ export function AlisPage(props: AlisPageProps) {
     onCancelUnicontaInvoice,
     cancelPendingSequenceNo,
     listLoading,
+    listError,
+    onRetryDocuments,
     actionPendingSequenceNo,
     customerMode,
     setCustomerMode,
@@ -460,6 +466,8 @@ export function AlisPage(props: AlisPageProps) {
           source={detailPurchase}
           detail={detail}
           loading={detailLoading}
+          error={detailError}
+          onRetry={onRetryDetail}
           onClose={onCloseDetail}
           onEdit={onEditDetail}
           onDelete={onDeleteDetail}
@@ -592,6 +600,8 @@ export function AlisPage(props: AlisPageProps) {
           onCancelUnicontaInvoice={onCancelUnicontaInvoice}
           cancelPendingSequenceNo={cancelPendingSequenceNo}
           listLoading={listLoading}
+          listError={listError}
+          onRetryDocuments={onRetryDocuments}
           actionPendingSequenceNo={actionPendingSequenceNo}
         />
       )}
@@ -1302,6 +1312,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
     onCancelUnicontaInvoice,
     cancelPendingSequenceNo,
     listLoading,
+    listError,
+    onRetryDocuments,
     actionPendingSequenceNo,
   } = props;
   const savedPurchaseContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1538,6 +1550,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
             <SavedPurchaseCardList
               documents={filteredAndSorted}
               listLoading={listLoading}
+              listError={listError}
+              onRetryDocuments={onRetryDocuments}
               onViewDocument={onViewDocument}
               onOpenDocumentExcelPreview={onOpenDocumentExcelPreview}
               onOpenCustomer={onOpenCustomer}
@@ -1556,6 +1570,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
             <SavedPurchaseTable
               documents={filteredAndSorted}
               listLoading={listLoading}
+              listError={listError}
+              onRetryDocuments={onRetryDocuments}
               onViewDocument={onViewDocument}
               onOpenDocumentExcelPreview={onOpenDocumentExcelPreview}
               onOpenCustomer={onOpenCustomer}
@@ -1582,6 +1598,8 @@ function StartWorkspaceView(props: StartWorkspaceViewProps) {
 function SavedPurchaseTable({
   documents,
   listLoading,
+  listError,
+  onRetryDocuments,
   onViewDocument,
   onOpenDocumentExcelPreview,
   onOpenCustomer,
@@ -1648,7 +1666,23 @@ function SavedPurchaseTable({
         </tr>
       </thead>
       <tbody>
-        {listLoading ? (
+        {listError ? (
+          <tr>
+            <td colSpan={7} className="px-4 py-10 text-center">
+              <AlertCircle className="mx-auto h-8 w-8 text-rose-400" />
+              <p className="mt-3 text-sm font-semibold text-rose-700">Alış listesi yüklenemedi</p>
+              <p className="mt-1 text-xs text-rose-500">{listError}</p>
+              <button
+                type="button"
+                onClick={onRetryDocuments}
+                className="mt-3 inline-flex items-center gap-1.5 border border-rose-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 transition hover:bg-rose-50"
+              >
+                <RefreshCcw className="h-3.5 w-3.5" />
+                Tekrar dene
+              </button>
+            </td>
+          </tr>
+        ) : listLoading ? (
           <tr>
             <td colSpan={7} className="px-4 py-10 text-center text-sm text-brand-400">
               Kayıtlı alışlar yükleniyor...
@@ -1913,6 +1947,8 @@ function SavedPurchaseTable({
 function SavedPurchaseCardList({
   documents,
   listLoading,
+  listError,
+  onRetryDocuments,
   onViewDocument,
   onOpenDocumentExcelPreview,
   onOpenCustomer,
@@ -1927,6 +1963,24 @@ function SavedPurchaseCardList({
   cancelPendingSequenceNo,
   actionPendingSequenceNo,
 }: SavedPurchaseListRendererProps) {
+  if (listError) {
+    return (
+      <div className="px-4 py-10 text-center">
+        <AlertCircle className="mx-auto h-8 w-8 text-rose-400" />
+        <p className="mt-3 text-sm font-semibold text-rose-700">Alış listesi yüklenemedi</p>
+        <p className="mt-1 text-xs text-rose-500">{listError}</p>
+        <button
+          type="button"
+          onClick={onRetryDocuments}
+          className="mt-3 inline-flex items-center gap-1.5 border border-rose-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 transition hover:bg-rose-50"
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Tekrar dene
+        </button>
+      </div>
+    );
+  }
+
   if (listLoading) {
     return <div className="px-4 py-10 text-center text-sm text-brand-400">Kayıtlı alışlar yükleniyor...</div>;
   }
@@ -2329,6 +2383,8 @@ function SavedPurchaseDetailModal({
   source,
   detail,
   loading,
+  error,
+  onRetry,
   onClose,
   onEdit,
   onDelete,
@@ -2340,6 +2396,8 @@ function SavedPurchaseDetailModal({
   source: PosSavedPurchaseListItem | null;
   detail: PosDocumentDetail | null;
   loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -2414,7 +2472,21 @@ function SavedPurchaseDetailModal({
           </button>
         </div>
 
-        {loading || !detail ? (
+        {error ? (
+          <div className="px-6 py-10 text-center">
+            <AlertCircle className="mx-auto h-8 w-8 text-rose-400" />
+            <p className="mt-3 text-sm font-semibold text-rose-700">Belge detayları yüklenemedi</p>
+            <p className="mt-1 text-xs text-rose-500">{error}</p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-3 inline-flex items-center gap-1.5 border border-rose-300 bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest text-rose-700 transition hover:bg-rose-50"
+            >
+              <RefreshCcw className="h-3.5 w-3.5" />
+              Tekrar dene
+            </button>
+          </div>
+        ) : loading || !detail ? (
           <div className="px-6 py-10 text-center text-sm text-brand-500">Belge detayları yükleniyor...</div>
         ) : (
           <>
