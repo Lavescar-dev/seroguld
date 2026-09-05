@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -32,16 +33,23 @@ class GoldPriceService:
     }
     _FX_SYMBOL = "usddkk"
     _STOOQ_CSV_URL = "https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcv&h&e=csv"
+    # Pt/Pd fallback'leri market_rate_profile.DEFAULT_PLATINUM_DKK /
+    # DEFAULT_PALLADIUM_DKK (280/335) ile ayna değerdedir — üç yüzeyin aynı
+    # sabiti göstermesi için. Tek sabit modülüne taşınması döngüsel içe aktarım
+    # üretir (market_rate_profile bu servisi içe aktarır); senkron tutulmalı.
     _FALLBACK_RATES = {
         "gold": Decimal("615.50"),
         "silver": Decimal("7.80"),
-        "platinum": Decimal("255.00"),
-        "palladium": Decimal("268.00"),
+        "platinum": Decimal("280.00"),
+        "palladium": Decimal("335.00"),
     }
 
     _cache_rates: dict[str, Decimal] | None = None
     _cache_meta: dict[str, dict[str, Any]] | None = None
     _cache_expires_at: datetime | None = None
+    # get_rates tek-uçuş kilidi; olay döngüsü başına bir örnek tutulur
+    # (testler döngü başına yeniden kurar).
+    _single_flight: tuple[asyncio.AbstractEventLoop, asyncio.Lock] | None = None
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -105,19 +113,35 @@ class GoldPriceService:
 
     @classmethod
     def cached_auto_values_or_fallback(cls) -> dict[str, dict[str, Any]]:
-        """Profilin oto değerleri (fx, Pt, Pd) — ağ I/O'su olmadan."""
+        """Profilin oto değerleri (fx, Pt, Pd) — ağ I/O'su olmadan.
+
+        Fallback kaynaklı girişte ``value=None`` döner: ``_auto_overlay`` None
+        değeri profile YAZMAZ, operatörün kaydettiği manuel değer korunur
+        (yalnız meta fallback/bayat işaretlenir). Önbellek miss'inde sabit
+        fallback değerini döndürmek aynı alan için iki farklı değer üretiyordu —
+        çekmecede (taze yol) canlı, alış/dashboard/stok/woo/portal'da (cache'li
+        yol) sabit fallback; dashboard "matchesCurrentRates" karşılaştırması
+        sahte uyuşmazlık raporlardı.
+        """
         rates = cls.cached_rates_or_fallback()
         meta = cls.cached_meta_or_fallback()
+
+        def _entry(key: str) -> dict[str, Any]:
+            entry_meta = dict(meta.get(key, {}))
+            if str(entry_meta.get("source") or "") == "fallback":
+                return {"value": None, **entry_meta}
+            return {"value": rates.get(key), **entry_meta}
+
         fx_cached = EcbFxService.cached_fx()
         if fx_cached is not None:
             fx_value, fx_observed = fx_cached
             fx_entry: dict[str, Any] = {"value": fx_value, "source": "live", "observed_at": fx_observed, "stale": False}
         else:
-            fx_entry = {"value": DEFAULT_EUR_DKK_FX, "source": "fallback", "observed_at": None, "stale": True}
+            fx_entry = {"value": None, "source": "fallback", "observed_at": None, "stale": True}
         return {
             "eur_dkk_fx": fx_entry,
-            "platinum_dkk": {"value": rates.get("platinum"), **meta.get("platinum", {})},
-            "palladium_dkk": {"value": rates.get("palladium"), **meta.get("palladium", {})},
+            "platinum_dkk": _entry("platinum"),
+            "palladium_dkk": _entry("palladium"),
         }
 
     @classmethod
@@ -156,6 +180,21 @@ class GoldPriceService:
             return None
         return self._parse_stooq_close(response.text)
 
+    async def _fetch_symbol_closes(
+        self, client: httpx.AsyncClient, missing: list[str]
+    ) -> tuple[Decimal | None, dict[str, Decimal | None]]:
+        """Usd/Dkk + metal kapanışlarını TEK paralel turda çeker.
+
+        Sıralı zincir 5 × timeout'a (≈36 sn) uzayabiliyor ve yavaş feeder POS
+        satır akışını da geciktiriyordu; paralelde toplam üst sınır tek istek
+        zaman aşımıdır — ayrı bir toplam-deadline sürelayıcısı gerektirmez.
+        Metal kapanışları Usd/Dkk'ya bağlıdır; fx düşerse paralel gelmiş olsalar
+        da atılır ve o metaller fallback'e iner.
+        """
+        symbols = [self._FX_SYMBOL] + [self._SYMBOLS[key] for key in missing]
+        results = await asyncio.gather(*(self._fetch_stooq_close(client, symbol) for symbol in symbols))
+        return results[0], dict(zip(missing, results[1:]))
+
     async def _fetch_live_rates(self) -> tuple[dict[str, Decimal], dict[str, dict[str, Any]]]:
         """Metal başına bağımsız çözüm; asla topluca başarısız olmaz."""
         rates: dict[str, Decimal] = {}
@@ -168,14 +207,10 @@ class GoldPriceService:
         if missing:
             headers = {"User-Agent": "SeroGuldCRM/1.0 (+local demo)"}
             async with httpx.AsyncClient(timeout=self.timeout_seconds, headers=headers) as client:
-                usd_dkk = await self._fetch_stooq_close(client, self._FX_SYMBOL)
+                usd_dkk, closes = await self._fetch_symbol_closes(client, missing)
                 observed_at = self._now().isoformat()
                 for metal_key in missing:
-                    close = (
-                        await self._fetch_stooq_close(client, self._SYMBOLS[metal_key])
-                        if usd_dkk is not None
-                        else None
-                    )
+                    close = closes.get(metal_key)
                     if close is not None and usd_dkk is not None:
                         rates[metal_key] = self._convert_usd_ounce_to_dkk_gram(close, usd_dkk)
                         meta[metal_key] = {"source": "live", "observed_at": observed_at, "stale": False}
@@ -185,16 +220,30 @@ class GoldPriceService:
 
         return rates, meta
 
+    @classmethod
+    def _single_flight_lock(cls) -> asyncio.Lock:
+        """get_rates tek-uçuş kilidi — olay döngüsü başına bir örnek."""
+        loop = asyncio.get_running_loop()
+        if cls._single_flight is None or cls._single_flight[0] is not loop:
+            cls._single_flight = (loop, asyncio.Lock())
+        return cls._single_flight[1]
+
     async def get_rates(self, *, force_refresh: bool = False) -> dict[str, Decimal]:
         if not force_refresh and self._cache_is_valid():
             return dict(self._cache_rates or {})
 
-        if self.live_enabled:
-            rates, meta = await self._fetch_live_rates()
-        else:
-            rates, meta = dict(self._FALLBACK_RATES), self._fallback_meta()
-        self._set_cache(rates, meta, self.cache_seconds)
-        return dict(rates)
+        # Tek-uçuş: cache miss anında eşzamanlı istekler (çekmece poll + POS +
+        # portal aynı anda) aynı upstream zincirini paralel vurmasın (stampede).
+        # Kilidi bekleyen çağrı, sırası gelince taze cache'i bulup ağa çıkmaz.
+        async with self._single_flight_lock():
+            if not force_refresh and self._cache_is_valid():
+                return dict(self._cache_rates or {})
+            if self.live_enabled:
+                rates, meta = await self._fetch_live_rates()
+            else:
+                rates, meta = dict(self._FALLBACK_RATES), self._fallback_meta()
+            self._set_cache(rates, meta, self.cache_seconds)
+            return dict(rates)
 
     async def get_auto_values(self) -> dict[str, dict[str, Any]]:
         """Profilin oto değerleri (fx, Pt, Pd) — taze çekim serbest."""

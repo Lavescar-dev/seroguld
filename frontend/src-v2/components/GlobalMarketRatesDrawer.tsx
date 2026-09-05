@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, LockKeyhole, Save, X } from 'lucide-react';
 
 import { apiRequest, localizeApiError } from '@/lib/api';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { useToast } from '@/lib/toast';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
 import type { PosWorkspaceMarketRates } from '@/types';
@@ -50,6 +51,8 @@ export interface GlobalMarketRatesController {
   // Profil fallback kaynaklı ya da canlı meta bayat — üst barda rozetle işaretlenir.
   isStale: boolean;
   isSaving: boolean;
+  // Taslak profilden/devir alınan son durumdan saptı mı? Kapatma onayı için.
+  isDirty: boolean;
   errorMessage: string | null;
   open: () => void;
   close: () => void;
@@ -70,6 +73,21 @@ export interface GlobalMarketRatesController {
 }
 
 const SILVER_PROFILE_ROWS = SILVER_MATRIX_ROWS.filter((row) => row.key !== '800');
+
+// Dolu-değeri doğrulanan opsiyonel skalerler — backend _SCALAR_OPTIONAL_FIELDS
+// ile aynı küme. Boş bırakmak serbesttir (profil default'u uygulanır); doluysa
+// geçerli pozitif sayı olmak zorundadır (0/'abc' sessizce default'a düşmesin).
+const SCALAR_OPTIONAL_FIELDS: {
+  key: 'eur_dkk_fx' | 'gold_bar_dkk' | 'silver_bar_dkk' | 'platinum_dkk' | 'palladium_dkk' | 'plet_dkk';
+  label: string;
+}[] = [
+  { key: 'eur_dkk_fx', label: 'EUR/DKK' },
+  { key: 'gold_bar_dkk', label: 'Guldbarre' },
+  { key: 'silver_bar_dkk', label: 'Sølvbarre' },
+  { key: 'platinum_dkk', label: 'Platin' },
+  { key: 'palladium_dkk', label: 'Palladyum' },
+  { key: 'plet_dkk', label: 'Pletsølv' },
+];
 
 function buildFallbackProfile(): GlobalMarketRateProfile {
   const gold24 = 615.5;
@@ -103,6 +121,12 @@ function toDraft(profile: GlobalMarketRateProfile): GlobalMarketRateDraft {
     // ile ezerdi — "Platin/Palladyum niye 0" hatasının tam kökü buydu.
     platinum_dkk: profile.platinum_dkk,
     palladium_dkk: profile.palladium_dkk,
+    // Bar/Plet aynı tuzağa düşmesin: aktarılmazlarsa draft'a 0.00/0.0200
+    // artifact'i yazılır, çekmecede 0.00 görünür ve kayıtta profil değeri
+    // default'a düşer.
+    plet_dkk: profile.plet_dkk,
+    gold_bar_dkk: profile.gold_bar_dkk,
+    silver_bar_dkk: profile.silver_bar_dkk,
     gold_matrix: [],
     silver_matrix: [],
   });
@@ -127,6 +151,8 @@ function toTopbarValue(value: string) {
 
 export function useGlobalMarketRates(): GlobalMarketRatesController {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
   const query = useQuery({
     queryKey: ['market-rates', 'defaults'],
     queryFn: () => apiRequest<GlobalMarketRateProfile>('/api/v2/market-rates/defaults'),
@@ -137,6 +163,7 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
   const profile = query.data ? { ...fallback, ...query.data } : fallback;
   const [draft, setDraft] = useState<GlobalMarketRateDraft>(() => toDraft(fallback));
   const [isOpen, setIsOpen] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Çekmece yükleme/hata anında açıldıysa taslak fallback değerler taşıyordur;
   // gerçek profil ilk kez geldiğinde bir kez daha senkronlanır.
@@ -151,11 +178,13 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     if (!query.data) return;
     if (!isOpen) {
       setDraft(toDraft({ ...fallback, ...query.data }));
+      setIsDirty(false);
       return;
     }
     if (awaitingServerDraft) {
       setDraft(toDraft({ ...fallback, ...query.data }));
       setAwaitingServerDraft(false);
+      setIsDirty(false);
     }
   }, [awaitingServerDraft, fallback, isOpen, query.data]);
 
@@ -166,6 +195,13 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
         gold_rates_dkk: draft.gold_rates_dkk,
         silver_rates_dkk: draft.silver_rates_dkk,
       });
+      // Dolu skaler sayıya çevrilip gönderilir; boş alan '' gider (backend
+      // profil default'una düşer). '0.00' göndermek artık geçersiz değer
+      // sınıfına düştüğü için boş, '' olarak taşınır.
+      const scalarWire = (value: string | undefined, places: 2 | 4) => {
+        const text = String(value ?? '').trim();
+        return text === '' ? '' : parseDecimalValue(text).toFixed(places);
+      };
       return apiRequest<GlobalMarketRateProfile>('/api/v2/market-rates/defaults', {
         method: 'PUT',
         body: JSON.stringify({
@@ -175,12 +211,14 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
             SILVER_PROFILE_ROWS.map((row) => [row.key, committed.silver_rates_dkk[row.key] || '0']),
           ),
           // Plet 4 hane gönderilir — 2 hane "21 kr/kg" → 0.0210 ayrımını yutar.
-          plet_dkk: parseDecimalValue(draft.plet_dkk).toFixed(4),
-          gold_bar_dkk: parseDecimalValue(draft.gold_bar_dkk).toFixed(2),
-          silver_bar_dkk: parseDecimalValue(draft.silver_bar_dkk).toFixed(2),
-          platinum_dkk: parseDecimalValue(draft.platinum_dkk).toFixed(2),
-          palladium_dkk: parseDecimalValue(draft.palladium_dkk).toFixed(2),
+          plet_dkk: scalarWire(draft.plet_dkk, 4),
+          gold_bar_dkk: scalarWire(draft.gold_bar_dkk, 2),
+          silver_bar_dkk: scalarWire(draft.silver_bar_dkk, 2),
+          platinum_dkk: scalarWire(draft.platinum_dkk, 2),
+          palladium_dkk: scalarWire(draft.palladium_dkk, 2),
           // Alan-bazlı manuel/oto durumu da kaydedilir (drawer'daki geçiş).
+          // live_fields hiç yüklenmediyse {} "değişiklik yok"tur — backend
+          // canlı bayraklara dokunmaz.
           live_fields: draft.live_fields || {},
         }),
       });
@@ -196,10 +234,15 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
       void queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
       void queryClient.invalidateQueries({ queryKey: ['pos', 'alis'] });
       setErrorMessage(null);
+      setIsDirty(false);
       setIsOpen(false);
     },
     onError: (error) => {
-      setErrorMessage(error instanceof Error ? error.message : 'Oranlar kaydedilemedi.');
+      const message = error instanceof Error ? error.message : 'Oranlar kaydedilemedi.';
+      setErrorMessage(message);
+      // Kayıt sürerken çekmece kapatıldıysa hata bandı hiçbir yüzeye ulaşmaz —
+      // toast, çekmece kapalıyken de görünür.
+      toast.error('Oranlar kaydedilemedi', message);
     },
   });
 
@@ -207,6 +250,7 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     setAwaitingServerDraft(query.isLoading || query.isError);
     setDraft(toDraft(profile));
     setErrorMessage(null);
+    setIsDirty(false);
     setIsOpen(true);
   };
 
@@ -215,23 +259,28 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     queryClient.setQueryData(['market-rates', 'defaults'], next);
     setDraft(toDraft({ ...fallback, ...next }));
     setErrorMessage(null);
+    setIsDirty(false);
   };
 
   const close = () => {
     setIsOpen(false);
+    setIsDirty(false);
     setErrorMessage(null);
   };
 
   const updateFx = (value: string) => {
     setDraft((current) => ({ ...current, eur_dkk_fx: value }));
+    setIsDirty(true);
   };
 
   const updateGoldRate = (key: string, value: string) => {
     setDraft((current) => ({ ...current, gold_rates_dkk: { ...current.gold_rates_dkk, [key]: value } }));
+    setIsDirty(true);
   };
 
   const updateSilverRate = (key: string, value: string) => {
     setDraft((current) => ({ ...current, silver_rates_dkk: { ...current.silver_rates_dkk, [key]: value } }));
+    setIsDirty(true);
   };
 
   // ZORUNLU alanlar yalnız altın karat matrisi + gümüş saflıklarıdır. EUR/DKK,
@@ -242,6 +291,13 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     GOLD_MATRIX_ROWS.some((row) => !validPositive(draft.gold_rates_dkk[row.key]))
     || SILVER_PROFILE_ROWS.some((row) => !validPositive(draft.silver_rates_dkk[row.key]));
 
+  // OPSİYONEL skalerler için "doluysa geçerli pozitif sayı olmalı" denetimi —
+  // dolu ama geçersiz ('abc' / 0) değer daha önce sessizce default'a düşüyordu.
+  const invalidScalars = SCALAR_OPTIONAL_FIELDS.filter(({ key }) => {
+    const raw = String(draft[key] ?? '').trim();
+    return raw !== '' && !validPositive(raw);
+  }).map(({ label }) => label);
+
   return {
     profile,
     draft,
@@ -250,6 +306,7 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
     isFetchError,
     isStale,
     isSaving: saveMutation.isPending,
+    isDirty,
     errorMessage,
     open,
     close,
@@ -272,8 +329,17 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
         setErrorMessage('Altın karat ve gümüş saflık oranları pozitif olmalı — lütfen boş/0 bırakılan alanları doldurun.');
         return;
       }
+      if (invalidScalars.length > 0) {
+        setErrorMessage(
+          `Şu alanlar dolu ama geçerli pozitif sayı değil: ${invalidScalars.join(', ')}. `
+          + 'Hatalı değerleri düzeltin ya da alanı boş bırakın (profil varsayılanı uygulanır).',
+        );
+        return;
+      }
       // X4: bant dışı değerler (ons/10g/øre karışıklığı) kaydı engellemez ama
       // açık onay ister — 6392,10 DKK/g gibi bir değer doğrudan ödemeye vurur.
+      // Onay, native window.confirm yerine Promise tabanlı ConfirmDialog üzerinden
+      // gelir (tema/stil katmanına girer; provider yoksa yine confirm'e düşer).
       const outOfBand: string[] = [];
       for (const row of GOLD_MATRIX_ROWS) {
         if (rateBandWarning('gold', draft.gold_rates_dkk[row.key] || '')) outOfBand.push(`Altın ${row.label}`);
@@ -287,32 +353,56 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
       if (rateBandWarning('fx', draft.eur_dkk_fx)) outOfBand.push('EUR/DKK');
       if (rateBandWarning('ptpd', draft.platinum_dkk)) outOfBand.push('Platin');
       if (rateBandWarning('ptpd', draft.palladium_dkk)) outOfBand.push('Palladyum');
-      if (outOfBand.length > 0) {
-        const proceed = window.confirm(
-          `Şu alanlar beklenen DKK/g aralığının DIŞINDA: ${outOfBand.join(', ')}.\n` +
-            'Değerler ons/10g/øre karışıklığı olabilir ve doğrudan ödenen tutara yansır.\n\nYine de kaydedilsin mi?',
-        );
-        if (!proceed) return;
-      }
       setErrorMessage(null);
+      if (outOfBand.length > 0) {
+        void (async () => {
+          const proceed = (await confirm({
+            title: 'Bant dışı değerler',
+            message: `Şu alanlar beklenen DKK/g aralığının DIŞINDA: ${outOfBand.join(', ')}.\n`
+              + 'Değerler ons/10g/øre karışıklığı olabilir ve doğrudan ödenen tutara yansır.\n\nYine de kaydedilsin mi?',
+            confirmText: 'Yine de kaydet',
+            cancelText: 'Vazgeç',
+            variant: 'warning',
+          })) === true;
+          if (proceed) saveMutation.mutate();
+        })();
+        return;
+      }
       saveMutation.mutate();
     },
     updateFx,
     updateGoldRate,
     updateSilverRate,
-    updatePlatinum: (value) => setDraft((current) => ({ ...current, platinum_dkk: value })),
-    updatePalladium: (value) => setDraft((current) => ({ ...current, palladium_dkk: value })),
+    updatePlatinum: (value) => {
+      setDraft((current) => ({ ...current, platinum_dkk: value }));
+      setIsDirty(true);
+    },
+    updatePalladium: (value) => {
+      setDraft((current) => ({ ...current, palladium_dkk: value }));
+      setIsDirty(true);
+    },
     // Manuel/oto geçişi: alanı canlı beslemeye alır veya elle düzenlemeye bırakır.
     // Master live_enabled, herhangi bir alan oto olduğunda açık tutulur.
-    toggleAutoField: (key: 'eur_dkk_fx' | 'platinum_dkk' | 'palladium_dkk') =>
+    toggleAutoField: (key: 'eur_dkk_fx' | 'platinum_dkk' | 'palladium_dkk') => {
       setDraft((current) => {
         const nextFields = { ...(current.live_fields || {}), [key]: !((current.live_fields || {})[key] ?? false) };
         const anyAuto = Boolean(nextFields.eur_dkk_fx || nextFields.platinum_dkk || nextFields.palladium_dkk);
         return { ...current, live_fields: nextFields, live_enabled: anyAuto };
-      }),
-    updatePlet: (value) => setDraft((current) => ({ ...current, plet_dkk: value })),
-    updateGoldBar: (value) => setDraft((current) => ({ ...current, gold_bar_dkk: value })),
-    updateSilverBar: (value) => setDraft((current) => ({ ...current, silver_bar_dkk: value })),
+      });
+      setIsDirty(true);
+    },
+    updatePlet: (value) => {
+      setDraft((current) => ({ ...current, plet_dkk: value }));
+      setIsDirty(true);
+    },
+    updateGoldBar: (value) => {
+      setDraft((current) => ({ ...current, gold_bar_dkk: value }));
+      setIsDirty(true);
+    },
+    updateSilverBar: (value) => {
+      setDraft((current) => ({ ...current, silver_bar_dkk: value }));
+      setIsDirty(true);
+    },
   };
 }
 
@@ -403,6 +493,9 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
+  const confirmDialog = useConfirm();
+  // "WP'den çek" sürerken ikinci tık, ardışık POST + çift uygulama üretmesin.
+  const [wpPending, setWpPending] = useState(false);
   if (!controller.isOpen) return null;
   const { draft } = controller;
   const dark = variant === 'classic';
@@ -423,9 +516,28 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
   // Yükleme/hata sırasında kayıt ve WP çekimi kilitli — fallback değerlerin
   // profile yazılması engellenir.
   const loadBlocked = controller.isLoading || controller.isFetchError;
+  // Dirty taslakta kapatma yolları (backdrop/X/Vazgeç/Ayarları aç) onay sorar;
+  // kayıt sürerken tamamen kilitlidir — kapanınca save hatası görünmez kalırdı.
+  const requestClose = async (): Promise<boolean> => {
+    if (controller.isSaving) return false;
+    if (!controller.isDirty) {
+      controller.close();
+      return true;
+    }
+    const proceed = (await confirmDialog({
+      title: 'Kaydedilmemiş değişiklikler',
+      message: 'Çekmecede kaydedilmemiş oran değişiklikleri var — kapatırsanız değişiklikler silinir.',
+      confirmText: 'Değişiklikleri at',
+      cancelText: 'Düzenlemeye devam',
+      variant: 'warning',
+    })) === true;
+    if (proceed) controller.close();
+    return proceed;
+  };
+  const closeBlocked = controller.isSaving;
 
   return (
-    <div className="fixed inset-0 z-overlay-top bg-black/30" onClick={controller.close}>
+    <div className="fixed inset-0 z-overlay-top bg-black/30" onClick={() => { void requestClose(); }}>
       <aside className={panelClass} role="dialog" aria-modal="true" aria-labelledby="global-market-rates-title" aria-busy={controller.isLoading || undefined} onClick={(event) => event.stopPropagation()}>
         <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
           <div>
@@ -443,7 +555,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             </h2>
             <p className={`mt-1 ${metaClass}`}>Tüm alanlar DKK/g. Yeni alışlar bu profili başlangıç snapshot’ı olarak kullanır.</p>
           </div>
-          <button type="button" onClick={controller.close} className={dark ? 'border border-brand-300 bg-white p-2 text-brand-700 hover:bg-brand-50' : 'rounded-sg-sm border border-sg-border p-2 text-sg-text-soft hover:bg-sg-surface-soft'} aria-label="Piyasa oranları çekmecesini kapat">
+          <button type="button" onClick={() => { void requestClose(); }} disabled={closeBlocked} className={dark ? 'border border-brand-300 bg-white p-2 text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-sg-sm border border-sg-border p-2 text-sg-text-soft hover:bg-sg-surface-soft disabled:cursor-not-allowed disabled:opacity-50'} aria-label="Piyasa oranları çekmecesini kapat">
             <X className="h-4 w-4" />
           </button>
         </header>
@@ -544,7 +656,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
             <p className={`mt-2 ${metaClass}`}>Rozete tıklayarak alanı manuel/otomatik yapın. Otomatikte değer metals.dev/ECB'den canlı gelir; canlı değer alınamazsa mevcut değer korunur (AFG fiyatları sıfırlanmaz).</p>
           </section>
 
-          {anyAutoDisabled ? <button type="button" onClick={() => { controller.close(); navigate('/settings'); }} className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark'}>Ayarları aç</button> : null}
+          {anyAutoDisabled ? <button type="button" onClick={() => { void requestClose().then((closed) => { if (closed) navigate('/settings'); }); }} disabled={closeBlocked} className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700 disabled:cursor-not-allowed disabled:opacity-50' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark disabled:cursor-not-allowed disabled:opacity-50'}>Ayarları aç</button> : null}
           </>
           )}
         </div>
@@ -553,8 +665,15 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
           <button
             type="button"
             onClick={() => {
+              if (wpPending || loadBlocked) return;
+              setWpPending(true);
               // R2-06: karat/gümüş/bar/Pt/Pd/plet fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
               void (async () => {
+                // applied: POST başarılı mı? Catch'te "çekilemedi" mesajı yalnız
+                // POST'a bağlı kalmalı; POST sonrası tazeleme adımı patlarsa
+                // değerler UYGULANMIŞ durumdadır — tekrar basılırsa çift WP
+                // çekimi + çift uygulama olurdu (yanlış-olumsuz rapor).
+                let applied = false;
                 try {
                   const result = await apiRequest<{
                     applied_gold: Record<string, string>;
@@ -563,6 +682,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
                     auto_fields_disabled?: string[];
                     fetched_at: string;
                   }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
+                  applied = true;
                   await queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
                   await queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
                   // R2-06 takibi: invalidate draft'ı tazelemez (effect yalnız
@@ -580,17 +700,23 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
                     toast.success('WP Priser uygulandı', summary);
                   }
                 } catch (fetchError) {
-                  toast.error('WP Priser çekilemedi', localizeApiError(fetchError));
+                  if (applied) {
+                    toast.warning('WP Priser uygulandı', `${localizeApiError(fetchError)} — değerler uygulandı ama ekran tazelenemedi.`);
+                  } else {
+                    toast.error('WP Priser çekilemedi', localizeApiError(fetchError));
+                  }
+                } finally {
+                  setWpPending(false);
                 }
               })();
             }}
             className={dark ? 'mr-auto border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800' : 'mr-auto rounded-sg-sm border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800'}
             title="Karat, gümüş, bar, platin, palladium ve plet fiyatlarını seroguld.dk Priser sayfasından çek"
-            disabled={loadBlocked}
+            disabled={loadBlocked || wpPending}
           >
-            WP&apos;den çek
+            {wpPending ? 'Çekiliyor…' : "WP'den çek"}
           </button>
-          <button type="button" onClick={controller.close} className={dark ? 'border border-brand-300 bg-white px-4 py-2 text-sm font-bold text-brand-700' : 'rounded-sg-sm border border-sg-border px-4 py-2 text-sm font-semibold text-sg-text'}>Vazgeç</button>
+          <button type="button" onClick={() => { void requestClose(); }} disabled={closeBlocked} className={dark ? 'border border-brand-300 bg-white px-4 py-2 text-sm font-bold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-sg-sm border border-sg-border px-4 py-2 text-sm font-semibold text-sg-text disabled:cursor-not-allowed disabled:opacity-50'}>Vazgeç</button>
           <button
             type="button"
             onClick={controller.save}

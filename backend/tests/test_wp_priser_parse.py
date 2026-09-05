@@ -222,3 +222,63 @@ def test_empty_finhed_cell_is_dropped() -> None:
         '<table><tr><td>Palladium</td><td></td><td>220.00 DKK</td></tr></table>'
     )
     assert parsed["palladium_dkk"] == "220.00"
+
+
+# ---------------------------------------------------------------------------
+# fetch_wp_priser_rates: JSON-olmayan WP yanıtı 502 sınıfına düşer (422 değil)
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self):
+        import json
+
+        raise json.JSONDecodeError("Expecting value", "<html>Bakım modu</html>", 0)
+
+
+class _FakeClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def get(self, *_args, **_kwargs):
+        return _FakeResponse()
+
+
+class _FakeAsyncClient:
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return _FakeClient()
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_non_json_wp_response_maps_to_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WP HTML/bakım sayfası döndürünce json.JSONDecodeError ham haliyle 422'ye
+    düşmemeli — WPPriserUnavailable (502 sınıfı) yükselir."""
+    from app.config import Settings
+    from app.services import wp_priser_service
+
+    settings = Settings(
+        _env_file=None,
+        database_url="sqlite+aiosqlite:///test.db",
+        wordpress_base_url="https://wp.example",
+    )
+    monkeypatch.setattr(wp_priser_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(wp_priser_service.httpx, "AsyncClient", _FakeAsyncClient)
+
+    with pytest.raises(wp_priser_service.WPPriserUnavailable) as exc_info:
+        await wp_priser_service.fetch_wp_priser_rates()
+
+    # Mesaj temiz: ham parser metni ("Expecting value") taşımaz.
+    assert "Expecting value" not in str(exc_info.value)
+    assert not isinstance(exc_info.value, ValueError)

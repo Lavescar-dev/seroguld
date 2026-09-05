@@ -20,6 +20,7 @@ metals.dev bu karar ile tamamen devre dışıdır (kullanıcı kararı, Tur 2).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -32,6 +33,18 @@ from app.config import get_settings
 from app.utils.helpers import quantize_2, utc_now
 
 LOGGER = logging.getLogger(__name__)
+
+
+class WPPriserUnavailable(Exception):
+    """WP'ye ulaşılamadı ya da yanıtı ayrıştırılamadı (502 sınıfı hata).
+
+    ValueError KULLANILMAZ: endpoint, istemci-kaynaklı durumları ("fiyat
+    bulunamadı", config eksik) 422'ye çevirir; ulaşım/çözümleme hataları 502'de
+    kalmalı. json.JSONDecodeError bir ValueError alt sınıfı olduğundan olduğu
+    gibi yükselirse ham parser metniyle 422'ye düşer — bu yüzden burada
+    sarılır.
+    """
+
 
 # Canlı site: https://seroguld.dk/guldpriser/ ve /soelvpriser/ (wp/v2/pages).
 GOLD_PAGE_SLUG = "guldpriser"
@@ -104,6 +117,9 @@ _SCALAR_BANDS: dict[str, tuple[Decimal, Decimal]] = {
     "palladium_dkk": (Decimal("20"), Decimal("10000")),
     "plet_dkk": (Decimal("0.001"), Decimal("0.10")),
 }
+# Public takma ad — market-rates API'si bant-dışı uyarılarını aynı kaynaktan
+# üretir (kopya bant sabiti taşımamak için).
+SCALAR_BANDS = _SCALAR_BANDS
 
 
 def _price_to_decimal(raw: str) -> Decimal | None:
@@ -276,8 +292,9 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
     Önce bilinen slug'lar (guldpriser + soelvpriser) doğrudan istenir; slug
     değişmişse "priser" aramasıyla (per_page=100) en yüksek skorlu sayfalar
     seçilir. Dönen: {gold_rates_dkk, silver_rates_dkk, fetched_at, page_id,
-    page_title, silver_page_id}. Hata durumunda anlamlı mesajla ValueError
-    yükseltir (çağıran HTTP'ye çevirir).
+    page_title, silver_page_id}. Veri/istek hatalarında anlamlı mesajla
+    ValueError yükseltir (çağıran 422'ye çevirir); ulaşım/çözümleme
+    hatalarında WPPriserUnavailable (çağıran 502'ye çevirir).
     """
     settings = get_settings()
     base = (settings.wordpress_base_url or "").strip().rstrip("/")
@@ -288,7 +305,9 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
         auth = (settings.wp_app_username, settings.wp_app_password)
 
     try:
-        async with httpx.AsyncClient(timeout=20.0, auth=auth) as client:
+        # Timeout config'ten ayarlanabilir (yoksa 20 sn — eski sabit değer).
+        timeout_seconds = float(getattr(settings, "wp_priser_timeout_seconds", 20.0) or 20.0)
+        async with httpx.AsyncClient(timeout=timeout_seconds, auth=auth) as client:
             candidates: list[dict[str, Any]] = []
             for slug in (GOLD_PAGE_SLUG, SILVER_PAGE_SLUG):
                 response = await client.get(
@@ -296,7 +315,7 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
                     params={"slug": slug, "_fields": "id,title,content"},
                 )
                 response.raise_for_status()
-                pages = response.json()
+                pages = _decode_pages(response)
                 if isinstance(pages, list):
                     candidates.extend(pages)
 
@@ -310,14 +329,14 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
                     params={"search": "priser", "per_page": 100, "_fields": "id,title,content"},
                 )
                 response.raise_for_status()
-                pages = response.json()
+                pages = _decode_pages(response)
                 if isinstance(pages, list):
                     candidates.extend(pages)
     except httpx.HTTPError as exc:
-        # Ağ/HTTP hatası yeniden fırlar (çağıran 502'ye çevirir); yalnızca iz
-        # bırakılır — kaynak düştüğü log'lardan görünebilsin.
+        # Ağ/HTTP hatası 502 sınıfına çevrilir; tam mesaj yalnız log'a gider —
+        # httpx mesajları upstream URL taşıyabilir, istemciye dönmez.
         LOGGER.warning("WP Priser sayfaları çekilemedi (%s): %s", base, exc)
-        raise
+        raise WPPriserUnavailable(f"WP'ye ulaşılamadı (ağ/HTTP hatası: {type(exc).__name__}).") from exc
 
     if not candidates:
         raise ValueError("WP'de fiyat sayfası bulunamadı (guldpriser/soelvpriser slug'ları boş).")
@@ -369,3 +388,19 @@ async def fetch_wp_priser_rates() -> dict[str, Any]:
 
 def _rendered(page: dict[str, Any]) -> str:
     return ((page.get("content") or {}).get("rendered")) or ""
+
+
+def _decode_pages(response: httpx.Response) -> Any:
+    """WP sayfa yanıtını JSON'a çözer; JSON olmayan gövdeyi 502 sınıfına çevirir.
+
+    WP bir HTML/bakım sayfası döndürdüğünde response.json() json.JSONDecodeError
+    fırlatır — bu bir ValueError alt sınıfı olduğundan yakalanmazsa endpoint'in
+    "except ValueError → 422" dalına düşer ve istemci "Expecting value: line 1
+    column 1" gibi ham parser metnini istek-doğrulama hatası olarak görür.
+    """
+    try:
+        return response.json()
+    except json.JSONDecodeError as exc:
+        raise WPPriserUnavailable(
+            "WP yanıtı JSON çözümlenemedi — sayfa HTML/bakım sayfası döndürmüş olabilir."
+        ) from exc

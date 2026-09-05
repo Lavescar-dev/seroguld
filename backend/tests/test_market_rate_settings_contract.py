@@ -410,3 +410,123 @@ async def test_refresh_persists_plet_with_four_decimals(monkeypatch: pytest.Monk
     assert saved_env["INVENTORY_MARKET_PLET_DKK"] == "0.0200"
     assert saved_env["INVENTORY_MARKET_GOLD_BAR_DKK"] == "873.00"
     assert saved_env["INVENTORY_MARKET_SILVER_BAR_DKK"] == "13.10"
+
+
+# ---------------------------------------------------------------------------
+# PUT /defaults: skaler doğrulama + boş live_fields "değişiklik yok" + warnings
+# ---------------------------------------------------------------------------
+
+def _put_payload(**overrides: object) -> dict:
+    base: dict = {
+        "eur_dkk_fx": "7.45",
+        "gold_rates_dkk": {"8": "130", "14": "382", "18": "470", "21": "540", "21.6": "555", "22": "565", "22b": "565", "24": "612"},
+        "silver_rates_dkk": {"999": "8.10", "925": "7.40", "830": "6.60"},
+        "plet_dkk": "0.02", "gold_bar_dkk": "620", "silver_bar_dkk": "8.30",
+        "platinum_dkk": "300", "palladium_dkk": "340",
+        "live_fields": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def _update_in(payload: dict):
+    from app.api.market_rates import MarketRateProfileUpdateIn
+
+    return MarketRateProfileUpdateIn(**payload)
+
+
+@pytest.mark.asyncio
+async def test_put_rejects_filled_invalid_scalars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dolu ama geçersiz/0/negatif skaler 422 döner — sessizce profil
+    default'una düşmez (operatör kendi değeri yerine default görürdü)."""
+    from fastapi import HTTPException
+
+    from app.api import market_rates as api_module
+
+    seen: list[dict] = []
+
+    def fake_save(payload: dict) -> dict:
+        seen.append(payload)
+        return payload
+
+    monkeypatch.setattr(api_module, "save_manual_market_rate_profile", fake_save)
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=False))
+
+    for bad in ("abc", "0", "-5", "0.00"):
+        with pytest.raises(HTTPException) as exc_info:
+            await api_module.put_market_rate_defaults(_update_in(_put_payload(platinum_dkk=bad)), None)
+        assert exc_info.value.status_code == 422
+        assert "platinum_dkk" in str(exc_info.value.detail)
+
+    # Kayıt hiç çağrılmadı — sessiz default-ezme yok.
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_put_allows_empty_optional_scalars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Boş bırakılan opsiyonel skaler hâlâ serbesttir (profil default'una düşer)."""
+    from app.api import market_rates as api_module
+
+    seen: list[dict] = []
+    monkeypatch.setattr(api_module, "save_manual_market_rate_profile", lambda payload: seen.append(payload) or payload)
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=False))
+
+    await api_module.put_market_rate_defaults(
+        _update_in(_put_payload(platinum_dkk="", palladium_dkk="", plet_dkk="")), None,
+    )
+
+    assert seen and seen[0]["platinum_dkk"] == ""
+
+
+@pytest.mark.asyncio
+async def test_put_empty_live_fields_means_no_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    """live_fields {} "değişiklik yok"tur — üç canlı bayrağını kapatıp canlı
+    modu sessizce söndürmez (drawer live_fields yüklemeden kaydedebilir)."""
+    from app.api import market_rates as api_module
+
+    seen: list[dict] = []
+    monkeypatch.setattr(api_module, "save_manual_market_rate_profile", lambda payload: seen.append(payload) or payload)
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=False))
+
+    response = await api_module.put_market_rate_defaults(_update_in(_put_payload(live_fields={})), None)
+
+    assert seen and seen[0]["live_fields"] is None
+    assert response["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_put_reports_out_of_band_scalars_without_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bant dışı skaler (ons/10g karışıklığı) kaydı ENGELLEMEZ; yanıtın
+    'warnings' listesinde bant bilgisiyle bildirilir (wp_priser_service bantları
+    tek kaynaktır)."""
+    from app.api import market_rates as api_module
+
+    monkeypatch.setattr(api_module, "save_manual_market_rate_profile", lambda payload: payload)
+    monkeypatch.setattr(market_rate_profile, "get_settings", lambda: _settings(live=False))
+
+    response = await api_module.put_market_rate_defaults(
+        # 20000 DKK/g backend platin bandının (50–10000) dışındadır.
+        _update_in(_put_payload(platinum_dkk="20000")), None,
+    )
+
+    assert response["warnings"]
+    assert "platinum_dkk" in response["warnings"][0]
+    assert "50" in response["warnings"][0] and "10000" in response["warnings"][0]
+
+
+@pytest.mark.asyncio
+async def test_refresh_maps_unavailable_to_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ulaşım/çözümleme hataları (WPPriserUnavailable) 422 değil 502 döner."""
+    from fastapi import HTTPException
+
+    from app.api import market_rates as api_module
+    from app.services.wp_priser_service import WPPriserUnavailable
+
+    async def fake_fetch() -> dict:
+        raise WPPriserUnavailable("WP'ye ulaşılamadı (ağ/HTTP hatası: ConnectTimeout).")
+
+    monkeypatch.setattr("app.services.wp_priser_service.fetch_wp_priser_rates", fake_fetch)
+    with pytest.raises(HTTPException) as exc_info:
+        await api_module.post_market_rates_refresh_from_wp(_=None)
+    assert exc_info.value.status_code == 502
+    assert "ConnectTimeout" in str(exc_info.value.detail)

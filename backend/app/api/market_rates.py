@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,11 +15,52 @@ from app.services.market_rate_profile import (
     get_effective_market_rate_profile,
     save_manual_market_rate_profile,
 )
+from app.services.wp_priser_service import SCALAR_BANDS, WPPriserUnavailable
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 # WP priser tablosundan çekilebilen skaler metal alanları.
 SCALAR_PROFILE_KEYS = ("gold_bar_dkk", "silver_bar_dkk", "platinum_dkk", "palladium_dkk", "plet_dkk")
+
+# PUT'ta dolu-değeri doğrulanan opsiyonel skalerler (boş = profil default'u).
+_SCALAR_OPTIONAL_FIELDS = (
+    "eur_dkk_fx",
+    "gold_bar_dkk",
+    "silver_bar_dkk",
+    "platinum_dkk",
+    "palladium_dkk",
+    "plet_dkk",
+)
+
+
+def _parse_positive_decimal(raw: str) -> Decimal | None:
+    """market_rate_profile._positive çözümleyicisiyle aynı semantik."""
+    try:
+        value = Decimal(str(raw).replace(",", ".").strip())
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return value if value.is_finite() and value > 0 else None
+
+
+def _scalar_band_warnings(payload: dict) -> list[str]:
+    """Bant-dışı skaler değerler için engelleyici olmayan uyarı listesi.
+
+    Bantlar wp_priser_service._SCALAR_BANDS ile tek kaynaktan gelir; kayıt
+    ENGELLENMEZ (frontend onay akışıyla uyumlu), yalnız operatör bilgilendirilir.
+    """
+    warnings: list[str] = []
+    for field, (low, high) in SCALAR_BANDS.items():
+        raw = str(payload.get(field) or "").strip()
+        if not raw:
+            continue
+        value = _parse_positive_decimal(raw)
+        if value is not None and not (low <= value <= high):
+            warnings.append(
+                f"{field}: beklenen aralık {low}–{high} DKK/g, girilen '{raw}' — birim (ons/10g/kr-kg) karışıklığı olabilir."
+            )
+    return warnings
 
 
 class MarketRateMetaOut(AppBaseModel):
@@ -50,6 +93,8 @@ class MarketRateProfileOut(MarketRateProfileUpdateIn):
     # Alan bazında etkin oto durumu (eur_dkk_fx / platinum_dkk / palladium_dkk).
     live_fields: dict[str, bool] = {}
     rate_meta: dict[str, MarketRateMetaOut]
+    # Kaydı engellemeyen bant-dışı uyarıları (yalnız PUT yanıtında dolu gelir).
+    warnings: list[str] = []
 
 
 @router.post("/refresh-from-wp")
@@ -68,9 +113,14 @@ async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) 
     try:
         fetched = await fetch_wp_priser_rates()
     except ValueError as exc:
+        # Veri/istek kaynaklı: config eksik, sayfa yok, fiyat bulunamadı.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # ağ/HTTP hataları okunur mesaja
+    except WPPriserUnavailable as exc:
+        # Ulaşım/çözümleme kaynaklı; mesajı servis temizler (URL sızdırmez).
         raise HTTPException(status_code=502, detail=f"WP Priser çekilemedi: {exc}") from exc
+    except Exception as exc:  # beklenmeyen hata: detay istemciye sızmaz
+        logger.warning("WP Priser refresh beklenmeyen hata", exc_info=True)
+        raise HTTPException(status_code=502, detail="WP Priser çekilemedi (beklenmeyen sunucu hatası).") from exc
 
     current = get_manual_market_rate_profile()
     merged_gold = {**(current.get("gold_rates_dkk") or {})}
@@ -141,7 +191,27 @@ async def put_market_rate_defaults(
     # kaydedilebilir (eski 409 kilidi kaldırıldı).
     if set(payload.gold_rates_dkk) != set(GOLD_RATE_KEYS) or set(payload.silver_rates_dkk) != set(SILVER_RATE_KEYS):
         raise HTTPException(status_code=422, detail="Altın ve gümüş oran matrisi eksik veya hatalı.")
-    save_manual_market_rate_profile(payload.model_dump())
+    payload_dict = payload.model_dump()
+    # Dolu ama çözümlenemez/0/negatif skaler ('abc' gibi) sessizce profil
+    # default'una düşüyordu; operatör çekmeceyi yeniden açtığında kendi değeri
+    # yerine default'u görüyordu (para üstüne doğrudan etki). Doluysa 422 —
+    # boş bırakmak serbesttir (opsiyonel alan → profil default'u).
+    for field in _SCALAR_OPTIONAL_FIELDS:
+        raw = str(payload_dict.get(field) or "").strip()
+        if raw and _parse_positive_decimal(raw) is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{field}' alanı doluysa pozitif bir sayı olmalı (girilen: '{raw}').",
+            )
+    # Boş live_fields {} "değişiklik yok" sayılır — üç canlı bayrağını da
+    # kapatıp canlı modu sessizce söndürmesin (drawer live_fields yüklemeden
+    # kaydedersen bayraklar ezilmesin; None = mevcut ayar korunur).
+    if payload_dict.get("live_fields") == {}:
+        payload_dict["live_fields"] = None
+    warnings = _scalar_band_warnings(payload_dict)
+    save_manual_market_rate_profile(payload_dict)
     # Kaydettikten sonra ETKİN profili döndür: oto işaretlenen alanlar (Pt/Pd/fx)
     # canlı değerleriyle gelir; drawer anında güncel durumu görür.
-    return await get_effective_market_rate_profile()
+    result = await get_effective_market_rate_profile()
+    result["warnings"] = warnings
+    return result

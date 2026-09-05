@@ -23,6 +23,10 @@ vi.mock('@/lib/toast', () => ({
 
 import { GlobalMarketRatesDrawer, useGlobalMarketRates } from '../GlobalMarketRatesDrawer';
 
+// ConfirmProvider mount edilmemiş ortamda useConfirm fallback'i window.confirm
+// kullanır — onay akışlarını bu spy üzerinden test ederiz.
+const windowConfirmSpy = vi.spyOn(window, 'confirm');
+
 const PROFILE: GlobalMarketRateProfile = {
   eur_dkk_fx: '7.45',
   gold_rates_dkk: {
@@ -91,7 +95,9 @@ beforeEach(() => {
   toastMocks.success.mockClear();
   toastMocks.warning.mockClear();
   toastMocks.error.mockClear();
-  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  // mockReset: çağrı geçmişi + Once kuyruğunu temizler (testler arası sızıntı).
+  windowConfirmSpy.mockReset();
+  windowConfirmSpy.mockReturnValue(true);
 });
 
 describe('GlobalMarketRatesDrawer — Pletsølv bandı', () => {
@@ -201,5 +207,167 @@ describe('GlobalMarketRatesDrawer — yükleme/hata kilidi', () => {
 
     expect(await screen.findByLabelText(/Pletsølv DKK\/g/)).toBeInTheDocument();
     expect(screen.queryByText('bayat')).toBeNull();
+  });
+});
+
+describe('GlobalMarketRatesDrawer — opsiyonel skaler denetimi', () => {
+  // Platin/Palladyum etiketleri AutoFieldToggle butonu da içerir; implicit label
+  // ilk labelable elemanı (butonu) döndürdüğünden input'a closest('label') ile inilir.
+  async function findScalarInput(labelText: string) {
+    await screen.findByText(labelText);
+    return await waitFor(() => {
+      const input = screen.getByText(labelText).closest('label')?.querySelector('input');
+      expect(input).toBeTruthy();
+      return input as HTMLInputElement;
+    });
+  }
+
+  it('dolu ama geçersiz skaler (Platin "abc") Kaydet\'i engeller, PUT gitmez', async () => {
+    apiRequestMock.mockResolvedValue(makeProfile());
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const platinumInput = await findScalarInput('Platin DKK/g');
+    await waitFor(() => expect(platinumInput).toHaveValue('280.00'));
+    fireEvent.change(platinumInput, { target: { value: 'abc' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Kaydet$/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/dolu ama geçerli pozitif sayı değil: Platin/)).toBeInTheDocument(),
+    );
+    expect(putCalls()).toHaveLength(0);
+  });
+
+  it('boş bırakılan opsiyonel skaler kaydı ENGELLEMEZ ve "" gönderilir', async () => {
+    apiRequestMock.mockResolvedValue(makeProfile());
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const platinumInput = await findScalarInput('Platin DKK/g');
+    await waitFor(() => expect(platinumInput).toHaveValue('280.00'));
+    fireEvent.change(platinumInput, { target: { value: '' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Kaydet$/ }));
+
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    const body = JSON.parse((putCalls()[0][1] as { body: string }).body) as { platinum_dkk: string };
+    // Boş alan '' taşınır (backend profil default'una düşer) — 0.00 değil.
+    expect(body.platinum_dkk).toBe('');
+  });
+});
+
+describe('GlobalMarketRatesDrawer — WP\'den çek (bekleme + hata ayrımı)', () => {
+  const WP_RESULT = {
+    applied_gold: { '24': '867.00' },
+    applied_silver: { '999': '12.80' },
+    applied_scalars: { gold_bar_dkk: '873.00' },
+    auto_fields_disabled: [] as string[],
+    fetched_at: '2026-09-05T10:00:00',
+  };
+
+  it('çekim sürerken buton disable + "Çekiliyor…" etiketi; ikinci tık yeni POST açmaz', async () => {
+    let gets = 0;
+    apiRequestMock.mockImplementation((_url: string, init?: { method?: string }) => {
+      if (init?.method === 'POST') return new Promise(() => {}); // hiç çözülmeyen POST
+      gets += 1;
+      return Promise.resolve(makeProfile());
+    });
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const wpButton = await screen.findByRole('button', { name: /WP.*çek/ });
+    // Profil yüklenene kadar buton loadBlocked'tır — enable olmasını bekle.
+    await waitFor(() => expect(wpButton).toBeEnabled());
+    fireEvent.click(wpButton);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Çekiliyor…' })).toBeDisabled());
+    const postCalls = apiRequestMock.mock.calls.filter(
+      ([, init]) => (init as { method?: string } | undefined)?.method === 'POST',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Çekiliyor…' }));
+    expect(
+      apiRequestMock.mock.calls.filter(
+        ([, init]) => (init as { method?: string } | undefined)?.method === 'POST',
+      ),
+    ).toHaveLength(postCalls.length);
+    expect(postCalls.length).toBe(1);
+    expect(gets).toBeGreaterThan(0);
+  });
+
+  it('POST başarılıysa ama tazeleme patlarsa "çekilemedi" DEĞİL "uygulandı ama tazelenemedi" uyarısı gelir', async () => {
+    let gets = 0;
+    apiRequestMock.mockImplementation((_url: string, init?: { method?: string }) => {
+      if (init?.method === 'POST') return Promise.resolve(WP_RESULT);
+      gets += 1;
+      if (gets === 1) return Promise.resolve(makeProfile()); // ilk profil yüklemesi
+      return Promise.reject(new Error('tazeleme patladı'));
+    });
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const wpButton = await screen.findByRole('button', { name: /WP.*çek/ });
+    await waitFor(() => expect(wpButton).toBeEnabled());
+    fireEvent.click(wpButton);
+
+    await waitFor(() =>
+      expect(toastMocks.warning).toHaveBeenCalledWith(
+        'WP Priser uygulandı',
+        expect.stringContaining('tazelenemedi'),
+      ),
+    );
+    expect(toastMocks.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('GlobalMarketRatesDrawer — dirty kapatma koruması', () => {
+  it('taslak dirty iken Vazgeç onay sorar; onaylanırsa kapanır', async () => {
+    apiRequestMock.mockResolvedValue(makeProfile());
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const pletInput = await screen.findByLabelText(/Pletsølv DKK\/g/);
+    await waitFor(() => expect(pletInput).toHaveValue('0.0200'));
+    fireEvent.change(pletInput, { target: { value: '0.03' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => expect(window.confirm).toHaveBeenCalledTimes(1));
+    // Onay true (beforeEach mock'u) → çekmece kapanır.
+    await waitFor(() => expect(screen.queryByLabelText(/Pletsølv DKK\/g/)).toBeNull());
+  });
+
+  it('taslak dirty iken onay REDDEDİLİRSE çekmece açık kalır', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(false);
+    apiRequestMock.mockResolvedValue(makeProfile());
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const pletInput = await screen.findByLabelText(/Pletsølv DKK\/g/);
+    await waitFor(() => expect(pletInput).toHaveValue('0.0200'));
+    fireEvent.change(pletInput, { target: { value: '0.03' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => expect(window.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText(/Pletsølv DKK\/g/)).toBeInTheDocument();
+  });
+
+  it('kayıt sürerken kapatma yolları kilitlidir — onay bile sorulmaz', async () => {
+    apiRequestMock.mockImplementation((_url: string, init?: { method?: string }) => {
+      if (init?.method === 'PUT') return new Promise(() => {}); // hiç çözülmeyen PUT
+      return Promise.resolve(makeProfile());
+    });
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const pletInput = await screen.findByLabelText(/Pletsølv DKK\/g/);
+    await waitFor(() => expect(pletInput).toHaveValue('0.0200'));
+    fireEvent.change(pletInput, { target: { value: '0.03' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Kaydet$/ }));
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vazgeç' }));
+    expect(screen.getByRole('button', { name: 'Vazgeç' })).toBeDisabled();
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/Pletsølv DKK\/g/)).toBeInTheDocument();
   });
 });
