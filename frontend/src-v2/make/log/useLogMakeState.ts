@@ -163,6 +163,20 @@ export function useLogMakeState(): LogPageProps {
     }
   }, [documents, expandedDocument]);
 
+  // A15 — Excel içe aktar akışı: /excel-preview/{kind}/{key} rotası seçili
+  // (veya otomatik seçilen) AFG belgesinin draft workbook'una bağlanır
+  // (kind=alis-workspace, key=pos session id). Seçili kayıt yoksa akış kilitlenir.
+  const selectedImportDocument = useMemo(
+    () =>
+      documents.find((document) => document.sequence_no === expandedDocument) ??
+      documents[0] ??
+      null,
+    [documents, expandedDocument],
+  );
+  const excelImportPath = selectedImportDocument
+    ? `/excel-preview/alis-workspace/${selectedImportDocument.session_id}`
+    : null;
+
   const lotDraftsRef = useRef(lotDrafts);
   useEffect(() => {
     lotDraftsRef.current = lotDrafts;
@@ -429,6 +443,7 @@ export function useLogMakeState(): LogPageProps {
     onQueryChange: setQuery,
     expandedDocument,
     onToggleDocument: (sequenceNo) => setExpandedDocument(sequenceNo),
+    excelImportPath,
     showMeltSection,
     onToggleMeltSection: () => setShowMeltSection((current) => !current),
     lineDrafts,

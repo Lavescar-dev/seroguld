@@ -8,6 +8,7 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
+  FileUp,
   Flame,
   History,
   Layers,
@@ -26,6 +27,7 @@ import {
 } from 'lucide-react';
 
 import { fetchAuthedText } from '@/lib/api';
+import { useNavigate } from 'react-router-dom';
 import { HtmlDocumentModal } from '@/components/HtmlDocumentModal';
 import {
   formatDate,
@@ -270,6 +272,8 @@ export interface LogPageProps {
   lotLinesLoading: boolean;
   selectedYear: number;
   onSelectedYearChange: (year: number) => void;
+  /** A15 — seçili AFG belgesinin /excel-preview rotası; seçili kayıt yoksa null. */
+  excelImportPath?: string | null;
 }
 
 export function LogPage({
@@ -318,7 +322,9 @@ export function LogPage({
   lotLinesLoading,
   selectedYear,
   onSelectedYearChange,
+  excelImportPath,
 }: LogPageProps) {
+  const navigate = useNavigate();
   const goldBucket = workspace?.gold;
   const silverBucket = workspace?.silver;
   const activeBucket = activeTab === 'silver' ? silverBucket : goldBucket;
@@ -463,6 +469,22 @@ export function LogPage({
               </div>
               <p className="mt-1 text-[11px] text-emerald-700">{workbookStatus}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (excelImportPath) navigate(excelImportPath);
+              }}
+              disabled={!excelImportPath}
+              title={
+                excelImportPath
+                  ? 'Seçili AFG kaydının workbook’unu Excel’de açar (içe aktar / uygula)'
+                  : 'İçe aktarmak için önce bir AFG kaydı seçin'
+              }
+              className="inline-flex items-center gap-2 border border-emerald-600 bg-emerald-700 px-4 py-2 text-xs font-black uppercase tracking-wider text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <FileUp className="h-3.5 w-3.5" />
+              Excel'den İçe Aktar
+            </button>
             {activeView === 'system' ? (
               <button
                 type="button"
