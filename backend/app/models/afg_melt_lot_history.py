@@ -16,9 +16,11 @@ class AfgMeltLotHistory(Base):
     __tablename__ = "afg_melt_lot_history"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    lot_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("afg_melt_lots.id"), nullable=False, index=True
+    lot_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("afg_melt_lots.id"), nullable=True, index=True
     )
+    """Sahip lot'un id'si. Lot silindiğinde geçmiş satırları temizlenir; yalnız
+    terminal "deleted" audit kaydı lot_id=None ile lot bağımsız kalır."""
     action: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     """created | updated | finalized | deleted | line_attached | line_detached"""
 

@@ -6,6 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -413,7 +414,7 @@ def _melt_lot_out(lot: AfgMeltLot, line_count: int = 0) -> AfgMeltLotOut:
 async def _log_lot_history(
     db: AsyncSession,
     *,
-    lot_id: UUID,
+    lot_id: UUID | None,
     action: str,
     actor: User | None = None,
     old_value: dict | None = None,
@@ -553,6 +554,7 @@ async def create_afg_melt_lot(
     *,
     payload: AfgMeltLotCreateRequest,
     actor: User | None = None,
+    commit: bool = True,
 ) -> AfgMeltLotOut:
     workspace = await build_log_workspace(db, limit=400)
     bucket = workspace.gold if payload.metal_bucket == "gold" else workspace.silver
@@ -604,7 +606,8 @@ async def create_afg_melt_lot(
             "attached_line_count": len(line_ids),
         },
     )
-    await db.commit()
+    if commit:
+        await db.commit()
     await db.refresh(lot)
     return _melt_lot_out(lot, line_count=len(line_ids))
 
@@ -636,6 +639,7 @@ async def update_afg_melt_lot(
     lot_id: UUID,
     payload: AfgMeltLotUpdateRequest,
     actor: User | None = None,
+    commit: bool = True,
 ) -> AfgMeltLotOut:
     lot = await db.get(AfgMeltLot, lot_id)
     if lot is None:
@@ -683,7 +687,8 @@ async def update_afg_melt_lot(
         old_value=old_snapshot,
         new_value=_serialize_lot_snapshot(lot),
     )
-    await db.commit()
+    if commit:
+        await db.commit()
     await db.refresh(lot)
 
     from sqlalchemy import func as sa_func
@@ -787,17 +792,29 @@ async def delete_afg_melt_lot(
         .values(melt_lot_id=None)
     )
 
-    # History log (silmeden önce, FK temiz)
-    await _log_lot_history(
-        db,
-        lot_id=lot.id,
-        action="deleted",
-        actor=actor,
-        old_value=_serialize_lot_snapshot(lot),
+    # Lot geçmişi lot'tan önce açıkça silinir; aksi halde PostgreSQL
+    # afg_melt_lot_history.lot_id FK ihlaliyle 500 döner.
+    lot_id_str = str(lot.id)
+    snapshot = _serialize_lot_snapshot(lot)
+    await db.execute(
+        sa_delete(AfgMeltLotHistory).where(AfgMeltLotHistory.lot_id == lot.id)
     )
+    await db.delete(lot)
     await db.flush()
 
-    await db.delete(lot)
+    # Terminal "deleted" audit kaydı lot silindikten SONRA, lot_id=None ile
+    # yazılır: FK'ye bağlı olmadan kalıcıdır (Bogføringsloven §10). Lot
+    # kimliği old_value içine gömülür. Tek transaction içinde olduğu için
+    # audit kaydı başarısız olursa lot silinmesi de geri alınır — en kötü
+    # durumda audit kaybı olmaz.
+    await _log_lot_history(
+        db,
+        lot_id=None,
+        action="deleted",
+        actor=actor,
+        old_value={**snapshot, "lot_id": lot_id_str},
+        notes=f"Lot silindi (lot_id={lot_id_str}); audit kaydı lot bağımsız saklanır.",
+    )
     await db.commit()
 
 
@@ -952,6 +969,7 @@ async def apply_afg_route_requests_safe(
                     db=db,
                     route_requests=[req],
                     actor_id=actor_id,
+                    commit=False,
                 )
                 successes.extend(req for _ in resp.processed_line_ids)
         except HTTPException as exc:  # noqa: PERF203
@@ -1004,7 +1022,19 @@ async def apply_afg_route_requests(
     db: AsyncSession,
     route_requests: list[AfgRouteRequest],
     actor_id,
+    commit: bool = True,
 ) -> AfgRouteResponse:
+    """AFG rota kararlarını uygular.
+
+    commit=True (varsayılan): kendi transaction'ını yönetir — başarılı apply
+    sonunda ``db.commit()``, hata durumunda ``db.rollback()`` atar.
+
+    commit=False: hiçbir commit/rollback yapmaz; çağıran savepoint
+    (``db.begin_nested()``) veya dış transaction sahibidir. İç commit
+    savepoint'i erken release edip kompanzasyonu geçersiz kıldığı, iç
+    rollback ise savepoint sahibinin transaction'ını öldürdüğü için ikisi de
+    atlanır — hata olduğu gibi yükseltilir, geri alma savepoint sahibine kalır.
+    """
     if not route_requests:
         return AfgRouteResponse()
 
@@ -1160,9 +1190,11 @@ async def apply_afg_route_requests(
             product_ids.append(linked_product.id)
             status_key = linked_product.status.value
             status_counts[status_key] = int(status_counts.get(status_key, 0)) + 1
-        await db.commit()
+        if commit:
+            await db.commit()
     except Exception:
-        await db.rollback()
+        if commit:
+            await db.rollback()
         raise
 
     return AfgRouteResponse(

@@ -370,11 +370,15 @@ async def _ensure_log_artifact(
     year: int,
     create_snapshot: bool,
     force_sync: bool,
+    commit: bool = True,
 ) -> None:
     if not force_sync and await get_artifact_record(db, f"log.live.{year}"):
         return
     await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=create_snapshot)
-    await db.commit()
+    # commit=False: begin_nested savepoint içinde session.commit() savepoint'i
+    # erken release eder; commit sorumluluğu savepoint/dış transaction sahibinde.
+    if commit:
+        await db.commit()
 
 
 def _workspace_has_business_inputs(workspace: PosWorkspaceOut) -> bool:
@@ -578,26 +582,38 @@ async def _apply_log_workbook_artifact_inputs(
                     detail=f"Log artifact conflict_state={conflict_state}; önce yenileyin.",
                 )
     system_actor = SimpleNamespace(id=None)
-    if parsed.route_updates:
-        await apply_afg_route_requests(
-            db=db,
-            route_requests=[edit.payload for edit in parsed.route_updates],
-            actor_id=system_actor.id,
-        )
-    for create in parsed.lot_creates:
-        lot = await create_afg_melt_lot(db, payload=create.create_payload)
-        await update_afg_melt_lot(db, lot_id=UUID(str(lot.id)), payload=create.update_payload)
-    for update in parsed.lot_updates:
-        await update_afg_melt_lot(db, lot_id=update.lot_id, payload=update.payload)
+    # Tek savepoint: her route-apply ve lot create/update kendi commit'ini
+    # atmaz (commit=False). Yarım import ancak dış çağıranın commit'iyle
+    # kalıcı olur; ortadaki adım patlarsa savepoint geri alınır ve hiçbir
+    # route/lot/artifact kalıntısı kalmaz.
+    async with db.begin_nested():
+        if parsed.route_updates:
+            await apply_afg_route_requests(
+                db=db,
+                route_requests=[edit.payload for edit in parsed.route_updates],
+                actor_id=system_actor.id,
+                commit=False,
+            )
+        for create in parsed.lot_creates:
+            lot = await create_afg_melt_lot(db, payload=create.create_payload, commit=False)
+            await update_afg_melt_lot(
+                db,
+                lot_id=UUID(str(lot.id)),
+                payload=create.update_payload,
+                commit=False,
+            )
+        for update in parsed.lot_updates:
+            await update_afg_melt_lot(db, lot_id=update.lot_id, payload=update.payload, commit=False)
 
-    workspace = await build_log_workspace(db, q=None, year=year)
-    await _ensure_log_artifact(
-        db,
-        workspace,
-        year=year,
-        create_snapshot=create_snapshot,
-        force_sync=True,
-    )
+        workspace = await build_log_workspace(db, q=None, year=year)
+        await _ensure_log_artifact(
+            db,
+            workspace,
+            year=year,
+            create_snapshot=create_snapshot,
+            force_sync=True,
+            commit=False,
+        )
     return workspace
 
 
@@ -763,7 +779,9 @@ async def _office_preview_for_kind(
             return build_inventory_preview(workspace, artifact=bundle.artifact), True
         if kind == "log":
             year = _default_artifact_year(int(key))
-            workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
+            # Workspace anahtarın yılından kurulur; güncel yıl verisini geçmiş
+            # yıl artifact'ine yazmak projeksiyonu bozar.
+            workspace = await build_log_workspace(db, q=None, year=year)
             bundle = await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)
             await db.commit()
             return build_log_preview(workspace, year=year, artifact=bundle.artifact), False
@@ -823,7 +841,8 @@ async def _office_status_for_kind(
             year = _default_artifact_year(int(key))
             artifact = await get_artifact_record(db, f"log.live.{year}")
             if artifact is None:
-                workspace = await build_log_workspace(db, q=None, year=_default_artifact_year(None))
+                # Anahtarın yılından kurulur (yıl projeksiyonu düzeltmesi).
+                workspace = await build_log_workspace(db, q=None, year=year)
                 artifact = (await sync_log_workbook_artifact(db, workspace, year=year, create_snapshot=False)).artifact
                 await db.commit()
             # Log/history workbooks are projections and intentionally cannot
