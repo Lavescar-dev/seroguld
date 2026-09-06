@@ -128,6 +128,12 @@ jobs:
           cd desktop
           npm ci
 
+      - name: Build frontend dist
+        # generate_context! makrosu dev derlemesinde bile frontendDist yolunun
+        # varlığını doğrular (tauri dev devUrl'den servis etse de). CI'da dist
+        # üretilmeden Rust derlenirse makro panikleyip exit 101 verir.
+        run: bash scripts/frontend-build.sh
+
       - name: Prebuild desktop shell (Rust)
         # tauri dev aynı target dizimini kullanır: smoke anında yeniden
         # derleme kalmaz, uygulama spawn'dan saniyeler içinde pencere açar.
