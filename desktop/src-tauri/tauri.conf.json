@@ -42,9 +42,6 @@
       "../../installer/windows/assets/seroguld-sg.png",
       "../../installer/windows/assets/seroguld-sg.ico"
     ],
-    "resources": {
-      "runtime/seroguld-runtime": "runtime/seroguld-runtime"
-    },
     "windows": {
       "webviewInstallMode": {
         "type": "offlineInstaller",
