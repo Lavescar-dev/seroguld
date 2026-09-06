@@ -17,6 +17,12 @@ TAURI_DRIVER_PORT="${DESKTOP_SMOKE_DRIVER_PORT:-4444}"
 TAURI_NATIVE_PORT="${DESKTOP_SMOKE_NATIVE_PORT:-4445}"
 TAURI_DRIVER_LOG="${SMOKE_DIR}/tauri-driver.log"
 APPLICATION="${ROOT_DIR}/scripts/desktop-smoke-launch.sh"
+# Wall-clock üst sınırı: tauri-driver'ın new-session isteğinin zaman aşımı
+# yoktur; uygulama (ilk CI koşusunda sıfırdan Rust derlemesi) açılmazsa istemci
+# sonsuza dek asılır (repoda 6 saatlik cancel koşularının nedeni). Bu sınır
+# asılışı görünür/kurtarılabilir kılar; Rust önderlemesi CI'da ayrı adımda
+# yapıldığından 15 dk bant yeterlidir.
+SMOKE_WALL_TIMEOUT="${DESKTOP_SMOKE_WALL_TIMEOUT:-900}"
 
 TAURI_DRIVER_PID=""
 WEBKIT_WEBDRIVER_BIN="${WEBKIT_WEBDRIVER_BIN:-}"
@@ -90,6 +96,12 @@ if [[ -z "${WEBKIT_WEBDRIVER_BIN}" ]]; then
 fi
 
 export WEBKIT_WEBDRIVER_BIN
+# Sanal/GPU'suz ekranda (xvfb, CI runner) WebKitGTK'nın DMABUF renderer ve
+# compositing yolları kilitlenebilir; DOM doğrulaması yapan smoke için
+# kapatmak güvenli ve ortam farkını (repo sahibinin makinesi 2.52'de sorunsuz,
+# ubuntu runner'da eski WebKit) eler.
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
 
 (
   cd "${DESKTOP_DIR}"
@@ -117,6 +129,7 @@ if ! curl -fsS "http://127.0.0.1:${TAURI_DRIVER_PORT}/status" >/dev/null 2>&1; t
   exit 1
 fi
 
+SMOKE_EXIT=0
 (
   cd "${DESKTOP_DIR}"
   env \
@@ -127,7 +140,19 @@ fi
     DESKTOP_BACKEND_PORT="${BACKEND_PORT}" \
     DESKTOP_FRONTEND_PORT="${FRONTEND_PORT}" \
     DESKTOP_DATABASE_URL="${DATABASE_URL}" \
+    timeout --signal=TERM --kill-after=15s "${SMOKE_WALL_TIMEOUT}" \
     npm run desktop-smoke
-)
+) || SMOKE_EXIT=$?
+
+if [[ "${SMOKE_EXIT}" -ne 0 ]]; then
+  echo "[desktop-smoke] smoke başarısız (exit=${SMOKE_EXIT})." >&2
+  echo "[desktop-smoke] --- tauri-driver.log (son 150 satır) ---" >&2
+  tail -n 150 "${TAURI_DRIVER_LOG}" >&2 || true
+  if [[ -f "${SESSION_FILE}" ]]; then
+    echo "[desktop-smoke] --- session dosyası ---" >&2
+    cat "${SESSION_FILE}" >&2 || true
+  fi
+  exit "${SMOKE_EXIT}"
+fi
 
 echo "[desktop-smoke] smoke başarılı."

@@ -68,11 +68,23 @@ const capabilities = {
 
 let driver;
 
+function log(stage, detail = '') {
+  // Aşama günlükleri stderr'e: npm/CI pipeline'ında anlık ve görünür kalır.
+  // CI'da 6 saat sessiz asılan koşuların asılma noktası ancak böyle görünür.
+  console.error(`[desktop-smoke] ${stage}${detail ? ` — ${detail}` : ''}`);
+}
+
 try {
+  log('session açılıyor', `server=${serverUrl} app=${application}`);
+  const sessionStart = Date.now();
   driver = await new Builder().usingServer(serverUrl).withCapabilities(capabilities).build();
+  log('session açıldı', `${Math.round((Date.now() - sessionStart) / 1000)} sn (uygulama derleme/kalkış dahil)`);
   await driver.manage().setTimeouts({ pageLoad: 15_000, script: 30_000 });
+
+  log('session dosyası bekleniyor', sessionFile || '(yok)');
   await waitForSessionFile(sessionFile);
 
+  log('smoke summary bekleniyor');
   const summary = await driver.wait(
     until.elementLocated(By.css('[data-testid="desktop-smoke-summary"]')),
     timeoutMs,
@@ -81,17 +93,21 @@ try {
     const text = await summary.getText();
     return text.trim().length > 0;
   }, timeoutMs);
+  log('summary hazır');
 
   try {
     await driver.wait(
       until.elementLocated(By.css('[data-testid="desktop-smoke-shell-ok"]')),
       timeoutMs,
     );
+    log('shell tamam; display/idle rotası doğrulanıyor');
     await verifyDisplayIdleRoute(driver);
+    log('display/idle doğrulandı');
   } catch (error) {
     const state = await readSmokeState(driver);
     throw new Error(`Desktop smoke tamamlanmadı: ${JSON.stringify(state)}`, { cause: error });
   }
+  log('başarılı');
 } finally {
   if (driver) {
     await driver.quit();

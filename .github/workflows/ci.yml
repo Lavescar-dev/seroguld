@@ -74,6 +74,12 @@ jobs:
 
   desktop-shell-smoke:
     runs-on: ubuntu-latest
+    # Bu job tarihsel olarak 6 saatte GitHub iptaline kadar asılı kaldı
+    # (tauri-driver new-session'ın zaman aşımı yok + sıfırdan Rust derlemesi
+    # + xvfb'de WebKitGTK). smoke artık kendi wall-clock watchdog'unu taşıyor;
+    # job bandı da güvence: en kötü 45 dk sonra kesişir ve (dump'lanan)
+    # tauri-driver.log görünür olur.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +93,13 @@ jobs:
           node-version: "20"
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Rust derleme katmanı cache'lenir: smoke'ın içinden tetiklenen
+      # `tauri dev` derlemesi cache'ten saniyeler sürer, new-session bloğu
+      # dakikalarca derleme beklemez.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
 
       - name: Install desktop deps
         run: |
@@ -114,6 +127,11 @@ jobs:
         run: |
           cd desktop
           npm ci
+
+      - name: Prebuild desktop shell (Rust)
+        # tauri dev aynı target dizimini kullanır: smoke anında yeniden
+        # derleme kalmaz, uygulama spawn'dan saniyeler içinde pencere açar.
+        run: cargo build --manifest-path desktop/src-tauri/Cargo.toml
 
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
