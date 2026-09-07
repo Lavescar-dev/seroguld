@@ -99,6 +99,7 @@ data/uploads/
 data/offsite-mirror/
 data/restore-drill/
 data/logs/
+data/archive/
 !data/.gitkeep
 
 # =========================
