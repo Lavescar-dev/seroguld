@@ -258,6 +258,33 @@ function plausibleCprSix(value: string): string {
 
 const CARE_OF_LINE = /^c\s*[/\\]\s*o\b/i;
 
+// OCR bilinen etiket kelimelerini bozabilir ("Adresse" → "Athesse", tr-paketi
+// P3 fixture'ı) — bozuk tek-kelime etiketler ad sanılıp pencereyi yanlış
+// kilitler. Uzunluk ≥6 tek-kelime adaylar bilinen etiket gövdeleriyle 2
+// düzenleme mesafesinde karşılaştırılır.
+const GARBLED_LABEL_STEMS = ['ADRESSE', 'POSTNR', 'POSTNUMMER', 'NAVN', 'KOMMUNE', 'PERSONNR', 'GYLDIG', 'SYGEHUS', 'CPRNR'];
+
+function editDistanceAtMost2(a: string, b: string): boolean {
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const above = previous[j];
+      previous[j] = Math.min(previous[j] + 1, previous[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+    if (Math.min(...previous) > 2) return false;
+  }
+  return previous[b.length] <= 2;
+}
+
+function looksLikeGarbledLabel(line: string): boolean {
+  const word = line.toUpperCase().replace(/[^A-ZÆØÅ]/g, '');
+  if (word.length < 6 || word !== line.toUpperCase().trim()) return false;
+  return GARBLED_LABEL_STEMS.some((stem) => editDistanceAtMost2(word, stem));
+}
+
 // Etiketsiz CPR adayı: Danca CPR 6+4 düzenidir ve tarih bölümü makul bir
 // tarih kodlar (dd 01-31, mm 01-12) — EHIC/kart no gibi 10 haneli yabancı
 // sayılar (ör. "Kort nr 0512345678", "999999-9999") CPR sanılmaz. Kart-no
@@ -298,46 +325,55 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
       ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
     ]);
-    if (Object.keys(fields).length) return { documentType: 'health_card', rawLines: lines, fields };
     // Etiketsiz yeni düzen: ad/sokak/posta bloğu alt alta basılır, etiket yok.
     // Posta satırı (9999 By) çıpaydır; bir üstü sokak, iki üstü addır.
     // Sokak ile ad arasına c/o satırı düşebilir — c/o satırları atlanır ve
     // adrese eklenir ("c/o Jens Jensen, Testgade 1").
-    const postalIndex = lines.findIndex((line) => /^\d{4}\s+\S/.test(line.trim()));
-    if (postalIndex >= 2) {
+    const blockFields = (() => {
+      const postalIndex = lines.findIndex((line) => /^\d{4}\s+\S/.test(line.trim()));
+      if (postalIndex < 2) return null;
       const streetLine = lines[postalIndex - 1]?.trim() ?? '';
       const careOf: string[] = [];
       // Ad adayı her zaman posta bloğunun iki üstünde değildir: araya CPR/
       // tarih satırı girebilir (gerçek saha kartı), ad satırının kenarında
       // madde imi/etiket kalıntısı olabilir. En fazla 3 satır pencereyle
-      // yukarı tara: c/o toplanır, rakam/iman satırları atlanır, ad olmayan
-      // harfli satırda (başlık bloğu) pencere kapanır.
+      // yukarı tara: c/o toplanır, rakam/iman satırları atlanır, etiket
+      // satırları (Navn/Adresse/Postnr…) pencereyi kapatmadan atlanır —
+      // 0.3.30 saha kartında isim etiketin ÜSTÜNDE kalabiliyordu.
       let nameCandidate = '';
-      for (let cursor = postalIndex - 2, depth = 0; cursor >= 0 && depth < 3; cursor -= 1, depth += 1) {
+      for (let cursor = postalIndex - 2, depth = 0; cursor >= 0 && depth < 5; cursor -= 1, depth += 1) {
         const line = lines[cursor]?.trim() ?? '';
         if (CARE_OF_LINE.test(line)) {
           careOf.unshift(line);
           continue;
         }
         if (/\d/.test(line) || !/\p{L}/u.test(line) || IDENTITY_NOISE_LINE.test(line)) continue;
+        if (looksLikeGarbledLabel(line)) continue;
         const candidate = printedNameCandidate(line);
         if (candidate && isPrintedNamePart(candidate)) {
           nameCandidate = candidate;
           break;
         }
+        if (IDENTITY_LABEL_WORDS.test(line.toUpperCase())) continue;
         break;
       }
       const blockPostal = lines[postalIndex].trim().match(/^(\d{4})\s+(.+)$/);
       const blockAddress = /\d/.test(streetLine) ? [...careOf, streetLine].filter(Boolean).join(', ') : '';
-      const blockFields = definedFields([
+      return definedFields([
         ['name', nameCandidate ? parsedField(nameCandidate, 'needs_review') : undefined],
         ['address', blockAddress ? parsedField(blockAddress, 'needs_review') : undefined],
         ['postal_code', parsedField(blockPostal?.[1] || '', 'needs_review')],
         ['city', parsedField(blockPostal?.[2] || '', 'needs_review')],
         ['cpr_number', parsedField(plausibleCprSix(bareCpr), 'needs_review')],
       ]);
-      if (Object.keys(blockFields).length) return { documentType: 'health_card', rawLines: lines, fields: blockFields };
+    })();
+    if (Object.keys(fields).length) {
+      // B1 (0.3.30 saha imzası): etiketli diğer alanlar dolup yalnız isim
+      // okunmazsa erken dönme YOK — blok penceresi ismi kurtarır. Merge yönü
+      // labeled kazanır: blok adayı etiketli değerleri asla ezmez.
+      return { documentType: 'health_card', rawLines: lines, fields: { ...blockFields, ...fields } };
     }
+    if (blockFields && Object.keys(blockFields).length) return { documentType: 'health_card', rawLines: lines, fields: blockFields };
     // Blok sezgisi de başarısızsa kartta CPR varsa yalnız CPR ile dön.
     if (bareCpr) {
       return {
