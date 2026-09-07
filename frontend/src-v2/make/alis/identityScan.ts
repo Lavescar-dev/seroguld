@@ -309,7 +309,17 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
   // Yeni kartlarda başlık kelimesi dikey basılı olduğu için OCR okumayabilir;
   // KOMMUNE + CPR kombinasyonu da kartı tanır (diğer kartlarda Kommune yok).
   const bareCpr = findBareCpr(lines);
-  const isSundhedskort = /SUNDHEDSKORT/.test(upper) || (/KOMMUNE/.test(upper) && Boolean(bareCpr));
+  // Başlık dikey basılırsa OCR harf-aralıklı yatay metin üretir
+  // ("S U N D H E D S K O R T") — boşluklar çöertilerek eşleştirilir.
+  const collapsedTitle = upper.replace(/\s+/g, '');
+  // Son çare kapısı (c/o + CPR) kimlik belgesi başlıklarında AÇILMAZ: eski-tip
+  // kørekort bopælsadresse + c/o taşıyabilir — guard'sız kapı onu yutardı.
+  const identityDocTitle = /[KMG][OØ0]E?REKORT|DRIVING\s+LICEN[CS]E|KONGERIGET|PASSPORT|IDENTITETSKORT/.test(upper);
+  const isSundhedskort = /SUNDHEDSKORT/.test(upper)
+    || /SUNDHEDSKORT/.test(collapsedTitle)
+    || /SYGESIKR/.test(upper)
+    || (/KOMMUNE/.test(upper) && Boolean(bareCpr))
+    || (!identityDocTitle && Boolean(bareCpr) && /(^|\n)\s*c\s*[/\\]\s*o\b/i.test(raw));
   if (isSundhedskort) {
     const labels = [/^\s*navn\b\s*[:.]?/i, /CPR[-\s.]?n/i, /^\s*ad?resse\b\s*[:.]?/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
     const name = valueAfterLabelLine(lines, /^\s*navn\b\s*[:.]?/i, labels, isPrintedNamePart);
@@ -396,10 +406,10 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     // tr-OCR numara öneklerini yutabilir ("1. Demir" → "Demir") ve başlığın
     // altındaki değer satırlarını etiketsiz bırakabilir (gerçek saha
     // fotoğrafı: KOREKORT / Demir / 21 / Recai / 1985-04-20 …). Etiket yolu
-    // iki alanı da bulamadıysa başlık sonrasındaki ilk iki basılı isim
-    // satırını sırayla soyad/ad al — sayı/gürültü satırları isPrintedNamePart
-    // dışında kalır.
-    if (!surname && !givenName) {
+    // ALANLARDAN BİRİNİ bile bulamadıysa başlık sonrasındaki basılı isim
+    // satırları eksik slota tamamlanır — bilinen slota eşit aday atlanır
+    // (çift-yazım yok), kalan sırayla soyad/ad alınır.
+    if (!surname || !givenName) {
       const blockNames = lines
         .filter((line) => {
           const trimmed = line.trim();
@@ -407,7 +417,12 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
           return isPrintedNamePart(trimmed);
         })
         .slice(0, 2);
-      [surname, givenName] = [blockNames[0] ?? '', blockNames[1] ?? ''];
+      const knownSlots = [surname, givenName]
+        .filter(Boolean)
+        .map((value) => value.toUpperCase().replace(/Æ/g, 'AE').replace(/Ø/g, 'OE').replace(/Å/g, 'AA').replace(/[^A-Z ]/g, '').trim());
+      const remaining = blockNames.filter((candidate) => !knownSlots.includes(candidate.toUpperCase().replace(/Æ/g, 'AE').replace(/Ø/g, 'OE').replace(/Å/g, 'AA').replace(/[^A-Z ]/g, '').trim()));
+      if (!surname) surname = remaining.shift() ?? '';
+      if (!givenName) givenName = remaining.shift() ?? '';
     }
     const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()))
       || (lines.find((line) => /^\d{8,9}$/.test(line.trim()))?.trim() ?? '')
