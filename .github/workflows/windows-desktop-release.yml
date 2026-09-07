@@ -12,6 +12,9 @@ permissions:
 jobs:
   build-windows-installer:
     runs-on: windows-latest
+    # Normal tur ~30 dk; 60 dk sinir asili adimin 6 saatlik varsayilani
+    # yakmasini (private repoda Windows runner dakikasi 2x sayilir) engeller.
+    timeout-minutes: 60
 
     steps:
       # Release scripts enforce a fixed source tree name (donor-tree guard in
@@ -138,7 +141,27 @@ jobs:
         working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: |
-          $process = Start-Process -FilePath ".run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe" -ArgumentList "/S" -Wait -PassThru
+          $process = Start-Process -FilePath ".run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe" -ArgumentList "/S" -PassThru
+          # Normal sessiz kurulum ~1-3 dk. Asili kurulum 6 saatlik job
+          # timeout'unu beklemesin: sinirda canli prosesler + kurulumun kendi
+          # temizlik logu dump edilir, boylece tek kosuda kok neden gorunur.
+          if (-not $process.WaitForExit(480000)) {
+            Write-Host "Kurulum 8 dk'da bitmedi — canli prosesler:"
+            Get-Process | Where-Object { $_.Name -match 'seroguld|setup|nsis|consent|msiexec|powershell|icacls|docker' } |
+              Format-Table Id, Name, StartTime, CPU -AutoSize | Out-String -Width 200 | Write-Host
+            $cleanupLog = Join-Path $env:ProgramData "SeroGuldCRM\logs\installer-cleanup.log"
+            if (Test-Path -LiteralPath $cleanupLog) {
+              Write-Host "--- installer-cleanup.log (son 40 satır):"
+              Get-Content -LiteralPath $cleanupLog | Select-Object -Last 40 | Write-Host
+            } else {
+              Write-Host "--- installer-cleanup.log YOK (temizlik scripti hic baslamadi/bitenmedi)"
+            }
+            Stop-Process -Id $process.Id -Force
+            throw "NSIS silent install 8 dk icinde bitmedi (timeout) — teshis yukarida"
+          }
+          # WaitForExit(int) true donse bile ExitCode PS 5.1'de null kalabilir;
+          # parametresiz bekleme cikis kodunu garanti eder (cikmis surecte anlik).
+          $process.WaitForExit()
           if ($process.ExitCode -ne 0) { throw "NSIS silent install failed: $($process.ExitCode)" }
 
       - name: Installed desktop acceptance
