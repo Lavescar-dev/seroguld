@@ -26,6 +26,13 @@ jobs:
         with:
           node-version: "20"
 
+      # Windows runner images default core.autocrlf to true; a fresh LF
+      # checkout then makes every provenance `git` call warn ("LF will be
+      # replaced by CRLF") and PowerShell 5.1 turns that into a hard error.
+      - name: Disable git autocrlf for provenance calls
+        shell: powershell
+        run: git config --global core.autocrlf false
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: actions/setup-python@v5

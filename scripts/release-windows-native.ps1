@@ -183,13 +183,24 @@ function Get-SourceHead {
 
 function Invoke-ReleaseGit {
   param([string[]]$Arguments)
-  $git = Get-Command git.exe -ErrorAction SilentlyContinue
-  if ($null -ne $git) {
-    $output = & $git.Source -C $Root @Arguments 2>$null
-  } else {
-    $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    if ($null -eq $wsl) { throw "Git provenance aracı bulunamadı" }
-    $output = & $wsl.Source --cd $Root git @Arguments 2>$null
+  # PS 5.1 turns native stderr lines into error records even under 2>$null;
+  # with $ErrorActionPreference = "Stop" (e.g. an autocrlf warning from a
+  # runner image) that kills the release.  The 2>$null above already intends
+  # to discard stderr, so relax EAP just for the native call; $LASTEXITCODE
+  # below still fails the release on a real git error.
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($null -ne $git) {
+      $output = & $git.Source -C $Root @Arguments 2>$null
+    } else {
+      $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+      if ($null -eq $wsl) { throw "Git provenance aracı bulunamadı" }
+      $output = & $wsl.Source --cd $Root git @Arguments 2>$null
+    }
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
   }
   if ($LASTEXITCODE -ne 0) { throw "Git provenance bilgisi okunamadı" }
   return $output
