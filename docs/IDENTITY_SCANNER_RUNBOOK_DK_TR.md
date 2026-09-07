@@ -1,6 +1,6 @@
 # Identitets-Scanner Runbook / Kimlik Tarayıcı Runbook (DK + TR)
 
-> **Sidst opdateret / Son güncellenme:** 2026-09-03
+> **Sidst opdateret / Son güncellenme:** 2026-09-08 (0.3.35)
 > **Gælder / Geçerli:** v0.3.31+ desktop (Windows), Epson ET-3850 (netværk)
 > **Primær sprog: Dansk. Tyrkisk udgave følger i del 2.**
 
@@ -182,3 +182,61 @@ aradığınızda bu kodu okuyun.
 Müşteri aradığında ekrandaki kodu okutun (`Hata kodu: …`). Kod, "cihaz yok" ile
 "iptal edildi"yi ayırır — eskiden cihaz hataları kullanıcı iptali sanılıyordu;
 bu paketin ana düzeltmesi tam olarak budur.
+
+### 2.7 Danca OCR dil paketi kurulumu (0.3.35)
+
+Windows OCR yalnız **kurulu dil paketleriyle** çalışır. Danca paketi yoksa
+uygulama tr gibi bir profil diliyle okur: Æ→E, Ø→O, Å→Â katlanır
+("Navn" → bozuk etiket) ve isim/adres alanları hatalı dolar.
+
+**Online kurulum (önerilen):** yönetici PowerShell'de:
+
+```powershell
+Add-WindowsCapability -Online -Name "Language.OCR~~~da-DK~0.0.1.0"
+```
+
+Durumu doğrula: `Get-WindowsCapability -Online -Name "Language.OCR~~~da-DK*"`,
+`State: Installed` olmalı. Uygulama açılışta bu durumu yoklar (probe);
+paket yoksa panelde uyarı görürsün.
+
+**Çevrimdışı kurulum (saatlerde İnternet yoksa):**
+
+1. Microsoft'tan **"Languages and Optional Features" ISO**sunu (FOD disk
+   görüntüsü, Windows sürümüne uyan) başka bir makinede indirin, USB'ye aktarın.
+2. ISO'yu bağlayın (ör. `E:\`) ve yönetici PowerShell'de:
+
+```powershell
+DISM /Online /Add-Capability /CapabilityName:"Language.OCR~~~da-DK~0.0.1.0" /Source:E:\
+```
+
+`0x800f0954` hatası görürsen makine WSUS'a yönlendirilmiştir: geçici çözüm
+`HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU` altında
+`UseWUServer=0` yapıp `wuauserv` servisini yeniden başlatın, kurulumdan
+sonra eski değere döndürün.
+
+**Uyarıların anlamı (0.3.35 tri-state):**
+
+- *"Danca OCR paketi bulunamadı (tr-TR kullanılıyor)…"* → probe çalıştı,
+  paket kesin yok → 2.7 kurulumunu yap.
+- *"Danca OCR paketi doğrulanamadı — … ui-diagnostics.jsonl kodunu iletin."* →
+  probe çalışamadı (durum bilinmiyor). Kurulumu deneyin; sonuç değişmezse
+  destek kaydına aşağıdaki teşhis kodunu ekleyin.
+
+### 2.8 Teşhis kodu ve log yolu
+
+- **Kalıcı log:** `%APPDATA%\dk.seroguld.crm\logs\ui-diagnostics.jsonl` —
+  her taramada bir satır; kişisel veri İÇERMEZ.
+- **Atomik teşhis kodu** (tarama sonrası panelde, kopyalanabilir):
+
+  `idscan.<yüz>.<dil>.<satır>L.<alan>F.<S|NS>.<harfler>`
+
+  ör. `idscan.front.da-DK.9L.4F.NS.NCAP` → ön yüz, da-DK, 9 satır, 4 alan,
+  görüntü ölçeklenmedi (NS), dolu alanlar N/C/A/P. **NS görüyorsanız 400 dpi
+  ile tekrar tarayın** — 300 dpi taramalar ~1010 px genişlikte kalır ve ölçekleme
+  eşiğinin sınırlarında okunabilirlik kaybeder.
+- **Maskeli ham satırlar** (yalnız ekranda): "Maskeli ham satırlar" başlığından
+  açılır; rakamlar 9'a, harfler a'ya maskelenir — telefonla okutulabilir.
+
+**Tarama çözünürlüğü önerisi:** Epson profilinde **300–400 dpi**. 300 dpi
+sorunlu çıkarsa (NS kodu, eksik isim) 400 dpi'ye çıkın; daha yüksek
+çözünürlük 10 MB dosya sınırını zorlayabilir.

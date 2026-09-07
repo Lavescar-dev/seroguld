@@ -1,6 +1,43 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.35] — 2026-09-08
+
+### Düzeltildi (kimlik OCR)
+
+- **İsim çıkarımı kök neden paketi:** 30 commit'e rağmen kimlik OCR isimleri
+  çıkarmıyordu; 6 kök neden üst katmanlarda bulundu ve kapatıldı: (B2) etiket
+  regex'leri iki nokta/aynı-satır değerini tanımıyor, (B3) `Adresse` gibi
+  etiket kelimeleri isim alanına dolabiliyordu, (B1) sundhedskort yolu
+  diğer alanlar dolunca isme bakmadan erken dönüş yapıyordu (0.3.30 saha
+  imzası: diğer alanlar dolu, isim boş), (B4) harf-aralıklı dikey başlıklı
+  kartlar ve sygesikring kartları `unknown` düşüyordu, (B5) kørekort'ta tek
+  isim alanı eksikken blok tamamlaması yoktu, (B6) 300 dpi tarama büyütme
+  eşiğini (1000→1400 px) aşıyordu.
+- Merge yönü yasası: blok sezgisi adayı etiketli değerleri ASLA ezmez;
+  bozuk tek-kelime etiketler (ör. tr-OCR "Athesse") 2 düzenleme mesafesi
+  karılamasıyla atlanır.
+
+### Eklendi
+
+- **OCR dil yoklaması tri-state:** `danishAvailable: Option<bool>` + probe
+  durumu + DISM capability state; probe başarısızlığı artık sessiz
+  "paket var" varsaymıyor. UI'da iki ayrı uyarı: paket yok → kurulum mesajı;
+  probe doğrulanamadı → log yoluyla birlikte "doğrulanamadı" mesajı (yalnız
+  Windows'ta; eski çift kilit kaldırıldı).
+- **Kopyalanabilir teşhis kodu:** tarama sonrası panelde atomik `idscan.…`
+  kodu (PII içermmez) monospace olarak gösterilir — destek kaydına eklenir.
+- Docs: runbook'a da-DK OCR paketi online/çevrimdışı kurulumu + teşhis
+  rehberi; HANDOVER'a Kimlik OCR bölümü (mimari, kök nedenler, bekleyen
+  saha işleri); yeni `docs/PRINTER_TEST_MATRIX_TR.md`.
+
+### Düzeltildi (yazıcı hazırlığı)
+
+- POS fişi ve alış çalışma alanı print HTML'ine `@page A4/14mm` + satır
+  bölme kuralları (`tr` bölünmez, `thead` tekrar eder) — AFG resmi PDF hattı
+  bilinçli olarak değiştirilmedi.
+- Workspace print `auto_print` query param'ına bağlandı (hardcoded true
+  kaldırıldı): Tauri'de inline script gömülmez (CSP ile zaten engelli),
+  tarayıcı modunda `?auto_print=true` opt-in ile tek diyalog açılır.
 
 ### Altyapı
 

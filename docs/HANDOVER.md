@@ -1572,3 +1572,75 @@ make desktop-restart
 > 4. §17 (sağlık) checklisti tekrar gözden geçir
 >
 > Bu doc'a `feat(docs): ...` commit mesajıyla ekle ki release notes'da görünür olsun.
+
+---
+
+## 20. Kimlik OCR — 0.3.35 düzeltme paketi (2026-09-08)
+
+### 20.1 Mimari (veri akışı)
+
+```
+Epson ET-3850 (WIA diyaloğu veya klasöre-tara profili) → JPEG
+  → desktop/src-tauri/src/identity_ocr.ps1   (Windows.Media.Ocr; dil seçimi,
+     <1400px görüntüyü ≤2x büyütme; include_str! ile main.rs'e gömülü)
+  → main.rs (read+OCR güvenlik bloğu, 10 MB + magic-byte; dil yoklaması probe)
+  → frontend/src-v2/make/alis/identityScan.ts (parseIdentityScan: MRZ TD1/TD3
+     + onarım dalı, Danca etiketli dal — sundhedskort/kørekort/pas/ID-kort,
+     çoklu-yüz merge, GDPR ilk-6 CPR)
+  → CustomerOcrPanel (inceleme + uygula; teşhis kodu idscan.…)
+```
+
+### 20.2 Kök nedenler (30 commit'e rağmen isim çıkmıyordu)
+
+1. **Sessiz Türkçe motoru:** da-DK OCR paketi yoksa tr profili ÆØÅ katlıyordu;
+   probe hatasında "paket var" varsayılıyor VE UI koşulu çift kilitliydi →
+   uyarı asla görünmüyordu.
+2. **Erken dönüş:** sundhedskort etiketli yolu adres/posta/CPR dolunca isme
+   bakmadan dönüyordu → "diğer alanlar dolu, isim boş" (0.3.30 saha imzası).
+3. **Gizli iki-nokta:** `/^Navn$/` çapası "Navn:" satırlarını görünmez kılıyor,
+   `Adresse` etiket kelimesi dışlama listesinde yoktu → isim alanı "Adresse"
+   ile dolabilirdi (sessiz yanlış-isim).
+4. **Dar kart kapısı:** başlık dikey basılırsa (harf-aralıklı OCR çıktısı)
+   kart `unknown` düşüyordu → 0 alan + sert hata.
+5. **Test körlüğü:** OCR fixture kaydı tr paketiyle alınmıştı; CI Danca motoru
+   asla görmüyordu.
+6. **Görüntü sınırı:** 300 dpi tarama ~1010 px; büyütme eşiği 1000 px'in
+   hemen üstünde → büyütme atlanıyordu.
+
+### 20.3 Yapılan düzeltmeler (0.3.35)
+
+- **B2+B3:** etiket regex'leri iki nokta/aynı-satır değerini tanır; etiket
+  kelimesi dışlama listesi genişletildi (ADRESSE, POSTNR, CPR, TLF, LÆGE…).
+- **B1:** erken dönüş kaldırıldı — etiketli alanlar dolup isim yoksa blok
+  penceresi ismi kurtarır (merge yönü: etiketli kazanır). Bloz penceresi
+  etiket satırlarını ve bozuk tek-kelime etiketleri (edit-distance ≤2,
+  ör. "Athesse") atlar.
+- **B4:** kart kapısı genişletildi: harf-aralıklı SUNDHEDSKORT, SYGESIKR,
+  son çare c/o+CPR (kimlik-belge başlığında AÇILMAZ — guard). Kørekort
+  tek-eksik isim slotu bloktan tamamlanır (çift-yazım korumalı).
+- **C (probe tri-state):** `danish_available: Option<bool>` + `probe_ok` +
+  DISM `capability_state`; hata artık "paket var" varsaymaz. UI iki uyarı:
+  paket yok → kurulum mesajı; probe çalışamadı → "doğrulanamadı" + log yolu
+  (`ui-diagnostics.jsonl`). Panelde kopyalanabilir `idscan.` teşhis kodu.
+- **B6:** büyütme eşiği 1000→1400 px (hedef 1400 ile uyumlu).
+- **E (yazıcı):** fiş + workspace print HTML'inde `@page A4/14mm`, satır
+  bölme kuralları; workspace `auto_print` query param'ına bağlandı (Tauri'de
+  inline script CSP ile engelli — tarayıcı modunda opt-in).
+
+Regresyon kalkanı: `identityScanOcrContract.test.ts` (B serisi 10 yeni test)
++ hook tri-state testleri + `test_print_page_and_auto_print.py`.
+
+### 20.4 BEKLEYEN SAHA İŞLERİ (hp/Windows makinesi açılınca)
+
+1. **Faz A kanıt okuma:** 0.3.30–0.3.34 saha taramalarının teşhis kodlarını
+   `ui-diagnostics.jsonl` üzerinden doğrula (NS kodları → 400 dpi kuralı).
+2. **da-DK paketi:** `Get-WindowsCapability -Online -Name "Language.OCR~~~da-DK*"`
+   ile durum; yoksa runbook §2.7 ile kur (online veya FOD ISO).
+3. **Danca fixture kaydı (D1/D2):** `scripts/ocr-fixture-harness.ps1 -OutFile
+   raw_ocr_da.json`; sonra `git mv backend/tests/fixtures/ocr/raw_ocr.json
+   raw_ocr_tr.json` ve contract testine iki kayıt parametresi ekle (tr + da).
+4. **Canlı sarı kart smoke:** gerçek sundhedskort ile tarama → isim/adres/CPR-6
+   alanlarını doğrula; B serisi düzeltmelerin saha doğrulaması.
+5. **ET-3850 yazıcı matrisi:** `docs/PRINTER_TEST_MATRIX_TR.md` boş kolonları
+   doldurulacak (saha testi).
+
