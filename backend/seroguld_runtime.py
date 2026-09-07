@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import subprocess
 import sys
 import threading
 import tempfile
@@ -171,6 +172,88 @@ def _safe_write_text(path: Path, content: str) -> None:
     os.replace(temporary, path)
 
 
+def _runtime_env_acl_command(path: Path, user_sid: str) -> list[str]:
+    """runtime.env için kurulum/Rust ile birebir aynı kısıtlı icacls satırı.
+
+    Yalnız SYSTEM, yerel Administrators ve etkileşimli kullanıcıya Full
+    verilir; kalıtsal Everyone/Authenticated Users/Users girişleri kaldırılır
+    (desktop/src-tauri/src/main.rs secure_windows_path ile aynı sözleşme).
+    """
+
+    return [
+        "icacls.exe",
+        str(path),
+        "/inheritance:r",
+        "/remove:g",
+        "*S-1-1-0",
+        "*S-1-5-11",
+        "*S-1-5-32-545",
+        "/grant:r",
+        "*S-1-5-18:F",
+        "/grant:r",
+        "*S-1-5-32-544:F",
+        "/grant:r",
+        f"*{user_sid}:F",
+    ]
+
+
+def _current_interactive_user_sid() -> str | None:
+    """whoami.exe çıktısından etkileşimli kullanıcının SID'ini ayrıştırır."""
+
+    creation_flags = 0x08000000 if os.name == "nt" else 0
+    try:
+        output = subprocess.run(
+            ["whoami.exe", "/user", "/fo", "csv", "/nh"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=creation_flags,
+        )
+    except Exception:
+        return None
+    if output.returncode != 0:
+        return None
+    for candidate in output.stdout.replace('"', ",").replace(" ", ",").split(","):
+        parts = candidate.strip().split("-")
+        if parts[0] != "S" or not parts[1]:
+            continue
+        if all(part.isdigit() for part in parts[1:]):
+            return candidate.strip()
+    return None
+
+
+def _protect_runtime_env_file(path: Path) -> None:
+    """_safe_write_text os.replace ile dosyayı yeniden yarattığı için açık
+    DACL her yazımda kaybolur; kısıtlı grant'ı yazım noktasında yeniden uygula.
+
+    Best-effort: icacls yoksa/başarısızsa başlatma çökmez — Rust tarafı
+    (secure_runtime_env) migrate sonrası dosyayı yine doğrular ve
+    yetkisiz okuma durumunda servis başlatmayı reddeder.
+    """
+
+    if os.name != "nt":
+        return
+    user_sid = _current_interactive_user_sid()
+    if not user_sid:
+        logging.getLogger(__name__).warning(
+            "runtime.env DACL korunamadı: etkileşimli kullanıcı SID'i alınamadı"
+        )
+        return
+    try:
+        result = subprocess.run(
+            _runtime_env_acl_command(path, user_sid),
+            capture_output=True,
+            timeout=15,
+            creationflags=0x08000000,
+        )
+        if result.returncode != 0:
+            logging.getLogger(__name__).warning(
+                "runtime.env DACL korunamadı: icacls %d döndü", result.returncode
+            )
+    except Exception:
+        logging.getLogger(__name__).warning("runtime.env DACL korunamadı", exc_info=True)
+
+
 def _is_valid_field_encryption_key(value: str | None) -> bool:
     """Return whether ``value`` can safely preserve encrypted customer data.
 
@@ -319,6 +402,7 @@ def prepare_runtime_environment() -> RuntimePaths:
         current.pop(key, None)
         os.environ.pop(key, None)
     _safe_write_text(paths.env_file, _render_env(current))
+    _protect_runtime_env_file(paths.env_file)
 
     os.environ["SEROGULD_DATA_DIR"] = str(paths.data)
     os.environ["SEROGULD_CONFIG_FILE"] = str(paths.env_file)
