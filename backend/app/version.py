@@ -6,4 +6,4 @@ Cargo.toml(+lock), iki package.json ve BU dosya birlikte yükseltilir.
 Dashboard, kaynak/runtime sürüm uyuşmazlığını bu değerle teşhis eder.
 """
 
-0.3.34
+APP_VERSION = "0.3.34"
