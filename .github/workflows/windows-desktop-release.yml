@@ -14,7 +14,13 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # Release scripts enforce a fixed source tree name (donor-tree guard in
+      # release-windows-native.ps1 and build-windows-runtime.ps1: only
+      # seroguld-crm-latest-windows may produce a release). Match the local
+      # build layout by checking out under that exact folder name.
       - uses: actions/checkout@v4
+        with:
+          path: seroguld-crm-latest-windows
 
       - uses: actions/setup-node@v4
         with:
@@ -27,18 +33,19 @@ jobs:
           python-version: "3.12"
 
       - name: Frontend install
-        working-directory: frontend
+        working-directory: seroguld-crm-latest-windows/frontend
         run: npm ci
 
       - name: Frontend typecheck
-        working-directory: frontend
+        working-directory: seroguld-crm-latest-windows/frontend
         run: npm run typecheck
 
       - name: Desktop install
-        working-directory: desktop
+        working-directory: seroguld-crm-latest-windows/desktop
         run: npm ci
 
       - name: Isolated installer migration and ACL smoke
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: ./scripts/windows-installer-smoke.ps1
 
@@ -55,6 +62,7 @@ jobs:
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $downloads "SERO-GULD-CRM-FULL-SETUP.manifest.json") -Encoding UTF8
 
       - name: Provision customer integration seed input
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         env:
           SEROGULD_CUSTOMER_RUNTIME_ENV_B64: ${{ secrets.SEROGULD_CUSTOMER_RUNTIME_ENV_B64 }}
@@ -76,6 +84,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_WS_BASE_URL: "http://127.0.0.1:8100"
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: >-
           ./scripts/release-windows-native.ps1
@@ -85,12 +94,14 @@ jobs:
 
       - name: Remove customer integration seed input
         if: always()
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: |
           Remove-Item -LiteralPath ".env" -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath "backend/runtime-seed.env" -Force -ErrorAction SilentlyContinue
 
       - name: Verify finalized Downloads delivery and archive rollback contract
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: |
           $downloads = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
@@ -115,12 +126,14 @@ jobs:
           if ($originalSidecars.Count -ne 2) { throw "Original installer sidecars were not preserved" }
 
       - name: Install verified NSIS on ephemeral runner
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: |
           $process = Start-Process -FilePath ".run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe" -ArgumentList "/S" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "NSIS silent install failed: $($process.ExitCode)" }
 
       - name: Installed desktop acceptance
+        working-directory: seroguld-crm-latest-windows
         shell: powershell
         run: ./scripts/windows-desktop-acceptance.ps1 -ForceCloseAfterChecks
 
@@ -129,11 +142,11 @@ jobs:
         with:
           name: SERO_GULD_CRM_windows
           path: |
-            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe
-            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sha256
-            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sig
-            .run/windows-native-release/latest.json
-            .run/windows-native-release/release-manifest.json
+            seroguld-crm-latest-windows/.run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe
+            seroguld-crm-latest-windows/.run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sha256
+            seroguld-crm-latest-windows/.run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sig
+            seroguld-crm-latest-windows/.run/windows-native-release/latest.json
+            seroguld-crm-latest-windows/.run/windows-native-release/release-manifest.json
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -141,9 +154,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe
-            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sha256
-            .run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sig
-            .run/windows-native-release/latest.json
-            .run/windows-native-release/release-manifest.json
+            seroguld-crm-latest-windows/.run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe
+            seroguld-crm-latest-windows/.run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sha256
+            seroguld-crm-latest-windows/.run/windows-native-release/SERO-GULD-CRM-FULL-SETUP.exe.sig
+            seroguld-crm-latest-windows/.run/windows-native-release/latest.json
+            seroguld-crm-latest-windows/.run/windows-native-release/release-manifest.json
           generate_release_notes: true
