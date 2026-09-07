@@ -215,7 +215,9 @@ def _current_interactive_user_sid() -> str | None:
         return None
     for candidate in output.stdout.replace('"', ",").replace(" ", ",").split(","):
         parts = candidate.strip().split("-")
-        if parts[0] != "S" or not parts[1]:
+        # Rust parse_windows_sid ile aynı savunma: "S" gibi dejenere token'lara
+        # indeksle erişme (IndexError prepare_runtime_environment'i düşürmesin).
+        if len(parts) < 2 or parts[0] != "S" or not parts[1]:
             continue
         if all(part.isdigit() for part in parts[1:]):
             return candidate.strip()
