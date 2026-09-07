@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+### Güvenlik (sertleştirme)
+
+- **runtime.env DACL'ı yazım noktasında geri uygulanıyor:** `os.replace`
+  dosyayı yeniden yarattığı için açık Windows DACL'ı her açılışta
+  sıfırlanıyordu (0.3.34'te kontrol config dizinine taşınmıştı). Python
+  tarafı artık yazım sonrası kurulum/Rust ile birebir aynı kısıtlı icacls
+  grant'ını (SYSTEM + Administrators + etkileşimli kullanıcı) best-effort
+  yeniden uyguluyor; icacls yoksa başlatma çökmez, Rust tarafı yine
+  fail-closed doğrular.
+
+### Operasyon
+
+- **wp-bridge canlıya alındı:** seroguld.dk'daki `seroguld-crm-bridge`
+  eklentisi aktif (repo kopyasıyla md5 birebir), `seroguld_crm_bridge_secret`
+  option'ı ile CRM seed secret'ı hash ile doğrulanarak eşleştirildi,
+  `SEROGULD_CUSTOMER_RUNTIME_ENV_B64` GitHub secret'ına köprü anahtarları
+  eklendi. §11.2 canlı smoke kanıtlandı: 200 + `{"sent":true}` (e-posta log
+  result=1), 401 `seroguld_bridge_forbidden`, 413 `seroguld_bridge_too_large`,
+  429 `seroguld_bridge_rate_limited`. Not: düz `http://` isteği Simply
+  kenarında 301 ile https'e yönleniyor — eklentinin 403 katmanı ikinci
+  savunma hattı olarak kalıyor.
+
 ## [0.3.35] — 2026-09-08
 
 ### Düzeltildi (kimlik OCR)

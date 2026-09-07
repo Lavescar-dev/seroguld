@@ -333,6 +333,17 @@ curl -s -X POST "$URL" -H "X-SeroGuld-Bridge-Token: $TOKEN" \
 
 Detaylı smoke seti: `ops/wordpress/seroguld-crm-bridge/readme.txt`.
 
+> **2026-09-08 canlı smoke sonucu (kanıt):** doğru token + küçük PDF →
+> `200 {"sent":true}` (Email Log `result=1`), yanlış token → `401
+> seroguld_bridge_forbidden`, 12.6 MB gövde → `413
+> seroguld_bridge_too_large`, saat kovası dolunca → `429
+> seroguld_bridge_rate_limited`. İki saha notu: (1) düz `http://` isteği
+> Simply kenarında 301 ile https'e yönlenir — eklentinin 403 katmanına
+> ulaşmaz; token yine de WP'ye taşınmaz. (2) Simply WAF'ı datacenter
+> IP'lerine 455 döndürebilir; smoke'u hosting sunucusu üzerinden (SSH)
+> çalıştırmak en güvenilir yoldur. Rate kovası token+IP başınadır; smoke
+> kovayı bir saate kadar doldurur, gerçek CRM ayrı IP'den gelir.
+
 ## 12. İlgili dökümanlar
 
 - `docs/PROJECT_SYSTEM_GUIDE_TR.md` — Ana sistem dokümantasyonu

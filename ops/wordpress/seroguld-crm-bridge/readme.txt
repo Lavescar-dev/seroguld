@@ -39,7 +39,8 @@ CRM'e asla girmez.
 
 == Sınırlar ==
 
-- Yalnız HTTPS (HTTP isteği 403).
+- Yalnız HTTPS (düz HTTP isteği Simply kenarında 301 ile https'e yönlenir;
+  WP'ye ulaşamaz — eklentinin 403 katmanı ikinci savunma hattıdır).
 - Gövde tavanı 10 MB (413).
 - Token + IP başına saatte 10 istek (429).
 - Token başlıkları: X-SeroGuld-Bridge-Token (hash_equals, sabit zamanlı).
