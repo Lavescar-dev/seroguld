@@ -11,6 +11,15 @@ function Assert-Smoke {
   if (-not $Condition) { throw "Windows installer smoke başarısız: $Message" }
 }
 
+function Assert-SmokeFilePreserved {
+  param([string]$Path, [string]$Content, [string]$Message)
+  # Write-SmokeFile fixture'lari LF ile yazar ve cleanup mevcut/legacy dosyalari
+  # byte-birebir tasir (Copy-Item). Get-Content -Raw satir sonunu normalleştirmez;
+  # CRLF'e sabitlenmis -eq kiyasi bu yuzden hicbir makinede gecemez.
+  $raw = Get-Content -LiteralPath $Path -Raw
+  Assert-Smoke ($raw.Replace("`r`n", "`n") -eq ($Content + "`n")) $Message
+}
+
 function Write-SmokeFile {
   param([string]$Path, [string]$Content)
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
@@ -185,14 +194,14 @@ UNICONTA_USERNAME=installer-user-must-not-win
   foreach ($forbiddenLogValue in @('api-seed-password', 'api-seed-key', 'legacy-openai-key', 'installer-opmc-key', 'smoke-only-key-never-log-this-value')) {
     Assert-Smoke (-not $logContent.Contains($forbiddenLogValue)) "installer log gizli değer içeriyor"
   }
-  Assert-Smoke ((Get-Content -LiteralPath $targetDb -Raw) -eq "existing-customer-db`r`n") `
-    "mevcut müşteri DB'si değiştirildi"
-  Assert-Smoke ((Get-Content -LiteralPath $targetExistingDocument -Raw) -eq "existing-document`r`n") `
-    "mevcut müşteri belgesi değiştirildi"
-  Assert-Smoke ((Get-Content -LiteralPath (Join-Path $targetRoot "documents\legacy.txt") -Raw) -eq "legacy-document`r`n") `
-    "legacy belge korunarak kopyalanmadı"
-  Assert-Smoke ((Get-Content -LiteralPath (Join-Path $targetRoot "documents\legacy-data.txt") -Raw) -eq "legacy-data-document`r`n") `
-    "legacy data belgesi korunarak kopyalanmadı"
+  Assert-SmokeFilePreserved -Path $targetDb -Content "existing-customer-db" `
+    -Message "mevcut müşteri DB'si değiştirildi"
+  Assert-SmokeFilePreserved -Path $targetExistingDocument -Content "existing-document" `
+    -Message "mevcut müşteri belgesi değiştirildi"
+  Assert-SmokeFilePreserved -Path (Join-Path $targetRoot "documents\legacy.txt") -Content "legacy-document" `
+    -Message "legacy belge korunarak kopyalanmadı"
+  Assert-SmokeFilePreserved -Path (Join-Path $targetRoot "documents\legacy-data.txt") -Content "legacy-data-document" `
+    -Message "legacy data belgesi korunarak kopyalanmadı"
 
   foreach ($legacyFile in @($legacyOnlyOfficeEnv, $legacyCompose, $legacyOfficeCompose, $legacyComposeAlias, $legacyRunOnlyOfficeEnv)) {
     Assert-Smoke (-not (Test-Path -LiteralPath $legacyFile -PathType Leaf)) "Docker yokken exact legacy dosya silinmedi: $legacyFile"
