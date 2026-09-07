@@ -337,6 +337,17 @@ function Remove-SeroGuldDockerResources {
   $docker = Get-Command docker.exe -ErrorAction SilentlyContinue
   if ($null -eq $docker) { return $false }
 
+  # Docker reports routine negatives (a missing legacy container or
+  # network) on stderr.  With the script-wide ErrorActionPreference=Stop,
+  # Windows PowerShell 5.1 wraps that stderr into a terminating
+  # NativeCommandError even when it is redirected, which aborted the
+  # cleanup on any Docker-equipped machine whose legacy resources are
+  # already gone.  Everything inside this function therefore runs with a
+  # function-local Continue preference: the caller's Stop preference is
+  # untouched, negative outcomes stay on $LASTEXITCODE, and real cleanup
+  # failures still hit the explicit throw statements below.
+  $ErrorActionPreference = "Continue"
+
   # Querying the daemon is deliberately the only Docker operation used as a
   # precondition.  The installer never starts, installs, upgrades, or
   # uninstalls Docker; an unavailable daemon means the legacy files remain
