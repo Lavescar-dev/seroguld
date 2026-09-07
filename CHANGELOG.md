@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.34] — 2026-09-07
+
+### Güvenlik
+
+- **Belge renderer'larında stored-XSS kaçışı:** POS fişi ve AFG belgesi renderer'larında müşteri kaynaklı TÜM serbest metin (navn/adresse/tlf/e-mail/kørekort/belge no) HTML kaçışlı gömülür — '<img onerror=…>' içeren müşteri adı artık e-posta eki/önizleme HTML'inde etiket olarak parse edilemez; reportlab Paragraph'ı da '<' içeren adda düşmez.
+- **Şifre değişimi tüm eski oturumları düşürür:** parola değişiminde mevcut refresh token'ları geçersiz kılınır (çalıntı token ile yeniden giriş kapısı).
+- **Kimlik doğrulama sertleştirmesi:** parola politikası, giriş rate-limit, env değer kodlaması ve yedek hata eşlemesi medium bulguları kapatıldı; `/settings` ucu admin-guard'lı, env yazımı parse-gate'ten geçer, yükleme hatası maskelenmez.
+- **POS PII ve token kapsamı:** plaintext PII kalıcı yüzeyden düşürüldü; müşteri ekranı token kapsamı daraltıldı; kur oranı kaynağı yarış koşulu kapatıldı.
+
+### Düzeltildi
+
+- **Alış:** filtre durumları şeffaf, yeniden bağlama (relink) ve çift-gönderim koruması düzeltildi; market oranı editörü ve belge ülke alanı medium bulguları kapatıldı; hata yüzeyleri ve iptal onayı eklendi; AFG finalize e-posta akışı event loop'u bloklamaz.
+- **Müşteriler:** modülün 8 yüksek öncelikli hatası + taslak korunumu, canlı mükerrer kayıt kontrolü, OCR alan paritesi ve maskeli liste düzeni; GDPR durum makinesi, SLA görünürlüğü, rıza kanıtı, pseudonymize kurtarılabilirliği, public uç abuse guard'ları ve ön onay diyaloğu düzeltildi.
+- **Stok/Depolama:** manuel fiyat profili, projeksiyon senkronu, terminal guard, dirty guard, alıcı seçici, filtre debounce'u ve durum rozetleri; Woo tarafında hata sanitizasyonu, sayfalama sınırı ve arama debounce'u.
+- **OPMC/Market/Log/Rapor:** OPMC önbelleği LRU+single-flight, skor override denetimi, 'none' sipariş görünürlüğü; market canlı zincir paraleli, tek-uçuş kilidi, WP hata sınıflandırması, pletsølv bandı; log artifact senkron disiplini, Log Excel import UI, lot taslak tazeliği ve atomik apply zincirleri; rapor popülasyonu, dönem semantiği ve export yüzeyi.
+- **POS belge akışı:** confirm_session atomik ve yarış-güvenli; müşteri ekranı önizleme matematiği backend paritesine alındı, extra satırlar görünür, snapshot hafifledi; klasik pano API hatası artık yutulmaz; ayarlarda üç durumlu entegrasyon rozeti ve yedek paneli dürüstleştirildi.
+- Excel apply zinciri sıkılaştırma ve embedded workbook durumları; display kapanış sahnesi ve sessiz except logları; dashboard/log ekran erişim hataları.
+
+### Eklendi
+
+- i18n katalog dalgaları (M1–M3 + gdpr public sayfalar): ayarlar, müşteriler, stok, rapor, OPMC ve kurtarma paneli yüzey metinleri kataloğa alındı.
+- Test kapsamı büyüdü: backend 398 → 590 (+192), frontend 596 test.
+
+### Altyapı
+
+- Release hattı (diğer makine serisi): kaynak fingerprint'ten tauri gen/schemas artık hariç (yanlış kapı düşüşleri kalktı); git provenance çağrısında PS5.1 stderr yerel hatası giderildi; runtime build'e açık Python yorumlayıcısı pinlendi; installer smoke satır sonu agnostik doğrulamaya geçti; `data/archive/` gitignore'a alındı (müşteri verisi public-repo bariyeri).
+
 ## [0.3.33] — 2026-09-04
 
 ### Eklendi
