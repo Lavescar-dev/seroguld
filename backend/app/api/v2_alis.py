@@ -604,11 +604,14 @@ async def post_alis_workspace_artifact_import_v2(
 async def get_alis_workspace_print_v2(
     session_id: UUID,
     format: str = Query(default="html", pattern="^(html)$"),
+    # Tauri'de inline print script'i CSP zaten engeller; tarayıcı modunda
+    # ?auto_print=true ile çift diyalog istenerek opt-in edilir.
+    auto_print: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> Response:
     pos_session = await get_pos_session_or_404(db, session_id)
-    html_payload = await build_purchase_workspace_print_html(db, pos_session=pos_session, auto_print=True)
+    html_payload = await build_purchase_workspace_print_html(db, pos_session=pos_session, auto_print=auto_print)
     return Response(content=html_payload, media_type="text/html; charset=utf-8")
 
 

@@ -2974,7 +2974,10 @@ export function useAlisMakeState(): AlisPageProps {
     setPaymentMethod: setPaymentMethodFromUi,
     onPrintWorkspace: () => {
       if (!workspace) return;
-      void printAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html`).catch(
+      // Tauri'de inline print script'i CSP engeller (iframe srcdoc parent CSP
+      // miras alır); tarayıcı modunda auto_print opt-in edilir.
+      const autoPrint = isTauriRuntime() ? '' : '&auto_print=true';
+      void printAuthedDocument(`/api/v2/alis/workspace/${workspace.session.id}/print?format=html${autoPrint}`).catch(
         (error: unknown) => {
           toast.error('Belge yazdırılamadı', localizeApiError(error));
         },

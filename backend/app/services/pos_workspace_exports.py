@@ -301,7 +301,10 @@ def render_purchase_workspace_print_html(
       .total {{ display:flex; justify-content:space-between; align-items:center; background:#221710; color:#fff; padding:16px 18px; }}
       .disclaimer {{ margin-top:28px; font-size:11px; line-height:1.65; color:#655341; }}
       @media print {{
+        @page {{ size: A4; margin: 14mm; }}
         body {{ padding: 16px; }}
+        tr {{ page-break-inside: avoid; }}
+        thead {{ display: table-header-group; }}
       }}
     </style>
   </head>

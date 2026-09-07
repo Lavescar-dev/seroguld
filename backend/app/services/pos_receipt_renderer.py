@@ -149,9 +149,12 @@ def render_pos_receipt_html(context: dict[str, Any]) -> str:
     .total {{ margin-top: 14px; padding: 12px; background: #f4eee3; border-radius: 8px; font-size: 18px; font-weight: 700; }}
     .note {{ margin-top: 12px; font-size: 12px; color: #555; }}
     @media print {{
+      @page {{ size: A4; margin: 14mm; }}
       body {{ margin: 0; }}
       .wrap {{ border: none; border-radius: 0; padding: 8px; max-width: 100%; }}
       .line-table th, .line-table td {{ font-size: 10px; padding: 4px; }}
+      tr {{ page-break-inside: avoid; }}
+      thead {{ display: table-header-group; }}
     }}
   </style>
 </head>
