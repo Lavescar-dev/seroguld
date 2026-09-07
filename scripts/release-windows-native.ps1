@@ -16,7 +16,14 @@ param(
   [string]$SignCertificateThumbprint = '',
   [string]$Root = "",
   [string]$OutputDirectory = "",
-  [string]$RuntimeBuildDirectory = ""
+  [string]$RuntimeBuildDirectory = "",
+  # Explicit Python interpreter for the frozen runtime build.  Empty (default)
+  # keeps Resolve-Python's local discovery (py -3 first).  CI must pin this:
+  # the Windows runner's py launcher resolves to the image's preinstalled
+  # Python, whose newer ABI has no Windows wheels for our pinned compiled
+  # packages (asyncpg/Pillow/pillow-avif-plugin), forcing slow and fragile
+  # sdist builds that crash on pillow-avif-plugin's py312-era setup.py.
+  [string]$Python = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -837,6 +844,9 @@ try {
     )
     if (-not [string]::IsNullOrWhiteSpace($RuntimeBuildDirectory)) {
       $runtimeArguments += @("-BuildDirectory", [System.IO.Path]::GetFullPath($RuntimeBuildDirectory))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Python)) {
+      $runtimeArguments += @("-Python", (Resolve-Path -LiteralPath $Python).ProviderPath)
     }
     Invoke-Checked -Command $powershell -Arguments $runtimeArguments
   }

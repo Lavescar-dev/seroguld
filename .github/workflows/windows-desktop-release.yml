@@ -77,6 +77,9 @@ jobs:
           }
           [System.IO.File]::WriteAllBytes((Join-Path $PWD ".env"), $bytes)
 
+      # -Python pins the exact setup-python interpreter: the runner's py
+      # launcher resolves to the image's preinstalled (newer) Python, whose
+      # ABI has no Windows wheels for the pinned compiled packages.
       - name: Build and verify Dockerless Windows release
         env:
           CI: "true"
@@ -91,6 +94,7 @@ jobs:
           -OutputDirectory .run/windows-native-release
           -Finalize
           -RunDefenderScan
+          -Python "$env:pythonLocation\python.exe"
 
       - name: Remove customer integration seed input
         if: always()
