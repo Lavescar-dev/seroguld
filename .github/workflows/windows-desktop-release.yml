@@ -137,6 +137,25 @@ jobs:
           $originalSidecars = @(Get-ChildItem -LiteralPath $archive -Filter "$($archived[0].Name).sidecar-*" -File)
           if ($originalSidecars.Count -ne 2) { throw "Original installer sidecars were not preserved" }
 
+      - name: Reduce Defender real-time overhead for installer extraction
+        shell: powershell
+        # KEEP THIS BLOCK PURE ASCII (PS 5.1 ANSI decode trap, see install
+        # step below). The hosted runner ships Defender real-time scanning
+        # enabled. NSIS extraction writes thousands of small site-package
+        # files and per-file RT scanning on a 2-core runner stalled the
+        # silent install past the whole previous 480s budget. The payload
+        # was already scanned at rest by the explicit -RunDefenderScan gate
+        # in the build step, so these targeted exclusions only skip a
+        # second scan of already-scanned bytes.
+        run: |
+          Add-MpPreference -ExclusionProcess "SERO-GULD-CRM-FULL-SETUP.exe" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath "$env:ProgramFiles\Sero Guld CRM" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath "$env:ProgramData\SeroGuldCRM" -ErrorAction SilentlyContinue
+          Write-Host "ExclusionPath:"
+          (Get-MpPreference).ExclusionPath | Write-Host
+          Write-Host "ExclusionProcess:"
+          (Get-MpPreference).ExclusionProcess | Write-Host
+
       - name: Install verified NSIS on ephemeral runner
         working-directory: seroguld-crm-latest-windows
         shell: powershell
@@ -150,8 +169,8 @@ jobs:
           # tree (Win32_Process carries parent PID + command line, which
           # reveals an elevated copy / UAC consent) and the installer's own
           # cleanup log, then fail fast instead of burning the job timeout.
-          if (-not $process.WaitForExit(480000)) {
-            Write-Host "INSTALL-TIMEOUT after 480s. Live processes:"
+          if (-not $process.WaitForExit(900000)) {
+            Write-Host "INSTALL-TIMEOUT after 900s. Live processes:"
             Get-CimInstance Win32_Process | Where-Object {
               ([string]$_).Length -gt 0 -and (
                 ([string]$_.Name) -match 'seroguld|setup|ns[A-Za-z0-9]{2,6}|consent|msiexec|powershell|icacls|docker|Edge|WebView' -or
@@ -165,8 +184,22 @@ jobs:
             } else {
               Write-Host "--- installer-cleanup.log MISSING (cleanup script never started or never finished)"
             }
+            Write-Host "--- extraction progress probe:"
+            foreach ($root in @((Join-Path $env:ProgramFiles "Sero Guld CRM"), (Join-Path $env:ProgramData "SeroGuldCRM"))) {
+              if (Test-Path -LiteralPath $root) {
+                $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue)
+                $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+                Write-Host ("ROOT {0} : {1} files, {2} bytes" -f $root, $files.Count, $bytes)
+                $files | Sort-Object -Property LastWriteTime -Descending | Select-Object -First 5 LastWriteTime, Length, FullName | Format-List | Out-String -Width 240 | Write-Host
+              } else {
+                Write-Host ("ROOT {0} : MISSING" -f $root)
+              }
+            }
+            Write-Host "--- WebView2 runtime check:"
+            $wv = Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue
+            if ($wv) { Write-Host ("WebView2 pv={0}" -f $wv.pv) } else { Write-Host "WebView2 ABSENT" }
             Stop-Process -Id $process.Id -Force
-            throw "NSIS silent install did not exit within 480s (timeout) - diagnostics above"
+            throw "NSIS silent install did not exit within 900s (timeout) - diagnostics above"
           }
           # WaitForExit(int) returning true can still leave ExitCode unset on
           # PS 5.1; the parameterless call on an exited process is instant.
