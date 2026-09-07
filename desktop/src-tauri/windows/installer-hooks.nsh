@@ -16,6 +16,14 @@
     Delete "$INSTDIR\runtime\seroguld-runtime\runtime-seed.env"
   ${EndIf}
   ${If} $0 != 0
+    ; A silent install has nobody to answer an error dialog: a MessageBox
+    ; here hangs headless runs until an external kill.  Silent installs
+    ; fail fast with the cleanup exit code instead; interactive installs
+    ; keep the explicit dialog.
+    ${If} ${Silent}
+      SetErrorLevel $0
+      Abort
+    ${EndIf}
     MessageBox MB_ICONSTOP|MB_OK "Sero Guld CRM eski çalışma süreçleri temizlenemedi. Kurulum durduruldu."
     Abort
   ${EndIf}

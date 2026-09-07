@@ -57,6 +57,20 @@ function Write-CleanupLog {
   Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) $Message"
 }
 
+# Log every terminating failure to the installer cleanup log before the
+# non-zero exit reaches NSIS: silent installs (CI runners, unattended
+# upgrades) have no dialog to show the reason, so this log line is the
+# only evidence of which cleanup stage failed.  `break` rethrows after
+# logging and preserves the non-zero exit contract.
+trap {
+  Write-CleanupLog ("CLEANUP-FAIL: " + $_.Exception.Message)
+  $position = [string]$_.InvocationInfo.PositionMessage
+  if (-not [string]::IsNullOrWhiteSpace($position)) {
+    Write-CleanupLog ("CLEANUP-FAIL-AT: " + (($position -replace '\s+', ' ').Trim()))
+  }
+  break
+}
+
 function Write-TextFileAtomically {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -322,6 +336,17 @@ function Stop-LegacyProcessDescendants {
 function Remove-SeroGuldDockerResources {
   $docker = Get-Command docker.exe -ErrorAction SilentlyContinue
   if ($null -eq $docker) { return $false }
+
+  # Docker reports routine negatives (a missing legacy container or
+  # network) on stderr.  With the script-wide ErrorActionPreference=Stop,
+  # Windows PowerShell 5.1 wraps that stderr into a terminating
+  # NativeCommandError even when it is redirected, which aborted the
+  # cleanup on any Docker-equipped machine whose legacy resources are
+  # already gone.  Everything inside this function therefore runs with a
+  # function-local Continue preference: the caller's Stop preference is
+  # untouched, negative outcomes stay on $LASTEXITCODE, and real cleanup
+  # failures still hit the explicit throw statements below.
+  $ErrorActionPreference = "Continue"
 
   # Querying the daemon is deliberately the only Docker operation used as a
   # precondition.  The installer never starts, installs, upgrades, or
@@ -735,6 +760,7 @@ function Protect-PrivateRuntimeStorage {
     & "$env:SystemRoot\System32\icacls.exe" $runtimeEnv /inheritance:r /remove:g '*S-1-1-0' '*S-1-5-11' '*S-1-5-32-545' /grant:r '*S-1-5-18:F' /grant:r '*S-1-5-32-544:F' /grant:r "*${userSid}:F" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Runtime yapılandırması güvenli hale getirilemedi" }
   }
+  Write-CleanupLog ("Runtime ACL applied; userSid=" + $userSid)
   Write-CleanupLog "Runtime yapılandırma ACL'si sınırlandırıldı"
 }
 
