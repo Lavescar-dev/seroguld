@@ -182,6 +182,16 @@ function valueAfterLabelLine(
 function addressValueAfterLabelLine(lines: string[], label: RegExp, labels: RegExp[], window = 4): string {
   const start = lines.findIndex((line) => label.test(line));
   if (start < 0) return '';
+  // Etiket ve sokak aynı satırda basılmışsa ("Adresse: Testgade 1") önce
+  // satır içi değere bakılır — boş sokak pencere yanlış satırdan dolmasın.
+  const labelMatch = lines[start].match(label);
+  if (labelMatch && labelMatch.index === 0) {
+    const rest = lines[start]
+      .slice(labelMatch[0].length)
+      .replace(/^[\s.:·•\-]+/, '')
+      .trim();
+    if (rest && (/\d/.test(rest) || rest.length > 4)) return rest;
+  }
   const careOf: string[] = [];
   for (let index = start + 1; index <= start + window && index < lines.length; index += 1) {
     const line = lines[index];
@@ -202,7 +212,7 @@ const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔ�
 // Bilinen etiket kelimeleri asla ad değeri değildir (case-tolerant kontrolde
 // "Fornavn" gibi satırlar ad sanılmasın). OCR başlıkları bozabilir
 // (Fornavn→PORNAVN) — "navn" sonu (Danca: isim) ek bazında dışlanır.
-const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b|SUNDHEDSKORT|^DANMARK\b/;
+const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b|SUNDHEDSKORT|^DANMARK\b|^ADRESSE\b|^POSTNR|^POSTNUMMER|^CPR\b|^TLF\b|^TELEFON\b|^L[AÆ]GE\b|^GYLDIG\b|^SYGEHUS\b|SYGESIKR|^PERSONNR\b|^F[ØO]EDT\b/;
 
 function isPrintedNamePart(line: string): boolean {
   const trimmed = line.trim();
@@ -274,10 +284,10 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
   const bareCpr = findBareCpr(lines);
   const isSundhedskort = /SUNDHEDSKORT/.test(upper) || (/KOMMUNE/.test(upper) && Boolean(bareCpr));
   if (isSundhedskort) {
-    const labels = [/^Navn$/i, /CPR[-\s.]?n/i, /^Ad?resse$/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
-    const name = valueAfterLabelLine(lines, /^Navn$/i, labels, isPrintedNamePart);
+    const labels = [/^\s*navn\b\s*[:.]?/i, /CPR[-\s.]?n/i, /^\s*ad?resse\b\s*[:.]?/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
+    const name = valueAfterLabelLine(lines, /^\s*navn\b\s*[:.]?/i, labels, isPrintedNamePart);
     const cprLine = valueAfterLabelLine(lines, /CPR[-\s.]?n/i, labels, (line) => /\d{6}/.test(line));
-    const street = addressValueAfterLabelLine(lines, /^Ad?resse$/i, labels);
+    const street = addressValueAfterLabelLine(lines, /^\s*ad?resse\b\s*[:.]?/i, labels);
     const postalLine = valueAfterLabelLine(lines, /r\.?\s*og\s*by/i, labels, (line) => /^\d{4}\s+\S/.test(line));
     const postalMatch = postalLine.match(/^(\d{4})\s+(.+)$/);
     const fields = definedFields([

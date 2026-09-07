@@ -557,6 +557,175 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
   });
 });
 
+describe('OCR parser regresyonları — 0.3.35 (etiket esnetme, erken dönüş, kapı genişletme)', () => {
+  it('B2: iki noktalı etiketler (Navn: / CPR-nr:) okunur', () => {
+    // Gerçek OCR etiket satırlarına iki nokta bırakır; /^Navn$/ çapası bu
+    // satırları etiket sanmaz → isim boş kalır, alanlar eksik döner.
+    const raw = [
+      'Hvidovre Kommune',
+      'Navn: Mette Hansen',
+      'CPR-nr: 010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Mette Hansen');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('B1: Navn etiketi okunmaz + diğer alanlar dolu → blok ismi kurtarır (0.3.30 saha imzası)', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      'Sundhedskort',
+      'Mette Hansen',
+      'Adresse',
+      'Testgade 1',
+      'Postnr. og by',
+      '8000 Aarhus C',
+      'CPR-nr',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Mette Hansen');
+    expect(result.fields.address?.value).toBe('Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('8000');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('B1+B3: Adresse etiket satırı ASLA isim olarak sızmaz', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      'Sundhedskort',
+      'Adresse',
+      'Testgade 1',
+      '8000 Aarhus C',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name).toBeUndefined();
+    expect(result.fields.address?.value).toBe('Testgade 1');
+  });
+
+  it('B1: merge yönü — blok ismi eklenir, etiketli adres/posta kazanır', () => {
+    const raw = [
+      'Hvidovre Kommune',
+      'Sundhedskort',
+      'Mette Hansen',
+      'Adresse',
+      'Labelgade 1',
+      'Postnr. og by',
+      '8000 Aarhus C',
+      'CPR-nr',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.fields.name?.value).toBe('Mette Hansen');
+    expect(result.fields.address?.value).toBe('Labelgade 1');
+    expect(result.fields.postal_code?.value).toBe('8000');
+    expect(result.fields.city?.value).toBe('Aarhus C');
+  });
+
+  it('B4: harf-aralıklı başlık (S U N D H E D S K O R T) kartı tanır', () => {
+    // Başlık dikey basıldığında OCR harf-aralıklı yatay metin üretir;
+    // KOMMUNE da okunmamışsa kart unknown düşer → 0 alan + sert hata.
+    const raw = [
+      'S U N D H E D S K O R T',
+      'Test Person',
+      'c/o Testgade 1',
+      '9999 Testby',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.address?.value).toBe('c/o Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('9999');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('B4: sygesikring başlığı kartı tanır', () => {
+    const raw = [
+      'Sygesikringskort',
+      'Test Person',
+      'Testgade 1',
+      '9999 Testby',
+      '010190-1234',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.address?.value).toBe('Testgade 1');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('B4 guard: KØREKORT başlığı + bopælsadresse + 4d CPR → driver_license KALIR', () => {
+    // Kapı genişledikten sonra bile eski-tip kørekort (adres taşır) health_card
+    // yutulmamalı — sundhedskort bloğu başlıktan ÖNCE guard ile ayrılır.
+    const raw = [
+      'KØREKORT',
+      '1. Hansen',
+      '2. Lars',
+      '3. 1990-01-01',
+      '4b. 2050-01-01 4d. 010190-1234',
+      '5. 30998877',
+      '8. Testgade 1, 8000 Aarhus C',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Lars Hansen');
+    expect(result.fields.identity_doc_number?.value).toBe('30998877');
+    expect(result.fields.address?.value).toBe('Testgade 1');
+    expect(result.fields.postal_code?.value).toBe('8000');
+  });
+
+  it('B4 negatif: c/o + CPR son-çare kapısı kørekort başlığıyla AÇILMAZ', () => {
+    const raw = [
+      'KØREKORT',
+      'c/o Jens Jensen',
+      'Testgade 1',
+      '8000 Aarhus C',
+      '4d. 010190-1234',
+      '5. 30998877',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.identity_doc_number?.value).toBe('30998877');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('B5: kørekort yalnız 2. (ad) alanı eksik → blok tamamlar, çift-yazım yok', () => {
+    const raw = [
+      'KØREKORT',
+      '1. Hansen',
+      '2.',
+      '3. 1990-01-01, Danmark',
+      '4a. 2010-01-01 4c. Rigspolitichefen',
+      '4b. 2050-01-01 4d. 010190-1234',
+      '5. 30998877',
+      'Lars',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Lars Hansen');
+  });
+
+  it('B5: kørekort yalnız 1. (soyad) alanı eksik → blok tamamlar', () => {
+    const raw = [
+      'KØREKORT',
+      '2. Lars',
+      '3. 1990-01-01, Danmark',
+      '4a. 2010-01-01',
+      '4b. 2050-01-01 4d. 010190-1234',
+      '5. 30998877',
+      'Hansen',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name?.value).toBe('Lars Hansen');
+  });
+});
+
 describe('OCR fixture sözleşmesi — düşük kalite davranışı', () => {
   const degraded = groundTruth.fixtures.filter((item) => !(RELIABLE as readonly string[]).includes(item.capture_condition));
 
