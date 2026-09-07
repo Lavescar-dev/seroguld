@@ -57,6 +57,20 @@ function Write-CleanupLog {
   Add-Content -LiteralPath $logPath -Value "$(Get-Date -Format o) $Message"
 }
 
+# Log every terminating failure to the installer cleanup log before the
+# non-zero exit reaches NSIS: silent installs (CI runners, unattended
+# upgrades) have no dialog to show the reason, so this log line is the
+# only evidence of which cleanup stage failed.  `break` rethrows after
+# logging and preserves the non-zero exit contract.
+trap {
+  Write-CleanupLog ("CLEANUP-FAIL: " + $_.Exception.Message)
+  $position = [string]$_.InvocationInfo.PositionMessage
+  if (-not [string]::IsNullOrWhiteSpace($position)) {
+    Write-CleanupLog ("CLEANUP-FAIL-AT: " + (($position -replace '\s+', ' ').Trim()))
+  }
+  break
+}
+
 function Write-TextFileAtomically {
   param(
     [Parameter(Mandatory = $true)][string]$Path,

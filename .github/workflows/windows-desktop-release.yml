@@ -156,6 +156,21 @@ jobs:
           Write-Host "ExclusionProcess:"
           (Get-MpPreference).ExclusionProcess | Write-Host
 
+      - name: Rehearse installer cleanup directly on the runner
+        working-directory: seroguld-crm-latest-windows
+        shell: powershell
+        # KEEP THIS BLOCK PURE ASCII (PS 5.1 ANSI decode trap, see
+        # install step below).  The NSIS hook swallows the cleanup
+        # script's console output, so a fresh-runner failure inside the
+        # real install is invisible.  Running the exact script the hooks
+        # run - before the real install - surfaces any such failure with
+        # its full error text directly in this step's log.
+        run: |
+          & "desktop/src-tauri/windows/seroguld-installer-cleanup.ps1" -Mode PreInstall
+          Write-Host "PreInstall rehearsal passed"
+          & "desktop/src-tauri/windows/seroguld-installer-cleanup.ps1" -Mode PostInstall
+          Write-Host "PostInstall rehearsal passed"
+
       - name: Install verified NSIS on ephemeral runner
         working-directory: seroguld-crm-latest-windows
         shell: powershell
@@ -204,7 +219,26 @@ jobs:
           # WaitForExit(int) returning true can still leave ExitCode unset on
           # PS 5.1; the parameterless call on an exited process is instant.
           $process.WaitForExit()
-          if ($process.ExitCode -ne 0) { throw "NSIS silent install failed: $($process.ExitCode)" }
+          if ($process.ExitCode -ne 0) {
+            Write-Host ("NSIS silent install failed with exit code " + $process.ExitCode)
+            Get-CimInstance Win32_Process | Where-Object {
+              ([string]$_).Length -gt 0 -and (
+                ([string]$_.Name) -match 'seroguld|setup|ns[A-Za-z0-9]{2,6}|consent|msiexec|powershell|icacls|docker|Edge|WebView' -or
+                ([string]$_.CommandLine) -match 'seroguld|SERO-GULD|nsis|WebView2')
+            } | Select-Object ProcessId, ParentProcessId, Name, CommandLine |
+              Format-List | Out-String -Width 240 | Write-Host
+            Write-Host "--- WebView2 runtime check:"
+            $wv = Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue
+            if ($wv) { Write-Host ("WebView2 pv={0}" -f $wv.pv) } else { Write-Host "WebView2 ABSENT" }
+            $cleanupLog = Join-Path $env:ProgramData "SeroGuldCRM\logs\installer-cleanup.log"
+            if (Test-Path -LiteralPath $cleanupLog) {
+              Write-Host "--- installer-cleanup.log (last 60 lines):"
+              Get-Content -LiteralPath $cleanupLog | Select-Object -Last 60 | Write-Host
+            } else {
+              Write-Host "--- installer-cleanup.log MISSING"
+            }
+            throw ("NSIS silent install failed: " + $process.ExitCode)
+          }
 
       - name: Installed desktop acceptance
         working-directory: seroguld-crm-latest-windows
