@@ -37,6 +37,7 @@ const WINDOWS_CAPABILITIES: IdentityScannerCapabilities = {
   maxFileBytes: 10 * 1024 * 1024,
   acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
   ocrDanishAvailable: true,
+  ocrProbeOk: true,
   ocrProfileLanguage: 'da-DK',
   ocrAvailableLanguages: ['da-DK', 'en-US'],
 };

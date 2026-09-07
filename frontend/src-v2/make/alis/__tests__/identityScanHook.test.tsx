@@ -25,7 +25,7 @@ import {
   type IdentityScannerCapabilities,
   type IdentityScannerErrorPayload,
 } from '@/lib/desktop';
-import { useIdentityScan } from '../identityScan';
+import { normalizeIdentityScannerCapabilities, useIdentityScan } from '../identityScan';
 import type { EditableCustomer } from '../types';
 
 const emptyCustomer: EditableCustomer = {
@@ -47,6 +47,7 @@ const TAURI_CAPABILITIES: IdentityScannerCapabilities = {
   maxFileBytes: 10 * 1024 * 1024,
   acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
   ocrDanishAvailable: true,
+  ocrProbeOk: true,
   ocrProfileLanguage: 'da-DK',
   ocrAvailableLanguages: ['da-DK', 'en-US'],
 };
@@ -88,8 +89,9 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
       scanner: true,
       file: true,
       watch: true,
+      platform: 'windows',
       message: undefined,
-      ocr: { danishAvailable: true, profileLanguage: 'da-DK', availableLanguages: ['da-DK', 'en-US'] },
+      ocr: { danishAvailable: true, probeOk: true, profileLanguage: 'da-DK', availableLanguages: ['da-DK', 'en-US'] },
     });
   });
 
@@ -315,6 +317,73 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     await waitFor(() => expect(result.current.status).toBe('ready'));
     expect(result.current.ocrNotice).toContain('Danca OCR paketi bulunamadı');
     expect(result.current.ocrNotice).toContain('tr-TR');
+  });
+
+  it('probe calisamazsa (tri-state) Windows uyarisi log yolunu icerir', async () => {
+    // 0.3.35: eski çift kilit (availableLanguages>0 && !danishAvailable)
+    // probe başarısızlığında uyarıyı bastırıyordu — artık bilinmezlik
+    // kendini "doğrulanamadı" mesajıyla gösterir.
+    mockedCapabilities.mockResolvedValue({
+      ...TAURI_CAPABILITIES,
+      ocrDanishAvailable: null,
+      ocrProbeOk: false,
+      ocrAvailableLanguages: [],
+    });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.ocrNotice).toContain('doğrulanamadı');
+    expect(result.current.ocrNotice).toContain('ui-diagnostics.jsonl');
+  });
+
+  it('non-Windows platformda probe calisamazsa uyarı üretilmez', async () => {
+    mockedCapabilities.mockResolvedValue({
+      ...TAURI_CAPABILITIES,
+      platform: 'linux',
+      supported: false,
+      wiaAcquisition: false,
+      localOcr: false,
+      imageFileFallback: false,
+      watchFolder: false,
+      ocrDanishAvailable: null,
+      ocrProbeOk: false,
+    });
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).not.toBe('checking'));
+    expect(result.current.ocrNotice).toBeNull();
+  });
+
+  it('normalize: Rust null danishAvailable tri-state korunur, probeOk okunur', () => {
+    // Rust Option<bool> None → JSON null; `??` zinciri null'u düşürmemeli.
+    const normalized = normalizeIdentityScannerCapabilities({
+      supported: true,
+      platform: 'windows',
+      wiaAcquisition: true,
+      imageFileFallback: true,
+      watchFolder: true,
+      ocrDanishAvailable: null,
+      ocrProbeOk: false,
+      ocrProfileLanguage: '',
+      ocrAvailableLanguages: [],
+    });
+    expect(normalized.ocr).toEqual({
+      danishAvailable: null,
+      probeOk: false,
+      profileLanguage: '',
+      availableLanguages: [],
+    });
+    // Eski payload (probe alanı yok): danishAvailable biliniyorsa probe çalışmış sayılır.
+    const legacy = normalizeIdentityScannerCapabilities({
+      supported: true,
+      platform: 'windows',
+      wiaAcquisition: true,
+      imageFileFallback: true,
+      watchFolder: true,
+      ocrDanishAvailable: false,
+      ocrProfileLanguage: 'tr-TR',
+      ocrAvailableLanguages: ['tr-TR'],
+    });
+    expect(legacy.ocr?.probeOk).toBe(true);
+    expect(legacy.ocr?.danishAvailable).toBe(false);
   });
 
   it('taninamayan belgede ham tani maskelemeyle gosterilir; gercek rakamlar sizmaz', async () => {

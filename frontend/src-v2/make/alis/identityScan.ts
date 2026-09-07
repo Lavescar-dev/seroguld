@@ -29,7 +29,10 @@ export type IdentityParseResult = {
 };
 
 export type IdentityOcrLanguageInfo = {
-  danishAvailable: boolean;
+  /** Tri-state: false = paket yok, null = bilinmiyor (probe sonucu okunamadı). */
+  danishAvailable: boolean | null;
+  /** false = probe çalışamadı → "doğrulanamadı" uyarısı (yalnız Windows'ta). */
+  probeOk: boolean;
   profileLanguage: string;
   availableLanguages: string[];
 };
@@ -39,6 +42,7 @@ export type IdentityScannerCapabilities = {
   file: boolean;
   /** İş 4: klasör izleme (scan-to-folder) yeteneği. */
   watch: boolean;
+  platform?: string;
   message?: string;
   ocr?: IdentityOcrLanguageInfo;
 };
@@ -602,7 +606,7 @@ export function applyConfirmedIdentityResult(customer: EditableCustomer, result:
 }
 
 export function normalizeIdentityScannerCapabilities(value: unknown): IdentityScannerCapabilities {
-  if (typeof value === 'boolean') return { scanner: value, file: value, watch: value };
+  if (typeof value === 'boolean') return { scanner: value, file: value, watch: value, platform: '' };
   const record = asRecord(value);
   const supported = record?.supported;
   const scanner = supported === false
@@ -614,18 +618,33 @@ export function normalizeIdentityScannerCapabilities(value: unknown): IdentitySc
   const watch = supported === false
     ? false
     : Boolean(record?.watchFolder ?? record?.watch_folder);
-  const danishAvailable = record?.ocrDanishAvailable ?? record?.ocr_danish_available;
+  // Rust Option<bool> → null: `??` null'u snake_case yedeğine düşürür; önce
+  // anahtar varlığına bakılır (null = bilinmiyor, tri-state korunur).
+  const rawDanish = record && 'ocrDanishAvailable' in record ? record.ocrDanishAvailable : record?.ocr_danish_available;
+  const rawProbeOk = record && 'ocrProbeOk' in record ? record.ocrProbeOk : record?.ocr_probe_ok;
+  const danishAvailable = typeof rawDanish === 'boolean' ? rawDanish : rawDanish === undefined ? undefined : null;
+  // Eski payload'larda probe alanı yoktur: danishAvailable biliniyorsa probe
+  // çalışmış sayılır (geriye dönük uyum).
+  const probeOk = rawProbeOk === undefined || rawProbeOk === null ? danishAvailable !== undefined && danishAvailable !== null : Boolean(rawProbeOk);
   const languagesRaw: unknown = record?.ocrAvailableLanguages ?? record?.ocr_available_languages;
-  const ocr: IdentityOcrLanguageInfo | undefined = danishAvailable === undefined
+  const ocr: IdentityOcrLanguageInfo | undefined = danishAvailable === undefined && rawProbeOk === undefined
     ? undefined
     : {
-        danishAvailable: Boolean(danishAvailable),
+        danishAvailable: danishAvailable ?? null,
+        probeOk,
         profileLanguage: text(record?.ocrProfileLanguage ?? record?.ocr_profile_language),
         availableLanguages: Array.isArray(languagesRaw)
           ? languagesRaw.map((tag) => text(tag)).filter(Boolean)
           : [],
       };
-  return { scanner, file, watch, message: text(record?.message) || undefined, ocr };
+  return {
+    scanner,
+    file,
+    watch,
+    platform: text(record?.platform),
+    message: text(record?.message) || undefined,
+    ocr,
+  };
 }
 
 export function extractIdentityScanText(value: unknown): string {
@@ -826,11 +845,20 @@ export function useIdentityScan({
   const resultRef = useRef(result);
   resultRef.current = result;
 
-  // Danca OCR paketi yoksa sahadan uyarı: profil dili (ör. tr) Danca'yı
-  // bozarak okur (Æ→E, Ø→O, Å→Â) — isim/adres alanları hatalı olabilir.
-  const ocrNotice = capabilities.ocr && capabilities.ocr.availableLanguages.length > 0 && !capabilities.ocr.danishAvailable
-    ? `Danca OCR paketi bulunamadı (${capabilities.ocr.profileLanguage || 'profil dili'} kullanılıyor) — Danca karakterler hatalı okunabilir.`
-    : null;
+  // Danca OCR paketi uyarısı — iki yol:
+  // 1) probe çalıştı ve paket yok: kurulum mesajı (profil dili Danca'yı
+  //    bozarak okur: Æ→E, Ø→O, Å→Â — isim/adres alanları hatalı olabilir).
+  // 2) probe çalışamadı (tri-state bilinmiyor): eski çift kilit uyarıyı
+  //    bastırıyordu; artık saha "doğrulanamadı" mesajı + log yolu görür.
+  //    Yalnız Windows'ta: diğer platformlarda OCR hattı ilgisizdir.
+  const ocrInfo = capabilities.ocr;
+  const ocrNotice = !ocrInfo
+    ? null
+    : ocrInfo.probeOk && ocrInfo.danishAvailable === false
+      ? `Danca OCR paketi bulunamadı (${ocrInfo.profileLanguage || 'profil dili'} kullanılıyor) — Danca karakterler hatalı okunabilir.`
+      : !ocrInfo.probeOk && capabilities.platform === 'windows'
+        ? 'Danca OCR paketi doğrulanamadı — tarama hatalı çıkabilir; %APPDATA%\\dk.seroguld.crm\\logs\\ui-diagnostics.jsonl kodunu iletin.'
+        : null;
 
   // Ortak hata bildirimi: describeScannerError iptali sessizce yutar (null),
   // diğerlerini teşhis kodu + saha metniyle state'e yazar. true = hata gösterildi.

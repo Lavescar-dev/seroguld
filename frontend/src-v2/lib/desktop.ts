@@ -39,7 +39,10 @@ export interface IdentityScannerCapabilities {
   watchFolder: boolean;
   maxFileBytes: number;
   acceptedMimeTypes: IdentityScanMimeType[];
-  ocrDanishAvailable: boolean;
+  // Tri-state: null = bilinmiyor (probe başarısız → Rust Option<bool> None).
+  ocrDanishAvailable: boolean | null;
+  // false = dil yoklaması çalışamadı → UI "doğrulanamadı" uyarısı (Windows).
+  ocrProbeOk: boolean;
   ocrProfileLanguage: string;
   ocrAvailableLanguages: string[];
 }
@@ -326,8 +329,10 @@ function unsupportedIdentityScannerCapabilities(platform: IdentityScannerPlatfor
     watchFolder: false,
     maxFileBytes: 10 * 1024 * 1024,
     acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/tiff', 'image/bmp'],
-    // Probe yok: sessiz geç (yanlış "Danca paketi yok" uyarısı olmasın).
-    ocrDanishAvailable: true,
+    // Probe yok: bilinmez (tri-state). UI yalnız Windows platformunda
+    // "doğrulanamadı" uyarısı üretir; tarayıcıdan uyarı çıkmaz.
+    ocrDanishAvailable: null,
+    ocrProbeOk: false,
     ocrProfileLanguage: '',
     ocrAvailableLanguages: [],
   };

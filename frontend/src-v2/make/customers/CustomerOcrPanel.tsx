@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Camera, CheckCircle2, FileImage, FolderInput, Loader2, Radio, RefreshCw, ScanLine, X } from 'lucide-react';
 
 import { getIdentityWatchStatus, stopIdentityWatch, type IdentityWatchStatus } from '@/lib/desktop';
-import { useIdentityScan } from '@/make/alis/identityScan';
+import { buildIdentityScanDiagnosticCode, useIdentityScan } from '@/make/alis/identityScan';
 import type { EditableCustomer } from '@/make/alis/types';
 import type { CustomerDraft } from './types';
 
@@ -235,6 +235,11 @@ export function CustomerOcrPanel({
             OCR teşhisi: {identity.scanMeta.language || 'dil bilinmiyor'} · {identity.scanMeta.lineCount} satır
             {identity.scanMeta.scaled === undefined ? '' : identity.scanMeta.scaled ? ' · ölçeklendi' : ' · ölçeklenmedi'}
             {identity.scanMeta.fieldKeys.includes('name') ? '' : ' · İSİM OKUNAMADI'}
+          </p>
+          {/* A6: atomik teşhis kodu (idscan.…) destek talebinde kopyalanır —
+              monospace + selectable; PII içermez, kalıcı kayda girmez. */}
+          <p className="mt-0.5 select-text font-mono text-[10px] text-brand-600">
+            {buildIdentityScanDiagnosticCode(identity.scanMeta)}
           </p>
           {identity.diagnostic ? (
             <details className="mt-0.5">

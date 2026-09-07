@@ -1776,7 +1776,10 @@ struct IdentityScannerCapabilities {
     max_file_bytes: usize,
     accepted_mime_types: Vec<String>,
     // OCR dil paketi yoklaması: Danca paket yoksa UI uyarır (saha teshisi).
-    ocr_danish_available: bool,
+    // ocr_probe_ok=false → probe çalışamadı: "doğrulanamadı" uyarısı (yalnız
+    // Windows'ta; diğer platformlarda uyarı üretilmez — platform ilgisiz).
+    ocr_danish_available: Option<bool>,
+    ocr_probe_ok: bool,
     ocr_profile_language: String,
     ocr_available_languages: Vec<String>,
 }
@@ -2115,17 +2118,20 @@ fn identity_scanner_platform() -> &'static str {
 fn identity_scanner_capabilities() -> IdentityScannerCapabilities {
     let supported = cfg!(target_os = "windows");
     #[cfg(target_os = "windows")]
-    let (ocr_danish_available, ocr_profile_language, ocr_available_languages) = {
+    let (ocr_danish_available, ocr_probe_ok, ocr_profile_language, ocr_available_languages) = {
         let probe = identity_ocr_language_probe();
         (
             probe.danish_available,
+            probe.probe_ok,
             probe.profile_language.clone(),
             probe.available_languages.clone(),
         )
     };
+    // Non-Windows: probe yok — bilinmez (None/false). UI yalnız Windows'ta
+    // "doğrulanamadı" uyarısı üretir; burada uyarı gürültü olur.
     #[cfg(not(target_os = "windows"))]
-    let (ocr_danish_available, ocr_profile_language, ocr_available_languages) =
-        (true, String::new(), Vec::new());
+    let (ocr_danish_available, ocr_probe_ok, ocr_profile_language, ocr_available_languages) =
+        (None, false, String::new(), Vec::new());
     IdentityScannerCapabilities {
         supported,
         platform: identity_scanner_platform().to_string(),
@@ -2139,6 +2145,7 @@ fn identity_scanner_capabilities() -> IdentityScannerCapabilities {
             .map(|mime_type| (*mime_type).to_string())
             .collect(),
         ocr_danish_available,
+        ocr_probe_ok,
         ocr_profile_language,
         ocr_available_languages,
     }
@@ -2297,7 +2304,18 @@ try {
   try {
     $available = @([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages() | ForEach-Object { [string]$_.LanguageTag })
   } catch {}
-  $payload = @{ danishAvailable = $danish; profileLanguage = $profileTag; availableLanguages = $available }
+  # DISM yetenek durumu: WinRT IsLanguageSupported yanit vermezse paketin
+  # kurulu/kurulu-degil bilgisini DISM verir. PS 5.1'de script-bazli EAP=Stop
+  # altinda native stderr terminating olabilir — try/catch disinda birakilmaz,
+  # hata -> 'unknown' (tri-state; yanlis uyaridan iyidir).
+  $capabilityState = 'unknown'
+  try {
+    $capability = Get-WindowsCapability -Online -Name 'Language.OCR~~~da-DK*' -ErrorAction Stop | Select-Object -First 1
+    if ($null -ne $capability) { $capabilityState = [string]$capability.State }
+  } catch {
+    $capabilityState = 'unknown'
+  }
+  $payload = @{ danishAvailable = $danish; profileLanguage = $profileTag; availableLanguages = $available; capabilityState = $capabilityState }
   [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
   [Console]::WriteLine([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $payload -Compress -Depth 3))))
   exit 0
@@ -2491,19 +2509,29 @@ fn run_windows_local_ocr(path: &std::path::Path) -> Result<WindowsOcrOutput, Ide
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct IdentityOcrLanguageProbe {
-    danish_available: bool,
+    // Tri-state: None = bilinmiyor (probe başarısız). Eski `false` sabiti
+    // yanlış "paket var" varsayımıyla uyarıyı çift kilitliyordu.
+    danish_available: Option<bool>,
+    // Probe gerçekten çalışıp geçerli JSON döndürdü mü — hata yolları false.
+    probe_ok: bool,
     profile_language: String,
     available_languages: Vec<String>,
+    // DISM Get-WindowsCapability durumu ("Installed" / "NotPresent" /
+    // "unknown") — saha teshisi için.
+    capability_state: String,
 }
 
 #[cfg(target_os = "windows")]
 impl Default for IdentityOcrLanguageProbe {
     fn default() -> Self {
-        // Probe başarısızsa uyarı YOK (sessiz geç): yanlış uyarıdan iyidir.
+        // Probe başarısız = bilinmiyor: UI "doğrulanamadı" uyarısı verir,
+        // eski davranıştaki gibi sessiz "paket var" varsayımı YOK.
         Self {
-            danish_available: true,
+            danish_available: None,
+            probe_ok: false,
             profile_language: String::new(),
             available_languages: Vec::new(),
+            capability_state: "unknown".to_string(),
         }
     }
 }
@@ -2528,7 +2556,15 @@ fn identity_ocr_language_probe() -> &'static IdentityOcrLanguageProbe {
             Ok(json) => json,
             Err(_) => return IdentityOcrLanguageProbe::default(),
         };
-        serde_json::from_slice(&json).unwrap_or_default()
+        match serde_json::from_slice::<IdentityOcrLanguageProbe>(&json) {
+            Ok(mut probe) => {
+                // Geçerli JSON = probe çalıştı; danishAvailable tri-state'i
+                // script'in kendisinden gelir (Some/None).
+                probe.probe_ok = true;
+                probe
+            }
+            Err(_) => IdentityOcrLanguageProbe::default(),
+        }
     })
 }
 
