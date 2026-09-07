@@ -212,6 +212,7 @@ function Test-ReleaseSourcePath {
   if ([string]::IsNullOrWhiteSpace($normalized)) { return $false }
   if ($normalized -match '(^|/)(node_modules|target|\.run)(/|$)') { return $false }
   if ($normalized -match '^desktop/src-tauri/runtime(/|$)') { return $false }
+  if ($normalized -match '^desktop/src-tauri/gen(/|$)') { return $false }
   if ($normalized -match '(^|/)(dist|build|playwright-report|test-results)(/|$)') { return $false }
   if ($normalized -match '(^|/)(__pycache__|\.pytest_cache|\.mypy_cache)(/|$)') { return $false }
   if ($normalized -match '\.pyc$' -or $normalized -match '(^|/)\.vitest-results[^/]*$') { return $false }
@@ -233,7 +234,9 @@ function Assert-SourceManifestMatchesCurrentTree {
   $manifestPaths = @($manifestProperties | ForEach-Object { $_.Name })
   if (($currentPaths -join "`n") -ne ($manifestPaths -join "`n") -or
       [int]$SourceManifest.source_file_count -ne $currentPaths.Count) {
-    throw "Runtime kaynak fingerprint dosya listesi mevcut release ağacıyla eşleşmiyor"
+    $onlyInTree = @($currentPaths | Where-Object { $manifestPaths -notcontains $_ } | Select-Object -First 5)
+    $onlyInManifest = @($manifestPaths | Where-Object { $currentPaths -notcontains $_ } | Select-Object -First 5)
+    throw "Runtime kaynak fingerprint dosya listesi mevcut release ağacıyla eşleşmiyor (manifest: $($manifestPaths.Count), ağaç: $($currentPaths.Count); yalnız ağaçta: $($onlyInTree -join ', '); yalnız manifestte: $($onlyInManifest -join ', '))"
   }
 
   $currentHashes = [ordered]@{}
