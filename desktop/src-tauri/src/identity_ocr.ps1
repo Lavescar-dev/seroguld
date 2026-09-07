@@ -52,7 +52,7 @@ function New-OcrSoftwareBitmap {
   # MaxImageDimension'u asan goruntuler Windows OCR'da sessizce bos/az satir
   # dondurur (semptom: "N satir okudu" cok dusuk). Bu yuzden decoder
   # olculerine gore BitmapTransform ile olceklenir; kucuk goruntuler (uzun kenar
-  # <1000px) okunabilirlik icin en fazla 2x buyutulur.
+  # <1400px) okunabilirlik icin en fazla 2x buyutulur.
   param([string]$Path)
 
   $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
@@ -68,7 +68,7 @@ function New-OcrSoftwareBitmap {
   $scale = 1.0
   if ($longest -gt $maxDim) {
     $scale = $maxDim / [double]$longest
-  } elseif ($longest -lt 1000) {
+  } elseif ($longest -lt 1400) {
     $scale = [Math]::Min(2.0, 1400.0 / [double]$longest)
   }
 
