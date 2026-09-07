@@ -80,6 +80,13 @@ jobs:
       # -Python pins the exact setup-python interpreter: the runner's py
       # launcher resolves to the image's preinstalled (newer) Python, whose
       # ABI has no Windows wheels for the pinned compiled packages.
+      #
+      # The runner appends "exit $LASTEXITCODE" to every shell:powershell
+      # script, so a stale exit code from any tolerated native call (e.g. a
+      # warning-only tool) fails this step AFTER the release script printed
+      # its final success line. The release script itself throws on every
+      # real failure, which kills the process before "exit 0" is reached, so
+      # the explicit exit only normalizes the success path.
       - name: Build and verify Dockerless Windows release
         env:
           CI: "true"
@@ -89,12 +96,10 @@ jobs:
           VITE_WS_BASE_URL: "http://127.0.0.1:8100"
         working-directory: seroguld-crm-latest-windows
         shell: powershell
-        run: >-
-          ./scripts/release-windows-native.ps1
-          -OutputDirectory .run/windows-native-release
-          -Finalize
-          -RunDefenderScan
-          -Python "$env:pythonLocation\python.exe"
+        run: |
+          ./scripts/release-windows-native.ps1 -OutputDirectory .run/windows-native-release -Finalize -RunDefenderScan -Python "$env:pythonLocation\python.exe"
+          Write-Host "Release script basarili bitti (runner'a kalan LASTEXITCODE=$LASTEXITCODE)"
+          exit 0
 
       - name: Remove customer integration seed input
         if: always()
