@@ -198,6 +198,12 @@ OnlyOffice + Collabora docker compose ile başlatılır:
 ```bash
 docker compose -f docker-compose.yml up -d onlyoffice collabora
 ```
+
+### 7.5 Installer cleanup logu
+Installer kurulum/temizlik adımları `%ProgramData%\SeroGuldCRM\logs\installer-cleanup.log`
+dosyasına yazar. Terminating bir temizlik hatası `CLEANUP-FAIL` (ve kaynak konumu
+`CLEANUP-FAIL-AT`) satırı olarak loglanır; sessiz (`/S`) kurulumlarda dialog çıkmaz,
+kurulum cleanup çıkış koduyla düşer — destekte installer sorunlarında ilk bakılacak yer.
 Health: `GET /api/v2/office-runtime/status?kind=alis-workspace`
 
 ---

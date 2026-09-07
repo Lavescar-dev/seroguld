@@ -269,7 +269,39 @@ Kontrol sırası:
 4. `runtime.env` ACL'si kullanıcı, SYSTEM ve Administrators için erişilebilir mi?
 5. Backend logunda migration, encryption key veya hash compatibility hatası var mı?
 6. Aynı eski installer yanlışlıkla yeniden mi kurulmuş?
+7. Installer temizlik hatası mı? `%ProgramData%\SeroGuldCRM\logs\installer-cleanup.log`
+   içindeki `CLEANUP-FAIL` / `CLEANUP-FAIL-AT` satırlarına bak; sessiz (`/S`) kurulum
+   dialog yerine cleanup çıkış koduyla düşer.
 
 Release script'inin gate'ini `-SkipRuntime`, `-SkipFrontend` veya `-SkipTauri`
 ile müşteri teslimatında atlamayın. Bu bayraklar yalnız kontrollü geliştirme
 teşhisi içindir.
+
+## 12. CI release hattı (windows-desktop-release.yml)
+
+Yerel build makinesine alternatif kanal: GitHub, `seroguld-desktop-v*` tag
+push'unda temiz bir runner'da installer'ı üretir, kurar ve doğrular. Tetikleme:
+
+```powershell
+git tag -f seroguld-desktop-v0.3.34 HEAD
+git push -f origin refs/tags/seroguld-desktop-v0.3.34
+```
+
+Aşamalar: build (yerel akışla aynı `build-windows-runtime.ps1`) → imza/hash
+doğrulama → Defender gerçek zamanlı istisnaları (kurulum çıkarma hızlandırması)
+→ cleanup script provası (NSIS dışında doğrudan koşturulur, hata tam metinle
+logda) → sessiz kurulum (900 sn bütçe, çıkarma ilerleme probu) → kurulu
+uygulamada kabul testi (`scripts/windows-desktop-acceptance.ps1`; ACL kontrolü
+config dizini sınırına bakar) → artifact upload → GitHub release yayını
+(setup.exe, .sha256, .sig, latest.json, release-manifest.json).
+
+İki kalıcı tuzak:
+
+1. Workflow'daki `shell: powershell` adımlarının `run:` blokları **saf ASCII**
+   olmalıdır — runner geçici .ps1 dosyasını ANSI çözer; em-dash gibi çok
+   baytlı karakter bir baytı akıllı tırnağa denk gelip string'i erken
+   kapatabilir.
+2. PS 5.1'de script-bazlı `ErrorActionPreference=Stop` altında native program
+   stderr'ı redirect edilse bile terminating hataya dönüşür; toleranslı native
+   çağrı içeren adımlar sonunda açık `exit 0` bulundurur. (Installer cleanup'ın
+   Docker adımı bu yüzden fonksiyon-lokal `Continue` ile çalışır.)

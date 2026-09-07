@@ -51,7 +51,7 @@
 **P1 — ana akış / Windows güvenilirliği**
 | ID | Başlık | Durum | Efor | Kanıt |
 |---|---|---|---|---|
-| WIN-01 | Release workflow'a Windows display smoke + ana pencere smoke ekle | MISSING | S | `windows-desktop-release.yml` |
+| WIN-01 | Release workflow'a Windows display smoke + ana pencere smoke ekle | KISMEN — hat artık temiz runner'da sessiz kurulum + kurulu uygulama kabul testi (`windows-desktop-acceptance.ps1`) koşturuyor; display/pencere smoke (`windows-display-smoke.mjs`) hâlâ yok | S | `windows-desktop-release.yml` |
 | WIN-02 | Release exe startup loglaması + hata ekranı (sessiz beyaz ekran önleme) | BÜYÜK ÖLÇÜDE KAPANDI — `desktop.log` + state/dialog loglama (`main.rs`) | M | `main.rs:113,149-150` |
 | WIN-03 | Backend adresi runtime yapılandırılabilir olsun (build-time gömülü 105 IP) | MISSING | M | `lib/api.ts:44-50` |
 | WIN-04 | Gerçek Windows + çift monitör kabul testi (checklist PLATFORM_COMPATIBILITY §4) | MISSING | S | `main.rs:248-295` |

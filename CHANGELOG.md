@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Altyapı
+
+- **CI release hattı yeşile çekildi (`windows-desktop-release.yml`):** tag tetiklemeli hat artık temiz GH runner'ında build → imza/hash doğrulama → Defender gerçek zamanlı istisnaları → installer cleanup provası → sessiz kurulum (900 sn bütçe + çıkarma ilerleme probu) → kurulu uygulamada kabul testi → artifact upload → GitHub release yayını (setup.exe, .sha256, .sig, latest.json, release-manifest.json) zincirini uçtan uca koşturuyor; ilk yeşil koşu 2026-09-07. Ayrıntı: `docs/WINDOWS_RELEASE_RUNBOOK_TR.md` §12.
+- **Installer cleanup Docker stderr toleransı:** PS 5.1'de script-bazlı `ErrorActionPreference=Stop` altında docker.exe'nin rutin "No such container" stderr'ı terminating NativeCommandError'a dönüşüp temizliği öldürüyordu; `Remove-SeroGuldDockerResources` artık fonksiyon-lokal `Continue` ile çalışır. Docker kurulu müşteri makinelerinde kalıntılar zaten temizken kurulumun düşmesi kapatıldı (yerel dockerless build makinesinde görünmeyen gerçek ürün hatası).
+- **Sessiz kurulumda fail-fast:** installer cleanup hatası `/S` kurulumunda MessageBox'a bakmaz — headless/uzaktan kurulumlar görünmez dialog'da asılı kalmak yerine cleanup çıkış koduyla hızla düşer; interaktif kurulumda davranış değişmedi.
+- **Cleanup teşhis logu:** her terminating temizlik hatası `CLEANUP-FAIL` (ve kaynak konumu `CLEANUP-FAIL-AT`) olarak `%ProgramData%\SeroGuldCRM\logs\installer-cleanup.log`'a yazılır; runtime ACL uygulaması da `userSid` ile loglanır.
+- **Kabul testinde ACL sınırı düzeltildi:** `runtime.env` koruma kontrolü dosyanın kendi protected-DACL bayrağından (uygulama her açılışta tmp+os.replace ile dosyayı yeniden yarattığı için sıfırlanır) kilitli config **dizinine** taşındı; kontrol CI'da adım-hesabı SID'ini de kabul eder, hatalar tam metinle raporlanır.
+
+Bu kalemler bir sonraki installer build'iyle müşteriye ulaşır (teslim edilmiş 0.3.34 installer'ında yoktur).
+
 ## [0.3.34] — 2026-09-07
 
 ### Güvenlik

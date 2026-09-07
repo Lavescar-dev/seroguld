@@ -1183,7 +1183,10 @@ docker-compose -f docker-compose.yml up -d backend
   `npm run i18n:check` → `npm run test` (Vitest 305) →
   `npm run test:coverage` (coverage v8 eşikleri) + backend pytest.
 - `desktop-feedback-windows.yml` — Windows feedback smoke.
-- `windows-desktop-release.yml` — Windows release build.
+- `windows-desktop-release.yml` — Windows release build: tag push'unda temiz
+  runner'da build → doğrulama → sessiz kurulum → kurulu uygulama kabul testi →
+  GitHub release yayını (2026-09-07'de yeşile çekildi; kurulum/temizlik
+  hataları `installer-cleanup.log`'a `CLEANUP-FAIL` olarak yazılır).
 - Frontend tooling: ESLint 9 (flat config `eslint.config.js`) + Prettier
   (`npm run format` / `format:check`) kuruldu.
 
