@@ -1630,17 +1630,27 @@ Epson ET-3850 (WIA diyaloğu veya klasöre-tara profili) → JPEG
 Regresyon kalkanı: `identityScanOcrContract.test.ts` (B serisi 10 yeni test)
 + hook tri-state testleri + `test_print_page_and_auto_print.py`.
 
-### 20.4 BEKLEYEN SAHA İŞLERİ (hp/Windows makinesi açılınca)
+### 20.4 BEKLEYEN SAHA İŞLERİ
+
+**hp/Windows geliştirme makinesi açılınca (yazıcı GEREKMEZ):**
 
 1. **Faz A kanıt okuma:** 0.3.30–0.3.34 saha taramalarının teşhis kodlarını
    `ui-diagnostics.jsonl` üzerinden doğrula (NS kodları → 400 dpi kuralı).
+   Not: log, uygulamayı çalıştıran makinenin
+   `%APPDATA%\dk.seroguld.crm\logs\` dizinindedir.
 2. **da-DK paketi:** `Get-WindowsCapability -Online -Name "Language.OCR~~~da-DK*"`
    ile durum; yoksa runbook §2.7 ile kur (online veya FOD ISO).
 3. **Danca fixture kaydı (D1/D2):** `scripts/ocr-fixture-harness.ps1 -OutFile
-   raw_ocr_da.json`; sonra `git mv backend/tests/fixtures/ocr/raw_ocr.json
-   raw_ocr_tr.json` ve contract testine iki kayıt parametresi ekle (tr + da).
+   raw_ocr_da.json` (fiziksel tarayıcı gerekmez, fixture görüntüleri OCR'lanır);
+   sonra `git mv backend/tests/fixtures/ocr/raw_ocr.json raw_ocr_tr.json` ve
+   contract testine iki kayıt parametresi ekle (tr + da).
+
+**Müşteri lokasyonunda (SERO GULD, Valby — ET-3850 ve gerçek kartlar oradadır):**
+
 4. **Canlı sarı kart smoke:** gerçek sundhedskort ile tarama → isim/adres/CPR-6
-   alanlarını doğrula; B serisi düzeltmelerin saha doğrulaması.
+   alanlarını doğrula; B serisi düzeltmelerin saha doğrulaması. hp'de yazıcı/
+   tarayıcı YOKTUR — bu adım müşteri makinesinde yapılır.
 5. **ET-3850 yazıcı matrisi:** `docs/PRINTER_TEST_MATRIX_TR.md` boş kolonları
-   doldurulacak (saha testi).
+   doldurulacak (saha testi). ET-3850 müşteri lokasyonundaki ağ yazıcısıdır;
+   hp'de yoktur.
 

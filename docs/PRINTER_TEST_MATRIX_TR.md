@@ -1,8 +1,9 @@
 # Yazıcı Test Matrisi (TR) — 0.3.35
 
-> **Durum:** Matris hazır; **sonuç kolonları BOŞ** — saha testi bekleniyor
-> (hp/Windows saha makinesi bu oturumda çevrimdışıydı). Testler yapılıp
-> sonuçlar bu tabloya işlenir.
+> **Durum:** Matris hazır; **sonuç kolonları BOŞ** — saha testi bekleniyor.
+> ET-3850 müşteri lokasyonundaki (SERO GULD, Valby) ağ yazıcısıdır;
+> hp geliştirme laptopunda yazıcı/tarayıcı YOKTUR. Testler müşteri
+> makinesi + yazıcısı üzerinde yapılıp sonuçlar bu tabloya işlenir.
 
 ## Önkoşullar (ET-3850, saha makinesi)
 
