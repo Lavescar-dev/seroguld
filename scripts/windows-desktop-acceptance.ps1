@@ -62,18 +62,32 @@ function Test-PrivateRuntimeAcl {
   try {
     $whoami = & "$env:SystemRoot\System32\whoami.exe" /user /fo csv /nh 2>$null
     $currentSid = ($whoami -split '[,\"\s]+' | Where-Object { $_ -match '^S-1-' } | Select-Object -First 1)
+    # In CI the packaged app is launched by the step account; on a
+    # customer desktop the app later runs as the WTS console user.  The
+    # installer grants the console user, so either principal is a valid
+    # accessor for this environment.
+    $consoleSid = ""
+    try {
+      $consoleUser = [string](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+      if (-not [string]::IsNullOrWhiteSpace($consoleUser)) {
+        $consoleAccount = New-Object -TypeName System.Security.Principal.NTAccount -ArgumentList $consoleUser
+        $consoleSid = $consoleAccount.Translate([System.Security.Principal.SecurityIdentifier]).Value
+      }
+    } catch { $consoleSid = "" }
     $acl = Get-Acl -LiteralPath $runtimeEnv
     $broadSids = @("S-1-1-0", "S-1-5-11", "S-1-5-32-545")
     $seenSids = @($acl.Access | ForEach-Object {
         try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value }
         catch { [string]$_.IdentityReference }
       })
-    $required = @("S-1-5-18", "S-1-5-32-544", $currentSid)
+    $required = @("S-1-5-18", "S-1-5-32-544")
     $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $seenSids -notcontains $_ })
     $broad = @($broadSids | Where-Object { $seenSids -contains $_ })
     $protected = [bool]$acl.AreAccessRulesProtected
-    if ($missing.Count -gt 0 -or $broad.Count -gt 0 -or -not $protected) {
-      return @{ Passed = $false; Detail = "runtime.env ACL geniş veya eksik (secret değerleri raporlanmadı)" }
+    $userAllowed = (($seenSids -contains $currentSid) -or (($consoleSid -ne "") -and ($seenSids -contains $consoleSid)))
+    if ($missing.Count -gt 0 -or -not $userAllowed -or $broad.Count -gt 0 -or -not $protected) {
+      $diagnostic = "missing=[$($missing -join ',')]; broad=[$($broad -join ',')]; protected=$protected; currentSid=$currentSid; consoleSid=$consoleSid; seen=[$($seenSids -join ',')]"
+      return @{ Passed = $false; Detail = "runtime.env ACL genis veya eksik (secret degerleri raporlanmadi): $diagnostic" }
     }
     return @{ Passed = $true; Detail = "runtime.env ACL SYSTEM/Administrators/interactive user ile sınırlı" }
   } catch {

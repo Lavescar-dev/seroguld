@@ -760,6 +760,7 @@ function Protect-PrivateRuntimeStorage {
     & "$env:SystemRoot\System32\icacls.exe" $runtimeEnv /inheritance:r /remove:g '*S-1-1-0' '*S-1-5-11' '*S-1-5-32-545' /grant:r '*S-1-5-18:F' /grant:r '*S-1-5-32-544:F' /grant:r "*${userSid}:F" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Runtime yapılandırması güvenli hale getirilemedi" }
   }
+  Write-CleanupLog ("Runtime ACL applied; userSid=" + $userSid)
   Write-CleanupLog "Runtime yapılandırma ACL'si sınırlandırıldı"
 }
 
