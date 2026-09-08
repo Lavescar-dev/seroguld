@@ -262,6 +262,18 @@ function plausibleCprSix(value: string): string {
 
 const CARE_OF_LINE = /^c\s*[/\\]\s*o\b/i;
 
+// Posta satırındaki şehir artığı: OCR iki fiziksel satırı birleştirdiğinde
+// şehirden sonra Tlf./etiket kısaltmaları ve rakamlar eklenir
+// ("Testby Tit. 36 78 45 66", 2026-09-08 gerçek kart). Şehir bilinen etiket
+// kısaltmasında ya da ilk rakamda kesilir; gerçek şehirler dokunulmaz.
+function sanitizeCityValue(value: string): string {
+  return value
+    .replace(/\s+(?:tlf|tit|tel|tf|tlv)\b.*$/i, '')
+    .replace(/\s+\d.*$/, '')
+    .replace(/[,;:.]+$/, '')
+    .trim();
+}
+
 // OCR bilinen etiket kelimelerini bozabilir ("Adresse" → "Athesse", tr-paketi
 // P3 fixture'ı) — bozuk tek-kelime etiketler ad sanılıp pencereyi yanlış
 // kilitler. Uzunluk ≥6 tek-kelime adaylar bilinen etiket gövdeleriyle 2
@@ -337,16 +349,45 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       ['cpr_number', parsedField(plausibleCprSix(cprLine), 'needs_review')],
       ['address', parsedField(street, 'needs_review')],
       ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
-      ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
+      ['city', parsedField(sanitizeCityValue(postalMatch?.[2] || ''), 'needs_review')],
     ]);
     // Etiketsiz yeni düzen: ad/sokak/posta bloğu alt alta basılır, etiket yok.
     // Posta satırı (9999 By) çıpaydır; bir üstü sokak, iki üstü addır.
     // Sokak ile ad arasına c/o satırı düşebilir — c/o satırları atlanır ve
     // adrese eklenir ("c/o Jens Jensen, Testgade 1").
     const blockFields = (() => {
-      const postalIndex = lines.findIndex((line) => /^\d{4}\s+\S/.test(line.trim()));
+      // Posta satırı çıpası: gerçek kartta læge (doktor) bloğu ÜSTTE, hasta
+      // bloğu CPR'nin ALTINDADIR. CPR satırı okunduysa onun altındaki İLK
+      // posta satırı hastablordur; ilk-posta sezgisi doktorun sokağını adres
+      // yazıyordu (2026-09-08 gerçek kart değerlendirmesi). CPR okunmadıysa
+      // eski davranış (ilk posta satırı) korunur.
+      const postalIndices: number[] = [];
+      lines.forEach((line, index) => {
+        if (/^\d{4}\s+\S/.test(line.trim())) postalIndices.push(index);
+      });
+      const cprLineIndex = bareCpr ? lines.findIndex((line) => line.includes(bareCpr)) : -1;
+      const postalIndex = postalIndices.find((index) => index > cprLineIndex) ?? postalIndices[0] ?? -1;
       if (postalIndex < 2) return null;
-      const streetLine = lines[postalIndex - 1]?.trim() ?? '';
+      // Sokak satırı: posta satırının hemen üstü beklenir; ama gerçek OCR
+      // çıktısına tek harf/rakam döküntüsü girer ("I", "1813"). Üste doğru en
+      // fazla 4 satır tara: rakam + harf taşıyan İLK satır sokaktır. c/o
+      // satırları toplanır; ad satırına varıldığında sokak üsttedir, tarama
+      // biter (eski tek-satır bakışta adres bu döküntülerde kayboluyordu).
+      const streetCareOf: string[] = [];
+      let streetLine = '';
+      for (let cursor = postalIndex - 1, depth = 0; cursor >= 0 && depth < 4; cursor -= 1, depth += 1) {
+        const line = lines[cursor]?.trim() ?? '';
+        if (CARE_OF_LINE.test(line)) {
+          streetCareOf.unshift(line);
+          continue;
+        }
+        if (/\d/.test(line) && /\p{L}/u.test(line)) {
+          streetLine = line;
+          break;
+        }
+        if (line.length <= 2) continue;
+        if (printedNameCandidate(line) && isPrintedNamePart(line)) break;
+      }
       const careOf: string[] = [];
       // Ad adayı her zaman posta bloğunun iki üstünde değildir: araya CPR/
       // tarih satırı girebilir (gerçek saha kartı), ad satırının kenarında
@@ -362,6 +403,9 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
           continue;
         }
         if (/\d/.test(line) || !/\p{L}/u.test(line) || IDENTITY_NOISE_LINE.test(line)) continue;
+        // Tek/iki harflik OCR döküntüsü ("I", "er") pencereyi kırmasın:
+        // gerçek kartta posta satırı ile ad arasına düşer (2026-09-08).
+        if (line.length <= 2) continue;
         if (looksLikeGarbledLabel(line)) continue;
         const candidate = printedNameCandidate(line);
         if (candidate && isPrintedNamePart(candidate)) {
@@ -372,12 +416,12 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
         break;
       }
       const blockPostal = lines[postalIndex].trim().match(/^(\d{4})\s+(.+)$/);
-      const blockAddress = /\d/.test(streetLine) ? [...careOf, streetLine].filter(Boolean).join(', ') : '';
+      const blockAddress = [...new Set([...careOf, ...streetCareOf, streetLine].filter(Boolean))].join(', ');
       return definedFields([
         ['name', nameCandidate ? parsedField(nameCandidate, 'needs_review') : undefined],
         ['address', blockAddress ? parsedField(blockAddress, 'needs_review') : undefined],
         ['postal_code', parsedField(blockPostal?.[1] || '', 'needs_review')],
-        ['city', parsedField(blockPostal?.[2] || '', 'needs_review')],
+        ['city', parsedField(sanitizeCityValue(blockPostal?.[2] || ''), 'needs_review')],
         ['cpr_number', parsedField(plausibleCprSix(bareCpr), 'needs_review')],
       ]);
     })();
@@ -438,8 +482,14 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     // Kørekort CPR'si 4d alanındadır ("4d. 010190-1234"); tarihlerden ayrışır
     // (tarihler 4+2+2 hanedir, CPR 6+4). tr-OCR '4d.' önekini '48.' olarak
     // okuyabilir (d→8) — 4[db8] toleransı; 4b'deki tarih 4+2+2 düzeni
-    // yüzünden 6+4 desenine asla uymaz, yanlış pozitif oluşmaz.
-    const cprRaw = raw.match(/4[db8]\s*[.:]?\s*(\d{6}[-\s]?\d{4})/i)?.[1] ?? '';
+    // yüzünden 6+4 desenine asla uymaz, yanlış pozitif oluşmaz. Gerçek OCR
+    // ayraç bozukluğu ("010190- 1234") [-\s]{0,2} ile tolere edilir; etiket
+    // öneki tamamen bozuk okunduğunda ("åd. 010190- 1234", 2026-09-08 gerçek
+    // kart) gövdedeki bağımsız 6+4 düzeni yedektir — 8-9 bitişik belge no ve
+    // 4+2+2 tarihler bu deseni üretemez, plausibility kapısı uydurmayı eler.
+    const cprRaw = raw.match(/4[db8]\s*[.:]?\s*(\d{6}[-\s]{0,2}\d{4})/i)?.[1]
+      ?? raw.match(/(?<![\d-])(\d{6}[-\s]{0,2}\d{4})(?!\d)/i)?.[1]
+      ?? '';
     // Eski kart düzeninde 8. alan bopælsadresse (kayıtlı adres) taşır.
     const addressLine = valueAfterLabelLine(lines, /^8[.:]/, labels, (line) => /\d/.test(line) || line.length > 4);
     const addressPostal = addressLine.match(/\b(\d{4})\s+([^,\n]+)$/);

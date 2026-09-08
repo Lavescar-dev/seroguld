@@ -787,3 +787,87 @@ describe('OCR fixture sözleşmesi — pas + sundhedskort eşleştirme (P1–P5)
     },
   );
 });
+
+describe('OCR parser sağlamlaştırma — gerçek saha kartı değerlendirmesi (2026-09-08)', () => {
+  // Aşağıdaki düzenler, müşterinin gerçek sundhedskort+kørekort fotoğrafının
+  // VDS-üzeri OCR denemesinde gözlemlenen satır desenlerinin SENTETİK
+  // modelleridir (Test Person / Testgade 47 / 2650 Testby — gerçek veri yok).
+
+  it('S1: læge (doktor) bloğu hasta bloğunu gölgelemez — CPR altındaki posta satırı kazanır', () => {
+    // Gerçek kart düzeni: üstte læge adresi, ortada CPR, altta hasta adı/
+    // sokak/posta. İlk-posta sezgisi doktorun sokağını adres olarak yazıyordu.
+    const raw = [
+      'Region Hovedstaden',
+      'Hvidovre Kommune',
+      'Læge Testklinikken',
+      'Lægevej 101',
+      '2650 Testby',
+      '010190-1234',
+      'Test Person',
+      'Testgade 47',
+      '2650 Testby',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.address?.value).toBe('Testgade 47');
+    expect(result.fields.postal_code?.value).toBe('2650');
+    expect(result.fields.city?.value).toBe('Testby');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+  });
+
+  it('S2: posta satırı ile ad arasına giren tek harf/rakam döküntüsü pencereyi kırmez', () => {
+    // Gerçek OCR: "I", "er", "1813" gibi kullanılamaz satırlar ad ile posta
+    // arasına düşer — mevcut pencere ilk tıkanmada kırılır, ad/sokak düşer.
+    const raw = [
+      'Hvidovre Kommune',
+      '010190-1234',
+      'Test Person',
+      'er',
+      'Testgade 47',
+      'I',
+      '1813',
+      'I',
+      '2650 Testby',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.name?.value).toBe('Test Person');
+    expect(result.fields.address?.value).toBe('Testgade 47');
+    expect(result.fields.postal_code?.value).toBe('2650');
+  });
+
+  it('S3: posta satırına taşan etiket artığı şehiri kirletmez', () => {
+    // OCR iki fiziksel satırı birleştirdiğinde şehirden sonra Tlf./etiket
+    // artığı ve rakamlar eklenir ("Testby Tit. 36 78 45 66").
+    const raw = [
+      'Hvidovre Kommune',
+      '010190-1234',
+      'Test Person',
+      'Testgade 47',
+      '2650 Testby Tit. 36 78 45 66',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('health_card');
+    expect(result.fields.city?.value).toBe('Testby');
+    expect(result.fields.postal_code?.value).toBe('2650');
+  });
+
+  it('L1: kørekort 4d etiketi bozuk okunduğunda CPR gövdedeki 6+4 düzeninden kurtarılır', () => {
+    // Gerçek OCR: "4b. 2055-04-20 ad. 010190- 1234" — etiket öneki ve
+    // tire+boşluk ayraçlı CPR. Tarih (4+2+2) ve 8-9 bitişik belge no bu
+    // deseni üretemez; plausibility kapısı uydurma CPR'yi eler.
+    const raw = [
+      'KØREKORT DANMARK',
+      '1. Testsen',
+      '2. Test',
+      '3. 1985-04-20, Tyrkiet',
+      '4b. 2055-04-20 ad. 010190- 1234',
+      '5. 30499459',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.cpr_number?.value).toBe('010190');
+    expect(result.fields.identity_doc_number?.value).toBe('30499459');
+  });
+});
