@@ -2,6 +2,15 @@
 export type LegacyCopyLocale = 'tr' | 'en' | 'da';
 
 const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
+  // 0.3.37 — piyasa oranları otomatik çekim + müşteri çalışma alanı hata bantları
+  "Otomatik çekmeyi durdur": { en: "Stop automatic pull", da: "Stop automatisk hentning" },
+  "İşaretliyken oranlar yalnız elle güncellenir.": { en: "When checked, rates are updated manually only.", da: "Når den er markeret, opdateres kurserne kun manuelt." },
+  "(bilgi: canlı kaynak değeri)": { en: "(info: live source value)", da: "(info: live kildeværdi)" },
+  "Rozete tıklayarak alanı manuel/otomatik yapın. Otomatikte değer WordPress (guldpriser/soelvpriser) ve Stooq'dan canlı gelir; canlı değer alınamazsa mevcut değer korunur (AFG fiyatları sıfırlanmaz).": { en: "Click the badge to switch a field between manual and automatic. When automatic, the value streams live from WordPress (guldpriser/soelvpriser) and Stooq; if the live value cannot be fetched, the current value is kept (AFG prices are never reset).", da: "Klik på mærkaten for at skifte feltet mellem manuel og automatisk. Når den er automatisk, hentes værdien live fra WordPress (guldpriser/soelvpriser) og Stooq; kan den live værdi ikke hentes, bevares den nuværende værdi (AFG-priser nulstilles aldrig)." },
+  "Müşteri dosyası yüklenemedi": { en: "Could not load customer file", da: "Kunne ikke indlæse kundefil" },
+  "İşlemler yüklenemedi": { en: "Could not load transactions", da: "Kunne ikke indlæse transaktioner" },
+  "Belgeler yüklenemedi": { en: "Could not load documents", da: "Kunne ikke indlæse dokumenter" },
+  "Belge yok — bu müşteriye bağlı AFG veya fatura bulunmuyor.": { en: "No documents — no AFG or invoice is linked to this customer.", da: "Ingen dokumenter — ingen AFG eller faktura er knyttet til denne kunde." },
   "Otomatik şifreli yedekleme": { en: "Automatic encrypted backup", da: "Automatisk krypteret backup" },
   "CRM açıldıktan sonra arka planda günlük tutarlı SQLite, belge ve fotoğraf yedeği alınır. Açılış ve çıkış yedekleme için bekletilmez.": { en: "After CRM opens, a consistent daily backup of SQLite, documents and photos runs in the background. Startup and exit never wait for backup.", da: "Når CRM er åbnet, tages en konsistent daglig backup af SQLite, bilag og billeder i baggrunden. Start og afslutning venter aldrig på backup." },
   "Son yerel yedek": { en: "Latest local backup", da: "Seneste lokale backup" },
