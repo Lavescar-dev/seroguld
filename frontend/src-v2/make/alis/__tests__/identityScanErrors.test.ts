@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeScannerError } from '../identityScan';
+import {
+  buildIdentityScanLowResCode,
+  describeLowResIdentityScan,
+  describeScannerError,
+  isLowResolutionIdentityImage,
+} from '../identityScan';
 
 // İş 4 — tarayıcı hata kodlarının UI ayrımı: kod teşhisi saha metnine
 // bağlanır, iptal sessizdir. (Pure sözleşme; hook/panel testleri ayrı dosyada.)
@@ -78,5 +83,40 @@ describe('describeScannerError (İş 4 hata ayrımı)', () => {
       code: 'INTERNAL_ERROR',
       message: 'boom',
     });
+  });
+});
+
+// 0.3.36 — düşük çözünürlük yönlendirmesi: 125 DPI WIA varsayılanı (419×288)
+// saha taraması "tanınamadı" yerine DPI/çekim yönlendirmesi alır. Pure sözleşme.
+describe('düşük çözünürlük yönlendirmesi (0.3.36)', () => {
+  it('419×288 saha taraması DPI + yakından çekim yönlendirmesi taşır', () => {
+    const message = describeLowResIdentityScan(419, 288);
+    expect(message).toContain('çok düşük çözünürlüklü');
+    expect(message).toContain('(419×288)');
+    expect(message).toContain('300 DPI');
+    expect(message).toContain('yakinden');
+  });
+
+  it('eşik üstü ya da boyutu bilinmeyen görüntüde yönlendirme yok (null)', () => {
+    expect(describeLowResIdentityScan(1011, 1099)).toBeNull();
+    // Eşik değerler dahil edilmez: 600×400 kabul edilir.
+    expect(describeLowResIdentityScan(600, 400)).toBeNull();
+    expect(describeLowResIdentityScan(undefined, undefined)).toBeNull();
+  });
+
+  it('tek ekseni düşük görüntü de düşük çözünürlük sayılır', () => {
+    expect(isLowResolutionIdentityImage(599, 1200)).toBe(true);
+    expect(isLowResolutionIdentityImage(1200, 399)).toBe(true);
+    expect(isLowResolutionIdentityImage(600, 400)).toBe(false);
+    expect(isLowResolutionIdentityImage(undefined, 1200)).toBe(false);
+  });
+
+  it('hata imzası idscan ailesinden ve ascii atom kısıtına uyar', () => {
+    expect(buildIdentityScanLowResCode(419, 288)).toBe('idscan.lowres.419x288');
+    expect(buildIdentityScanLowResCode(undefined, undefined)).toBe('idscan.lowres');
+    // Rust validate_ui_diagnostic safe_atom: alfanumerik + -_.:+, en fazla 64.
+    expect(buildIdentityScanLowResCode(419, 288)).toMatch(/^[A-Za-z0-9_.:+-]{1,64}$/);
+    // Yönlendirme ham OCR satırını içermez (PII sızması yok).
+    expect(describeLowResIdentityScan(419, 288)).not.toContain('9aa');
   });
 });

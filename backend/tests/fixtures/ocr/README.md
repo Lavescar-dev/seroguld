@@ -116,6 +116,20 @@ motoru değil bu kayıtları tüketir; böylece test deterministik ve CI'da koş
 Tazeleme: harness'i uygun motorla koş (hp/müşteri makinesi ya da CI akışı),
 çıktıyı ilgili dosyaya yaz; sözleşme değişmez.
 
+### Görüntü ön-işleme sözleşmesi (0.3.36)
+
+Kayıtları üreten harness, üretimdeki `WINDOWS_OCR_SCRIPT` ile aynı ortak
+`identity_ocr.ps1` dosyasını kullandığı için ölçekleme kuralı da bu kayıtların
+bir parçasıdır ve sürüklenmemelidir:
+
+- `MaxImageDimension` üstünde küçült (Windows OCR tavan üstünde sessizce
+  boş/az satır döner).
+- Altında **adaptif büyütme**: uzun kenar 1600 px'in altında kaldığı sürece
+  2x katlanır, toplamda en fazla 4x. (Eski kural: uzun kenar <1400 px ise
+  en fazla 2x — 0.3.36 saha taraması 419×288 geldiğinde 2x'lik 838×576 hâlâ
+  zayıftı ve OCR 9 çöp satır okuyup hiçbir alan tutmadı.)
+- 2x/4x sonrası uzun kenar tavanı aşıyorsa tavana kırpılır.
+
 Kayıt sırasında bulunan ve düzeltilen iki üretim hatası (main.rs):
 1. `[System.WindowsRuntimeSystemExtensions]::AsTask($op)` PowerShell 5.1'de
    generic overload çözemeyip patlayabiliyor → reflection (`MakeGenericMethod`).

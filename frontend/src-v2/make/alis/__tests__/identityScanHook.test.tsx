@@ -268,7 +268,7 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
   });
 
   it('isim okunmayan tarama tesiste isaretlenir ama alanlar yine onaya gider', async () => {
-    const noName = 'KØREKORT\n4d.200485-2985\n5. 30499459';
+    const noName = 'KØREKORT\n4d.010102-2468\n5. 20984713';
     mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: noName, ocrLines: noName.split('\n') }));
     const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
     await waitFor(() => expect(result.current.status).toBe('ready'));
@@ -410,5 +410,106 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     expect(diagnostic).toContain('999999a9999');
     expect(diagnostic).not.toContain('123456');
     expect(diagnostic).not.toContain('OMAR');
+  });
+});
+
+// 0.3.36 — yeniden tarama hijyeni: ikinci belge ilk belgenin kalıntısını
+// taşımaz, başarısız tarama formu değiştirmez, tür değişince karşı yüz sıfırlanır.
+describe('useIdentityScan — yeniden tarama hijyeni (0.3.36)', () => {
+  const SPARSE_LICENSE = 'KØREKORT\n4d. 010101-1234\n5. 20984713';
+
+  it('ikinci belge daha az alan okursa onceki belgenin kalintisi taslmaz', async () => {
+    mockedAcquire.mockResolvedValueOnce(scanResult());
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: SPARSE_LICENSE, ocrLines: SPARSE_LICENSE.split('\n') }));
+    const setCustomer = vi.fn();
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    await act(async () => {
+      result.current.confirm();
+    });
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('review');
+    await act(async () => {
+      result.current.confirm();
+    });
+    expect(setCustomer).toHaveBeenCalledTimes(2);
+    const firstUpdate = setCustomer.mock.calls[0][0] as (current: EditableCustomer) => EditableCustomer;
+    const secondUpdate = setCustomer.mock.calls[1][0] as (current: EditableCustomer) => EditableCustomer;
+    const afterFirst = firstUpdate(emptyCustomer);
+    expect(afterFirst.name).toBe('ANNA MARIA ERIKSSON');
+    // Pas → kørekort: pas kalıntısı (ad, ülke) temizlenir; kørekortun okudukları dolar.
+    expect(secondUpdate(afterFirst)).toMatchObject({
+      name: '',
+      cpr_number: '010101',
+      identity_doc_type: 'driver_license',
+      identity_doc_number: '20984713',
+      identity_doc_country: '',
+    });
+  });
+
+  it('basarisiz (taninamayan) tarama formu degistirmez; confirm yolu acilmaz', async () => {
+    const garbage = 'SPECIMEN KORT\n9aaa9a9 aa9a\naa9 9aa9a9aa';
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: garbage, ocrLines: garbage.split('\n') }));
+    const setCustomer = vi.fn();
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.status).toBe('error');
+    expect(result.current.result).toBeNull();
+    expect(result.current.error).toContain('Belge türü tanınamadı');
+    await act(async () => {
+      result.current.confirm();
+    });
+    expect(setCustomer).not.toHaveBeenCalled();
+  });
+
+  it('ayni yuzde tur degisen yeni tarama karsi yuzun kalintisini temizler', async () => {
+    const licenseBack = 'KØREKORT\n1. TESTOVESEN\n2. Test\n5. 20984713';
+    mockedAcquire.mockResolvedValueOnce(scanResult({ previewDataUrl: 'data:image/png;base64,FRONT' }));
+    mockedAcquire.mockResolvedValueOnce(
+      scanResult({ side: 'back', previewDataUrl: 'data:image/png;base64,BACK', ocrText: licenseBack, ocrLines: licenseBack.split('\n') }),
+    );
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.result?.documentType).toBe('passport');
+    await act(async () => {
+      await result.current.acquire('back');
+    });
+    expect(result.current.status).toBe('review');
+    // Pas ön yüzünün adı birleşimde taşınmaz — karşı yüz sıfırlandı.
+    expect(result.current.result?.documentType).toBe('driver_license');
+    expect(result.current.result?.fields.name?.value).toBe('Test TESTOVESEN');
+    expect(result.current.previews.front).toBeUndefined();
+    expect(result.current.previews.back).toBe('data:image/png;base64,BACK');
+  });
+
+  it('id_card on+arka akisi bozulmaz: ayni tur iki yuz birlesir', async () => {
+    const frontTd1 = 'I<UTOD231458907<<<<<<<<<<<<<<<\n7408122F1204159UTO<<<<<<<<<<<6\nERIKSSON<<ANNA<MARIA<<<<<<<<<<';
+    const backPrinted = 'IDENTITETSKORT\nKortnr.\nID1000066';
+    mockedAcquire.mockResolvedValueOnce(scanResult({ ocrText: frontTd1, ocrLines: frontTd1.split('\n') }));
+    mockedAcquire.mockResolvedValueOnce(scanResult({ side: 'back', ocrText: backPrinted, ocrLines: backPrinted.split('\n') }));
+    const { result } = renderHook(() => useIdentityScan({ customer: emptyCustomer, setCustomer: vi.fn() }));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      await result.current.acquire('front');
+    });
+    expect(result.current.result?.documentType).toBe('id_card');
+    await act(async () => {
+      await result.current.acquire('back');
+    });
+    expect(result.current.result?.documentType).toBe('id_card');
+    // Ön yüz (MRZ) primary kalır: ad ve belge no ön yüzden, arka yüz ekleme yapar.
+    expect(result.current.result?.fields.name?.value).toBe('ANNA MARIA ERIKSSON');
+    expect(result.current.result?.fields.identity_doc_number?.value).toBe('D23145890');
   });
 });

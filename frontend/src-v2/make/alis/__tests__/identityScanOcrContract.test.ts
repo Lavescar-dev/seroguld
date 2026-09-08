@@ -17,6 +17,8 @@ import { describe, expect, it } from 'vitest';
 import type { EditableCustomer } from '../types';
 import {
   applyConfirmedIdentityResult,
+  buildIdentityScanLowResCode,
+  describeLowResIdentityScan,
   type IdentityParseResult,
   mergeSideScanResults,
   parseIdentityScan,
@@ -44,6 +46,26 @@ type GroundTruth = {
 };
 
 const groundTruth = JSON.parse(readFileSync(resolve(FIXTURE_ROOT, 'fixtures.json'), 'utf-8')) as GroundTruth;
+
+// Görüntüsüz satır-deseni fixture'ları: gerçek OCR kayıtlarının SENTETİK
+// modelleri (0.3.36 saha bildirimleri). Görselleri ve raw_ocr kaydı YOKTUR —
+// satır listesi doğrudan parseIdentityScan'e beslenir.
+type LinePatternFixture = {
+  id: string;
+  pattern: string;
+  lines: string[];
+  image_source?: { width?: number; height?: number };
+  expected: {
+    document_type: 'pas' | 'idkort' | 'koerekort' | 'sundhedskort' | 'unknown';
+    full_name?: string;
+    cpr_first6?: string;
+    document_number?: string;
+    filled_field_count?: number;
+    low_res_guidance?: { message_contains: string[]; error_code: string };
+  };
+};
+
+const linePatternFixtures = (groundTruth as unknown as { line_pattern_fixtures?: LinePatternFixture[] }).line_pattern_fixtures ?? [];
 
 type RawOcrRecord = { results: Record<string, string[]> };
 
@@ -315,24 +337,24 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
     // 4[db8] toleransı CPR'yi kurtarır.
     const raw = [
       'KOREKORT',
-      'Demir',
+      'Testsoy',
       '21',
-      'Recai',
-      '1985-04-20,',
+      'Testkay',
+      '1981-03-14,',
       '-40. 2012-05-09',
       '46. 2055-04-20',
-      '5. - 30499459',
+      '5. - 20984713',
       'DANMARK / z',
       'Tyrkiej',
       '4c. Rigsp.iitkfwö•n-—-',
-      '48.200485-2985',
+      '48.010102-2468',
       '9.- B.C-D-BE.CE.DE',
     ].join('\n');
     const result = parseIdentityScan(raw);
     expect(result.documentType).toBe('driver_license');
-    expect(result.fields.name?.value).toBe('Recai Demir');
-    expect(result.fields.identity_doc_number?.value).toBe('30499459');
-    expect(result.fields.cpr_number?.value).toBe('200485');
+    expect(result.fields.name?.value).toBe('Testkay Testsoy');
+    expect(result.fields.identity_doc_number?.value).toBe('20984713');
+    expect(result.fields.cpr_number?.value).toBe('010102');
     expect(result.fields.identity_doc_country?.value).toBe('DNK');
   });
 
@@ -343,23 +365,23 @@ describe('OCR fixture sözleşmesi — gerçek kart düzenleri (aynı-satır + e
     // satır-içi 8-9 hane taraması belge noyu kurtarır.
     const raw = [
       'KØREKORT',
-      'Demir',
+      'Testsoy',
       '21',
-      'Recai',
+      'Testkay',
       '2012.05-09',
       'Ab. 2055-04-20',
-      '-5. . 30499459',
+      '-5. . 20984713',
       'DANMARK /',
       'Tyrkiet',
       '4c. Rigs p.titiciwf•n•—-',
-      '4d.200485-2985',
+      '4d.010102-2468',
       '9., B.C.D.BE.CE.DE',
     ].join('\n');
     const result = parseIdentityScan(raw);
     expect(result.documentType).toBe('driver_license');
-    expect(result.fields.name?.value).toBe('Recai Demir');
-    expect(result.fields.identity_doc_number?.value).toBe('30499459');
-    expect(result.fields.cpr_number?.value).toBe('200485');
+    expect(result.fields.name?.value).toBe('Testkay Testsoy');
+    expect(result.fields.identity_doc_number?.value).toBe('20984713');
+    expect(result.fields.cpr_number?.value).toBe('010102');
     expect(result.fields.identity_doc_country?.value).toBe('DNK');
   });
 
@@ -889,14 +911,14 @@ describe('OCR parser sağlamlaştırma — gerçek saha kartı değerlendirmesi 
       'KØREKORT DANMARK',
       '1. Testsen',
       '2. Test',
-      '3. 1985-04-20, Tyrkiet',
+      '3. 1981-03-14, Tyrkiet',
       '4b. 2055-04-20 ad. 010190- 1234',
-      '5. 30499459',
+      '5. 20984713',
     ].join('\n');
     const result = parseIdentityScan(raw);
     expect(result.documentType).toBe('driver_license');
     expect(result.fields.cpr_number?.value).toBe('010190');
-    expect(result.fields.identity_doc_number?.value).toBe('30499459');
+    expect(result.fields.identity_doc_number?.value).toBe('20984713');
   });
 });
 
@@ -950,4 +972,46 @@ describe('OCR fixture sözleşmesi — da motoru (üretim motoru, CI runner kayd
       expect(line.includes('Ä')).toBe(false);
     }
   });
+});
+
+describe('OCR satır-deseni fixture\'ları — 0.3.36 saha modelleri (sentetik)', () => {
+  it.each(linePatternFixtures.map((item) => [item.id, item] as const))(
+    '%s: satır deseni sözleşmeye bağlanır',
+    (_id, fixture) => {
+      const result = parseIdentityScan(fixture.lines.join('\n'));
+      const expectedType = fixture.expected.document_type === 'unknown'
+        ? 'unknown'
+        : DOCUMENT_TYPE_MAP[fixture.expected.document_type];
+      expect(result.documentType).toBe(expectedType);
+
+      const filled = Object.values(result.fields).filter((field) => Boolean(field?.value));
+      if (fixture.expected.filled_field_count !== undefined) {
+        expect(filled).toHaveLength(fixture.expected.filled_field_count);
+      }
+      // Ad: beklenen satır birebir; beklenen yoksa asla uydurulmaz.
+      expect(result.fields.name?.value ?? '').toBe(fixture.expected.full_name ?? '');
+      if (fixture.expected.document_number !== undefined) {
+        expect(result.fields.identity_doc_number?.value).toBe(fixture.expected.document_number);
+      }
+      if (fixture.expected.cpr_first6 !== undefined) {
+        expect(result.fields.cpr_number?.value).toBe(fixture.expected.cpr_first6);
+      }
+
+      // Düşük çözünürlük yönlendirmesi: parse boş + küçük görüntü → DPI/çekim
+      // metni ve imza kodu (genel "tanınamadı" mesajı değil).
+      const guidance = fixture.expected.low_res_guidance;
+      if (guidance) {
+        const width = fixture.image_source?.width;
+        const height = fixture.image_source?.height;
+        const message = describeLowResIdentityScan(width, height);
+        expect(message).not.toBeNull();
+        for (const fragment of guidance.message_contains) {
+          expect(message).toContain(fragment);
+        }
+        expect(buildIdentityScanLowResCode(width, height)).toBe(guidance.error_code);
+        // Yönlendirme PII/ham satır taşımaz.
+        expect(message).not.toContain(fixture.lines[0]);
+      }
+    },
+  );
 });

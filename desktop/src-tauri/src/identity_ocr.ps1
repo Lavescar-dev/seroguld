@@ -51,8 +51,10 @@ function Select-OcrEngine {
 function New-OcrSoftwareBitmap {
   # MaxImageDimension'u asan goruntuler Windows OCR'da sessizce bos/az satir
   # dondurur (semptom: "N satir okudu" cok dusuk). Bu yuzden decoder
-  # olculerine gore BitmapTransform ile olceklenir; kucuk goruntuler (uzun kenar
-  # <1400px) okunabilirlik icin en fazla 2x buyutulur.
+  # olculerine gore BitmapTransform ile olceklenir. Buyutme adaptiftir: uzun
+  # kenar 1600px'in altinda kaldigi surece 2x katlanir, toplamda en fazla 4x
+  # (0.3.36 saha taramasi 419x288 geldi; 2x'lik 838x576 hala zayifti ve 9 cop
+  # satir okundu). MaxImageDimension tavani asagi dogru kirilir.
   param([string]$Path)
 
   $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
@@ -68,8 +70,17 @@ function New-OcrSoftwareBitmap {
   $scale = 1.0
   if ($longest -gt $maxDim) {
     $scale = $maxDim / [double]$longest
-  } elseif ($longest -lt 1400) {
-    $scale = [Math]::Min(2.0, 1400.0 / [double]$longest)
+  } else {
+    # Adaptif buyutme: uzun kenar 1600px'in altinda kaldigi surece 2x, toplam
+    # en fazla 4x (4x tavan, dahaki adimin MaxImageDimension'u asmasin diye).
+    while (($longest * $scale) -lt 1600 -and $scale -lt 4.0) {
+      $scale = $scale * 2.0
+    }
+    # 2x/4x sonrasi uzun kenar tavani asabilirsa tavana kirp (Windows OCR
+    # tavan ustu goruntude sessizce bos/az satir dondurur).
+    if (($longest * $scale) -gt $maxDim) {
+      $scale = $maxDim / [double]$longest
+    }
   }
 
   $scaled = $false

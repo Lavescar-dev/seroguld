@@ -588,5 +588,126 @@
         "Düşük kalite girdi: OCR emin olmadığı alanı düşük confidence ile işaretleyip manuel düzeltmeye açmalı, sessizce doldurmamalı."
       ]
     }
+  ],
+  "line_pattern_fixtures_note": "Görüntüsüz satır-deseni fixture'ları: gerçek Windows OCR kayıtlarının SENTETİK modelleri (0.3.36 saha bildirimleri; tüm adlar/CPR'ler uydurma, gerçek veri YOK). Satır desenini üreten motor farklılıklarını sözleşmeye bağlar; images/ altında görselleri YOKTUR, raw_ocr_*.json kaydına girmez. Tüketici: identityScanOcrContract.test.ts 'satır-deseni fixture'ları' bloğu.",
+  "line_pattern_fixtures": [
+    {
+      "id": "koerekort_prefix_swallowed",
+      "pattern": "OCR 1./2. numara öneklerini tamamen yuttu; isim satırları etiketsiz kaldı (başlık sonrası iki isim-şeklinde satır).",
+      "lines": [
+        "KOREKORT",
+        "Testove",
+        "21",
+        "Testkay",
+        "1981-03-14,",
+        "4d. 010101-1234",
+        "5. 20984713"
+      ],
+      "image_source": {
+        "width": 1011,
+        "height": 640
+      },
+      "expected": {
+        "document_type": "koerekort",
+        "full_name": "Testkay Testove",
+        "cpr_first6": "010101",
+        "document_number": "20984713"
+      }
+    },
+    {
+      "id": "koerekort_combined_line",
+      "pattern": "OCR iki fiziksel isim satırını tek satıra bindirdi: '1. Soyad 2. Ad' birleşik form (1=soyad, 2=ad; görünen ad 'Ad Soyad' sırasıyla döner).",
+      "lines": [
+        "KØREKORT DANMARK",
+        "1. Testove 2. TESTSEN",
+        "3. 1981-03-14, Tyrkiet",
+        "4d. 010101-1234",
+        "5. 20984713"
+      ],
+      "image_source": {
+        "width": 1011,
+        "height": 640
+      },
+      "expected": {
+        "document_type": "koerekort",
+        "full_name": "TESTSEN Testove",
+        "cpr_first6": "010101",
+        "document_number": "20984713"
+      }
+    },
+    {
+      "id": "koerekort_separatorless_labels",
+      "pattern": "Ayırıcı yutulmuş etiketler: '1 Soyad' / '2 Ad' (nokta/iki nokta yok) ve '4d' / '5' ayırıcısız değer.",
+      "lines": [
+        "KØREKORT",
+        "1 TESTOVESEN",
+        "2 Test",
+        "3. 1981-03-14, Tyrkiet",
+        "4d 010101-1234",
+        "5 20984713"
+      ],
+      "image_source": {
+        "width": 1011,
+        "height": 640
+      },
+      "expected": {
+        "document_type": "koerekort",
+        "full_name": "Test TESTOVESEN",
+        "cpr_first6": "010101",
+        "document_number": "20984713"
+      }
+    },
+    {
+      "id": "koerekort_single_name_adjacent_to_date",
+      "pattern": "Kardeş isim satırı okunmadı; yalnız 3. (doğum tarihi) satırının hemen üstündeki tek isim-şeklinde satır kaldı → kart düzeninden 2 (ad) slotuna girer.",
+      "lines": [
+        "KØREKORT",
+        "Test",
+        "3. 1981-03-14, Tyrkiet",
+        "4d. 010101-1234",
+        "5. 20984713"
+      ],
+      "image_source": {
+        "width": 1011,
+        "height": 640
+      },
+      "expected": {
+        "document_type": "koerekort",
+        "full_name": "Test",
+        "cpr_first6": "010101",
+        "document_number": "20984713"
+      }
+    },
+    {
+      "id": "unknown_lowres_garbage",
+      "pattern": "419×288'lik düşük çözünürlüklü sarı kart taramasının sentetik modeli: 9 çöp satır (8-17 karakter, harf/rakam karışığı), hiçbir belge çıpası tutmaz.",
+      "lines": [
+        "a9a a9aa9",
+        "9aaa9a9a 9aa",
+        "aa9a9 aa9a 9aa",
+        "a9aa9aaaa",
+        "9a 9aa9a 9a",
+        "aaaa9a9 a99a",
+        "a9a9a9 9aaa9",
+        "9aaaa a9a",
+        "aa99a9a9a 9a"
+      ],
+      "image_source": {
+        "width": 419,
+        "height": 288
+      },
+      "expected": {
+        "document_type": "unknown",
+        "filled_field_count": 0,
+        "low_res_guidance": {
+          "message_contains": [
+            "çok düşük çözünürlüklü",
+            "419×288",
+            "300 DPI"
+          ],
+          "error_code": "idscan.lowres.419x288"
+        }
+      }
+    }
   ]
 }

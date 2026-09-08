@@ -19,6 +19,10 @@ const EMPTY: EditableCustomer = {
   identity_doc_country: 'DNK',
 };
 
+// OCR'ın sahiplendiği taslak alanları — tarama bunları doldurabilir de
+// boşaltabilir de (yeniden tarama hijyeni); phone/e-mail OCR hattına girmez.
+const OCR_DRAFT_FIELDS = ['name', 'address', 'postal_code', 'city', 'cpr_number', 'identity_doc_type', 'identity_doc_number', 'identity_doc_country'] as const;
+
 // R1-02 — müşteri formuna kimlik tarama/OCR bloğu. AFG'deki useIdentityScan
 // hattını (WIA tarayıcı + dosya + sürükle-bırak, R2-03) yeniden kullanır;
 // onaylanan alanlar "önerilen değer" olarak taslağa dolar, kayıt yine
@@ -68,6 +72,14 @@ export function CustomerOcrPanel({
         if (applied.cpr_number) fields.cpr_number = applied.cpr_number;
         if (applied.identity_doc_type) fields.identity_doc_type = applied.identity_doc_type;
         if (applied.identity_doc_number) fields.identity_doc_number = applied.identity_doc_number;
+        // Yeniden tarama hijyeni (0.3.36): applyConfirmedIdentityResult artık
+        // yeni belgenin doldurmadığı OCR alanlarını boşaltıyor; boş kalanlar
+        // da explicit olarak bildirilir — atama-yapan bir parent taslağı eski
+        // belgenin kalıntısından temizleyebilir. Yalnız dolu değeri alan
+        // parent bu boş stringleri zaten atlar (mevcut sözleşme bozulmaz).
+        for (const field of OCR_DRAFT_FIELDS) {
+          if (applied[field] === '' && fields[field] === undefined) fields[field] = '';
+        }
         onApply(fields);
         return EMPTY;
       });

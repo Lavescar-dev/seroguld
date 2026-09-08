@@ -2251,6 +2251,17 @@ try {
   $device = $dialog.ShowSelectDevice()
   if ($null -eq $device) { exit 2 }
   $item = $device.Items.Item(1)
+  # DPI varsayilan birakilirsa saha taramasi ~125 DPI geliyor (Epson ET-3850:
+  # 419x288 px, OCR 9 cop satiri okudu, hicbir alan tutmadi). WIA item
+  # properties 6146/6147 = Horizontal/Vertical Resolution; ShowTransfer'dan
+  # ONCE 300'e cekilir. Her eksen AYRI try/catch: cihaz/ozellik desteklemiyorsa
+  # sessiz gecilir, tarama WIA varsayilaniyla devam eder.
+  foreach ($resolutionPropertyId in @(6146, 6147)) {
+    try {
+      $resolution = $item.Properties.Item($resolutionPropertyId)
+      $resolution.Value = 300
+    } catch {}
+  }
   # FormatID verilmezse cihazin tercih ettigi format kullanilir; bazi tarayicilar
   # BMP dondurur ve magic-byte kontrolu INVALID_IMAGE ile reddeder. JPEG iste;
   # cihaz desteklemiyorsa WIA tercih ettigi formata duser (asagi dogru sniff var).
@@ -3064,6 +3075,10 @@ mod tests {
         assert!(WINDOWS_OCR_SCRIPT.contains("Get-OcrJson"));
         assert!(WINDOWS_OCR_SCRIPT.contains("da-DK"));
         assert!(WINDOWS_OCR_SCRIPT.contains("MaxImageDimension"));
+        // Adaptif büyütme (0.3.36): uzun kenar 1600 px altında kaldıkça 2x,
+        // toplam en fazla 4x — 2x tavanı sürüklenmesin.
+        assert!(WINDOWS_OCR_SCRIPT.contains("1600"));
+        assert!(WINDOWS_OCR_SCRIPT.contains("4.0"));
         assert!(WINDOWS_OCR_SCRIPT.contains("-InputObject"));
         assert!(WINDOWS_OCR_SCRIPT.contains("RecognizerLanguage.LanguageTag"));
         // Ortak dosya gerçekten gömülüyor (boş include sürüklenmeyi gizler).
@@ -3074,6 +3089,27 @@ mod tests {
     #[test]
     fn wia_script_requests_jpeg_transfer_format() {
         assert!(WIA_ACQUIRE_SCRIPT.contains("B96B3CA6-0728-11D3-9D7B-0000F81EF32E"));
+        // Sahada tarayıcı varsayılan ~125 DPI ile taradı (419x288 px görüntü,
+        // OCR 9 çöp satır) → DPI item properties 6146/6147 üzerinden 300'e
+        // çekilmeli ve bu ayar ShowTransfer'dan ÖNCE gelmeli.
+        assert!(WIA_ACQUIRE_SCRIPT.contains("6146"));
+        assert!(WIA_ACQUIRE_SCRIPT.contains("6147"));
+        // Çapalar KOD üzerine kurulur — "6146"/"ShowTransfer" yorumlarda da
+        // geçebilir, find() ilk EŞLEŞMEYi bulur; pencere yorumu değil kodu
+        // ölçmeli (adversarial doğrulama bulgusu).
+        let script = WIA_ACQUIRE_SCRIPT;
+        let dpi_block = script
+            .find("foreach ($resolutionPropertyId")
+            .expect("DPI döngüsü kodu");
+        let transfer = script.find("$dialog.ShowTransfer").expect("ShowTransfer çağrısı");
+        assert!(dpi_block < transfer, "DPI ayarı ShowTransfer'dan önce gelmeli");
+        assert!(
+            script[dpi_block..transfer].contains("$resolution.Value = 300"),
+            "DPI döngüsü çözünürlüğü 300'e çekmeli"
+        );
+        // Her eksen ayrı try/catch: cihaz çözünürlük özelliğini desteklemiyorsa
+        // tarama sessizce WIA varsayılanıyla devam eder (hata kodu YOK).
+        assert!(script[dpi_block..transfer].contains("catch"), "DPI bloğu kendi try/catch'ine sahip olmalı");
     }
 
     // PS 5.1 ConvertTo-Json pipeline unwrap'ine karşı: 0/1/n satır ve alan

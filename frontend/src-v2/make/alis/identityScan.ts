@@ -156,12 +156,12 @@ function valueAfterLabelLine(
 ): string {
   const start = lines.findIndex((line) => label.test(line));
   if (start < 0) return '';
-  // Gerçek kartlarda değer etiketle AYNI satırda basılır ("1. Demir",
+  // Gerçek kartlarda değer etiketle AYNI satırda basılır ("1. Testsoy",
   // "5. 30499959") — önce etiketin satır içi kaldığı denenir; sentetik
   // fixture'lardaki ayrı-satır düzeni için ardından alttaki satırlara bakılır.
   const labelLine = lines[start];
   const labelMatch = labelLine.match(label);
-  // Yalnız etiket SATIR BAŞINDA olduğunda satır içi değere bakılır ("1. Demir");
+  // Yalnız etiket SATIR BAŞINDA olduğunda satır içi değere bakılır ("1. Testsoy");
   // OCR gürültüsünde etiket kelimesi satır ortasında geçebilir ("I GIVEN NAMES
   // …") — oradan değer almak soyadı ada çeker.
   if (labelMatch && labelMatch.index === 0) {
@@ -216,12 +216,14 @@ const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔ�
 // Bilinen etiket kelimeleri asla ad değeri değildir (case-tolerant kontrolde
 // "Fornavn" gibi satırlar ad sanılmasın). OCR başlıkları bozabilir
 // (Fornavn→PORNAVN) — "navn" sonu (Danca: isim) ek bazında dışlanır.
-const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b|SUNDHEDSKORT|^DANMARK\b|^ADRESSE\b|^POSTNR|^POSTNUMMER|^CPR\b|^TLF\b|^TELEFON\b|^L[AÆ]GE\b|^GYLDIG\b|^SYGEHUS\b|SYGESIKR|^PERSONNR\b|^F[ØO]EDT\b/;
+// ^AD$: kørekort 2. alanının başlık kelimesi ("2. Ad") — ayırıcı toleransıyla
+// değer sanılıp ada yazılmasın (Danca ad = isim).
+const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b|SUNDHEDSKORT|^DANMARK\b|^ADRESSE\b|^POSTNR|^POSTNUMMER|^CPR\b|^TLF\b|^TELEFON\b|^L[AÆ]GE\b|^GYLDIG\b|^SYGEHUS\b|SYGESIKR|^PERSONNR\b|^F[ØO]EDT\b|^AD$|^EFTERNAVN\b|^FORNAVN\b/;
 
 function isPrintedNamePart(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed || /DANSK|DANISH|DNK\b/.test(trimmed) || IDENTITY_LABEL_WORDS.test(trimmed.toUpperCase())) return false;
-  // Gerçek kartlarda ad karışık durumda basılır ("Recai Demtr"); sentetik
+  // Gerçek kartlarda ad karışık durumda basılır ("Testkay Denmtr"); sentetik
   // fixture'larda tamamen büyüktür — iki biçim de kabul edilir.
   return PRINTED_NAME_PART.test(trimmed) || PRINTED_NAME_PART.test(trimmed.toUpperCase());
 }
@@ -443,17 +445,78 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     return null;
   }
 
-  // Dansk kørekort: numaralı etiketler ve değerler aynı satırda ("1. Demir");
+  // Dansk kørekort: numaralı etiketler ve değerler aynı satırda ("1. Testsoy");
   // tr-paketi başlığı bozabilir (MOREKORT) — [KMG] toleransı; Ø bazı
   // motorlarda OE diye translitre okunur (KOEREKORT) — E? toleransı.
   // 4d = personnummer.
   if (/[KMG][OØ0]E?REKORT/.test(upper)) {
-    const labels = [/^1[.:]/, /^2[.:]/, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
-    let surname = valueAfterLabelLine(lines, /^1[.:]/, labels, isPrintedNamePart);
-    let givenName = valueAfterLabelLine(lines, /^2[.:]/, labels, isPrintedNamePart);
-    // tr-OCR numara öneklerini yutabilir ("1. Demir" → "Demir") ve başlığın
+    // 1/2 etiketleri ayırıcı-toleranslı: OCR "1. Testsoy"in noktasını yutarak
+    // "1 Testsoy" üretebilir. (?!\d) 1981-03-14 (3. alan) ve 12. (betingelser)
+    // gibi sayısal satırların etiket sanılmasını engeller.
+    const surnameLabel = /^1(?!\d)\s*[.:]?\s*/;
+    const givenLabel = /^2(?!\d)\s*[.:]?\s*/;
+    const labels = [surnameLabel, givenLabel, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
+    let surname = valueAfterLabelLine(lines, surnameLabel, labels, isPrintedNamePart);
+    let givenName = valueAfterLabelLine(lines, givenLabel, labels, isPrintedNamePart);
+    // Birleşik form: OCR iki fiziksel satırı tek satıra bindirebilir
+    // ("1. Testove 2. TESTSEN" — hatta arkasından 3. tarih). 1 = soyad,
+    // 2 = ad kurallı; her parça isim-şeklinde olmak zorundadır (başlık
+    // kelimesi Efternavn/Ad parça olarak da kabul edilmez).
+    if (!surname || !givenName) {
+      for (const line of lines) {
+        const combined = line.match(/^\s*1(?!\d)\s*[.:]?\s*(\p{L}[\p{L} .'’-]{0,39}?)\s+2\s*[.:]?\s*(\p{L}[\p{L} .'’-]{1,39}?)(?=\s*,?\s*(?:3(?!\d)|$))/u);
+        if (!combined) continue;
+        const surnamePart = combined[1].trim();
+        const givenPart = combined[2].trim();
+        if (!isPrintedNamePart(surnamePart) || !isPrintedNamePart(givenPart)) continue;
+        if (!surname) surname = surnamePart;
+        if (!givenName) givenName = givenPart;
+        break;
+      }
+    }
+    // Tek-satır blok tamamlama: 1./2. önekleri tamamen yutulmuşsa ve kardeş
+    // isim satırı yoksa (ya da isim-şeklinde değilse), 3. (doğum tarihi)
+    // satırına komşu TEK isim-şeklinde satır kabul edilir. Slot, kart
+    // düzeninden gelir: 2 = ad (tarihin hemen üstü), 1 = soyad (bir üstü).
+    if (!surname || !givenName) {
+      const licenseDateIndex = (() => {
+        const labeled = lines.findIndex((line) => /^3(?!\d)\s*[.:]?\s*/.test(line) && /\d{4}/.test(line));
+        if (labeled >= 0) return labeled;
+        // Etiket öneki bozuk okunduğunda tarih deseni çıpa olur
+        // ("3. 1981-03-14, Tyrkiet" → "1981-03-14," / "2012.05-09").
+        return lines.findIndex((line) => /\d{4}[-.]\d{2}[-.]\d{2}/.test(line) || /\d{2}[-.]\d{2}[-.]\d{2}(?!\d)/.test(line));
+      })();
+      // Yukarı doğru taramada başlık/gürültü/döküntü satırları atlanır;
+      // bulunan her isim adayı sıradaki slota yazılır (bilinen slota eşit
+      // aday atlanır — çift-yazım yok).
+      const normalizeSlot = (value: string) => value
+        .toUpperCase()
+        .replace(/Æ/g, 'AE')
+        .replace(/Ø/g, 'OE')
+        .replace(/Å/g, 'AA')
+        .replace(/[^A-Z ]/g, '')
+        .trim();
+      const knownSlots = [surname, givenName].filter(Boolean).map(normalizeSlot);
+      let slot = 2; // tarihe komşu aday 2 (ad), sonraki 1 (soyad)
+      for (let cursor = licenseDateIndex - 1, depth = 0; cursor >= 0 && depth < 4 && (!surname || !givenName); cursor -= 1, depth += 1) {
+        const line = lines[cursor]?.trim() ?? '';
+        if (!line || /\d/.test(line) || !/\p{L}/u.test(line)) continue;
+        if (/^[KMG][OØ0]E?REKORT/i.test(line) || IDENTITY_NOISE_LINE.test(line) || looksLikeGarbledLabel(line)) continue;
+        const candidate = printedNameCandidate(line);
+        if (!candidate || !isPrintedNamePart(candidate)) continue;
+        if (knownSlots.includes(normalizeSlot(candidate))) continue;
+        if (slot === 2 && !givenName) {
+          givenName = candidate;
+        } else if (!surname) {
+          surname = candidate;
+        }
+        knownSlots.push(normalizeSlot(candidate));
+        slot = 1;
+      }
+    }
+    // tr-OCR numara öneklerini yutabilir ("1. Testsoy" → "Testsoy") ve başlığın
     // altındaki değer satırlarını etiketsiz bırakabilir (gerçek saha
-    // fotoğrafı: KOREKORT / Demir / 21 / Recai / 1985-04-20 …). Etiket yolu
+    // fotoğrafı: KOREKORT / Testsoy / 21 / Testkay / 1981-03-14 …). Etiket yolu
     // ALANLARDAN BİRİNİ bile bulamadıysa başlık sonrasındaki basılı isim
     // satırları eksik slota tamamlanır — bilinen slota eşit aday atlanır
     // (çift-yazım yok), kalan sırayla soyad/ad alınır.
@@ -474,7 +537,7 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     }
     const documentNumber = valueAfterLabelLine(lines, /^5[.:]/, labels, (line) => /^[A-Z]{0,3}\d{6,}$/.test(line.trim()))
       || (lines.find((line) => /^\d{8,9}$/.test(line.trim()))?.trim() ?? '')
-      // da-motor '-5. . 30499459' gibi önek gürültüsü bırakabilir; satır
+      // da-motor '-5. . 20984713' gibi önek gürültüsü bırakabilir; satır
       // içinde bağımsız 8-9 haneli sayı (tarih/CPR parçası olmayan) belge no
       // adayıdır — tarih (4+2+2) ve CPR (6+4) desenleri 8-9 bitişik hane
       // üretmediğinden yanlış pozitif oluşmaz.
@@ -646,8 +709,28 @@ export function hasParsedIdentityFields(result: IdentityParseResult | null | und
   return Boolean(result && Object.values(result.fields).some((field) => Boolean(field?.value)));
 }
 
+// OCR'ın sahiplendiği alanlar iki gruptur: belge kimliği ve kişi+adres. Yeni
+// belge bir gruptan EN AZ BİR alan dolduruyorsa o grup, birleştirmeden önce
+// sıfırlanır — aksi halde yeniden taramada eski belgenin okunamayan alanları
+// kalıntı olarak kalıyordu ("üst üste biniyor", 0.3.36 saha bildirimi).
+// Sundhedskort kimlik belgesi değildir ve kimlik grubuna hiç yazmaz; bu yüzden
+// pas → sundhedskort akışı (kimlik belgesi + adres belgesi) bozulmaz.
+const IDENTITY_DOCUMENT_FIELDS: IdentityFieldName[] = ['identity_doc_number', 'identity_doc_type', 'identity_doc_country'];
+const IDENTITY_PERSON_FIELDS: IdentityFieldName[] = ['name', 'cpr_number', 'address', 'postal_code', 'city'];
+
 export function applyConfirmedIdentityResult(customer: EditableCustomer, result: IdentityParseResult): EditableCustomer {
   const next = { ...customer };
+  const filledFields = new Set(
+    (Object.entries(result.fields) as Array<[IdentityFieldName, ParsedIdentityField | undefined]>)
+      .filter(([, parsed]) => Boolean(parsed?.value))
+      .map(([field]) => field),
+  );
+  for (const group of [IDENTITY_DOCUMENT_FIELDS, IDENTITY_PERSON_FIELDS]) {
+    if (!group.some((field) => filledFields.has(field))) continue;
+    group.forEach((field) => {
+      next[field] = '';
+    });
+  }
   (Object.entries(result.fields) as Array<[IdentityFieldName, ParsedIdentityField | undefined]>).forEach(([field, parsed]) => {
     if (!parsed?.value) return;
     next[field] = field === 'postal_code' ? parsed.value.replace(/\D/g, '').slice(0, 4) : parsed.value;
@@ -821,6 +904,32 @@ export function buildIdentityScanDiagnosticCode(meta: IdentityScanMeta): string 
   return `idscan.${meta.side}.${language}.${meta.lineCount}L.${meta.fieldKeys.length}F${scaledTag}.${initials || 'none'}`;
 }
 
+// Düşük çözünürlük eşiği: saha taraması 419×288 geldiğinde OCR 9 çöp satır
+// okuyup hiçbir alan tutmadı — kök neden DPI (WIA varsayılanı ~125). Parse
+// başarısızsa ve görüntü bu eşiğin altındaysa genel "belge türü tanınamadı"
+// metni yerine DPI/çekim yönlendirmesi verilir.
+const IDENTITY_LOW_RES_MIN_WIDTH = 600;
+const IDENTITY_LOW_RES_MIN_HEIGHT = 400;
+
+export function isLowResolutionIdentityImage(width?: number, height?: number): boolean {
+  return (width !== undefined && width < IDENTITY_LOW_RES_MIN_WIDTH) || (height !== undefined && height < IDENTITY_LOW_RES_MIN_HEIGHT);
+}
+
+// Yönlendirme metni: paneller identity.error'ı aynen gösterir; null = düşük
+// çözünürlük değil (ya da boyut bilinmiyor).
+export function describeLowResIdentityScan(width?: number, height?: number): string | null {
+  if (!isLowResolutionIdentityImage(width, height)) return null;
+  const dimensions = width !== undefined && height !== undefined ? ` (${width}×${height})` : '';
+  return `Görüntü çok düşük çözünürlüklü${dimensions}. Tarayıcıyı 300 DPI'ya alin veya kart fotoğrafini yakinden cekin.`;
+}
+
+// Düşük çözünürlük hata imzası — buildIdentityScanDiagnosticCode ile aynı
+// idscan.* ailesinden ve aynı ascii-atom kısıtında (Rust validate_ui_diagnostic
+// safe_atom: alfanumerik + -_.:+, en fazla 64 karakter).
+export function buildIdentityScanLowResCode(width?: number, height?: number): string {
+  return width !== undefined && height !== undefined ? `idscan.lowres.${width}x${height}` : 'idscan.lowres';
+}
+
 // Çoklu tarama birleşimi: ÖN YÜZ kanoniktir. Arka yüz taraması (MRZ
 // transliterasyonu "SOERENSEN AABERG", kategori legend gürültüsü, ikinci bir
 // kartın karışması) ön yüzden gelen doğru dolumları EZMEZ — yalnız eksik
@@ -894,6 +1003,9 @@ export function useIdentityScan({
   const result = useMemo(() => mergeSideScanResults(scanBySide.front, scanBySide.back), [scanBySide]);
   const resultRef = useRef(result);
   resultRef.current = result;
+  // Yüz-başına son sonuç: yeniden taramada karşı yüzün eskime denetimi için.
+  const scanBySideRef = useRef(scanBySide);
+  scanBySideRef.current = scanBySide;
 
   // Danca OCR paketi uyarısı — iki yol:
   // 1) probe çalıştı ve paket yok: kurulum mesajı (profil dili Danca'yı
@@ -974,6 +1086,9 @@ export function useIdentityScan({
       // desteklendiği söylenir). Kısmi MRZ zaten merge ile korunuyor.
       // Saha teshisi: okunan satır sayısı + dil + ölçekleme bilgisi ve
       // maskeli ham satır önizlemesi (yalnız ekranda, kalıcı kayıt yok).
+      // Düşük çözünürlük kendi sınıfıdır: kök neden DPI (WIA varsayılanı
+      // ~125) — genel "tanınamadı" metni yerine DPI/çekim yönlendirmesi.
+      const lowResMessage = describeLowResIdentityScan(imageInfo.sourceWidth, imageInfo.sourceHeight);
       const detailParts: string[] = [];
       if (imageInfo.language) detailParts.push(`OCR dili ${imageInfo.language}`);
       if (imageInfo.sourceWidth && imageInfo.sourceHeight) {
@@ -981,13 +1096,37 @@ export function useIdentityScan({
       }
       const detailSuffix = detailParts.length ? ` — ${detailParts.join(', ')}` : '';
       setError(
-        !raw
-          ? 'Tarayıcı/görüntü metin döndürmedi — görüntü kalitesini veya cihazı kontrol edin.'
-          : `Belge türü tanınamadı (${rawLines.length} satır okundu${detailSuffix}). Desteklenen: pas, ID-kort, kørekort, sundhedskort. Bilgileri elle girebilirsiniz.`,
+        lowResMessage
+          || (!raw
+            ? 'Tarayıcı/görüntü metin döndürmedi — görüntü kalitesini veya cihazı kontrol edin.'
+            : `Belge türü tanınamadı (${rawLines.length} satır okundu${detailSuffix}). Desteklenen: pas, ID-kort, kørekort, sundhedskort. Bilgileri elle girebilirsiniz.`),
       );
+      // Başarısız taramada önceki taramanın hata kodu taşınmasın; düşük
+      // çözünürlükte imza kodu gösterilir (destek talebinde kopyalanır).
+      setErrorCode(lowResMessage ? buildIdentityScanLowResCode(imageInfo.sourceWidth, imageInfo.sourceHeight) : null);
       return;
     }
-    setScanBySide((current) => ({ ...current, [side]: nextResult }));
+    // Yeniden tarama hijyeni: aynı yüze FARKLI TÜRDE bir belge düştüyse karşı
+    // yüzün sonucu eski belgeye aittir — birleşim iki belgeyi karıştırırdı.
+    // id_card ön+arka bilinçli akışı aynı türde kaldığı için bozulmaz.
+    const otherSide: 'front' | 'back' = side === 'front' ? 'back' : 'front';
+    const otherResult = scanBySideRef.current[otherSide];
+    const oppositeStale = nextResult.documentType !== 'unknown'
+      && otherResult !== null
+      && otherResult.documentType !== 'unknown'
+      && otherResult.documentType !== nextResult.documentType;
+    setScanBySide((current) => {
+      const next: { front: IdentityParseResult | null; back: IdentityParseResult | null } = { ...current, [side]: nextResult };
+      if (oppositeStale) next[otherSide] = null;
+      return next;
+    });
+    if (oppositeStale) {
+      setPreviews((current) => {
+        const next = { ...current };
+        delete next[otherSide];
+        return next;
+      });
+    }
     setStatus('review');
     setError(null);
   }, [uiVariant]);

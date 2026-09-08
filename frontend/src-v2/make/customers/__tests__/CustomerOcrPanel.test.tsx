@@ -23,6 +23,7 @@ import {
   startIdentityWatch,
   stopIdentityWatch,
   type IdentityScannerCapabilities,
+  type IdentityScanResult,
 } from '@/lib/desktop';
 
 import { CustomerOcrPanel } from '../CustomerOcrPanel';
@@ -70,7 +71,7 @@ describe('CustomerOcrPanel (İş 4 klasör izleme + hata kodu)', () => {
   it('Klasörden izlemeyi başlatır; rozet klasörü gösterir ve Durdur kapatır', async () => {
     mockedStartWatch.mockResolvedValue({
       active: true,
-      folder: 'C:\\Users\\Recai\\Pictures\\SeroGuld-Scan',
+      folder: 'C:\\Users\\Testkay\\Pictures\\SeroGuld-Scan',
       side: 'front',
     });
     mockedStopWatch.mockResolvedValue({ active: false, folder: null, side: 'front' });
@@ -112,7 +113,7 @@ describe('CustomerOcrPanel (İş 4 klasör izleme + hata kodu)', () => {
   it('mount\'ta kalıcı izleme durumunu geri yükler ve Durdur izlemeyi kapatır', async () => {
     vi.mocked(getIdentityWatchStatus).mockResolvedValue({
       active: true,
-      folder: 'C:\\Users\\Recai\\Pictures\\SeroGuld-Scan',
+      folder: 'C:\\Users\\Testkay\\Pictures\\SeroGuld-Scan',
       side: 'front',
     });
     mockedStopWatch.mockResolvedValue({ active: false, folder: null, side: 'front' });
@@ -145,5 +146,56 @@ describe('CustomerOcrPanel (İş 4 klasör izleme + hata kodu)', () => {
     // Türkçe 'İ' Unicode küçültmede birleşik karakter ürettiğinden exact eşleşme kullanılır.
     fireEvent.click(screen.getByRole('button', { name: 'İzlemeyi durdur' }));
     await waitFor(() => expect(mockedStopWatch).toHaveBeenCalledTimes(1));
+  });
+});
+
+// 0.3.36 — yeniden tarama hijyeni: ikinci uygulama, yeni belgenin okumadığı
+// alanları explicit boş string olarak bildirir. Dolu değer alan mevcut parent
+// bu boşları zaten atlar; atama-yapan parent eski belgenin kalıntısını siler.
+describe('CustomerOcrPanel (0.3.36 yeniden tarama hijyeni)', () => {
+  const scanPayload = (ocrText: string, overrides: Partial<IdentityScanResult> = {}): IdentityScanResult => ({
+    side: 'front',
+    source: 'wia',
+    mimeType: 'image/jpeg',
+    previewDataUrl: '',
+    ocrText,
+    ocrLines: ocrText.split('\n'),
+    ocrLanguage: 'da-DK',
+    ocrRequestedLanguage: 'da-DK',
+    ocrMaxImageDimension: 2600,
+    imageScaled: false,
+    imageSourceWidth: 1011,
+    imageSourceHeight: 1099,
+    ...overrides,
+  });
+
+  it('ikinci uygulama yeni belgenin okumadigi alanlari explicit bos olarak bildirir', async () => {
+    const pasText = ['KONGERIGET DANMARK', 'Efternavn', 'TESTOVESEN', 'Fornavn', 'TEST', 'Pasnr.', '201000033'].join('\n');
+    const licenseText = 'KØREKORT\n4d. 010101-1234\n5. 20984713';
+    mockedAcquire.mockResolvedValueOnce(scanPayload(pasText));
+    mockedAcquire.mockResolvedValueOnce(scanPayload(licenseText));
+    const onApply = vi.fn();
+    render(<CustomerOcrPanel onApply={onApply} />);
+    await waitFor(() => expect(screen.getByText('Tarayıcıdan')).toBeEnabled());
+
+    fireEvent.click(screen.getByText('Tarayıcıdan'));
+    expect(await screen.findByText('Forma uygula')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Forma uygula'));
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+    expect(onApply.mock.calls[0][0]).toMatchObject({ name: 'TEST TESTOVESEN', identity_doc_number: '201000033' });
+
+    // İkinci belge daha az alan okur: okumadıkları boş olarak bildirilir.
+    fireEvent.click(screen.getByText('Tarayıcıdan'));
+    expect(await screen.findByText('Forma uygula')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Forma uygula'));
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(2));
+    const second = onApply.mock.calls[1][0] as Record<string, string>;
+    expect(second).toMatchObject({
+      cpr_number: '010101',
+      identity_doc_type: 'driver_license',
+      identity_doc_number: '20984713',
+    });
+    expect(second.name).toBe('');
+    expect(second.identity_doc_country).toBe('');
   });
 });

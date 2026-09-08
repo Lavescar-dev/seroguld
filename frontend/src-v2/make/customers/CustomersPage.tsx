@@ -836,8 +836,12 @@ export function CustomersPage({
                 targetLabel={ocrTarget === 'edit' ? 'Düzenleme' : 'Yeni kayıt'}
                 onApply={(fields) => {
                   const change = ocrTarget === 'edit' ? onEditDraftChange : onNewDraftChange;
+                  // OCR alanlarında '' de GERÇEK değerdir: yeni taramada
+                  // okunamayan alan eski taramadan kalıntı taşımamalı
+                  // (adversarial doğrulama — üst üste biniyor düzeltmesi).
+                  const ocrFields = ['name', 'address', 'postal_code', 'city', 'cpr_number', 'identity_doc_type', 'identity_doc_number', 'identity_doc_country'];
                   (Object.entries(fields) as Array<[keyof typeof fields, string | undefined]>).forEach(([field, value]) => {
-                    if (value) change(field, value);
+                    if (value || (value === '' && ocrFields.includes(field))) change(field, value);
                   });
                 }}
               />
