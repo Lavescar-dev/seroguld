@@ -3,6 +3,13 @@
 # raw_ocr_da.json artifact'ı üretir. hp beklenmeden Danca fixture kaydı yapmayı
 # dener; runner Server SKU'su OCR capability'sini desteklemezse dürüstçe kırılır.
 # Elle tetiklenir: gh workflow run windows-ocr-fixture.yml
+#
+# DİKKAT: run: bloklarındaki inline PowerShell, runner'da BOM'suz geçici .ps1
+# olarak yazılır ve Windows PowerShell 5.1 tarafından cp1252 diye okunur.
+# UTF-8 em-dash (—) bayt dizisi cp1252'de `â€"` olur; 0x94 = `"` olduğundan
+# string terminator kayar ve tüm adım ParserError ile çöker (kanıt: run
+# 34172511954). Bu yüzden inline scriptler %100 ASCII olmalı; Türkçe açıklamalar
+# yalnız bu başlıktaki gibi YAML yorumlarında durur.
 
 name: windows-ocr-fixture
 
@@ -30,17 +37,17 @@ jobs:
             $cap = Get-WindowsCapability -Online -Name $name -ErrorAction Stop
             Write-Host "capability: $($cap.Name) state=$($cap.State)"
           } catch {
-            Write-Host "Get-WindowsCapability başarısız (Server SKU olabilir): $($_.Exception.Message)"
+            Write-Host "Get-WindowsCapability failed (Server SKU?): $($_.Exception.Message)"
           }
           try {
             $state = (Get-WindowsCapability -Online -Name $name -ErrorAction Stop).State
             if ($state -ne 'Installed') {
-              Write-Host "Add-WindowsCapability başlatılıyor..."
+              Write-Host "Add-WindowsCapability starting..."
               Add-WindowsCapability -Online -Name "Language.OCR~~~da-DK~0.0.1.0" | Out-Null
-              Write-Host "kurulum sonrası state: $((Get-WindowsCapability -Online -Name $name).State)"
+              Write-Host "post-install state: $((Get-WindowsCapability -Online -Name $name).State)"
             }
           } catch {
-            Write-Host "da-DK capability kurulamadı: $($_.Exception.Message)"
+            Write-Host "da-DK capability install failed: $($_.Exception.Message)"
           }
 
       - name: List OCR engine languages (WinRT)
@@ -55,7 +62,7 @@ jobs:
             $tryDa = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new('da-DK'))
             Write-Host ("da-DK engine: " + ($null -ne $tryDa))
           } catch {
-            Write-Host "WinRT OCR sorgusu başarısız: $($_.Exception.Message)"
+            Write-Host "WinRT OCR query failed: $($_.Exception.Message)"
           }
 
       - name: Record Danish fixture (production harness)
@@ -69,7 +76,7 @@ jobs:
           $engine = $payload.engine_language
           Write-Host "engine_language: $engine"
           if ($engine -notlike 'da*') {
-            Write-Error "Motor Danca değil ($engine) — bu kayıt raw_ocr_da.json OLAMAZ; hp/müşteri makinesi gerekir."
+            Write-Error "engine is not Danish ($engine) - this record cannot be raw_ocr_da.json; a client Windows machine is required."
             exit 3
           }
           "engine=$engine" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
