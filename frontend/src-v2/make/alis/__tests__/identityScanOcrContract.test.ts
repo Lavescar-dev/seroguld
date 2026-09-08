@@ -1,13 +1,14 @@
 // OCR fixture sözleşmesi — backend/tests/fixtures/ocr altındaki 20 sentetik
-// SPECIMEN görselin GERÇEK Windows.Media.Ocr çıktısı (raw_ocr.json, harness:
-// scripts/ocr-fixture-harness.ps1) parseIdentityScan'e beslenir ve
-// fixtures.json ground-truth'una karşı doğrulanır.
+// SPECIMEN görselin GERÇEK Windows.Media.Ocr çıktıları (raw_ocr_da.json +
+// raw_ocr_tr.json, harness: scripts/ocr-fixture-harness.ps1)
+// parseIdentityScan'e beslenir ve fixtures.json ground-truth'una karşı
+// doğrulanır.
 //
-// Kayıt motoru bu geliştirme makinesinde 'tr' dil paketiyle çalıştı: Æ/Ø/Å
-// harfleri E/O/Â gibi okunur. Bu yüzden ad/adres karşılaştırmaları foldDanish
-// ile harf-katlanmış yapılır; rakam alanları (belge no, CPR, posta kodu)
-// birebir eşitlenir. Hedef makinede (da paketi) yeniden kayıt alınırsa
-// raw_ocr.json harness ile tazelenir, sözleşme aynı kalır.
+// İki kayıt: 'da' = üretim motoru (da-DK WinRT, CI runner kaydı) — ana
+// sözleşme bundadır; 'tr' = geliştirme makinesi kaydı (Æ/Ø/Å harfleri
+// E/O/Â gibi okunur) — regresyon gövdesi ve motor-farklılığı dayanıklılık
+// sözleşmesi bundadır. Karşılaştırmalar foldDanish ile harf-katlanmış
+// yapılır; rakam alanları (belge no, CPR, posta kodu) birebir eşitlenir.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -43,9 +44,18 @@ type GroundTruth = {
 };
 
 const groundTruth = JSON.parse(readFileSync(resolve(FIXTURE_ROOT, 'fixtures.json'), 'utf-8')) as GroundTruth;
-const rawOcr = JSON.parse(readFileSync(resolve(FIXTURE_ROOT, 'raw_ocr.json'), 'utf-8')) as {
-  results: Record<string, string[]>;
-};
+
+type RawOcrRecord = { results: Record<string, string[]> };
+
+// tr kaydı: 2026-09-01, geliştirme makinesi (tr dil paketi) — regresyon
+// gövdesi bu kaydın gerçek satır şekillerine sabitlenmiştir; korunur.
+const rawOcrTr = JSON.parse(readFileSync(resolve(FIXTURE_ROOT, 'raw_ocr_tr.json'), 'utf-8')) as RawOcrRecord;
+// da kaydı: 2026-09-08, GitHub windows-latest CI runner'ı (run 34173433109)
+// — ÜRETİM motoru (da-DK WinRT) ile kaydedildi; kaydı üreten akış:
+// .github/workflows/windows-ocr-fixture.yml (runner'da da-DK capability
+// kurulumu kanıtlandı). Da-DK paketiyle tazeleme artık hp/müşteri makinesi
+// beklemeden CI'dan alınabilir.
+const rawOcrDa = JSON.parse(readFileSync(resolve(FIXTURE_ROOT, 'raw_ocr_da.json'), 'utf-8')) as RawOcrRecord;
 
 const DOCUMENT_TYPE_MAP = {
   pas: 'passport',
@@ -54,14 +64,23 @@ const DOCUMENT_TYPE_MAP = {
   sundhedskort: 'health_card',
 } as const;
 
-function ocrLines(name: string): string[] {
-  const lines = rawOcr.results[name];
-  if (!lines) throw new Error(`raw OCR kaydı eksik: ${name} (scripts/ocr-fixture-harness.ps1 ile üretin)`);
+function ocrLinesFrom(record: RawOcrRecord, file: string, name: string): string[] {
+  const lines = record.results[name];
+  if (!lines) throw new Error(`raw OCR kaydı eksik: ${name} (${file}; scripts/ocr-fixture-harness.ps1 ile üretin)`);
   return lines;
+}
+
+// Regression pinleri tr kaydının satır şekillerine bağlı — tr kaydını okur.
+function ocrLines(name: string): string[] {
+  return ocrLinesFrom(rawOcrTr, 'raw_ocr_tr.json', name);
 }
 
 function parseFixture(name: string): IdentityParseResult {
   return parseIdentityScan(ocrLines(name).join('\n'));
+}
+
+function parseFixtureDa(name: string): IdentityParseResult {
+  return parseIdentityScan(ocrLinesFrom(rawOcrDa, 'raw_ocr_da.json', name).join('\n'));
 }
 
 // Kayıt motorunun bilinen harf katlamaları (tr paketi): Æ→E, Ø→O, Å/Â→A.
@@ -83,36 +102,45 @@ const EMPTY_CUSTOMER: EditableCustomer = {
 
 const RELIABLE = ['clean', 'rotate'] as const;
 
+// clean+rotate için ortak alan sözleşmesi; hem tr hem da kaydı aynı
+// ground-truth'a karşı koşar.
+function expectReliableContract(
+  parse: (name: string) => IdentityParseResult,
+  fixture: GroundTruth['fixtures'][number],
+): void {
+  const result = parse(fixture.file.replace('images/', ''));
+  const expected = fixture.expected_fields;
+  expect(result.documentType).toBe(DOCUMENT_TYPE_MAP[fixture.document_type]);
+
+  // Ad basılı satırlardan gelir; harf-katlanmış birebir eşleşme.
+  expect(foldDanish(result.fields.name?.value ?? '')).toBe(foldDanish(expected.full_name ?? ''));
+
+  if (fixture.document_type === 'sundhedskort') {
+    // Sundhedskort kimlik belgesi değildir: belge no/türü doldurulmaz.
+    expect(result.fields.identity_doc_number).toBeUndefined();
+    expect(result.fields.identity_doc_type).toBeUndefined();
+    expect(result.fields.address?.value ?? '').not.toBe('');
+    expect(result.fields.postal_code?.value).toBe(expected.postal_code);
+    expect(foldDanish(result.fields.city?.value ?? '')).toBe(foldDanish(expected.city ?? ''));
+    expect(result.fields.cpr_number?.value).toBe(expected.cpr_first6);
+  } else {
+    // Rakam alanları birebir: OCR kayıtlarında rakamlar güvenilir.
+    expect(result.fields.identity_doc_number?.value).toBe(expected.document_number);
+  }
+  if (fixture.document_type === 'pas') {
+    // Dansk pasta Personnr. alanı zaten yalnız ilk 6 hanedir.
+    expect(result.fields.cpr_number?.value).toBe(expected.cpr_first6);
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+  }
+}
+
 describe('OCR fixture sözleşmesi — alan çıkarımı (clean + rotate)', () => {
   const reliable = groundTruth.fixtures.filter((item) => (RELIABLE as readonly string[]).includes(item.capture_condition));
 
   it.each(reliable.map((item) => [item.file.replace('images/', ''), item] as const))(
     '%s: alanlar doğru form alanlarına iner',
-    (name, fixture) => {
-      const result = parseFixture(name);
-      const expected = fixture.expected_fields;
-      expect(result.documentType).toBe(DOCUMENT_TYPE_MAP[fixture.document_type]);
-
-      // Ad basılı satırlardan gelir; harf-katlanmış birebir eşleşme.
-      expect(foldDanish(result.fields.name?.value ?? '')).toBe(foldDanish(expected.full_name ?? ''));
-
-      if (fixture.document_type === 'sundhedskort') {
-        // Sundhedskort kimlik belgesi değildir: belge no/türü doldurulmaz.
-        expect(result.fields.identity_doc_number).toBeUndefined();
-        expect(result.fields.identity_doc_type).toBeUndefined();
-        expect(result.fields.address?.value ?? '').not.toBe('');
-        expect(result.fields.postal_code?.value).toBe(expected.postal_code);
-        expect(foldDanish(result.fields.city?.value ?? '')).toBe(foldDanish(expected.city ?? ''));
-        expect(result.fields.cpr_number?.value).toBe(expected.cpr_first6);
-      } else {
-        // Rakam alanları birebir: OCR kayıtlarında rakamlar güvenilir.
-        expect(result.fields.identity_doc_number?.value).toBe(expected.document_number);
-      }
-      if (fixture.document_type === 'pas') {
-        // Dansk pasta Personnr. alanı zaten yalnız ilk 6 hanedir.
-        expect(result.fields.cpr_number?.value).toBe(expected.cpr_first6);
-        expect(result.fields.identity_doc_country?.value).toBe('DNK');
-      }
+    (_name, fixture) => {
+      expectReliableContract(parseFixture, fixture);
     },
   );
 });
@@ -217,7 +245,7 @@ describe('OCR fixture sözleşmesi — MRZ normalizasyonu (« ve boşluk onarım
   });
 
   it('whitelist dışı satırlar (« ile bile) MRZ sanılmaz', () => {
-    // raw_ocr.json'dan gerçek hayatta görülen şekiller: '(' içeren kısmi MRZ
+    // raw_ocr_tr.json'dan gerçek hayatta görülen şekiller: '(' içeren kısmi MRZ
     // ve uzun SPECIMEN başlığı — normalizasyon sonrası bile reddedilmeli.
     const raw = ['I (DNKID1000066«««««««««', 'SPECIMEN — TEST FIXTURE — IKKE ET GYLDIGT DOKUMENT «««'].join('\n');
     const result = parseIdentityScan(raw);
@@ -869,5 +897,57 @@ describe('OCR parser sağlamlaştırma — gerçek saha kartı değerlendirmesi 
     expect(result.documentType).toBe('driver_license');
     expect(result.fields.cpr_number?.value).toBe('010190');
     expect(result.fields.identity_doc_number?.value).toBe('30499459');
+  });
+});
+
+describe('OCR fixture sözleşmesi — da motoru (üretim motoru, CI runner kaydı)', () => {
+  // da kaydı 2026-09-08'de GitHub windows-latest runner'ında ÜRETİM motoruyla
+  // (da-DK WinRT) alındı — tr kaydının aksine Æ/Ø/Å gerçek harfleriyle gelir.
+  const reliable = groundTruth.fixtures.filter((item) => (RELIABLE as readonly string[]).includes(item.capture_condition));
+
+  it.each(reliable.map((item) => [item.file.replace('images/', ''), item] as const))(
+    'da %s: alanlar doğru form alanlarına iner',
+    (_name, fixture) => {
+      expectReliableContract(parseFixtureDa, fixture);
+    },
+  );
+
+  it.each(
+    groundTruth.fixtures.filter((item) => !item.carries_address).map((item) => [item.file.replace('images/', '')] as const),
+  )('da %s: basılı olmayan adres alanları asla doldurulmaz', (name) => {
+    const result = parseFixtureDa(name);
+    expect(result.fields.address).toBeUndefined();
+    expect(result.fields.postal_code).toBeUndefined();
+    expect(result.fields.city).toBeUndefined();
+  });
+
+  it.each(
+    groundTruth.fixtures.filter((item) => item.document_type === 'sundhedskort').map((item) => [item.file.replace('images/', '')] as const),
+  )('da %s: kartta tam CPR basılı olsa da yalnız ilk 6 hane taşınır', (name) => {
+    const raw = ocrLinesFrom(rawOcrDa, 'raw_ocr_da.json', name).join('\n');
+    const result = parseFixtureDa(name);
+    const parsed = result.fields.cpr_number?.value ?? '';
+    if (parsed) {
+      expect(parsed).toMatch(/^\d{6}$/);
+      const fullCpr = raw.match(/(\d{6})[-–]\s?(\d{4})/);
+      if (fullCpr) {
+        expect(parsed).not.toContain(fullCpr[2]);
+        expect(parsed.length).toBeLessThan((fullCpr[1] + fullCpr[2]).length);
+      }
+      const customer = applyConfirmedIdentityResult(EMPTY_CUSTOMER, result);
+      expect(customer.cpr_number).toBe(parsed);
+    }
+  });
+
+  it('da kaydında Danca karakterler gerçek formlarıyla gelir (mojibake yok)', () => {
+    // BOM'suz .ps1'in cp1252 okunması yalnız kaynak literal'leri bozar;
+    // OCR satırları runtime WinRT'den gelir. Bu test bozulma geri gelirse
+    // (ör. harness yeniden Türkçe literal yazarsa) erken düşer.
+    const lines = ocrLinesFrom(rawOcrDa, 'raw_ocr_da.json', 'sundhedskort_01_clean.png');
+    expect(lines.some((line) => /[ÆØÅæøå]/.test(line))).toBe(true);
+    for (const line of lines) {
+      expect(line.includes('Ã')).toBe(false);
+      expect(line.includes('Ä')).toBe(false);
+    }
   });
 });

@@ -578,7 +578,7 @@ export function parseIdentityScan(raw: string): IdentityParseResult {
   const td1 = parseTd1(mrzLines.filter((line) => line.length === 30).slice(0, 3));
   if (td1) return td1;
   // Onarılmış MRZ: Windows OCR '<' yerine « okur ve aralara boşluk koyar
-  // (raw_ocr.json: "2010000337 D N K 8611172 M 3103142 « « «"). Artıklardan
+  // (raw_ocr_tr.json: "2010000337 D N K 8611172 M 3103142 « « «"). Artıklardan
   // arındırıp ICAO karakter kümesine oturan satırlar MRZ adayıdır; check
   // digit gate'i yanlış pozitifi engeller. Basılı etiket dalı varsa kazınır:
   // basılı ad kanoniktir, MRZ yalnız eksik alanları doldurur.

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Düzeltildi (kimlik OCR — gerçek saha kartı değerlendirmesi)
+
+- **Gerçek kart fotoğrafıyla parser değerlendirmesi:** müşterinin kendi
+  sundhedskort + kørekort fotoğrafı (Google Drive'dan, repo dışında)
+  VDS-üzeri OCR ile incelendi; gözlemlenen satır desenleri sentetik
+  fixture'larla modele edildi (gerçek veri repoya girmez). Dört
+  sağlamlaştırma: (S1) læge bloğu artık hasta bloğunu gölgelamiyor —
+  posta çıpası CPR'nin altındaki bloğu seçiyor; (S2) tek/iki harflik OCR
+  döküntüsü ad/sokak penceresini kırmıyor; (S3) posta satırına taşan
+  etiket artığı şehiri kirletmiyor; (L1) kørekort 4d etiketi bozuk
+  okunduğunda CPR gövdedeki 6+4 düzeninden kurtarılıyor. En iyi saha
+  varyantında sundhedskort 2/6 → 6/6 alan.
+- **Danca fixture kaydı artık CI'dan geliyor (D1+D2):** GitHub
+  windows-latest runner'ında da-DK OCR capability kurulumu ve üretim
+  harness'ı çalıştırılarak `raw_ocr_da.json` üretildi (run 34173433109).
+  Eski `raw_ocr.json` → `raw_ocr_tr.json` oldu; sözleşme testi iki kayıtla
+  koşar (da = üretim motoru ana sözleşme, tr = regresyon gövdesi).
+  Harness'a cp1252 dersi gömüldü: BOM'suz .ps1'de string literal'ler ASCII
+  kalmalı, aksi halde çift-kodlanmojibake üretir (OCR satırları
+  etkilenmez — runtime WinRT'den gelir; regresyon testi eklendi).
+
 ### Güvenlik (sertleştirme)
 
 - **runtime.env DACL'ı yazım noktasında geri uygulanıyor:** `os.replace`

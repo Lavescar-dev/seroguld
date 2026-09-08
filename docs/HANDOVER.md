@@ -1632,6 +1632,19 @@ Regresyon kalkanı: `identityScanOcrContract.test.ts` (B serisi 10 yeni test)
 
 ### 20.4 BEKLEYEN SAHA İŞLERİ
 
+**Tamamlanan ara adım (2026-09-08, VDS — makine beklemeden):**
+
+- **Gerçek kart değerlendirmesi:** kullanıcının Google Drive'a yüklediği
+  gerçek sundhedskort + kørekort fotoğrafı repo dışında (`~/seroguld-eval/`)
+  OCR'lanıp `parseIdentityScan`'e beslendi (tesseract-dan, üretim motoru
+  değil — not: üretim Windows OCR'i Linux'ta çalışmaz). Gözlemlenen dört
+  satır deseni sentetik fixture'larla modele edildi ve parser
+  sağlamlaştırıldı (S1 læge-gölgelemesi, S2 döküntü penceresi, S3 şehir
+  artığı, L1 4d-CPR yedeği) — bkz. CHANGELOG [Unreleased]. D1'in CI
+  karşılığı: GitHub windows-latest runner'ında da-DK OCR capability kurulumu
+  VE Danca WinRT motoru oluşturulması kanıtlandı (run 34172511954; em-dash
+  cp1252 ParserError sonrası ASCII-only inline scriptlerle düzeltildi).
+
 **hp/Windows geliştirme makinesi açılınca (yazıcı GEREKMEZ):**
 
 1. **Faz A kanıt okuma:** 0.3.30–0.3.34 saha taramalarının teşhis kodlarını
@@ -1639,17 +1652,28 @@ Regresyon kalkanı: `identityScanOcrContract.test.ts` (B serisi 10 yeni test)
    Not: log, uygulamayı çalıştıran makinenin
    `%APPDATA%\dk.seroguld.crm\logs\` dizinindedir.
 2. **da-DK paketi:** `Get-WindowsCapability -Online -Name "Language.OCR~~~da-DK*"`
-   ile durum; yoksa runbook §2.7 ile kur (online veya FOD ISO).
-3. **Danca fixture kaydı (D1/D2):** `scripts/ocr-fixture-harness.ps1 -OutFile
-   raw_ocr_da.json` (fiziksel tarayıcı gerekmez, fixture görüntüleri OCR'lanır);
-   sonra `git mv backend/tests/fixtures/ocr/raw_ocr.json raw_ocr_tr.json` ve
-   contract testine iki kayıt parametresi ekle (tr + da).
+   ile durum; yoksa runbook §2.7 ile kur (online veya FOD ISO). Not: CI
+   runner'ında kurulum kanıtlandı — istemci Windows 10/11'de de çalışması
+   beklenir, yine de sahada doğrulanmalı.
+3. **✅ TAMAMLANDI (2026-09-08, CI ile — hp gerekmedi):** Danca fixture
+   kaydı D1+D2: GitHub windows-latest runner'ı da-DK OCR capability'yi
+   kurup üretim harness'ıyla `raw_ocr_da.json` üretti (run 34173433109);
+   `raw_ocr.json` → `raw_ocr_tr.json` yeniden adlandırılıp sözleşme testi
+   iki kayıtla koşar (da = üretim motoru ana sözleşme, tr = regresyon
+   gövdesi). Tazeleme gerektiğinde: workflow dosyasına dokunup push'la —
+   artifact `raw_ocr_da` hazır gelir. hp'de kalan yalnız lokal da-DK
+   capability probe'u (madde 2) ve Faz A kanıt okuma (madde 1).
 
 **Müşteri lokasyonunda (SERO GULD, Valby — ET-3850 ve gerçek kartlar oradadır):**
 
 4. **Canlı sarı kart smoke:** gerçek sundhedskort ile tarama → isim/adres/CPR-6
    alanlarını doğrula; B serisi düzeltmelerin saha doğrulaması. hp'de yazıcı/
    tarayıcı YOKTUR — bu adım müşteri makinesinde yapılır.
+   **Hane doğruluğu zorunlu:** alan DOLU mu diye bakma, kart üzerindeki ile
+   HANE HANE karşılaştır. Yedek motor denemesinde rakam karışmaları gerçek
+   gözlendi: 2650→2850 (6→8), …2985→…2988 (5→8), 30499459→30499859 (4→8).
+   Yanlış haneli ama makul görünen değer inceleme panelinde operatör
+   tarafından yakalanmalı — panelin onay ekranı son kontrol noktasıdır.
 5. **ET-3850 yazıcı matrisi:** `docs/PRINTER_TEST_MATRIX_TR.md` boş kolonları
    doldurulacak (saha testi). ET-3850 müşteri lokasyonundaki ağ yazıcısıdır;
    hp'de yoktur.

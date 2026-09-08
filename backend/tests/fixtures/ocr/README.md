@@ -95,19 +95,26 @@ da alış akışında adres için ayrı bir belge taraması adımı tanımlanır
 belge tipi eklemek için `PEOPLE` ve `DOCS` sözlüklerini genişletip yeniden
 çalıştırmak yeterlidir; `fixtures.json` otomatik güncellenir.
 
-## Kayıtlı ham OCR çıktısı (`raw_ocr.json`) — CRM sözleşme testleri
+## Kayıtlı ham OCR çıktıları (`raw_ocr_da.json` + `raw_ocr_tr.json`) — CRM sözleşme testleri
 
-`raw_ocr.json`, 20 görselin **gerçek Windows.Media.Ocr** satır çıktısıdır ve
+İki kayıt da 20 görselin **gerçek Windows.Media.Ocr** satır çıktısıdır ve
 `scripts/ocr-fixture-harness.ps1` ile üretilir (üretimdeki
 `WINDOWS_OCR_SCRIPT` ile aynı WinRT çağrıları). Frontend sözleşme testi
 `frontend/src-v2/make/alis/__tests__/identityScanOcrContract.test.ts` gerçek
-motoru değil bu kaydı tüketir; böylece test deterministik ve CI'da koşulabilir.
+motoru değil bu kayıtları tüketir; böylece test deterministik ve CI'da koşar.
 
-Dikkat: bu kayıt geliştirme makinesinde **tr** dil paketiyle alındı (Danca
-paketi kurulu değildi). Æ/Ø/Å harfleri E/O/Â gibi okunur; test bu yüzden ad ve
-şehir karşılaştırmalarını harf-katlanmış yapar, rakam alanlarını birebir
-eşitler. Hedef makinede (da paketi) harness yeniden koşulursa `raw_ocr.json`
-tazelenir; sözleşme değişmez.
+- `raw_ocr_da.json` — **üretim motoru (da-DK)**, 2026-09-08, GitHub
+  windows-latest CI runner'ı (`.github/workflows/windows-ocr-fixture.yml`;
+  runner'da da-DK OCR capability kurulumu kanıtlandı). Ana sözleşme
+  (alan çıkarımı, uydurma yok, CPR minimizasyonu) bu kayıt üzerinedir;
+  Æ/Ø/Å gerçek formlarıyla gelir.
+- `raw_ocr_tr.json` — 2026-09-01, geliştirme makinesi **tr** dil paketiyle
+  (Danca paketi kurulu değildi): Æ/Ø/Å harfleri E/O/Â gibi okunur.
+  Regresyon gövdesi ve motor-farklılığı dayanıklılık sözleşmesi bu kaydın
+  satır şekillerine sabitlidir; korunur.
+
+Tazeleme: harness'i uygun motorla koş (hp/müşteri makinesi ya da CI akışı),
+çıktıyı ilgili dosyaya yaz; sözleşme değişmez.
 
 Kayıt sırasında bulunan ve düzeltilen iki üretim hatası (main.rs):
 1. `[System.WindowsRuntimeSystemExtensions]::AsTask($op)` PowerShell 5.1'de
