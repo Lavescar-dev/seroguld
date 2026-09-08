@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_admin
+from app.models.ai_usage_log import AIUsageLog
 from app.models.pos_document import PosDocument
 from app.models.pos_document_audit import PosDocumentAudit
 
@@ -64,6 +66,11 @@ from app.models.user import User
 from app.schemas.base import AppBaseModel
 from app.schemas.document_artifact import DocumentArtifactReconcilePreviewOut
 from app.schemas.historical_afg_import import HistoricalAfgImportApplyOut, HistoricalAfgImportPreviewOut
+from app.schemas.identity import (
+    IdentityCapabilitiesOut,
+    IdentityExtractOut,
+    IdentityExtractRequest,
+)
 from app.schemas.address import CustomerMatchOut, CustomerMatchRequest, KdsAddressResolveOut, KdsAddressSearchOut
 from app.schemas.pos import (
     PosDocumentDetailOut,
@@ -115,6 +122,7 @@ from app.services.historical_afg_import import (
     preview_historical_afg_import,
 )
 from app.services.kds_address_service import KdsAddressError, kds_address_service
+from app.services.identity_extract_service import extract_identity, identity_capabilities
 from app.schemas.pos import PosSessionCreate
 
 router = APIRouter()
@@ -381,6 +389,46 @@ async def post_alis_customer_match_v2(
         cpr_number=payload.cpr_number,
         identity_doc_number=payload.identity_doc_number,
     )
+
+
+# --- R1-B: kimlik OCR üç katman -------------------------------------------
+
+
+@router.get("/alis/identity/capabilities", response_model=IdentityCapabilitiesOut)
+async def get_alis_identity_capabilities_v2(
+    _: User = Depends(require_admin),
+) -> IdentityCapabilitiesOut:
+    """Frontend motor seçimi: VLM bayrağı + model + barkod varlığı."""
+    return IdentityCapabilitiesOut(**identity_capabilities())
+
+
+@router.post("/alis/identity/extract", response_model=IdentityExtractOut)
+async def post_alis_identity_extract_v2(
+    payload: IdentityExtractRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> IdentityExtractOut:
+    """Kimlik görüntüsünden alan çıkarımı (barkod + VLM + doğrulama).
+
+    GDPR: görüntü bellek içi işlenir, diske yazılmaz, log'a girmez; yalnız
+    maliyet sayacı (AIUsageLog, product_id=None) kalıcıdır.
+    """
+    result = await extract_identity(image_data_url=payload.image_data_url, side=payload.side)
+    if result.usage is not None:
+        db.add(
+            AIUsageLog(
+                product_id=None,
+                performed_by=admin.id,
+                provider="openai",
+                model=result.usage.model,
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
+                total_tokens=result.usage.total_tokens,
+                total_cost_usd=Decimal(result.usage.total_cost_usd),
+            )
+        )
+        await db.commit()
+    return result
 
 
 @router.post("/alis/workspace/{session_id}/customer/select", response_model=PosWorkspaceOut)
