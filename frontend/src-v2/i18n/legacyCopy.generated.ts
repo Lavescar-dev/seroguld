@@ -619,6 +619,9 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Sürükleyerek sıralayın — ilk görsel Birincil olur": { en: "Drag to reorder — the first image becomes primary", da: "Træk for at sortere — det første billede bliver primær" },
   "Sürükleyerek sırayı değiştirin — ilk görsel Birincil olur": { en: "Drag to change the order — the first image becomes primary", da: "Træk for at ændre rækkefølgen — det første billede bliver primær" },
   "Fotoğraf sırası kaydedilemedi": { en: "Photo order could not be saved", da: "Billederækkefølgen kunne ikke gemmes" },
+  // 0.3.38 — CPR 6/10 (R1-CPR): kısmi doğum-tarihi girişi artık geçerli
+  "Yalnız doğum tarihi girildi — kalan 4 hane sonradan tamamlanır": { en: "Only the birth date was entered — the remaining 4 digits can be added later", da: "Kun fødselsdatoen er indtastet — de sidste 4 cifre kan tilføjes senere" },
+  "CPR 6 (doğum tarihi) veya 10 haneli olmalı": { en: "CPR must be 6 (birth date) or 10 digits", da: "CPR skal være 6 (fødselsdato) eller 10 cifre" },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {

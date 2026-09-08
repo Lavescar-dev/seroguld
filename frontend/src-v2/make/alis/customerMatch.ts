@@ -26,7 +26,15 @@ export function normalizeCustomerMatch(value: unknown): PosCustomerMatchResponse
     const match = asRecord(item);
     const id = text(match?.customer_id) || text(match?.id);
     const name = text(match?.name);
-    return id && name ? [{ id, name, matched_by: text(match?.matched_by) || null }] : [];
+    // R1-CPR: match_kind ('birth') whitelist'te taşınır — normalize bilinmeyen
+    // alanları düşürdüğü için açıkça eklenmezse POS uyarısı kind'ı kaybeder.
+    const matchKindRaw = text(match?.match_kind);
+    const matchKind = matchKindRaw === 'cpr' || matchKindRaw === 'birth' || matchKindRaw === 'identity_doc_number'
+      ? matchKindRaw
+      : null;
+    return id && name
+      ? [{ id, name, matched_by: text(match?.matched_by) || null, match_kind: matchKind }]
+      : [];
   });
   const rawStatus = text(record?.status);
   const status = rawStatus === 'none' || rawStatus === 'single' || rawStatus === 'conflict'

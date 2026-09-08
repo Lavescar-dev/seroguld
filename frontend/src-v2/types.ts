@@ -1020,6 +1020,9 @@ export interface PosCustomerMatchItem {
   id: string;
   name: string;
   matched_by?: string | null;
+  // R1-CPR: 'birth' — yalnız doğum bölümü eşleşmesi (tam CPR değil);
+  // POS canlı dup uyarısında "tam eşleşme değil" bağlamını ayırt eder.
+  match_kind?: 'cpr' | 'birth' | 'identity_doc_number' | null;
 }
 
 export interface PosCustomerMatchResponse {

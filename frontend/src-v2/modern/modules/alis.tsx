@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 
 import { formatMoney, formatNumber, formatRelativeTime, labelProductType, labelMetalType } from '@/lib/format';
-import { validateCpr } from '@/lib/cpr';
+import { classifyCpr, isAcceptableCprLength, validateCpr } from '@/lib/cpr';
 import { ALIS_SHORTCUT_HINT } from '@/lib/shortcutHints';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
@@ -718,10 +718,13 @@ function SearchExistingPanel({ state, onPick }: { state: ModernAlisState; onPick
 }
 
 function NewCustomerForm({ state, onSubmit }: { state: ModernAlisState; onSubmit: (event: FormEvent) => void }) {
+  // R1-CPR: yalnız doğum tarihi (6 hane) de kabul edilir — kısmi kayıt
+  // olarak saklanır, buton kilidi 6|10'u denetler.
   const hasValidNewCustomer =
     state.newCustomer.name.trim().length >= 2 &&
     state.newCustomer.phone.trim().length >= 7 &&
-    state.newCustomer.cpr_number.replace(/\D/g, '').length >= 10 &&
+    isAcceptableCprLength(state.newCustomer.cpr_number) &&
+    classifyCpr(state.newCustomer.cpr_number) !== 'empty' &&
     state.newCustomer.identity_doc_number.trim().length >= 4;
   const newPostal = state.newCustomer.postal_code.replace(/\D/g, '');
   const hasValidPostal = newPostal.length === 0 || newPostal.length === 4;
@@ -788,6 +791,8 @@ function EditableCustomerFields({
           )}
           {field.key === 'cpr_number' && customer.cpr_number && cprValidation.formatOk && cprValidation.mod11Ok ? (
             <span className="mt-1 block text-[10px] font-semibold text-sg-green-strong">CPR mod-11 doğrulandı</span>
+          ) : field.key === 'cpr_number' && classifyCpr(customer.cpr_number) === 'birth' ? (
+            <span className="mt-1 block text-[10px] font-semibold text-sg-amber">Yalnız doğum tarihi girildi — kalan 4 hane sonradan tamamlanır</span>
           ) : null}
         </label>
       ))}

@@ -61,7 +61,17 @@ describe('purchase customer workflow parsers', () => {
   it('accepts both customer_id and id in customer-match results', () => {
     expect(normalizeCustomerMatch({ status: 'conflict', matches: [{ customer_id: 'first', name: 'A' }, { id: 'second', name: 'B' }] })).toEqual({
       status: 'conflict',
-      matches: [{ id: 'first', name: 'A', matched_by: null }, { id: 'second', name: 'B', matched_by: null }],
+      matches: [
+        { id: 'first', name: 'A', matched_by: null, match_kind: null },
+        { id: 'second', name: 'B', matched_by: null, match_kind: null },
+      ],
+    });
+  });
+
+  it('carries match_kind (R1-CPR birth) through the normalize whitelist', () => {
+    expect(normalizeCustomerMatch({ status: 'single', matches: [{ id: 'p1', name: 'P', matched_by: 'birth', match_kind: 'birth' }] })).toEqual({
+      status: 'single',
+      matches: [{ id: 'p1', name: 'P', matched_by: 'birth', match_kind: 'birth' }],
     });
   });
 });

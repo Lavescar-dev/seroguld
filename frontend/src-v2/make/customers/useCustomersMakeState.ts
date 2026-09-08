@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { apiRequest, localizeApiError } from '@/lib/api';
 import { useToast } from '@/lib/toast';
+import { sendWithCprConflictConfirm } from '@/make/alis/cprConflict';
 import type { CustomerDetailOut, CustomerOut, LogWorkspace, PaginatedResponse, PosDocumentDetail, PosDocumentListItem } from '@/types';
 
 import {
@@ -119,11 +120,18 @@ export function useCustomersMakeState(): CustomersPageProps {
   });
 
   const createMutation = useMutation({
+    // R1-CPR: doğum-bölümü yumuşak dup 409'u operatöre sorulur; onayla TEK
+    // KEZ confirm_cpr_conflict=true ile tekrarlanır (bayrak kalıcı değildir).
     mutationFn: () =>
-      apiRequest<CustomerOut>('/api/v2/musteriler', {
-        method: 'POST',
-        body: JSON.stringify(cleanDraft(newDraft)),
-      }),
+      sendWithCprConflictConfirm((confirmCprConflict) =>
+        apiRequest<CustomerOut>('/api/v2/musteriler', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...cleanDraft(newDraft),
+            ...(confirmCprConflict ? { confirm_cpr_conflict: true } : {}),
+          }),
+        }),
+      ),
     onSuccess: async (created) => {
       setSelectedCustomerId(created.id);
       setNewDraft(EMPTY_DRAFT);
@@ -138,10 +146,15 @@ export function useCustomersMakeState(): CustomersPageProps {
 
   const updateMutation = useMutation({
     mutationFn: (customerId: string) =>
-      apiRequest<CustomerOut>(`/api/v2/musteriler/${customerId}`, {
-        method: 'PUT',
-        body: JSON.stringify(cleanDraft(editDraft)),
-      }),
+      sendWithCprConflictConfirm((confirmCprConflict) =>
+        apiRequest<CustomerOut>(`/api/v2/musteriler/${customerId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            ...cleanDraft(editDraft),
+            ...(confirmCprConflict ? { confirm_cpr_conflict: true } : {}),
+          }),
+        }),
+      ),
     onSuccess: async (_, customerId) => {
       setEditingId(null);
       setEditDraftStash((current) => (current?.customerId === customerId ? null : current));

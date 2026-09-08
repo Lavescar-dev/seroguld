@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
 import { apiRequest, localizeApiError } from '@/lib/api';
+import { classifyCpr, isAcceptableCprLength } from '@/lib/cpr';
 import { FIRMA } from '@/lib/firma';
 import { useToast } from '@/lib/toast';
 import { type Dispatch, type FormEvent, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
@@ -1205,13 +1206,21 @@ function ActiveWorkspaceView(props: {
                         onSelectMatchedCustomer={onSelectExistingCustomer}
                       />
                       <div className="border-t border-brand-200 px-4 py-3">
+                        {/* R1-CPR: yalnız doğum tarihi (6 hane) de kabul edilir —
+                            kısmi kayıt saklanır; 10. haneler sonradan tamamlanır. */}
+                        {classifyCpr(newCustomer.cpr_number) === 'birth' ? (
+                          <p className="mb-2 text-[10px] font-semibold text-amber-600">
+                            Yalnız doğum tarihi girildi — kalan 4 hane sonradan tamamlanır
+                          </p>
+                        ) : null}
                         <button
                           type="submit"
                           disabled={
                             customerSelecting ||
                             newCustomer.name.trim().length < 2 ||
                             newCustomer.phone.trim().length < 7 ||
-                            newCustomer.cpr_number.replace(/\D/g, '').length < 10 ||
+                            !isAcceptableCprLength(newCustomer.cpr_number) ||
+                            classifyCpr(newCustomer.cpr_number) === 'empty' ||
                             newCustomer.identity_doc_number.trim().length < 4 ||
                             (newCustomer.postal_code.replace(/\D/g, '').length > 0 &&
                               newCustomer.postal_code.replace(/\D/g, '').length !== 4)

@@ -15,6 +15,7 @@ import {
 } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/components/ConfirmDialog';
+import { sendWithCprConflictConfirm } from '@/make/alis/cprConflict';
 import { emitArtifactSync, listenArtifactSync, signalMatches } from '@/lib/artifactSync';
 import { openOfficeDock } from '@/lib/officeDock';
 import {
@@ -1244,10 +1245,24 @@ export function useAlisMakeState(): AlisPageProps {
   };
 
   const selectCustomerMutation = useMutation({
+    // R1-CPR: customer_new yolunda doğum-bölümü yumuşak dup 409'u operatöre
+    // sorulur; onayla TEK KEZ confirm_cpr_conflict=true ile tekrarlanır.
     mutationFn: (payload: Record<string, unknown>) =>
-      apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/customer/select`, {
-        method: 'POST',
-        body: JSON.stringify({ ...payload, base_revision: workspaceRevisionRef.current }),
+      sendWithCprConflictConfirm((confirmCprConflict) => {
+        const body =
+          confirmCprConflict && payload.customer_new
+            ? {
+                ...payload,
+                customer_new: {
+                  ...(payload.customer_new as Record<string, unknown>),
+                  confirm_cpr_conflict: true,
+                },
+              }
+            : payload;
+        return apiRequest<PosWorkspace>(`/api/v2/alis/workspace/${workspace?.session.id}/customer/select`, {
+          method: 'POST',
+          body: JSON.stringify({ ...body, base_revision: workspaceRevisionRef.current }),
+        });
       }),
     onSuccess: (data) => {
       if (!applyWorkspace(data)) return;

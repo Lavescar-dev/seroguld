@@ -33,6 +33,8 @@ import {
 } from '@/lib/format';
 import { normalizePostalCode } from '@/make/alis/addressAutocomplete';
 import { useCustomerMatch } from '@/make/alis/customerMatch';
+import { CprInput } from '@/make/alis/customerEditors';
+import { isAcceptableCprLength } from '@/lib/cpr';
 import type { EditableCustomer } from '@/make/alis/types';
 import { useToast } from '@/lib/toast';
 import type { PosDocumentDetail, PosDocumentListItem, PosPostalLookup } from '@/types';
@@ -117,14 +119,22 @@ function DraftRow({
 }) {
   // A6-6: zorunlu alan (ad, en az 2 karakter) dolmadan ve istek sürerken kaydet kapalı;
   // isPending hem tıkı hem Enter'ı keser.
-  const canSave = draft.name.trim().length >= 2;
+  // R1-CPR: CPR 6 (yalnız doğum tarihi) veya 10 haneli olmalı — geçersiz
+  // uzunluk (7-9) geç 422'ye düşmeden kaydet butonunda yakalanır.
+  const canSave = draft.name.trim().length >= 2 && isAcceptableCprLength(draft.cpr_number);
   const handleRowKeyDown = (event: ReactKeyboardEvent<HTMLTableRowElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       if (!isSaving && canSave) onSave();
     }
   };
-  const saveHint = isSaving ? 'Kaydediliyor…' : canSave ? undefined : 'Ad soyad zorunlu';
+  const saveHint = isSaving
+    ? 'Kaydediliyor…'
+    : canSave
+      ? undefined
+      : draft.name.trim().length < 2
+        ? 'Ad soyad zorunlu'
+        : 'CPR 6 (doğum tarihi) veya 10 haneli olmalı';
 
   // M2: AFG'deki posta kodu → şehir otomasyonuyla aynı kural — 4 haneli
   // posta kodunda şehir boşsa postal-lookup'tan doldurulur; elle yazılan
@@ -158,7 +168,7 @@ function DraftRow({
         <input aria-label="Müşteri adı" required value={draft.name} onChange={(event) => onChange('name', event.target.value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
-        <input aria-label="CPR" value={draft.cpr_number} onChange={(event) => onChange('cpr_number', event.target.value)} className={cellInput} />
+        <CprInput aria-label="CPR" value={draft.cpr_number} onChange={(value) => onChange('cpr_number', value)} className={cellInput} />
       </td>
       <td className="border border-brand-300 px-1 py-1.5">
         <input aria-label="Telefon" value={draft.phone} onChange={(event) => onChange('phone', event.target.value)} className={cellInput} />

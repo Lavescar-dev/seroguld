@@ -6,13 +6,17 @@ export class ApiError extends Error {
   status: number;
   requestId?: string;
   url?: string;
+  // R1-CPR: yumuşak dup gibi makine-okunur 409 gövdeleri için ham detail;
+  // message alanı düz metin özet olarak kalır (davranış değişmez).
+  detail?: unknown;
 
-  constructor(status: number, message: string, requestId?: string, url?: string) {
+  constructor(status: number, message: string, requestId?: string, url?: string, detail?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.requestId = requestId;
     this.url = url;
+    this.detail = detail;
   }
 }
 
@@ -202,9 +206,11 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     let requestId = response.headers.get('X-Request-ID') || undefined;
+    let rawDetail: unknown;
     const rawBody = await response.text().catch(() => '');
     try {
       const payload = rawBody ? JSON.parse(rawBody) as { detail?: unknown; request_id?: unknown } : null;
+      rawDetail = payload?.detail;
       if (typeof payload?.detail === 'string') {
         message = payload.detail;
       } else if (
@@ -228,7 +234,7 @@ export async function apiRequest<T = unknown>(path: string, options: RequestOpti
     if (response.status === 422 && message === '422 Unprocessable Entity') {
       message = 'Gönderilen veriler doğrulanamadı (422).';
     }
-    throw new ApiError(response.status, requestId ? `${message} (Kod: ${requestId})` : message, requestId, path);
+    throw new ApiError(response.status, requestId ? `${message} (Kod: ${requestId})` : message, requestId, path, rawDetail);
   }
 
   const contentType = response.headers.get('content-type') || '';

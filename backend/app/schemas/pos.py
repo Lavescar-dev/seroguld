@@ -30,6 +30,9 @@ class PosCustomerInline(AppBaseModel):
     identity_doc_number: str | None = Field(default=None, max_length=50)
     identity_doc_country: str | None = Field(default="DK", max_length=8)
     identity_photo_refs: list[str] = Field(default_factory=list)
+    # R1-CPR: doğum-bölümü yumuşak dup uyarısını geçmek için onay bayrağı;
+    # kalıcılığa yazılmaz (CustomerCreate ile aynı kural).
+    confirm_cpr_conflict: bool = False
 
 
 class PosSessionCreate(AppBaseModel):

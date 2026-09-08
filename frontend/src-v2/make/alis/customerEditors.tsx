@@ -179,25 +179,31 @@ export function CustomerInfoTable({
   );
 }
 
-function CprInput({
+export function CprInput({
   value,
   onChange,
   onBlur,
   className,
   style,
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
   className: string;
   style?: typeof monoStyle | typeof sansStyle;
+  ariaLabel?: string;
 }) {
   const parts = (value || '').split('-');
   const prefix = parts[0] || '';
   const suffix = parts.length > 1 ? parts.slice(1).join('-') : '';
 
   const validation = useMemo(() => validateCpr(value), [value]);
-  const isPartial = suffix === '????' || validation.digits.length !== 10;
+  // R1-CPR: 6 hane (yalnız doğum tarihi) geçerli bir kısmi giriştir; hata
+  // değil, nötr ipucu gösterilir. 7-9 hane ve '????' kısmi işareti hâlen
+  // tamamlanmayı bekler.
+  const isBirthOnly = validation.digits.length === 6;
+  const isPartial = suffix === '????' || (validation.digits.length !== 10 && !isBirthOnly);
   // R1-06: uyarı yazarken değil, alandan ÇIKINCA (blur) gösterilir.
   const [blurred, setBlurred] = useState(false);
   const showValidation = blurred && !isPartial && Boolean(value);
@@ -230,6 +236,11 @@ function CprInput({
       ? 'text-emerald-700'
       : 'text-red-700';
 
+  // R1-CPR: doğum-bölümü ipucu — hata tonu değil, bilgi.
+  const birthHint = isBirthOnly ? (
+    <p className="text-[10px] font-semibold text-amber-600">Yalnız doğum tarihi girildi — kalan 4 hane sonradan tamamlanır</p>
+  ) : null;
+
   if (value && value.includes('-')) {
     const suffixInputCls = `${className} !w-16 text-center !px-1 ${
       suffix === '????' ? 'border-red-300 bg-red-50 text-red-600 ring-1 ring-red-400' : ''
@@ -254,6 +265,7 @@ function CprInput({
             className={`${className} !w-20 text-center !px-1`}
             style={style}
             placeholder="DDMMYY"
+            aria-label={ariaLabel ? `${ariaLabel} doğum tarihi` : undefined}
           />
           <span className="font-bold text-brand-500">-</span>
           <input
@@ -267,6 +279,7 @@ function CprInput({
             style={style}
             placeholder="0000"
             maxLength={4}
+            aria-label={ariaLabel ? `${ariaLabel} son haneler` : undefined}
           />
           {suffix === '????' ? (
             <span className="ml-1 hidden text-[10px] font-bold text-red-500 sm:inline">Eksik!</span>
@@ -275,7 +288,9 @@ function CprInput({
         </div>
         {showValidation && validationMessage ? (
           <p className={`text-[10px] font-semibold ${validationTextClass}`}>{validationMessage}</p>
-        ) : null}
+        ) : (
+          birthHint
+        )}
       </div>
     );
   }
@@ -298,12 +313,15 @@ function CprInput({
           className={baseInputCls}
           style={style}
           placeholder="120385-1234"
+          aria-label={ariaLabel}
         />
         {validationIcon}
       </div>
       {showValidation && validationMessage ? (
         <p className={`text-[10px] font-semibold ${validationTextClass}`}>{validationMessage}</p>
-      ) : null}
+      ) : (
+        birthHint
+      )}
     </div>
   );
 }

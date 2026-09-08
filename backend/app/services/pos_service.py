@@ -818,6 +818,7 @@ async def _resolve_customer(session: AsyncSession, payload: PosSessionCreate) ->
                 identity_doc_number=identity_doc_number,
                 identity_doc_country=payload.customer_new.identity_doc_country,
                 identity_photo_refs=payload.customer_new.identity_photo_refs,
+                confirm_cpr_conflict=payload.customer_new.confirm_cpr_conflict,
             )
         except ValidationError as exc:
             first_error = exc.errors()[0] if exc.errors() else None

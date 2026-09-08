@@ -13,6 +13,32 @@ export function normalizeCpr(value: string | null | undefined): string {
   return value.replace(/\D/g, '');
 }
 
+// R1-CPR: yazma yolu 6|10 hane kabul eder — backend'deki classify_cpr ile
+// aynı anlambilim (EMPTY/BIRTH/FULL/INVALID). BIRTH yalnız doğum bölümü
+// (DDMMYY) demek: kayıt kısmi saklanır, tamamlanmak üzere "??????" maskesi
+// taşır.
+export type CprClass = 'empty' | 'birth' | 'full' | 'invalid';
+
+export function classifyCpr(value: string | null | undefined): CprClass {
+  const digits = normalizeCpr(value);
+  if (!digits) return 'empty';
+  if (digits.length === 10) return 'full';
+  if (
+    digits.length === 6 &&
+    Number(digits.slice(0, 2)) >= 1 && Number(digits.slice(0, 2)) <= 31 &&
+    Number(digits.slice(2, 4)) >= 1 && Number(digits.slice(2, 4)) <= 12
+  ) {
+    return 'birth';
+  }
+  return 'invalid';
+}
+
+// Form kilitleri için tek kapı: boş, 6 (yalnız doğum tarihi) veya 10 hane.
+export function isAcceptableCprLength(value: string | null | undefined): boolean {
+  const kind = classifyCpr(value);
+  return kind === 'empty' || kind === 'birth' || kind === 'full';
+}
+
 function decodeBirthdate(digits10: string): Date | null {
   if (digits10.length !== 10) return null;
   const dd = Number(digits10.slice(0, 2));
