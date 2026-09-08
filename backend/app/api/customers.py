@@ -171,6 +171,32 @@ def _empty_document_product_meta() -> dict[str, object]:
     }
 
 
+def _customer_document_sequence_subquery(customer_id: UUID):
+    """Müşteriye bağlı belge sequence'larının TEK kaynağı.
+
+    İki kaynak UNION ile (tekrarsız) birleştirilir:
+    - işlem-bağlı: Transaction.pos_document_sequence_no üzerinden,
+    - oturum-bağlı: PosSession.customer_id üzerinden (işlemi olmayan belgeler —
+      örn. onaylanmış ama Transaction kaydı oluşmamış oturumlar).
+    Belge listesi (get_customer_history) ve belge sayımı (get_customer_workspace)
+    aynı alt sorguyu kullanır; böylece "Belgeler (N)" sayımı ile liste uzunluğu
+    hiçbir zaman ayrışmaz.
+    """
+    transaction_sequences = (
+        select(Transaction.pos_document_sequence_no.label("sequence_no"))
+        .where(
+            Transaction.pos_document_sequence_no.is_not(None),
+            Transaction.customer_id == customer_id,
+        )
+    )
+    session_sequences = (
+        select(PosDocument.sequence_no.label("sequence_no"))
+        .join(PosSession, PosSession.id == PosDocument.pos_session_id)
+        .where(PosSession.customer_id == customer_id)
+    )
+    return transaction_sequences.union(session_sequences).subquery()
+
+
 async def _delete_mock_customers(db: AsyncSession) -> int:
     rows = await db.scalars(select(User).where(User.role == RoleEnum.CUSTOMER))
     candidates = [user for user in rows.all() if _is_mock_customer(user)]
@@ -528,6 +554,15 @@ async def get_customer_history(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_admin),
 ) -> list[PosDocumentListItemOut]:
+    """Müşterinin belge geçmişi (AFG + fatura).
+
+    Davranış: belge kümesi artık _customer_document_sequence_subquery ile hem
+    işlem-bağlı hem oturum-bağlı (PosSession.customer_id) belgeleri kapsar —
+    öncesinde yalnız Transaction.customer_id eşleşen INNER JOIN üzerinden gelen
+    belgeler listeleniyordu ve oturum-bağlı belgeler listede görünmüyordu
+    (sayım ile liste ayrışıyordu). Transaction artık OUTER JOIN'dir; işlemi
+    olmayan belgeler oturum durumu ile döner.
+    """
     customer = await db.get(User, customer_id)
     if not customer or customer.role != RoleEnum.CUSTOMER:
         from fastapi import HTTPException
@@ -544,6 +579,7 @@ async def get_customer_history(
         .group_by(Transaction.pos_document_sequence_no)
         .subquery()
     )
+    document_sequences = _customer_document_sequence_subquery(customer_id)
 
     stmt = (
         select(
@@ -553,9 +589,10 @@ async def get_customer_history(
             func.coalesce(line_count_subquery.c.line_count, 0),
         )
         .join(PosSession, PosSession.id == PosDocument.pos_session_id)
-        .join(Transaction, Transaction.pos_document_sequence_no == PosDocument.sequence_no)
+        # OUTER JOIN: işlemi olmayan oturum-bağlı belgeler de listede kalmalı.
+        .outerjoin(Transaction, Transaction.pos_document_sequence_no == PosDocument.sequence_no)
         .outerjoin(line_count_subquery, line_count_subquery.c.sequence_no == PosDocument.sequence_no)
-        .where(Transaction.customer_id == customer_id)
+        .join(document_sequences, document_sequences.c.sequence_no == PosDocument.sequence_no)
         .order_by(PosDocument.issued_at.desc(), PosDocument.sequence_no.desc())
         .limit(limit)
     )
@@ -622,6 +659,7 @@ async def get_customer_history(
             currency_code=document.currency_code,
             gross_amount_dkk=document.gross_amount_dkk,
             net_amount_dkk=document.net_amount_dkk,
+            vat_rate_percent=document.vat_rate_percent,
             vat_amount_dkk=document.vat_amount_dkk,
             line_count=int(line_count or 0),
             total_weight_grams=Decimal(related_products.get(document.sequence_no, {}).get("total_weight_grams", 0) or 0),
@@ -721,7 +759,9 @@ async def get_customer_workspace(customer_id: UUID, db: AsyncSession = Depends(g
     sale_count, sale_amount = (await db.execute(select(
         func.count(Product.id), func.coalesce(func.sum(Product.sale_price_dkk), Decimal("0"))
     ).where(Product.buyer_customer_id == customer_id, visible))).one()
-    document_count = await db.scalar(select(func.count(PosDocument.sequence_no)).join(PosSession, PosSession.id == PosDocument.pos_session_id).where(PosSession.customer_id == customer_id))
+    # Belgeler: geçmiş listesiyle AYNI kümeden sayılır (işlem-bağlı + oturum-bağlı,
+    # tekrarsız) — aksi halde "Belgeler (0)" iken liste dolu çıkabiliyordu.
+    document_count = await db.scalar(select(func.count()).select_from(_customer_document_sequence_subquery(customer_id)))
     note_count = await db.scalar(select(func.count(CustomerNote.id)).where(CustomerNote.customer_id == customer_id, CustomerNote.deleted_at.is_(None)))
     last_purchase = await db.scalar(select(func.max(Product.purchase_date)).where(Product.seller_customer_id == customer_id, visible))
     last_sale = await db.scalar(select(func.max(Product.sale_date)).where(Product.buyer_customer_id == customer_id, visible))
