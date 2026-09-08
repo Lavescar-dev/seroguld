@@ -153,7 +153,8 @@ function renderWooState(initialEntry: string) {
   return renderHook(() => useWooMakeState(), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <ConfirmProvider>
-        <Wrapper initialEntry={initialEntry}>{children}</Wrapper>
+        {/* initialEntry Wrapper'a DEĞİL, closure'daki MemoryRouter'a ait. */}
+        <Wrapper>{children}</Wrapper>
       </ConfirmProvider>
     ),
   });
