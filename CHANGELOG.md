@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.36] — 2026-09-08
 
 ### Düzeltildi (Excel'de aç — saha raporu: hiçbir şey olmuyor)
 
