@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/api';
 import { labelMetalType, labelProductType } from '@/lib/format';
 import { WooPhotoThumb } from '@/make/woocommerce/WooPhotoThumb';
+import { photoCardDragProps, usePhotoReorder } from '@/make/woocommerce/photoReorder';
 import {
   type Dispatch,
   type FormEvent,
@@ -759,7 +760,6 @@ function ProductPhotoSection({
   const [dragActive, setDragActive] = useState(false);
   // R1-36: kart sürükle-sırala — bırakınca sıra kalıcılaşır, ilk görsel Primær.
   const queryClient = useQueryClient();
-  const [dragPhotoId, setDragPhotoId] = useState<string | null>(null);
   async function commitOrder(orderedIds: string[]) {
     try {
       await apiRequest(`/api/products/${product.id}/photos/order`, {
@@ -774,16 +774,17 @@ function ProductPhotoSection({
       // sıralama kalıcılaşamadıysa liste yenilenince eski sıraya döner
     }
   }
-  function handlePhotoDrop(targetId: string) {
-    if (!dragPhotoId || dragPhotoId === targetId) return;
-    const ids = (product.photos || []).map((item) => String(item.id || item.url));
-    const from = ids.indexOf(dragPhotoId);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
-    void commitOrder(ids.filter((id) => (product.photos || []).some((item) => String(item.id) === id)));
-    setDragPhotoId(null);
-  }
+  // R1-36: kart sürükle-sırala — ortak photoReorder yardımcısı üzerinden;
+  // yalnız gerçek id'li fotoğraflar sıralanabilir (id'sizler sabit durur).
+  const photoReorder = usePhotoReorder({
+    ids: useMemo(
+      () => (product.photos || []).map((item) => item.id).filter((id): id is string => Boolean(id)),
+      [product.photos],
+    ),
+    onCommit: (orderedIds) => {
+      void commitOrder(orderedIds);
+    },
+  });
   const attachedUrls = (product.photos || []).map((photo) => photo.url);
 
   return (
@@ -840,14 +841,13 @@ function ProductPhotoSection({
       >
         {product.photos.length > 0 ? (
           <div className="grid grid-cols-3 gap-2">
-            {product.photos.slice(0, 9).map((photo) => (
+            {product.photos.slice(0, 9).map((photo) => {
+              const drag = photoCardDragProps(photoReorder, photo.id);
+              return (
               <div
                 key={photo.id || photo.url}
-                draggable={Boolean(photo.id)}
-                onDragStart={() => setDragPhotoId(String(photo.id || photo.url))}
-                onDragOver={(event) => { if (dragPhotoId) event.preventDefault(); }}
-                onDrop={(event) => { event.preventDefault(); event.stopPropagation(); handlePhotoDrop(String(photo.id || photo.url)); }}
-                className={`group relative cursor-grab overflow-hidden border bg-white ${dragPhotoId === String(photo.id || photo.url) ? 'border-sg-accent opacity-60' : 'border-brand-200'}`}
+                {...drag}
+                className={`group relative cursor-grab overflow-hidden border bg-white ${drag.isDragging ? 'border-sg-accent opacity-60' : 'border-brand-200'}`}
                 title="Sürükleyerek sıralayın — ilk görsel Primær olur"
               >
                 <WooPhotoThumb photo={photo} alt={photo.filename || product.display_name || 'Ürün'} className="h-24 w-full object-cover" />
@@ -863,7 +863,8 @@ function ProductPhotoSection({
                   </button>
                 ) : null}
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className={`border border-dashed px-4 py-5 text-xs ${dragActive ? 'border-sg-accent text-sg-accent-dark' : 'border-brand-300 bg-white text-brand-500'}`}>

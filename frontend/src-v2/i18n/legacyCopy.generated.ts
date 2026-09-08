@@ -615,6 +615,10 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   "Rapor yükleniyor…": { en: "Loading report…", da: "Indlæser rapport…" },
   "Rapor alınamadı:": { en: "Could not fetch report:", da: "Rapporten kunne ikke hentes:" },
   "Tüm kayıtları indir (XLSX)": { en: "Download all records (XLSX)", da: "Download alle poster (XLSX)" },
+  // 0.3.38 — Woo foto sürükle-sırala (R1-36 v2)
+  "Sürükleyerek sıralayın — ilk görsel Birincil olur": { en: "Drag to reorder — the first image becomes primary", da: "Træk for at sortere — det første billede bliver primær" },
+  "Sürükleyerek sırayı değiştirin — ilk görsel Birincil olur": { en: "Drag to change the order — the first image becomes primary", da: "Træk for at ændre rækkefølgen — det første billede bliver primær" },
+  "Fotoğraf sırası kaydedilemedi": { en: "Photo order could not be saved", da: "Billederækkefølgen kunne ikke gemmes" },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {
