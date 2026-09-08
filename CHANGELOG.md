@@ -1,5 +1,87 @@
 # Changelog
 
+## [0.3.38] — 2026-09-08
+
+### WooCommerce foto sürükle-sıralama — 4 yüzeyde tek etkileşim
+
+- **Tutup taşıma birincil etkileşim oldu:** fotoğraf kartlarını sürükleyip
+  bırakarak sıralama artık 4 Woo yüzeyinde birden çalışır — modern
+  PhotosTab, klasik ürün detayı, klasik sihirbaz adım 4, modern sihirbaz
+  adım 4 (5. yüzey: DepolamaPage aynı ortak yardımcıya geçirildi,
+  davranış değişmedi). İlk görsel Birincil olur; yayında `images[0]`,
+  AI betimlemesi aynı sıradan beslenir.
+- **Ortak yardımcı:** `photoReorder.ts` — `moveId` + `usePhotoReorder`
+  + `photoCardDragProps` (kart üstü drop'un dropzone'a köpürmesi
+  `stopPropagation` ile kesilir; kart düşürmek dosya yüklemez).
+- **Backend ucu:** `PUT /api/v2/woocommerce/products/{id}/photos/order`
+  (mevcut legacy reorder mantığına v2 köprüsü; optimistik güncelleme
+  yok — invalidate + refetch). Sıralama kalıcı yüzeylerde anında PUT,
+  sihirbazlarda yerel dizide tutulur (ağ çağrısı yok, kayıtta korunur).
+- Kalıcı yüzeyde hata: "Fotoğraf sırası kaydedilemedi" toast'ı; i18n
+  kataloğu genişletildi.
+
+### CPR 6/10 düzeltmesi — "6 haneli girilemiyor" rezilliği bitti
+
+- **6 hane = yalnız doğum tarihi, meşru giriş:** `classify_cpr`
+  (EMPTY/BIRTH/FULL/INVALID) ile 6 haneli CPR (dd 01-31, mm 01-12)
+  kabul edilir; 7-9 hane 422 "6 veya 10 haneli olmalı" verir. POS
+  hızlı-kayıt dahil tüm müşteri oluşturma yüzeylerinde geçerli.
+- **Doğum-bölümü hash'i:** `cpr_birth_hash` kolonu (ilk 6 hanenin
+  `"cpr-birth:"` domain-önekli HMAC'i; tam-CPR hash'iyle asla çakışmaz)
+  + `cpr_is_partial` bayrağı. Migration 0042; backfill migration İÇİNDE
+  DEĞİL — idempotent CLI aracı 200'lük batch'lerle doldurur, bozuk
+  satırı atlar (decrypt edilemeyen kayıt asla patlamaz).
+- **Yumuşak dup:** aynı doğum bölümünde ikinci kayıt → 409
+  `cpr_birth_conflict` + aday listesi (ad + maskeli CPR); operatör
+  onayı (`confirm_cpr_conflict`) ile geçilir, onay kayda yazılmaz.
+  Tam-CPR çakışması eskisi gibi kesin 409 — onayla aşılamaz.
+- **Arama/eşleme canlandı:** 6 haneli arama `cpr_birth_hash` üzerinden
+  bulur, 10 hane hash OR birth_hash, 4 hane last4; customer-match
+  `match_kind: "birth"` döner, frontend normalize whitelist'i taşıyor.
+- **Form tarafı:** `CprInput` müşteriler sayfasına bağlandı (kayıt
+  butonu 6/10 hanede açılır — geç 422 biterdi); alış klasik+modern
+  yüzeylerde 6 hane kabulü + "Yalnız doğum tarihi girildi — kalan 4
+  hane sonradan tamamlanır" ipucu; 409 soft-dup diyalog akışı
+  (`cprConflict.ts`) alış ve müşteri kayıt mutasyonlarına sarıldı.
+
+### Kimlik OCR — üç katmanlı mimari (hardcore CPR rezilliğinin sonu)
+
+- **Tier 0 — Barkod (yeni, offline, maliyet 0):** sarı sundhedskorttaki
+  Code 128 barkodu zxing-cpp ile decode edilir; CPR **check-character
+  doğrulamalı** gelir — checksum'lı kaynak. Görüntü bellek içi işlenir,
+  diske ASLA yazılmaz. VDS'te ölçüm: 0,5 ms/görüntü.
+- **Tier 1 — Doğrulama katmanı (lokal):** `identity_validate.py` —
+  Danca CPR soft doğrulama (mod-11), TCKN (mod 10/11 + O/0-I/1-B/8
+  OCR onarımı), kørekort no biçimi, doğum tarihi-CPR tutarlılığı,
+  æøå/ğış transliterasyonu. Güven eşiği altı veya checksum bozuk →
+  `needs_review` (sessiz yazım yok).
+- **Tier 2 — Vision-LLM (flag'li, opt-in):** `POST
+  /api/v2/alis/identity/extract` — strict json_schema ile serbest metin
+  yasak; barkod CPR'ı VLM değerini ezer, doğum tarihi birleşim sonrası
+  FİNAL CPR'a göre yeniden değerlendirilir. `identity_extract_enabled`
+  default KAPALI; model `identity_extract_model` (min-max: gpt-5-mini
+  hedefi, benchmark onaysız canlıya alınmaz); base_url boşsa
+  openai_base_url devralır (AB-residency; Çin ucuna kimlik verisi ASLA).
+  Maliyet `AIUsageLog`'a (product_id=None) yazılır.
+- **Frontend motor seçimi:** taramada önce yerel regex zinciri (SİLİNMEZ,
+  fallback); VLM flag'i açıksa arka planda çıkarım → VLM birincil +
+  regex eksik-doldurucu birleşir; VLM hatası yerel sonucu EZMEZ, görünür
+  "kontrol edin" uyarısı üretir. `plausibleCprSix` 6-hane kırpması yalnız
+  regex dalında; VLM/barkod CPR'ı tam 10 hane taşır (R1-C doğrultusu).
+- **Benchmark:** `backend/tests/ocr_benchmark.py` (pytest toplamaz;
+  `--engine barcode|vlm`, canlı VLM yalnız `SERO_OCR_BENCH_LIVE=1` ile).
+  Barkod kanalı sentetik roundtrip 20/20. PaddleOCR-VL gibi lokal modeller
+  bu ölçüm hattına sonra eklenebilir (bkz. DPIA notu).
+- **GDPR notu:** `docs/IDENTITY_VLM_DPIA_NOTE_TR.md` — görüntü saklanmaz,
+  AB ucu + Art. 28 DPA, hvidvaskloven/kontantforbud bağlam notu, risk
+  tablosu.
+
+### Testler
+
+- Backend: +65 test (CPR 27+backfill 4+uçlar; kimlik 29+uç 4, toplam 692
+  passed). Frontend: +22 test (photoReorder + cprConflict + classifyCpr +
+  identityScan VLM eşleme/motor seçimi); tsc/lint/i18n kapıları yeşil.
+
 ## [0.3.37] — 2026-09-08
 
 ### Piyasa oranları (WP) — tam otomatik + operatör kontrolü

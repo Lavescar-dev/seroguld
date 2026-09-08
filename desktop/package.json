@@ -1,6 +1,6 @@
 {
   "name": "seroguld-crm-desktop",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "private": true,
   "description": "Sero Guld CRM desktop shell (Tauri)",
   "scripts": {
