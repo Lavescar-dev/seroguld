@@ -1585,6 +1585,10 @@ async def _execute_pseudonymize(session: AsyncSession, customer: User) -> dict[s
     customer.address_encrypted = None
     customer.cpr_number_encrypted = None
     customer.cpr_last4 = None
+    # R1-CPR: doğum-bölümü hash'i de kişisel veri türevidir — pseudonymization
+    # kapsamında temizlenmeli; cpr_is_partial bayrağı resetlenir.
+    customer.cpr_birth_hash = None
+    customer.cpr_is_partial = False
     customer.gdpr_status = "pseudonymized"
     customer.gdpr_pseudonymized_at = utc_now()
     if identity is not None:

@@ -51,6 +51,9 @@ class CustomerMatchItemOut(AppBaseModel):
     cpr_number_masked: str | None = None
     identity_doc_number_masked: str | None = None
     matched_by: str | None = None
+    # R1-CPR: 'birth' — yalnız doğum bölümü (ilk 6 hane) eşleşmesi; POS
+    # uyarısında "tam CPR değil" bağlamını ayırt eder.
+    match_kind: Literal["cpr", "birth", "identity_doc_number"] | None = None
 
 
 class CustomerMatchOut(AppBaseModel):

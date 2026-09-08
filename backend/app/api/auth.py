@@ -26,7 +26,12 @@ from app.schemas.auth import (
     UserOut,
 )
 from app.schemas.customer import CustomerCreate
-from app.services.customer_service import create_customer
+from app.services.customer_service import (
+    CprClass,
+    classify_cpr,
+    create_customer,
+    cpr_storage_fields,
+)
 from app.utils.cpr import normalize_cpr
 from app.utils.security import (
     create_access_token,
@@ -35,7 +40,6 @@ from app.utils.security import (
     decrypt_field,
     encrypt_field,
     get_password_hash,
-    hash_cpr,
     mask_cpr,
     verify_password,
 )
@@ -356,7 +360,15 @@ async def register(
         await db.refresh(user)
         return _to_user_out(user)
 
+    # R1-CPR: non-customer roles share the 6|10-digit CPR semantics — a bare
+    # birth-date section stores as a partial record instead of hitting the
+    # generic 422 that full-CPR-only writers produced.
     cpr = normalize_cpr(payload.cpr_number) or None
+    if classify_cpr(cpr) == CprClass.INVALID:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="CPR 6 (yalnız doğum tarihi) veya 10 haneli olmalı.",
+        )
     user = User(
         email=payload.email,
         password_hash=get_password_hash(payload.password),
@@ -365,9 +377,7 @@ async def register(
         phone=payload.phone,
         address_encrypted=encrypt_field(payload.address) if payload.address else None,
         city=(payload.city or "").strip() or None,
-        cpr_number_encrypted=encrypt_field(cpr) if cpr else None,
-        cpr_hash=hash_cpr(cpr),
-        cpr_last4=("".join(ch for ch in cpr if ch.isdigit())[-4:] if cpr else None),
+        **cpr_storage_fields(cpr),
         is_active=True,
     )
     db.add(user)

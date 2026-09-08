@@ -83,7 +83,12 @@ from app.schemas.pos import (
     PosWorkspaceSummaryOut,
 )
 from app.schemas.product import ProductCreate, ProductOut, ProductStatusUpdate
-from app.services.customer_service import create_customer, update_customer
+from app.services.customer_service import (
+    CprClass,
+    classify_cpr,
+    create_customer,
+    update_customer,
+)
 from app.services.gold_price import GoldPriceService
 from app.services.pos_document_service import (
     customer_party_label as _customer_party_label,
@@ -786,10 +791,11 @@ async def _resolve_customer(session: AsyncSession, payload: PosSessionCreate) ->
             )
         if not customer_cpr:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Yeni müşteri için CPR zorunlu")
-        if len(cpr_digits) != 10:
+        # R1-CPR: yalnız doğum tarihi bölümü (6 hane) de kabul edilir.
+        if classify_cpr(cpr_digits) == CprClass.INVALID:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Yeni müşteri CPR formatı geçersiz (10 rakam).",
+                detail="Yeni müşteri CPR formatı geçersiz (6 veya 10 rakam).",
             )
         if not identity_doc_number:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Yeni müşteri için kimlik belge numarası zorunlu")

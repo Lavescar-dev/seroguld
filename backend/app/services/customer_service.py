@@ -6,10 +6,12 @@ import uuid
 from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
+from enum import Enum
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.customer_activity import CustomerActivityEvent
@@ -32,10 +34,90 @@ from app.utils.security import (
     encrypt_field,
     get_password_hash,
     hash_cpr,
+    hash_cpr_birth,
     hash_sensitive_value,
     mask_cpr,
     mask_last4,
 )
+
+
+class CprClass(str, Enum):
+    """R1-CPR — CPR girdisinin yazma yolundaki sınıfı."""
+
+    EMPTY = "empty"
+    BIRTH = "birth"
+    FULL = "full"
+    INVALID = "invalid"
+
+
+def classify_cpr(value: str | None) -> CprClass:
+    """CPR'ı 6/10 anlambilmine ayırır.
+
+    EMPTY: boş; BIRTH: 6 hane ve geçerli doğum bölümü (gün 01-31, ay 01-12);
+    FULL: 10 hane; INVALID: diğer her şey (7-9 hane, harf, geçersiz ay/gün) —
+    yazma yolunda 422 döner.
+    """
+    digits = _digits_only(value)
+    if not digits:
+        return CprClass.EMPTY
+    if len(digits) == 10:
+        return CprClass.FULL
+    if len(digits) == 6 and 1 <= int(digits[0:2]) <= 31 and 1 <= int(digits[2:4]) <= 12:
+        return CprClass.BIRTH
+    return CprClass.INVALID
+
+
+def cpr_storage_fields(cpr: str | None) -> dict[str, object]:
+    """CPR'ın kolonlara yazılacak halini tek yerde hesaplar.
+
+    FULL: tüm kolonlar dolu. BIRTH: tam-CPR hash'i, last4 ve şifreli değer
+    YAZILMAZ — yalnız ``cpr_birth_hash`` + ``cpr_is_partial`` (6 haneyi
+    tam-hash'e yazmak unique partial index'in arama alanını bozar). EMPTY/
+    INVALID: hepsi temizlenir.
+    """
+    cpr_class = classify_cpr(cpr)
+    if cpr_class is CprClass.FULL:
+        return {
+            "cpr_number_encrypted": encrypt_field(cpr),
+            "cpr_hash": hash_cpr(cpr),
+            "cpr_last4": cpr[-4:],
+            "cpr_birth_hash": hash_cpr_birth(cpr),
+            "cpr_is_partial": False,
+        }
+    if cpr_class is CprClass.BIRTH:
+        return {
+            "cpr_number_encrypted": None,
+            "cpr_hash": None,
+            "cpr_last4": None,
+            "cpr_birth_hash": hash_cpr_birth(cpr),
+            "cpr_is_partial": True,
+        }
+    return {
+        "cpr_number_encrypted": None,
+        "cpr_hash": None,
+        "cpr_last4": None,
+        "cpr_birth_hash": None,
+        "cpr_is_partial": False,
+    }
+
+
+def cpr_search_predicates(digits: str) -> list[ColumnElement[bool]]:
+    """Arama çubuğunun CPR hane sayısına göre doğru kolonda araması.
+
+    R1-CPR: 10 hane → tam-CPR hash VEYA doğum-bölümü hash'i; 6 hane →
+    yalnız doğum-bölümü hash'i; 4 hane → last4. Diğer uzunluklarda boş
+    döner (serbest metin araması zaten ilike ile çalışır).
+    """
+    if len(digits) == 10:
+        return [
+            User.cpr_hash == hash_cpr(digits),
+            User.cpr_birth_hash == hash_cpr_birth(digits),
+        ]
+    if len(digits) == 6:
+        return [User.cpr_birth_hash == hash_cpr_birth(digits)]
+    if len(digits) == 4:
+        return [User.cpr_last4 == digits]
+    return []
 
 
 def _normalize_generated_email() -> str:
@@ -92,11 +174,11 @@ def _validate_customer_identity_inputs(
             detail="Telefon formatı geçersiz (7-15 rakam).",
         )
 
-    cpr_digits = _normalize_cpr(cpr)
-    if cpr is not None and cpr.strip() and (cpr_digits is None or len(cpr_digits) != 10):
+    cpr_class = classify_cpr(cpr)
+    if cpr_class is CprClass.INVALID:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="CPR formatı geçersiz (10 rakam).",
+            detail="CPR 6 (yalnız doğum tarihi) veya 10 haneli olmalı.",
         )
 
     if identity_doc_number is not None and identity_doc_number.strip() and len(identity_doc_number.strip()) < 4:
@@ -112,7 +194,11 @@ def _masked_cpr_for_list(user: User) -> str | None:
     M2: liste/arama yanıtları artık plaintext CPR taşımıyor; maske çoğu
     satırda hiç decrypt yapmadan üretilir (yalnız cpr_last4'süz eski satırda
     bir kez decrypt edilir).
+    R1-CPR: kısmi (yalnız 6 hane) kayıtta gerçek last4 yoktur; "??????"
+    yer tutucusu operatöre tam CPR'ın sonradan tamamlanması gerektiğini söyler.
     """
+    if user.cpr_is_partial:
+        return "??????"
     if not user.cpr_number_encrypted:
         return None
     if user.cpr_last4:
@@ -128,7 +214,12 @@ def _customer_out(
 ) -> CustomerOut:
     if include_sensitive:
         cpr_plain = decrypt_field(user.cpr_number_encrypted)
-        cpr_masked = mask_cpr(cpr_plain)
+        # Kısmi kayıtta plaintext 6 hane dışarı dönmez; maske "??????" kalır.
+        if user.cpr_is_partial:
+            cpr_plain = None
+            cpr_masked = "??????"
+        else:
+            cpr_masked = mask_cpr(cpr_plain)
     else:
         # Liste/arama yüzeyi: plaintext dönmez (GDPR minimizasyonu) ve CPR
         # decrypt maliyeti de düşer; maske yine dolu gelir.
@@ -150,6 +241,7 @@ def _customer_out(
         city=user.city,
         cpr_number=(cpr_plain if include_sensitive else None),
         cpr_number_masked=cpr_masked,
+        cpr_is_partial=user.cpr_is_partial,
         identity_doc_type=(identity.identity_doc_type if identity else None),
         identity_doc_number=(identity_number if include_sensitive else None),
         identity_doc_number_masked=mask_last4(identity_number),
@@ -246,15 +338,58 @@ def _identity_conflict_detail(*, has_cpr: bool, has_identity_doc: bool) -> str:
     return "Bu kimlik belge numarasıyla kayıtlı bir müşteri zaten var."
 
 
+async def _birth_conflict_matches(
+    session: AsyncSession,
+    *,
+    birth_hash: str,
+    exclude_user_id=None,
+    limit: int = 5,
+) -> list[dict[str, str]]:
+    """Doğum-bölümü çakışması için operatör diyalogu bağlamı (id/ad/maske)."""
+    statement = (
+        select(User)
+        .where(
+            User.role == RoleEnum.CUSTOMER,
+            User.cpr_birth_hash == birth_hash,
+        )
+        .order_by(User.created_at.asc())
+        .limit(limit)
+    )
+    if exclude_user_id is not None:
+        statement = statement.where(User.id != exclude_user_id)
+    rows = (await session.scalars(statement)).all()
+    return [
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "cpr_number_masked": _masked_cpr_for_list(row) or "",
+        }
+        for row in rows
+    ]
+
+
 async def _ensure_identity_values_available(
     session: AsyncSession,
     *,
     cpr: str | None,
     identity_doc_number: str | None,
     exclude_user_id=None,
+    confirm_cpr_conflict: bool = False,
 ) -> None:
-    cpr_hash = hash_cpr(cpr)
+    """Kimlik çakışma kapısı: tam dup sert 409, doğum-bölümü dup YUMUŞAK 409.
+
+    R1-CPR: 6 haneli kayıt aynı doğum bölümüne sahip başka müşteri varsa
+    409 döner; gövde ``{code: 'cpr_birth_conflict', matches: [...]}`` taşır ve
+    ``confirm_cpr_conflict=true`` ile geçilir. Tam-CPR (10 hane) çakışması
+    ise onayla geçilmez — gerçek dup'tır.
+    """
+    cpr_class = classify_cpr(cpr)
+    # Tam-hash dup yalnız 10 haneli girdide anlamlı; 6 haneyi tam-hash
+    # alanına karşı test etmek false positive üretir.
+    cpr_hash = hash_cpr(cpr) if cpr_class is CprClass.FULL else None
+    birth_hash = hash_cpr_birth(cpr) if cpr_class in (CprClass.FULL, CprClass.BIRTH) else None
     doc_hash = hash_sensitive_value(identity_doc_number) if identity_doc_number else None
+
     conflicts = await _identity_conflicting_customer_ids(
         session,
         cpr_hash=cpr_hash,
@@ -264,8 +399,20 @@ async def _ensure_identity_values_available(
     if conflicts:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_identity_conflict_detail(has_cpr=bool(cpr), has_identity_doc=bool(identity_doc_number)),
+            detail=_identity_conflict_detail(has_cpr=bool(cpr_hash), has_identity_doc=bool(identity_doc_number)),
         )
+
+    if birth_hash and not confirm_cpr_conflict:
+        matches = await _birth_conflict_matches(session, birth_hash=birth_hash, exclude_user_id=exclude_user_id)
+        if matches:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "cpr_birth_conflict",
+                    "message": "Aynı doğum tarihi bölümüne sahip başka bir müşteri kaydı var.",
+                    "matches": matches,
+                },
+            )
 
 
 async def customer_identity_match(
@@ -274,18 +421,27 @@ async def customer_identity_match(
     cpr_number: str | None,
     identity_doc_number: str | None,
 ) -> CustomerMatchOut:
-    """Return exact hash matches without disclosing raw identity values."""
+    """Return exact hash matches without disclosing raw identity values.
+
+    R1-CPR: 6 haneli girdi ``cpr_birth_hash`` ile eşlenir ve eşleşme
+    ``match_kind='birth'`` ile işaretlenir — POS canlı dup uyarısı kısmi
+    CPR'da da çalışır.
+    """
 
     cpr = _normalize_cpr(cpr_number)
-    cpr_hash = hash_cpr(cpr) if cpr and len(cpr) == 10 else None
+    cpr_class = classify_cpr(cpr)
+    cpr_hash = hash_cpr(cpr) if cpr_class is CprClass.FULL else None
+    birth_hash = hash_cpr_birth(cpr) if cpr_class in (CprClass.FULL, CprClass.BIRTH) else None
     doc_number = (identity_doc_number or "").strip() or None
     doc_hash = hash_sensitive_value(doc_number) if doc_number and len(doc_number) >= 4 else None
-    if not cpr_hash and not doc_hash:
+    if not cpr_hash and not birth_hash and not doc_hash:
         return CustomerMatchOut(status="none")
 
     conditions = []
     if cpr_hash:
         conditions.append(User.cpr_hash == cpr_hash)
+    if birth_hash:
+        conditions.append(User.cpr_birth_hash == birth_hash)
     if doc_hash:
         conditions.append(CustomerIdentityDocument.identity_doc_number_hash == doc_hash)
     rows = (
@@ -302,19 +458,30 @@ async def customer_identity_match(
         matched_fields: list[str] = []
         if cpr_hash and user.cpr_hash == cpr_hash:
             matched_fields.append("cpr")
+        # Tam-CPR eşleşmesi zaten 'cpr' der; 'birth' yalnız doğum-bölümü
+        # eşleşmesinde ayrı anlamlıdır.
+        if birth_hash and not cpr_hash and user.cpr_birth_hash == birth_hash:
+            matched_fields.append("birth")
         if doc_hash and document and document.identity_doc_number_hash == doc_hash:
             matched_fields.append("identity_doc_number")
         if not matched_fields:
             continue
+        if "cpr" in matched_fields:
+            match_kind = "cpr"
+        elif "birth" in matched_fields:
+            match_kind = "birth"
+        else:
+            match_kind = "identity_doc_number"
         matches.append(
             CustomerMatchItemOut(
                 id=str(user.id),
                 name=user.name,
-                cpr_number_masked=mask_cpr(decrypt_field(user.cpr_number_encrypted)),
+                cpr_number_masked=_masked_cpr_for_list(user),
                 identity_doc_number_masked=mask_last4(
                     decrypt_field(document.identity_doc_number_encrypted) if document else None
                 ),
                 matched_by=", ".join(matched_fields),
+                match_kind=match_kind,
             )
         )
 
@@ -377,6 +544,7 @@ async def create_customer(
         session,
         cpr=cpr,
         identity_doc_number=identity_doc_number,
+        confirm_cpr_conflict=payload.confirm_cpr_conflict,
     )
 
     password = payload.password or secrets.token_urlsafe(12)
@@ -390,6 +558,7 @@ async def create_customer(
                 session,
                 cpr=cpr,
                 identity_doc_number=identity_doc_number,
+                confirm_cpr_conflict=payload.confirm_cpr_conflict,
             )
             # M2: bcrypt_sha256 yüzlerce ms sürebilir — async yolda event
             # loop'u kilitlememesi için worker thread'de çalıştırılır. Woo
@@ -405,9 +574,7 @@ async def create_customer(
                 postal_code=postal_code,
                 city=city,
                 address_encrypted=encrypt_field(payload.address.strip()) if payload.address else None,
-                cpr_number_encrypted=encrypt_field(cpr) if cpr else None,
-                cpr_hash=hash_cpr(cpr),
-                cpr_last4=(cpr[-4:] if cpr else None),
+                **cpr_storage_fields(cpr),
                 is_active=True,
             )
             session.add(user)
@@ -436,6 +603,7 @@ async def create_customer(
             session,
             cpr=cpr,
             identity_doc_number=identity_doc_number,
+            confirm_cpr_conflict=payload.confirm_cpr_conflict,
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -468,6 +636,7 @@ async def update_customer(session: AsyncSession, user: User, payload: CustomerUp
             cpr=submitted_cpr,
             identity_doc_number=submitted_identity_doc if "identity_doc_number" in fields else None,
             exclude_user_id=user_id,
+            confirm_cpr_conflict=payload.confirm_cpr_conflict,
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -509,10 +678,12 @@ async def _apply_customer_update(session: AsyncSession, user: User, payload: Cus
             cpr=cpr,
             identity_doc_number=None,
             exclude_user_id=user.id,
+            confirm_cpr_conflict=payload.confirm_cpr_conflict,
         )
-        user.cpr_number_encrypted = encrypt_field(cpr) if cpr else None
-        user.cpr_hash = hash_cpr(cpr)
-        user.cpr_last4 = cpr[-4:] if cpr else None
+        # R1-CPR: kısmi (6 hane) girdide cpr_hash/last4/şifreli değer
+        # temizlenir, yalnız birth_hash + cpr_is_partial=True yazılır.
+        for column, value in cpr_storage_fields(cpr).items():
+            setattr(user, column, value)
     if "is_active" in fields and payload.is_active is not None:
         user.is_active = payload.is_active
 

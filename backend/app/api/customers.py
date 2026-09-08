@@ -50,6 +50,7 @@ from app.schemas.customer import (
 )
 from app.schemas.pos import PosDocumentListItemOut
 from app.services.customer_service import (
+    cpr_search_predicates,
     create_customer,
     get_customer_detail,
     to_customer_out,
@@ -60,7 +61,7 @@ from app.services.customer_statement_renderer import render_customer_statement_p
 from app.services.pos_document_service import document_title_tr, format_document_number
 from app.services.pos_workspace_state import _parse_workspace_note_payload, _workspace_calculators_from_note
 from app.services.woocommerce import WooCommerceService
-from app.utils.security import get_password_hash, hash_cpr, hash_sensitive_value
+from app.utils.security import get_password_hash, hash_sensitive_value
 
 router = APIRouter()
 
@@ -369,6 +370,8 @@ async def search_customers(
 
     digits = "".join(ch for ch in q if ch.isdigit())
     if digits:
+        # R1-CPR: CPR hane sayısına göre doğru kolonda arama (10 → tam hash
+        # veya doğum bölümü; 6 → doğum bölümü; 4 → last4).
         predicates = [
             *status_predicates,
             or_(
@@ -376,7 +379,7 @@ async def search_customers(
                 User.phone.ilike(pattern),
                 User.email.ilike(pattern),
                 User.postal_code.ilike(pattern),
-                User.cpr_hash == hash_cpr(digits),
+                *cpr_search_predicates(digits),
             ),
         ]
     else:

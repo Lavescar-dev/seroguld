@@ -36,7 +36,7 @@ def test_validate_customer_identity_inputs_rejects_invalid_cpr() -> None:
         _validate_customer_identity_inputs(phone="+4522334455", cpr="12345", identity_doc_number="ABCD1234")
     except HTTPException as exc:
         assert exc.status_code == 422
-        assert "CPR formatı geçersiz" in str(exc.detail)
+        assert "CPR 6 (yalnız doğum tarihi) veya 10 haneli olmalı." in str(exc.detail)
     else:
         raise AssertionError("CPR formatı invalid olmalıydı.")
 

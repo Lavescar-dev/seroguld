@@ -17,6 +17,10 @@ class CustomerCreate(AppBaseModel):
     postal_code: str | None = Field(default=None, max_length=20)
     city: str | None = Field(default=None, max_length=120)
     cpr_number: str | None = Field(default=None, max_length=20)
+    # R1-CPR: doğum-bölümü (ilk 6 hane) çakışması 409 cpr_birth_conflict
+    # döndüğünde operatör onayıyla tek seferlik geçiş bayrağı. Kalıcılığa
+    # yazılmaz.
+    confirm_cpr_conflict: bool = False
     identity_doc_type: IdentityDocTypeEnum | None = None
     identity_doc_number: str | None = Field(default=None, max_length=50)
     identity_doc_country: str | None = Field(default=None, max_length=8)
@@ -32,6 +36,8 @@ class CustomerUpdate(AppBaseModel):
     postal_code: str | None = Field(default=None, max_length=20)
     city: str | None = Field(default=None, max_length=120)
     cpr_number: str | None = Field(default=None, max_length=20)
+    # R1-CPR: create ile aynı anlam — doğum-bölümü yumuşak çakışma onayı.
+    confirm_cpr_conflict: bool = False
     identity_doc_type: IdentityDocTypeEnum | None = None
     identity_doc_number: str | None = Field(default=None, max_length=50)
     identity_doc_country: str | None = Field(default=None, max_length=8)
@@ -71,6 +77,9 @@ class CustomerOut(AppBaseModel):
     city: str | None
     cpr_number: str | None
     cpr_number_masked: str | None
+    # R1-CPR: kayıt yalnız doğum bölümüyle (ilk 6 hane) açılmışsa True;
+    # maske "??????" görünür ve tam CPR sonradan tamamlanır.
+    cpr_is_partial: bool = False
     identity_doc_type: IdentityDocTypeEnum | None = None
     identity_doc_number: str | None = None
     identity_doc_number_masked: str | None = None
