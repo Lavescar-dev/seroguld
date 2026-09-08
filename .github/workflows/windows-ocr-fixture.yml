@@ -8,6 +8,10 @@ name: windows-ocr-fixture
 
 on:
   workflow_dispatch:
+  # PAT'te workflow-dispatch izni yok; bu dosyaya dokunan push tetikler.
+  push:
+    branches: [main]
+    paths: ['.github/workflows/windows-ocr-fixture.yml']
 
 permissions:
   contents: read
