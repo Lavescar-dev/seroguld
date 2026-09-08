@@ -1,0 +1,78 @@
+# D1 saha işinin CI karşılığı: GitHub Windows runner'ında da-DK OCR paketi
+# kurup fixture görüntülerini ÜRETİM motoruyla (identity_ocr.ps1) OCR'lar ve
+# raw_ocr_da.json artifact'ı üretir. hp beklenmeden Danca fixture kaydı yapmayı
+# dener; runner Server SKU'su OCR capability'sini desteklemezse dürüstçe kırılır.
+# Elle tetiklenir: gh workflow run windows-ocr-fixture.yml
+
+name: windows-ocr-fixture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  record-danish-fixture:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe and install da-DK OCR capability
+        shell: powershell
+        run: |
+          $name = 'Language.OCR~~~da-DK*'
+          try {
+            $cap = Get-WindowsCapability -Online -Name $name -ErrorAction Stop
+            Write-Host "capability: $($cap.Name) state=$($cap.State)"
+          } catch {
+            Write-Host "Get-WindowsCapability başarısız (Server SKU olabilir): $($_.Exception.Message)"
+          }
+          try {
+            $state = (Get-WindowsCapability -Online -Name $name -ErrorAction Stop).State
+            if ($state -ne 'Installed') {
+              Write-Host "Add-WindowsCapability başlatılıyor..."
+              Add-WindowsCapability -Online -Name "Language.OCR~~~da-DK~0.0.1.0" | Out-Null
+              Write-Host "kurulum sonrası state: $((Get-WindowsCapability -Online -Name $name).State)"
+            }
+          } catch {
+            Write-Host "da-DK capability kurulamadı: $($_.Exception.Message)"
+          }
+
+      - name: List OCR engine languages (WinRT)
+        shell: powershell
+        run: |
+          try {
+            [void][Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime]
+            [void][Windows.Globalization.Language,Windows.Foundation,ContentType=WindowsRuntime]
+            $langs = [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | ForEach-Object { $_.LanguageTag }
+            Write-Host ("available: " + ($langs -join ', '))
+            Write-Host ("profile: " + [Windows.Media.Ocr.OcrEngine]::MaxAvailableResolution)
+            $tryDa = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new('da-DK'))
+            Write-Host ("da-DK engine: " + ($null -ne $tryDa))
+          } catch {
+            Write-Host "WinRT OCR sorgusu başarısız: $($_.Exception.Message)"
+          }
+
+      - name: Record Danish fixture (production harness)
+        id: record
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ocr-fixture-harness.ps1 `
+            -ImageDir backend/tests/fixtures/ocr/images `
+            -OutFile backend/tests/fixtures/ocr/raw_ocr_da.json
+          $payload = Get-Content backend/tests/fixtures/ocr/raw_ocr_da.json -Raw | ConvertFrom-Json
+          $engine = $payload.engine_language
+          Write-Host "engine_language: $engine"
+          if ($engine -notlike 'da*') {
+            Write-Error "Motor Danca değil ($engine) — bu kayıt raw_ocr_da.json OLAMAZ; hp/müşteri makinesi gerekir."
+            exit 3
+          }
+          "engine=$engine" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload Danish fixture artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw_ocr_da
+          path: backend/tests/fixtures/ocr/raw_ocr_da.json
+          if-no-files-found: error
