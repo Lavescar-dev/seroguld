@@ -259,6 +259,8 @@ export interface WooMakeState {
   isSyncing: boolean;
   isUploadingPhotos: boolean;
   isDeletingPhoto: boolean;
+  /** R1-36 v2 — fotoğraf sıralama PUT'u sürüyor mu? */
+  isReorderingPhotos: boolean;
   /** M3 — hangi fotoğraf siliniyor? Tüm kartlarda ortak spinner yerine kart bazlı. */
   deletingPhotoId: string | null;
   isCreatingProduct: boolean;
@@ -274,6 +276,8 @@ export interface WooMakeState {
   syncSale: () => void;
   uploadPhotos: (files: File[]) => void;
   deletePhoto: (photoId: string) => void;
+  /** R1-36 v2 — sürükle-sıralamayı kalıcılaştırır; ids dedup-öncesi gerçek id listesi. */
+  reorderPhotos: (productId: string, photoIds: string[]) => void;
   createProductFromDraft: (draft: NewWooProductDraft) => Promise<ProductOut | null>;
   catalogSearch: string;
   setCatalogSearch: (value: string) => void;
@@ -978,6 +982,19 @@ export function useWooMakeState(): WooMakeState {
     onError: (error) => toast.error('Fotoğraf silinemedi', extractApiMessage(error, 'Sunucu hatası')),
   });
 
+  // R1-36 v2 — sürükle-sırala kalıcılaşması (DepolamaPage deseni).
+  const reorderPhotosMutation = useMutation({
+    mutationFn: ({ productId, photoIds }: { productId: string; photoIds: string[] }) =>
+      apiRequest<ProductOut>(`/api/v2/woocommerce/products/${productId}/photos/order`, {
+        method: 'PUT',
+        body: JSON.stringify({ photo_ids: photoIds }),
+      }),
+    onSuccess: async (product) => {
+      await invalidateProduct(product.id);
+    },
+    onError: (error) => toast.error('Fotoğraf sırası kaydedilemedi', extractApiMessage(error, 'Sunucu hatası')),
+  });
+
   // M3 — kısmi oluşturma belleği: ürün POST'u başarılı olduktan sonra bir
   // sonraki adım patlarsa imza+id burada tutulur; operatör tekrar bastığında
   // zincir KALAN adımlardan devam eder, ikinci ürün kaydı oluşmaz.
@@ -1252,6 +1269,7 @@ export function useWooMakeState(): WooMakeState {
     isSyncing: syncSaleMutation.isPending,
     isUploadingPhotos: uploadPhotosMutation.isPending,
     isDeletingPhoto: deletePhotoMutation.isPending,
+    isReorderingPhotos: reorderPhotosMutation.isPending,
     deletingPhotoId:
       deletePhotoMutation.isPending && deletePhotoMutation.variables?.photoId
         ? deletePhotoMutation.variables.photoId
@@ -1341,6 +1359,11 @@ export function useWooMakeState(): WooMakeState {
     deletePhoto: (photoId) => {
       if (detailQuery.data && photoId) {
         deletePhotoMutation.mutate({ productId: detailQuery.data.id, photoId });
+      }
+    },
+    reorderPhotos: (productId, photoIds) => {
+      if (productId && photoIds.length > 0 && !reorderPhotosMutation.isPending) {
+        reorderPhotosMutation.mutate({ productId, photoIds });
       }
     },
     createProductFromDraft: async (draft) => createProductMutation.mutateAsync(draft),

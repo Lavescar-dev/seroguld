@@ -37,6 +37,7 @@ import { useToast } from '@/lib/toast';
 import { WooCatalogPanel } from './WooCatalogPanel';
 import { WooCategoryPicker } from './WooCategoryPicker';
 import { WooPhotoThumb } from './WooPhotoThumb';
+import { photoCardDragProps, usePhotoReorder } from './photoReorder';
 import { describeRejectedPhotos, filesFromDataTransfer, validatePhotoFiles } from './photoUpload';
 
 import {
@@ -469,6 +470,22 @@ export function YeniUrunPanel({
 
   const seoEksik = useMemo(() => missingSeoFields(form.seo as SeoBundle), [form.seo]);
 
+  // R1-36 v2 — adım 4 yerel foto sıralama: ağ çağrısı YOK; ürün oluşturulurken
+  // fotoğraflar form.fotograflar dizi sırasıyla yüklenir (createProductMutation),
+  // dolayısıyla yerel diziyi çevirmek yeterli. URL.revokeObjectURL ilişkisi
+  // bozulmaz: obje URL'leri foto başına sabit, sadece dizi sırası değişir.
+  const wizardPhotoReorder = usePhotoReorder({
+    ids: form.fotograflar.map((photo) => photo.id),
+    onLocalReorder: (orderedIds) => {
+      const byId = new Map(form.fotograflar.map((photo) => [photo.id, photo]));
+      const next = orderedIds
+        .map((id) => byId.get(id))
+        .filter((photo): photo is DraftPhoto => Boolean(photo))
+        .map((photo, index) => ({ ...photo, birincil: index === 0 }));
+      if (next.length === form.fotograflar.length) patch({ fotograflar: next });
+    },
+  });
+
   // M3 — onamsız kapanış kilidi: 4 adımlık form + foto + SEO paketi
   // kaybolmasın; pending'de kapanma hiç olmasın.
   const formDirty = useMemo(
@@ -853,7 +870,12 @@ export function YeniUrunPanel({
           {adim === 4 ? (
             <div
               data-testid="woo-draft-photo-dropzone"
-              onDragOver={(event) => { event.preventDefault(); setPhotoDragActive(true); }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                // Kart sıralama sürüklemesi dropzone UX'ini yakmasın: yalnız
+                // gerçek dosya sürüklemesi 'Files' tipi taşır.
+                if (event.dataTransfer.types.includes('Files')) setPhotoDragActive(true);
+              }}
               onDragLeave={(event) => { if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget as Node)) setPhotoDragActive(false); }}
               onDrop={onDraftPhotosDropped}
               className={`space-y-4 ${photoDragActive ? 'ring-2 ring-brand-500 ring-offset-2 bg-brand-50' : ''}`}
@@ -934,8 +956,16 @@ export function YeniUrunPanel({
 
               {form.fotograflar.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-4">
-                  {form.fotograflar.map((photo, index) => (
-                    <div key={photo.id} className="group relative overflow-hidden border border-brand-200 bg-brand-50">
+                  {form.fotograflar.map((photo, index) => {
+                    const drag = photoCardDragProps(wizardPhotoReorder, photo.id);
+                    return (
+                    <div
+                      key={photo.id}
+                      data-testid={`woo-draft-photo-card-${index}`}
+                      {...drag}
+                      className={`group relative cursor-grab overflow-hidden border border-brand-200 bg-brand-50 ${drag.isDragging ? 'opacity-60' : ''}`}
+                      title="Sürükleyerek sırayı değiştirin — ilk görsel Birincil olur"
+                    >
                       <img src={photo.url} alt={photo.name} className="aspect-square w-full object-cover" />
                       {photo.birincil || index === 0 ? (
                         <div className="absolute left-1 top-1 flex items-center gap-0.5 bg-amber-500 px-1 py-0.5">
@@ -953,7 +983,8 @@ export function YeniUrunPanel({
                       </div>
                       <p className="truncate border-t border-brand-200 bg-brand-50 px-1.5 py-1 text-[10px] text-brand-500">{photo.name}</p>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="border-2 border-dashed border-brand-200 px-6 py-8 text-center">
@@ -1058,6 +1089,8 @@ export function MakeWooCommercePage({
   syncSale,
   uploadPhotos,
   deletePhoto,
+  isReorderingPhotos,
+  reorderPhotos,
   createProductFromDraft,
   publishProfile,
   setPublishProfile,
@@ -1067,6 +1100,15 @@ export function MakeWooCommercePage({
 }: WooMakeState) {
   const toast = useToast();
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  // R1-36 v2 — foto sürükle-sırala: kalıcı sıra DEDUP ÖNCESİ gerçek id listesiyle PUT edilir.
+  const detailPhotoIds = useMemo(
+    () => (detail?.photos || []).map((photo) => photo.id).filter((id): id is string => Boolean(id)),
+    [detail?.photos],);
+  const photoReorder = usePhotoReorder({
+    ids: detailPhotoIds,
+    disabled: isReorderingPhotos,
+    onCommit: (orderedIds) => { if (detail?.id) reorderPhotos(detail.id, orderedIds); },
+  });
   const [yeniPanelAcik, setYeniPanelAcik] = useState(false);
   const [seoGoster, setSeoGoster] = useState(false);
   const [hamDuzenle, setHamDuzenle] = useState(false);
@@ -1565,8 +1607,16 @@ export function MakeWooCommercePage({
 
                   {detail?.photos.length ? (
                     <div className="mb-3 grid grid-cols-4 gap-3">
-                      {detail.photos.map((photo, index) => (
-                        <div key={photo.id || photo.url} className="group relative overflow-hidden border border-brand-200">
+                      {detail.photos.map((photo, index) => {
+                        const drag = photoCardDragProps(photoReorder, photo.id);
+                        return (
+                        <div
+                          key={photo.id || photo.url}
+                          data-testid={`woo-photo-card-${index}`}
+                          {...drag}
+                          className={`group relative cursor-grab overflow-hidden border border-brand-200 ${drag.isDragging ? 'opacity-60' : ''}`}
+                          title="Sürükleyerek sıralayın — ilk görsel Birincil olur"
+                        >
                           <WooPhotoThumb photo={photo} alt={detail.display_name || secilen.urun} className="aspect-square w-full object-cover" />
                           {primaryPhotoLabel(index, photo.is_primary) ? (
                             <div className="absolute left-1 top-1 flex items-center gap-0.5 bg-amber-500 px-1 py-0.5">
@@ -1598,7 +1648,8 @@ export function MakeWooCommercePage({
                           </div>
                           <p className="truncate border-t border-brand-200 bg-brand-50 px-1.5 py-1 text-[10px] text-brand-500">{photo.filename || 'Fotoğraf'}</p>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="mb-3 border-2 border-dashed border-brand-200 px-6 py-8 text-center">
