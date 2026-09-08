@@ -208,6 +208,9 @@ class ProductOut(AppBaseModel):
     melt_reason: str | None
     ai_description: str | None
     ai_description_approved: bool
+    # Yalnız AI üretim yanıtında dolar (AIUsageLog ile aynı sayaç): AI'a
+    # ulaştırılıp analiz edilen fotoğraf sayısı. Diğer uç noktalarda None.
+    images_analyzed: int | None = None
     woocommerce_product_id: int | None
     woocommerce_category_ids: list[int] | None = None
     woocommerce_publish_profile: str | None = None

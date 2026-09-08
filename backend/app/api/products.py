@@ -857,6 +857,9 @@ async def ai_describe(
         )
     )
     await db.commit()
+    # AIUsageLog'a yazılan aynı sayaç yanıta da konur: UI, ürünün fotoğrafı var
+    # ama AI hiç görsel analiz edememişse ("fotoğraf okunamadı") operatörü uyarır.
+    updated.images_analyzed = images_analyzed
     return updated
 
 

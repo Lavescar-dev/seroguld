@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
+import { useConfirm } from '@/components/ConfirmDialog';
 import { ApiError, apiRequest } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { describeRejectedPhotos, validatePhotoFiles } from './photoUpload';
@@ -633,6 +634,7 @@ function toCreatePayload(draft: NewWooProductDraft) {
 export function useWooMakeState(): WooMakeState {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   // M3 — workspace araması da ~300ms debounce ile koşar (catalogSearch ile
@@ -832,6 +834,13 @@ export function useWooMakeState(): WooMakeState {
     onSuccess: async (product) => {
       setAiDraft(product.ai_description || '');
       await invalidateProduct(product.id);
+      // Fotoğraflı ürün üretimden önce onaylanmıştı; AI yine de hiç görsel
+      // analiz edemediyse (okunamayan dosya vb.) operatör sessiz metin-only
+      // üretimle baş başa bırakılmaz.
+      if ((product.photos?.length ?? 0) > 0 && (product.images_analyzed ?? 0) === 0) {
+        toast.warning('Fotoğraflar okunamadı — açıklama yalnız özelliklerden üretildi.');
+        return;
+      }
       toast.success('AI açıklaması üretildi');
     },
     onError: (error) => toast.error('AI açıklaması üretilemedi', extractApiMessage(error, 'Sunucu hatası')),
@@ -1254,9 +1263,24 @@ export function useWooMakeState(): WooMakeState {
     isSyncingRecent: syncRecentMutation.isPending,
     refreshWorkspace,
     generateAi: () => {
-      if (detailQuery.data) {
-        generateAiMutation.mutate(detailQuery.data.id);
+      const product = detailQuery.data;
+      if (!product) return;
+      // Fotoğraf YOKSA AI yalnız ürün özelliklerinden üretir — operatör buna
+      // "emin misiniz?" ile onay verir (iptal = üretme). Fotoğraf VARSA onaya
+      // gerek yok; AI fotoğrafı görecektir (yanıtta images_analyzed ile doğrulanır).
+      if ((product.photos?.length ?? 0) === 0) {
+        void confirm({
+          title: 'AI açıklama üret',
+          message: 'Fotoğraf yok: açıklama yalnız ürün özelliklerinden oluşturulacak. Devam edilsin mi?',
+          confirmText: 'Üret',
+          cancelText: 'İptal',
+          variant: 'warning',
+        }).then((approved) => {
+          if (approved === true) generateAiMutation.mutate(product.id);
+        });
+        return;
       }
+      generateAiMutation.mutate(product.id);
     },
     saveAi: (approved) => {
       if (detailQuery.data && aiDraft.trim().length >= 10) {

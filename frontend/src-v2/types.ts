@@ -192,6 +192,8 @@ export interface ProductOut {
   profit_dkk?: string | null;
   ai_description?: string | null;
   ai_description_approved: boolean;
+  /** Son ai-describe üretiminde AI'a ulaştırılıp analiz edilen fotoğraf sayısı (yalnız AI üretim yanıtında dolar). */
+  images_analyzed?: number | null;
   woocommerce_product_id?: number | null;
   woocommerce_category_ids?: number[] | null;
   woocommerce_publish_profile?: string | null;

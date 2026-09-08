@@ -76,6 +76,46 @@ def test_jewelry_attributes_length_auto_cm():
     assert attrs2["Længde"] == "18-19cm"
 
 
+def test_jewelry_attribute_order_matches_live_site():
+    # 2026-09-08 canlı site denetimi (docs/WOO_SITE_FIELD_AUDIT.md): smykke
+    # satırlarında tablo sırası Karat, Renhed, Vægt, Længde, Bredde, Tykkelse,
+    # Producent, Vare nr. — CRM çıktısı birebir aynı sırada ve formatta.
+    product = _p(
+        reference_number="1628",
+        purity_karat="18K",
+        purity_percentage=Decimal("75.00"),
+        weight_grams=Decimal("13.76"),
+        length_cm="41,20cm",
+        width_mm=Decimal("1.54"),
+        thickness_mm=Decimal("1.85"),
+        producer="SSA",
+    )
+    assert [item["name"] for item in _build_attributes(product)] == [
+        "Karat",
+        "Renhed",
+        "Vægt",
+        "Længde",
+        "Bredde",
+        "Tykkelse",
+        "Producent",
+        "Vare nr.",
+    ]
+    # Kolye (necklace): length_cm doluysa Længde şeritte İLK ölçü olarak kalır.
+    assert (
+        _spec_strip_text(product)
+        == "Vare nr. : 1628 Vægt: 13,76g Længde: 41,20cm Bredde: 1,54mm Tykkelse: 1,85mm"
+    )
+
+
+def test_necklace_without_length_does_not_invent_laengde():
+    # Kolye şikayetinin kökü veri: length_cm boşsa Længde uydurulmaz, şerit/tablo
+    # kalan ölçülerle devam eder (operatör ya ölçüyü girer ya profili Smykke seçer).
+    product = _p(length_cm=None)
+    attrs = _attrs(product)
+    assert "Længde" not in attrs
+    assert _spec_strip_text(product) == "Vare nr. : 1201 Vægt: 1,15g Bredde: 1,10mm Tykkelse: 5,22mm"
+
+
 def test_gold_coin_attributes_include_dimensions_and_year():
     coin = _p(
         woocommerce_publish_profile="coin",
