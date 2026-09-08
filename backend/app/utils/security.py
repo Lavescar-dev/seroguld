@@ -161,3 +161,20 @@ def hash_cpr(cpr_number: str | None) -> str | None:
 
 def mask_cpr(cpr_number: str | None) -> str | None:
     return mask_last4(cpr_number)
+
+
+def hash_cpr_birth(value: str | None) -> str | None:
+    """İlk 6 hane (doğum tarihi bölümü DDMMYY) için HMAC.
+
+    ``cpr-birth:`` domain önekiyle karmalanır: tam-CPR hash'iyle asla çakışmaz
+    ve kolon kendi başına neyin hash'lendiğini kanıtlar. Kısmi kayıtta tam-CPR
+    hash'i YAZILMAZ (6 haneyi tam-hash'e koymak arama alanını bozar); bu kolon
+    yalnız doğum-tarihi araması ve yumuşak dup uyarısı içindir.
+    """
+    if not value:
+        return None
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if len(digits) < 6:
+        return None
+    digest = hmac.new(settings.encryption_key_bytes(), f"cpr-birth:{digits[:6]}".encode("utf-8"), hashlib.sha256)
+    return digest.hexdigest()

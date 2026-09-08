@@ -38,6 +38,10 @@ class User(Base):
     cpr_number_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     cpr_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     cpr_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # R1-CPR — ilk 6 hane (dogum tarihi) HMAC'i: kismi CPR kaydinda tam-CPR
+    # hash'i yazilmaz, dogum-bolumu aramasi/yumusak dup uyarisi bu kolonla calisir.
+    cpr_birth_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    cpr_is_partial: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     gdpr_status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", server_default="active")
     gdpr_pseudonymized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     marketing_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
