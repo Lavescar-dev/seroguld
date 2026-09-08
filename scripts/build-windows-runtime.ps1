@@ -272,7 +272,7 @@ function Write-SourceFingerprintManifest {
     }) -join "`n"
   $manifest = [ordered]@{
     schema = 2
-    product_version = "0.3.36"
+    product_version = "0.3.37"
     source_head = $Head
     source_diff_sha256 = Get-TextSha256 $diff
     source_untracked_sha256 = Get-TextSha256 $untracked

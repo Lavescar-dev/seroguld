@@ -1,5 +1,84 @@
 # Changelog
 
+## [0.3.37] — 2026-09-08
+
+### Piyasa oranları (WP) — tam otomatik + operatör kontrolü
+
+- **WP Priser zamanlanmış otomatik çekim:** FastAPI lifespan içinde
+  scheduler döngüsü başlatıldı (`MARKET_RATES_WP_AUTO_PULL_ENABLED`,
+  varsayılan açık; `MARKET_RATES_WP_AUTO_PULL_MINUTES`, varsayılan 60,
+  en az 15). Açılışta gereksiz ağ atışı yok (ilk tick'ten önce interval
+  beklenir); çekim hatası loglanıp sessizce devam eder, AFG fiyatları
+  asla sıfırlanmaz. Manuel "WP'den çek" butonu ile scheduler AYNI merge
+  yolunu (`apply_wp_priser_rates`) kullanır.
+- **"Otomatik çekmeyi durdur" onay kutusu:** GlobalMarketRatesDrawer'da
+  işaretlendiğinde tamamen manuel moda geçer — uygulamadan hemen önce
+  yeniden denetleme sayesinde bekleme penceresinde işaretlenen checkbox
+  bile o turdaki otomatik çekimi iptal eder (manuel fiyatlar WP ile
+  ezilmez). Ayarlar `.env`'e kalıcı yazılır, restart'ta korunur.
+- **22k-2 (`22b`) asla otomatik güncellenmez:** WP'de bu satır hiç
+  olmadığı için operatör değeridir; kaynak yanıtı bu anahtarı taşısa bile
+  merge savunması profile yazmaz.
+- **22K-2 satırı 22K'nın altında:** alış çalışma alanında extra satırlar
+  (22K-2, kniv, çeyrek) grubun en sonuna değil, karat rütbesine göre
+  taban satırın yanına düşer (`extraRowOrder.ts` — kararlı sıralama,
+  '22b' → 22). "+ Satır ekle" suni 22K-2 satırı da 22K'nın altına
+  yerleşir.
+- **Çeküm saydamlığı:** drawer'da "Son WP çekimi" damgası + bayat
+  "metals.dev/ECB" metni gerçek kaynakla (WordPress guldpriser/
+  soelvpriser + Stooq) değiştirildi. WP'den gelen platin/paladyum değeri
+  Stooq oto bayrağını bilinçli olarak kapatır (dükkân fiyatı kaynağı).
+
+### Kimlik OCR — saha smoke'undan geçen üç düzeltme
+
+- **Ehliyet Ad Soyad artık düşüyor:** tr/da OCR "1."/"2." numara
+  ön eklerini yuttuğunda ("1. Demir" → "1 Demir") ayırıcı-toleranslı
+  etiket eşleşmesi + tek satırda ad-soyad tamamlama + başlık bloğundan
+  ("KØREKORT / Demir / 21 / Recai") kurtarma devrede. Müşteri formu
+  varyantında OCR'ın boş bıraktığı alanlar ('') artık eski elle girişle
+  üst üste binmez.
+- **Yeniden taramada alan sıfırlama:** hatalı taramadan sonra yeni
+  tarama önceki parse'ı tamamen sıfırlar — `applyConfirmedIdentityResult`
+  OCR'a ait alanları (ad, adres, CPR, belge no/türü/ülkesi) mevcut
+  değerden bağımsız olarak yazar; belge türü/kişi değişince karşı yüz
+  temizlenir. "Üst üste biniyor, komple bozuluyor" bitti.
+- **Sarı kart çıktı vermeye başladı:** WIA taraması item properties
+  6146/6147 ile 300 DPI'ya çekiliyor (önceki ~125 DPI → 419×288 görüntü,
+  parser hiçbir çapa bulamıyordu); `identity_ocr.ps1` büyütme eşiği
+  adaptif ≤4× / 1600px hedefe çıkarıldı; düşük çözünürlüklü taramada
+  panel rehber mesajı gösterir. OCR kod/yorum/fixture'larındaki gerçek
+  kart değerleri tamamen sentetiğe çevrildi (CPR dahil).
+
+### Alış geçmişi — 500 ve "sorunlu belgeler"
+
+- **Müşteri geçmişi endpoint 500'ü:** `PosDocumentListItemOut` şeması
+  zorunlu `vat_rate_percent` alanı olmadan kuruluyordu — en az bir bağlı
+  belgesi olan müşteride GET /customers/{id}/history 500 atıyordu (boş
+  müşteride `[]` döndüğü için smoke'ta görünmüyordu).
+- **Oturum-bağlı belgeler listeye giriyor:** document_count UNION ile
+  hem işlem-bağlı hem oturum-bağlı (içe aktarılan) belgeleri sayar;
+  listede görünmeyen "sorunlu belgeler" artık geçmişte görünür.
+- **UI hata dalları:** CustomerWorkspacePanel üç sorguda da hata bandı +
+  "Tekrar dene" + "!" sayaçları + boş-durum metinleri; sessiz "Belgeler
+  0" yanılsaması bitti.
+
+### WooCommerce yayını — şablona sadakat + AI fotoğraf onayı
+
+- **Fotoğrafsız AI üretimi onaya bağlandı:** ürün fotoğrafı yoksa
+  (veya AI hiç fotoğraf analiz etmediyse `images_analyzed` uyarısı)
+  üretim öncesi "emin misiniz?" onay diyaloğu açılır; AI yalnız
+  özelliklerden üretim yapacağını bildirir.
+- **Site alan denetimi:** canlı Woo ürün sayfalarından tür-bazlı spec
+  şeridi + SEO slot haritası çıkarıldı → `docs/WOO_SITE_FIELD_AUDIT.md`
+  (kolye → Længde/Bredde vb. eşleme, AI alan uyduramaz).
+
+### Test altyapısı
+
+- Yeni süitler: WP auto-pull scheduler (11), müşteri geçmişi endpointi
+  (5), CustomerWorkspacePanel hata dalları (5), ai-describe fotoğraf
+  onayı, extraRowOrder sıralaması (7). AFG render testi yerel `.env`
+  override'larından bağımsız hale getirildi (hermetik footer ayarı).
+
 ## [0.3.36] — 2026-09-08
 
 ### Düzeltildi (Excel'de aç — saha raporu: hiçbir şey olmuyor)
