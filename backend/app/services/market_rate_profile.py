@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
@@ -321,3 +322,90 @@ def save_manual_market_rate_profile(payload: dict[str, Any]) -> dict[str, Any]:
     upsert_env_values(ROOT_ENV_FILE, updates)
     get_settings.cache_clear()
     return _with_runtime(profile, live_enabled=False, source="manual")
+
+
+# ---------------------------------------------------------------------------
+# WP otomatik çekim (scheduler) ayarları. Drawer'daki "Otomatik çekmeyi durdur"
+# onay kutusuyla yönetilir; MARKET_RATES_LIVE_* desenini izler (upsert_env_values
+# yazar). Ayar Settings alanı olarak bildirilmediği için okuma süreç ortamı
+# (upsert_env_values pin'ler) + runtime.env dosyası üzerinden yapılır.
+# ---------------------------------------------------------------------------
+WP_AUTO_PULL_ENABLED_ENV = "MARKET_RATES_WP_AUTO_PULL_ENABLED"
+WP_AUTO_PULL_MINUTES_ENV = "MARKET_RATES_WP_AUTO_PULL_MINUTES"
+WP_AUTO_PULL_DEFAULT_MINUTES = 60
+# Daha sık taramak WordPress REST'ini (guldpriser + soelvpriser = 2 sayfa)
+# boş yere zorlar; altına inen değer sessizce 15'e sabitlenir.
+WP_AUTO_PULL_MIN_MINUTES = 15
+
+_ENV_BOOL_FALSE = {"", "0", "false", "no", "off"}
+
+
+def _unquote_env_value(raw: str) -> str:
+    """upsert_env_values._quote_env_value çıktısını geri çözer (tek geçiş,
+    kaçış sırası bağımsız)."""
+    text = raw.strip()
+    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+        inner = text[1:-1]
+        out: list[str] = []
+        index = 0
+        while index < len(inner):
+            char = inner[index]
+            if char == "\\" and index + 1 < len(inner):
+                nxt = inner[index + 1]
+                out.append({"n": "\n", "r": "\r", '"': '"', "\\": "\\"}.get(nxt, "\\" + nxt))
+                index += 2
+            else:
+                out.append(char)
+                index += 1
+        return "".join(out)
+    return text
+
+
+def _read_env_value(key: str) -> str | None:
+    from app.utils.env_file import ENV_ASSIGNMENT_RE
+
+    pinned = os.environ.get(key)
+    if pinned is not None:
+        return pinned
+    try:
+        lines = ROOT_ENV_FILE.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        matched = ENV_ASSIGNMENT_RE.match(line)
+        if matched is not None and matched.group(1) == key:
+            return _unquote_env_value(line.split("=", 1)[1])
+    return None
+
+
+def get_wp_auto_pull_settings() -> tuple[bool, int]:
+    """(enabled, interval_dakika). enabled varsayılan AÇIK — WP dükkan fiyatı
+    tek kaynaktır ve operatör müdahalesi olmadan akmalıdır. Dakika değeri
+    okunamaz/0-altıysa varsayılana döner, min sınıra sabitlenir."""
+    raw_enabled = _read_env_value(WP_AUTO_PULL_ENABLED_ENV)
+    enabled = True
+    if raw_enabled is not None and raw_enabled.strip().lower() in _ENV_BOOL_FALSE:
+        enabled = False
+
+    minutes = WP_AUTO_PULL_DEFAULT_MINUTES
+    raw_minutes = _read_env_value(WP_AUTO_PULL_MINUTES_ENV)
+    if raw_minutes is not None:
+        try:
+            parsed = int(raw_minutes.strip())
+        except ValueError:
+            parsed = WP_AUTO_PULL_DEFAULT_MINUTES
+        if parsed > 0:
+            minutes = max(parsed, WP_AUTO_PULL_MIN_MINUTES)
+    return enabled, minutes
+
+
+def save_wp_auto_pull_settings(*, enabled: bool | None = None, minutes: int | None = None) -> tuple[bool, int]:
+    """Verilen alanları env'e kalıcılaştırır; eksik alanlar korunur."""
+    updates: dict[str, str] = {}
+    if enabled is not None:
+        updates[WP_AUTO_PULL_ENABLED_ENV] = "true" if enabled else "false"
+    if minutes is not None:
+        updates[WP_AUTO_PULL_MINUTES_ENV] = str(max(int(minutes), WP_AUTO_PULL_MIN_MINUTES))
+    if updates:
+        upsert_env_values(ROOT_ENV_FILE, updates)
+    return get_wp_auto_pull_settings()

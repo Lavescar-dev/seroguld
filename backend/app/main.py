@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -210,7 +211,24 @@ async def lifespan(_: FastAPI):
         await ensure_seed_inventory()
     except Exception:  # pragma: no cover - seed asla başlatmayı bloke etmez
         logging.getLogger("app.startup").exception("Depolama seed yüklenemedi")
-    yield
+
+    # Piyasa oranları — WP Priser zamanlanmış otomatik çekim (drawer'daki
+    # "Otomatik çekmeyi durdur" onay kutusuyla kapatılır). Döngü ilk tick'ten
+    # ÖNCE interval kadar bekler: açılışta gereksiz ağ atışı olmaz, test
+    # ortamında (lifespan çalışır) hiç tetiklenmez.
+    from app.api.market_rates import run_wp_auto_pull_scheduler
+
+    wp_auto_pull_task = asyncio.create_task(run_wp_auto_pull_scheduler())
+    try:
+        yield
+    finally:
+        wp_auto_pull_task.cancel()
+        try:
+            await wp_auto_pull_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # scheduler arka planı kapanışı asla bloke etmesin
+            logging.getLogger("app.startup").exception("WP otomatik çekim görevi hata ile sonlandı")
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)

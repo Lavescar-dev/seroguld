@@ -1,19 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import require_admin
+from app.config import get_settings
 from app.schemas.base import AppBaseModel
 from app.services.market_rate_profile import (
     GOLD_RATE_KEYS,
     SILVER_RATE_KEYS,
+    WP_AUTO_PULL_MIN_MINUTES,
     current_live_fields,
     get_effective_market_rate_profile,
+    get_manual_market_rate_profile,
+    get_wp_auto_pull_settings,
     save_manual_market_rate_profile,
+    save_wp_auto_pull_settings,
 )
 from app.services.wp_priser_service import SCALAR_BANDS, WPPriserUnavailable
 
@@ -82,6 +89,9 @@ class MarketRateProfileUpdateIn(AppBaseModel):
     # Alan-bazlı manuel/oto geçişi (eur_dkk_fx / platinum_dkk / palladium_dkk).
     # Verilirse canlı bayraklar da kaydedilir; verilmezse mevcut ayar korunur.
     live_fields: dict[str, bool] | None = None
+    # WP otomatik çekim: false = "Otomatik çekmeyi durdur" (tamamen manuel mod).
+    # Verilmezse mevcut ayar korunur.
+    wp_auto_pull_enabled: bool | None = None
 
 
 class MarketRateProfileOut(MarketRateProfileUpdateIn):
@@ -95,37 +105,42 @@ class MarketRateProfileOut(MarketRateProfileUpdateIn):
     rate_meta: dict[str, MarketRateMetaOut]
     # Kaydı engellemeyen bant-dışı uyarıları (yalnız PUT yanıtında dolu gelir).
     warnings: list[str] = []
+    # WP otomatik çekim durumu + son başarılı çekim (WP_PRISER_LAST_FETCH).
+    wp_auto_pull_enabled: bool = True
+    last_wp_fetch_at: str | None = None
 
 
-@router.post("/refresh-from-wp")
-async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) -> dict:
-    """R2-06 — karat/gümüş/bar/Pt/Pd/plet fiyatlarını WP "Priser" sayfasından
-    çekip global profile uygular. Kaynak WP'dir; yalnız sayfada BULUNAN
-    anahtarlar güncellenir, kalanlar mevcut değerinde korunur.
+async def apply_wp_priser_rates(*, trigger: Literal["manual", "auto"]) -> dict:
+    """R2-06 — WP "Priser" çekim + profile merge TEK yolu. Manuel buton
+    (refresh-from-wp) ile zamanlanmış otomatik çekim (scheduler) AYNI
+    fonksiyonu kullanır; davranış farkı yalnız 'trigger' etiketidir.
+
+    Kaynak WP'dir; yalnız sayfada BULUNAN anahtarlar güncellenir, kalanlar
+    mevcut değerinde korunur (AFG fiyatları asla sıfırlanmaz).
+
+    22b savunması: WordPress'te "22b" (ikinci 22K alış seviyesi) satırı YOKTUR
+    ve hiçbir zaman olmayacaktır. Kaynak yanıtı bu anahtarı taşırsa bile ASLA
+    profile yazılmaz — 22b yalnız operatörün manuel değeridir.
 
     WP'den Pt/Pd değeri geldiyse o alanın canlı (Stooq) oto bayrağı kapatılır —
     işletmenin kendi sitesindeki değer Stooq default'unu maskılamasın. fx oto
     akışı ve diğer alan bayrakları değişmez.
+
+    Hata sözleşmesi: ValueError = veri/istek kaynaklı (config eksik, sayfa
+    yok, uygun fiyat çıkmadı) → endpoint 422; WPPriserUnavailable = ulaşım/
+    çözümleme → 502. Scheduler her ikisini de loglayıp sessizce devam eder.
     """
-    from app.services.market_rate_profile import get_manual_market_rate_profile
     from app.services.wp_priser_service import fetch_wp_priser_rates
 
-    try:
-        fetched = await fetch_wp_priser_rates()
-    except ValueError as exc:
-        # Veri/istek kaynaklı: config eksik, sayfa yok, fiyat bulunamadı.
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except WPPriserUnavailable as exc:
-        # Ulaşım/çözümleme kaynaklı; mesajı servis temizler (URL sızdırmez).
-        raise HTTPException(status_code=502, detail=f"WP Priser çekilemedi: {exc}") from exc
-    except Exception as exc:  # beklenmeyen hata: detay istemciye sızmaz
-        logger.warning("WP Priser refresh beklenmeyen hata", exc_info=True)
-        raise HTTPException(status_code=502, detail="WP Priser çekilemedi (beklenmeyen sunucu hatası).") from exc
+    fetched = await fetch_wp_priser_rates()
 
     current = get_manual_market_rate_profile()
     merged_gold = {**(current.get("gold_rates_dkk") or {})}
     applied_gold: dict[str, str] = {}
     for key, value in (fetched.get("gold_rates_dkk") or {}).items():
+        if key == "22b":
+            # 22b operatörel bir ayrımdır; otomatik akışa ASLA girmez.
+            continue
         if key in GOLD_RATE_KEYS:
             merged_gold[key] = value
             applied_gold[key] = value
@@ -141,7 +156,7 @@ async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) 
         if value:
             applied_scalars[key] = str(value)
     if not applied_gold and not applied_silver and not applied_scalars:
-        raise HTTPException(status_code=422, detail="WP sayfasından profil anahtarına oturan fiyat çıkmadı.")
+        raise ValueError("WP sayfasından profil anahtarına oturan fiyat çıkmadı.")
 
     payload = {**current, "gold_rates_dkk": merged_gold, "silver_rates_dkk": merged_silver}
     payload.update(applied_scalars)
@@ -162,11 +177,10 @@ async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) 
 
     upsert_env_values(ROOT_ENV_FILE, {"WP_PRISER_LAST_FETCH": str(fetched.get("fetched_at") or "")})
     # R1-17: Ayarlar ekranı son çekim zamanını settings üzerinden okur.
-    from app.config import get_settings
-
     get_settings.cache_clear()
     return {
         "ok": True,
+        "trigger": trigger,
         "applied_gold": applied_gold,
         "applied_silver": applied_silver,
         "applied_scalars": applied_scalars,
@@ -176,9 +190,81 @@ async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) 
     }
 
 
+@router.post("/refresh-from-wp")
+async def post_market_rates_refresh_from_wp(_: object = Depends(require_admin)) -> dict:
+    """R2-06 — drawer'daki "WP'den çek" butonu: apply_wp_priser_rates(trigger=
+    "manual") ile ZAMANLANMIŞ çekimle aynı merge yolunu koşar."""
+    try:
+        return await apply_wp_priser_rates(trigger="manual")
+    except ValueError as exc:
+        # Veri/istek kaynaklı: config eksik, sayfa yok, fiyat bulunamadı.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except WPPriserUnavailable as exc:
+        # Ulaşım/çözümleme kaynaklı; mesajı servis temizler (URL sızdırmez).
+        raise HTTPException(status_code=502, detail=f"WP Priser çekilemedi: {exc}") from exc
+    except Exception as exc:  # beklenmeyen hata: detay istemciye sızmaz
+        logger.warning("WP Priser refresh beklenmeyen hata", exc_info=True)
+        raise HTTPException(status_code=502, detail="WP Priser çekilemedi (beklenmeyen sunucu hatası).") from exc
+
+
+# Zamanlanmış çekim KAPALIYKEN ayar yeniden denetleme aralığı (saniye): drawer'daki
+# "Otomatik çekmeyi durdur" onay kutusu uygulamayı yeniden başlatmadan etkili olsun.
+WP_AUTO_PULL_IDLE_POLL_SECONDS = 60
+
+
+async def run_wp_auto_pull_scheduler(
+    *, sleep: Callable[[float], Awaitable[None]] | None = None
+) -> None:
+    """WP Priser zamanlanmış otomatik çekim döngüsü (FastAPI lifespan'de başlar).
+
+    Ayar kapalıysa ağ çağrisi HİÇ yapılmaz; kısa aralıkla yeniden denetlenir.
+    Ayar açıksa ilk çekimden ÖNCE interval kadar beklenir — uygulama açılışında
+    gereksiz ağ atışı olmaz, test ortamında (lifespan çalışır) hiç tetiklenmez.
+    Hata (WP'ye ulaşılamadı / uygun fiyat yok / beklenmeyen) loglanır ve sessizce
+    devam edilir: AFG fiyatları sıfırlanmaz, WP_PRISER_LAST_FETCH ezilmez.
+    """
+    sleeper = sleep or asyncio.sleep
+    while True:
+        enabled, minutes = get_wp_auto_pull_settings()
+        if not enabled:
+            await sleeper(WP_AUTO_PULL_IDLE_POLL_SECONDS)
+            continue
+        interval = max(minutes, WP_AUTO_PULL_MIN_MINUTES) * 60
+        await sleeper(interval)
+        # Bekleme penceresinde "Otomatik çekmeyi durdur" işaretlenmiş olabilir:
+        # uygulamadan hemen önce yeniden denetle — checkbox anında tam-manuel moda geçirir.
+        enabled, _minutes = get_wp_auto_pull_settings()
+        if not enabled:
+            continue
+        try:
+            result = await apply_wp_priser_rates(trigger="auto")
+        except asyncio.CancelledError:  # kapanış: sessizce çık
+            raise
+        except (WPPriserUnavailable, ValueError) as exc:
+            logger.warning("WP otomatik çekim başarısız (%s dk sonra tekrar denenecek): %s", interval // 60, exc)
+        except Exception:  # scheduler asla uygulamayı düşürmesin
+            logger.warning("WP otomatik çekim beklenmeyen hata", exc_info=True)
+        else:
+            logger.info(
+                "WP otomatik çekim uyguladı: %s karat + %s gümüş + %s skaler (%s).",
+                len(result.get("applied_gold") or {}),
+                len(result.get("applied_silver") or {}),
+                len(result.get("applied_scalars") or {}),
+                result.get("fetched_at"),
+            )
+
+
+def _with_wp_auto_pull_state(result: dict) -> dict:
+    """GET/PUT /defaults yanıtına WP otomatik çekim durumunu ekler."""
+    enabled, _minutes = get_wp_auto_pull_settings()
+    result["wp_auto_pull_enabled"] = enabled
+    result["last_wp_fetch_at"] = (get_settings().wp_priser_last_fetch or "").strip() or None
+    return result
+
+
 @router.get("/defaults", response_model=MarketRateProfileOut)
 async def get_market_rate_defaults(_: object = Depends(require_admin)) -> dict:
-    return await get_effective_market_rate_profile()
+    return _with_wp_auto_pull_state(await get_effective_market_rate_profile())
 
 
 @router.put("/defaults", response_model=MarketRateProfileOut)
@@ -208,10 +294,16 @@ async def put_market_rate_defaults(
     # kaydedersen bayraklar ezilmesin; None = mevcut ayar korunur).
     if payload_dict.get("live_fields") == {}:
         payload_dict["live_fields"] = None
+    # WP otomatik çekim ayrı env anahtarlarına yazılır; profil payload'ına
+    # karışmasın (None = mevcut ayar korunur).
+    wp_auto_pull_enabled = payload_dict.pop("wp_auto_pull_enabled", None)
+    if wp_auto_pull_enabled is not None:
+        save_wp_auto_pull_settings(enabled=bool(wp_auto_pull_enabled))
     warnings = _scalar_band_warnings(payload_dict)
     save_manual_market_rate_profile(payload_dict)
     # Kaydettikten sonra ETKİN profili döndür: oto işaretlenen alanlar (Pt/Pd/fx)
     # canlı değerleriyle gelir; drawer anında güncel durumu görür.
     result = await get_effective_market_rate_profile()
+    result = _with_wp_auto_pull_state(result)
     result["warnings"] = warnings
     return result

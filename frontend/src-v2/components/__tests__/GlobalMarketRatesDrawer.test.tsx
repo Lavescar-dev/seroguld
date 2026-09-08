@@ -371,3 +371,49 @@ describe('GlobalMarketRatesDrawer — dirty kapatma koruması', () => {
     expect(screen.getByLabelText(/Pletsølv DKK\/g/)).toBeInTheDocument();
   });
 });
+
+describe('GlobalMarketRatesDrawer — WP otomatik çekim', () => {
+  it('"Otomatik çekmeyi durdur" kutusu işaretlenince PUT wp_auto_pull_enabled=false gönderir', async () => {
+    apiRequestMock.mockResolvedValue(makeProfile({ last_wp_fetch_at: '2026-09-08T10:00:00' }));
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const checkbox = await screen.findByRole('checkbox', { name: /Otomatik çekmeyi durdur/ });
+    // Varsayılan: otomatik çekim AÇIK (kutu işaretsiz).
+    expect(checkbox).not.toBeChecked();
+    // Son çekim damgası okunur (profil geldikçe taslak senkronlanır).
+    await waitFor(() => expect(screen.getByText(/Son WP çekimi:/)).toHaveTextContent('8.9.2026'));
+
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    expect(screen.getByText(/İşaretliyken oranlar yalnız elle güncellenir/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Kaydet$/ }));
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    const body = JSON.parse((putCalls()[0][1] as { body: string }).body) as { wp_auto_pull_enabled?: boolean };
+    expect(body.wp_auto_pull_enabled).toBe(false);
+  });
+
+  it('işaretsiz bırakılırsa Kaydet wp_auto_pull_enabled=true gönderir (varsayılan)', async () => {
+    // Profilde wp_auto_pull_enabled hiç gelmese bile backend default'u (açık) kullanılır.
+    apiRequestMock.mockResolvedValue(makeProfile());
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    const checkbox = await screen.findByRole('checkbox', { name: /Otomatik çekmeyi durdur/ });
+    await waitFor(() => expect(checkbox).not.toBeChecked());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Kaydet$/ }));
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    const body = JSON.parse((putCalls()[0][1] as { body: string }).body) as { wp_auto_pull_enabled?: boolean };
+    expect(body.wp_auto_pull_enabled).toBe(true);
+  });
+
+  it('son WP çekimi hiç yapılmadıysa "—" gösterilir', async () => {
+    apiRequestMock.mockResolvedValue(makeProfile({ last_wp_fetch_at: null }));
+    renderDrawer();
+    fireEvent.click(screen.getByText('open-drawer'));
+
+    expect(await screen.findByText(/Son WP çekimi: —/)).toBeInTheDocument();
+  });
+});

@@ -33,6 +33,10 @@ export interface GlobalMarketRateProfile {
   // Alan bazında oto durumu (eur_dkk_fx / platinum_dkk / palladium_dkk).
   live_fields?: Record<string, boolean>;
   rate_meta?: Record<string, GlobalRateMeta>;
+  // WP otomatik çekim: false = "Otomatik çekmeyi durdur" (tamamen manuel mod).
+  wp_auto_pull_enabled?: boolean;
+  // Son başarılı WP çekimi (WP_PRISER_LAST_FETCH); hiç çekilmediyse null.
+  last_wp_fetch_at?: string | null;
 }
 
 export interface GlobalMarketRateDraft extends GlobalMarketRateProfile {
@@ -70,6 +74,8 @@ export interface GlobalMarketRatesController {
   updateGoldBar: (value: string) => void;
   updateSilverBar: (value: string) => void;
   toggleAutoField: (key: 'eur_dkk_fx' | 'platinum_dkk' | 'palladium_dkk') => void;
+  // WP otomatik çekim: false = "Otomatik çekmeyi durdur" (yalnız elle güncelleme).
+  setWpAutoPullEnabled: (enabled: boolean) => void;
 }
 
 const SILVER_PROFILE_ROWS = SILVER_MATRIX_ROWS.filter((row) => row.key !== '800');
@@ -106,6 +112,9 @@ function buildFallbackProfile(): GlobalMarketRateProfile {
     live_enabled: false,
     source: 'manual',
     rate_meta: {},
+    // WP otomatik çekim varsayılan AÇIKTIR (backend default'u ile aynı).
+    wp_auto_pull_enabled: true,
+    last_wp_fetch_at: null,
   };
 }
 
@@ -220,6 +229,8 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
           // live_fields hiç yüklenmediyse {} "değişiklik yok"tur — backend
           // canlı bayraklara dokunmaz.
           live_fields: draft.live_fields || {},
+          // WP otomatik çekim durumu (backend default'u açık).
+          wp_auto_pull_enabled: draft.wp_auto_pull_enabled ?? true,
         }),
       });
     },
@@ -391,6 +402,12 @@ export function useGlobalMarketRates(): GlobalMarketRatesController {
       });
       setIsDirty(true);
     },
+    // WP otomatik çekim aç/kapat: işaretliyken ("durdur") değerler yalnız
+    // elle güncellenir; zamanlanmış çekim arka planda hiç çalışmaz.
+    setWpAutoPullEnabled: (enabled: boolean) => {
+      setDraft((current) => ({ ...current, wp_auto_pull_enabled: enabled }));
+      setIsDirty(true);
+    },
     updatePlet: (value) => {
       setDraft((current) => ({ ...current, plet_dkk: value }));
       setIsDirty(true);
@@ -450,7 +467,8 @@ function TextRateInput({ value, onChange, disabled, warning }: { value: string; 
 }
 
 // Manuel/oto geçiş rozeti — TIKLANABİLİR. "manuel" = elle girilir; "oto" = canlı
-// (metals.dev/ECB) beslenir. Tıklayınca mod değişir; Kaydet ile kalıcılaşır.
+// (WordPress guldpriser/soelvpriser + Stooq) beslenir. Tıklayınca mod değişir;
+// Kaydet ile kalıcılaşır.
 function AutoFieldToggle({ on, meta, dark, onToggle }: { on: boolean; meta: GlobalRateMeta | undefined; dark: boolean; onToggle: () => void }) {
   const stale = on && (Boolean(meta?.stale) || meta?.source === 'fallback');
   const label = on ? (stale ? 'oto · bayat' : 'oto') : 'manuel';
@@ -638,7 +656,13 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
           </section>
 
           <section className={sectionClass}>
-            <p className="mb-3 text-sm font-semibold">Oto değerler (kur ve diğer metaller)</p>
+            {/* "bilgi: canlı kaynak değeri" — bu bölümdeki Pt/Pd değerleri canlı
+                önbellekten gelir; karat grid'indeki profil matrisiyle
+                karıştırılmasın (saha: aynı değer iki yerde farklı görünüyordu). */}
+            <p className="mb-3 text-sm font-semibold">
+              Oto değerler (kur ve diğer metaller)
+              <span className={`ml-2 text-xs font-normal ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>(bilgi: canlı kaynak değeri)</span>
+            </p>
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="space-y-1">
                 <span className={`flex items-center justify-between gap-2 text-xs font-semibold ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}><span>EUR / DKK</span><AutoFieldToggle on={fieldAutoDisabled('eur_dkk_fx')} meta={rateMeta.eur_dkk_fx} dark={dark} onToggle={() => controller.toggleAutoField('eur_dkk_fx')} /></span>
@@ -653,7 +677,7 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
                 <TextRateInput value={draft.palladium_dkk} disabled={fieldAutoDisabled('palladium_dkk')} onChange={controller.updatePalladium} warning={rateBandWarning('ptpd', draft.palladium_dkk)} />
               </label>
             </div>
-            <p className={`mt-2 ${metaClass}`}>Rozete tıklayarak alanı manuel/otomatik yapın. Otomatikte değer metals.dev/ECB'den canlı gelir; canlı değer alınamazsa mevcut değer korunur (AFG fiyatları sıfırlanmaz).</p>
+            <p className={`mt-2 ${metaClass}`}>Rozete tıklayarak alanı manuel/otomatik yapın. Otomatikte değer WordPress (guldpriser/soelvpriser) ve Stooq'dan canlı gelir; canlı değer alınamazsa mevcut değer korunur (AFG fiyatları sıfırlanmaz).</p>
           </section>
 
           {anyAutoDisabled ? <button type="button" onClick={() => { void requestClose().then((closed) => { if (closed) navigate('/settings'); }); }} disabled={closeBlocked} className={dark ? 'inline-flex border border-brand-300 bg-white px-3 py-2 text-xs font-black uppercase tracking-wider text-brand-700 disabled:cursor-not-allowed disabled:opacity-50' : 'inline-flex rounded-sg-sm border border-sg-border px-3 py-2 text-sm font-semibold text-sg-accent-dark disabled:cursor-not-allowed disabled:opacity-50'}>Ayarları aç</button> : null}
@@ -662,60 +686,80 @@ export function GlobalMarketRatesDrawer({ controller, variant = 'modern' }: { co
         </div>
 
         <footer className={`flex items-center justify-end gap-2 border-t px-5 py-4 ${dark ? 'border-brand-200' : 'border-sg-border'}`}>
-          <button
-            type="button"
-            onClick={() => {
-              if (wpPending || loadBlocked) return;
-              setWpPending(true);
-              // R2-06: karat/gümüş/bar/Pt/Pd/plet fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
-              void (async () => {
-                // applied: POST başarılı mı? Catch'te "çekilemedi" mesajı yalnız
-                // POST'a bağlı kalmalı; POST sonrası tazeleme adımı patlarsa
-                // değerler UYGULANMIŞ durumdadır — tekrar basılırsa çift WP
-                // çekimi + çift uygulama olurdu (yanlış-olumsuz rapor).
-                let applied = false;
-                try {
-                  const result = await apiRequest<{
-                    applied_gold: Record<string, string>;
-                    applied_silver?: Record<string, string>;
-                    applied_scalars?: Record<string, string>;
-                    auto_fields_disabled?: string[];
-                    fetched_at: string;
-                  }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
-                  applied = true;
-                  await queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
-                  await queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
-                  // R2-06 takibi: invalidate draft'ı tazelemez (effect yalnız
-                  // çekmece kapalıyken senkronlar) — açık alanları burada güncelle.
-                  await controller.refreshDraftFromServer();
-                  const goldCount = Object.keys(result.applied_gold || {}).length;
-                  const silverCount = Object.keys(result.applied_silver || {}).length;
-                  const scalarCount = Object.keys(result.applied_scalars || {}).length;
-                  const summary = `${goldCount} karat + ${silverCount} gümüş${scalarCount ? ` + ${scalarCount} metal (bar/Pt/Pd/plet)` : ''} güncellendi`;
-                  const disabled = result.auto_fields_disabled || [];
-                  if (disabled.length > 0) {
-                    // Pt/Pd site değerine geçti: canlı Stooq akışı alan bazında kapatıldı.
-                    toast.warning('WP Priser uygulandı', `${summary}. Platin/palladium canlı akışı kapatıldı — site değeri esas alınıyor; çekmeceden geri açabilirsiniz.`);
-                  } else {
-                    toast.success('WP Priser uygulandı', summary);
+          {/* WP çekimi + otomatik akış kontrolü: butonun YANINDA "durdur" onay
+              kutusu ve son çekim damgası (çekmece içi tek yerde). */}
+          <div className="mr-auto flex items-center gap-4">
+            <div className="flex flex-col gap-1">
+              <label className={`inline-flex cursor-pointer items-center gap-2 text-xs font-semibold ${loadBlocked ? 'cursor-not-allowed opacity-60' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={!(draft.wp_auto_pull_enabled ?? true)}
+                  disabled={loadBlocked}
+                  onChange={(event) => controller.setWpAutoPullEnabled(!event.target.checked)}
+                  className="h-3.5 w-3.5 accent-sg-accent"
+                />
+                Otomatik çekmeyi durdur
+              </label>
+              <span className={`text-[10px] leading-tight ${dark ? 'text-brand-600' : 'text-sg-text-soft'}`}>
+                İşaretliyken oranlar yalnız elle güncellenir.
+                {` Son WP çekimi: ${draft.last_wp_fetch_at ? new Date(draft.last_wp_fetch_at).toLocaleString('da-DK') : '—'}`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (wpPending || loadBlocked) return;
+                setWpPending(true);
+                // R2-06: karat/gümüş/bar/Pt/Pd/plet fiyatlarını WP "Priser" sayfasından çek (tek kaynak).
+                void (async () => {
+                  // applied: POST başarılı mı? Catch'te "çekilemedi" mesajı yalnız
+                  // POST'a bağlı kalmalı; POST sonrası tazeleme adımı patlarsa
+                  // değerler UYGULANMIŞ durumdadır — tekrar basılırsa çift WP
+                  // çekimi + çift uygulama olurdu (yanlış-olumsuz rapor).
+                  let applied = false;
+                  try {
+                    const result = await apiRequest<{
+                      applied_gold: Record<string, string>;
+                      applied_silver?: Record<string, string>;
+                      applied_scalars?: Record<string, string>;
+                      auto_fields_disabled?: string[];
+                      fetched_at: string;
+                    }>('/api/v2/market-rates/refresh-from-wp', { method: 'POST' });
+                    applied = true;
+                    await queryClient.invalidateQueries({ queryKey: ['market-rates', 'defaults'] });
+                    await queryClient.invalidateQueries({ queryKey: ['pos', 'workspace', 'open-draft'] });
+                    // R2-06 takibi: invalidate draft'ı tazelemez (effect yalnız
+                    // çekmece kapalıyken senkronlar) — açık alanları burada güncelle.
+                    await controller.refreshDraftFromServer();
+                    const goldCount = Object.keys(result.applied_gold || {}).length;
+                    const silverCount = Object.keys(result.applied_silver || {}).length;
+                    const scalarCount = Object.keys(result.applied_scalars || {}).length;
+                    const summary = `${goldCount} karat + ${silverCount} gümüş${scalarCount ? ` + ${scalarCount} metal (bar/Pt/Pd/plet)` : ''} güncellendi`;
+                    const disabled = result.auto_fields_disabled || [];
+                    if (disabled.length > 0) {
+                      // Pt/Pd site değerine geçti: canlı Stooq akışı alan bazında kapatıldı.
+                      toast.warning('WP Priser uygulandı', `${summary}. Platin/palladium canlı akışı kapatıldı — site değeri esas alınıyor; çekmeceden geri açabilirsiniz.`);
+                    } else {
+                      toast.success('WP Priser uygulandı', summary);
+                    }
+                  } catch (fetchError) {
+                    if (applied) {
+                      toast.warning('WP Priser uygulandı', `${localizeApiError(fetchError)} — değerler uygulandı ama ekran tazelenemedi.`);
+                    } else {
+                      toast.error('WP Priser çekilemedi', localizeApiError(fetchError));
+                    }
+                  } finally {
+                    setWpPending(false);
                   }
-                } catch (fetchError) {
-                  if (applied) {
-                    toast.warning('WP Priser uygulandı', `${localizeApiError(fetchError)} — değerler uygulandı ama ekran tazelenemedi.`);
-                  } else {
-                    toast.error('WP Priser çekilemedi', localizeApiError(fetchError));
-                  }
-                } finally {
-                  setWpPending(false);
-                }
-              })();
-            }}
-            className={dark ? 'mr-auto border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800' : 'mr-auto rounded-sg-sm border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800'}
-            title="Karat, gümüş, bar, platin, palladium ve plet fiyatlarını seroguld.dk Priser sayfasından çek"
-            disabled={loadBlocked || wpPending}
-          >
-            {wpPending ? 'Çekiliyor…' : "WP'den çek"}
-          </button>
+                })();
+              }}
+              className={dark ? 'border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800' : 'rounded-sg-sm border border-emerald-400 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800'}
+              title="Karat, gümüş, bar, platin, palladium ve plet fiyatlarını seroguld.dk Priser sayfasından çek"
+              disabled={loadBlocked || wpPending}
+            >
+              {wpPending ? 'Çekiliyor…' : "WP'den çek"}
+            </button>
+          </div>
           <button type="button" onClick={() => { void requestClose(); }} disabled={closeBlocked} className={dark ? 'border border-brand-300 bg-white px-4 py-2 text-sm font-bold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50' : 'rounded-sg-sm border border-sg-border px-4 py-2 text-sm font-semibold text-sg-text disabled:cursor-not-allowed disabled:opacity-50'}>Vazgeç</button>
           <button
             type="button"
