@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
+import pytest
+
+import app.services.afg_document_renderer as afg_renderer_module
 from app.services.afg_document_renderer import (
     aggregate_afg_rows,
     render_afg_document_html,
@@ -253,8 +257,16 @@ def test_render_afg_pdf_single_page_with_all_fifteen_slots_filled():
     assert _pdf_page_count(payload) == 1
 
 
-def test_render_afg_document_pdf_isolates_internal_fields():
+def test_render_afg_document_pdf_isolates_internal_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     """İç marj ve POS kodu müşteri belgesine SIZMAMALI (sızmazlık sözleşmesi)."""
+    # Footer ayarlardan okunur: yerel .env override'ları (ör. INVOICE_SELLER_CVR
+    # 'DK' öneksiz) testi ortama muhtaç bırakmasın — bilinen default'la render.
+    base_settings = afg_renderer_module.get_settings()
+    monkeypatch.setattr(
+        afg_renderer_module,
+        "get_settings",
+        lambda: SimpleNamespace(**{**vars(base_settings), "invoice_seller_cvr": "DK34093083"}),
+    )
     html = render_afg_document_html(_sample_context())
     assert "B501EBC0" not in html  # session_code
     assert "8.00 %" not in html  # marj yüzdesi
