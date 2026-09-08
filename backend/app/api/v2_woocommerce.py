@@ -24,6 +24,7 @@ from app.api.products import (
     get_product_sync_log as legacy_get_product_sync_log,
     get_product_woocommerce_raw as legacy_get_product_woocommerce_raw,
     publish as legacy_publish_product,
+    reorder_product_photos as legacy_reorder_product_photos,
     sync_product_sale_status as legacy_sync_product_sale_status,
     unpublish as legacy_unpublish_product,
     update_ai_describe as legacy_update_ai_describe,
@@ -37,6 +38,7 @@ from app.schemas.product import (
     ProductAIDescriptionUpdate,
     ProductHistoryOut,
     ProductOut,
+    ProductPhotoReorderRequest,
     ProductPublishRequest,
     ProductPublishResponse,
     WooSyncLogOut,
@@ -488,6 +490,23 @@ async def delete_woocommerce_photo_v2(
     admin: User = Depends(require_admin),
 ) -> ProductOut:
     return await legacy_delete_photo(product_id=product_id, photo_id=photo_id, db=db, admin=admin)
+
+
+@router.put("/woocommerce/products/{product_id}/photos/order", response_model=ProductOut)
+async def put_woocommerce_photo_order_v2(
+    product_id: UUID,
+    payload: ProductPhotoReorderRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> ProductOut:
+    """Sürükle-sırala yüzeyleri için v2 sarmalayıcı; legacy R1-36 davranışı aynen:
+    sort_order = liste sırası, ilk görsel Primær, bahsedilmeyenler sona."""
+    return await legacy_reorder_product_photos(
+        product_id=product_id,
+        payload={"photo_ids": payload.photo_ids},
+        db=db,
+        admin=admin,
+    )
 
 
 @router.get("/opmc/orders", response_model=AntiFraudOrdersResponse)

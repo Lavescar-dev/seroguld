@@ -36,6 +36,14 @@ class LibraryPhotoAttach(AppBaseModel):
     make_primary: bool = False
 
 
+class ProductPhotoReorderRequest(AppBaseModel):
+    """Fotoğraf sıralama isteği; ``photo_ids`` hedef sırayla ürün foto id'leridir.
+    Bahsedilmeyen mevcut fotoğraflar göreli sıraları korunarak sona eklenir ve
+    ilk görsel otomatik Primær olur (photo_service.reorder_photos sözleşmesi)."""
+
+    photo_ids: list[str] = Field(min_length=1, max_length=200)
+
+
 class SellerInlineCreate(AppBaseModel):
     name: str = Field(min_length=2, max_length=200)
     email: str | None = None
