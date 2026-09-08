@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Düzeltildi (Excel'de aç — saha raporu: hiçbir şey olmuyor)
+
+- **Paylaşılan `onOpenExcel` akışında saha teşhisi + kendini onarma:** tüm
+  "Excel'de aç" yüzeyleri (alış çalışma alanı, AFG belgeleri, depolama, log,
+  office dock) tek ortak yolu kullanıyor ve başarısızlık yalnız 10px'lik
+  bantta yaşadığı için saha "hiçbir şey olmuyor" raporluyordu. Üç katman:
+  (1) her başarısız çıkışta aşama kodlu `writeUiDiagnostic` kaydı
+  (`excel-open:conflict`, `excel-open:bridge-failed`,
+  `excel-open:working-copy:<status>`, `excel-open:tauri-missing`) —
+  müşteri makinesindeki `ui-diagnostics.jsonl` tek satırı hangi aşamanın
+  düştüğünü kesin söyler; (2) 409 dışındaki başarısızlıklar artık toast ile
+  de görünür; (3) Rust açılış penceresinden (1.2 sn) sonra köprü süreci
+  ölürse yoklama bunu görüp backend oturumunu DELETE ile serbest bırakır —
+  eski davranışta oturum TTL'e (1 saat) kadar açık kalıyor ve her yüzey
+  409 çakışmasıyla kilitleniyordu. Temiz kopyada slot anında açılır,
+  kirli kopyada sonraki açma bilinçli olarak 409 + kurtarma bandı üretir.
+
 ### Düzeltildi (kimlik OCR — gerçek saha kartı değerlendirmesi)
 
 - **Gerçek kart fotoğrafıyla parser değerlendirmesi:** müşterinin kendi

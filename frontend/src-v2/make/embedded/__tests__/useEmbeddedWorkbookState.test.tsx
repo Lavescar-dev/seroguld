@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as XLSX from 'xlsx';
 
 const { apiRequestMock } = vi.hoisted(() => ({ apiRequestMock: vi.fn() }));
@@ -33,6 +33,8 @@ vi.mock('@/lib/desktop', () => ({
   focusManagedExcelSession: vi.fn(async () => true),
   closeManagedExcelSession: vi.fn(async () => true),
   exportDocumentBytes: vi.fn(async () => ({ path: 'C:/exports/cikti.xlsx', mode: 'save-dialog' })),
+  getDesktopStartupState: vi.fn(async () => ({ state: 'ready', message: 'ok', excel_bridge_running: true })),
+  writeUiDiagnostic: vi.fn(async () => ({ path: 'C:/logs/ui-diagnostics.jsonl' })),
 }));
 
 vi.mock('@/lib/saveCoordinator', () => ({
@@ -43,11 +45,15 @@ vi.mock('@/lib/saveCoordinator', () => ({
 import { ApiError, downloadAuthedDocument } from '@/lib/api';
 import {
   exportDocumentBytes,
+  getDesktopStartupState,
   getExcelAvailability,
   isTauriRuntime,
+  launchExcelBridge,
   probeExcelComAvailability,
+  writeUiDiagnostic,
 } from '@/lib/desktop';
 import { isPendingSaveDiscarded } from '@/lib/saveCoordinator';
+import { t } from '@/lib/locale';
 import type {
   DocumentArtifactCellsPatchOut,
   DocumentArtifactPreview,
@@ -144,6 +150,9 @@ const mockedProbe = vi.mocked(probeExcelComAvailability);
 const mockedExportBytes = vi.mocked(exportDocumentBytes);
 const mockedDownload = vi.mocked(downloadAuthedDocument);
 const mockedIsDiscarded = vi.mocked(isPendingSaveDiscarded);
+const mockedLaunch = vi.mocked(launchExcelBridge);
+const mockedStartupState = vi.mocked(getDesktopStartupState);
+const mockedWriteDiagnostic = vi.mocked(writeUiDiagnostic);
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -445,5 +454,228 @@ describe('useEmbeddedWorkbookState onExport', () => {
     expect(result.current.excelMessage).toContain('indirme başarısız');
     expect(mockedExportBytes).not.toHaveBeenCalled();
     expect(mockedDownload).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onOpenExcel — Excel köprüsü akışı (tüm "Excel'de aç" yüzeylerinin ortak yolu)
+// ---------------------------------------------------------------------------
+
+const excelSessionPayload = {
+  session_id: 'sess-1',
+  bearer_token: 'tok-1',
+  status: 'active',
+  can_write: true,
+  revision: 3,
+  file_name: 'afg.xlsm',
+  working_file_name: 'afg.xlsm',
+  message: null,
+};
+
+function excelRequestSession(): void {
+  apiRequestMock.mockImplementation((path: unknown, options?: ApiRequestOptions) => {
+    const target = String(path);
+    if (target.startsWith('/api/v2/excel-preview/')) return previewPayload;
+    if (target.endsWith('/excel-sessions') && options?.method === 'POST') return excelSessionPayload;
+    if (options?.method === 'PATCH') return appliedPatch;
+    return workbookBlob;
+  });
+}
+
+function findReleaseDeleteCall(): { path: string; headers: Record<string, string> } | null {
+  const call = vi.mocked(globalThis.fetch).mock.calls.find(
+    ([input, init]) =>
+      String(input).includes('/api/v2/excel-sessions/')
+      && (init as RequestInit | undefined)?.method === 'DELETE',
+  );
+  if (!call) return null;
+  const headers = ((call[1] as RequestInit | undefined)?.headers ?? {}) as Record<string, string>;
+  return { path: String(call[0]), headers };
+}
+
+describe('useEmbeddedWorkbookState onOpenExcel — Excel köprüsü akışı', () => {
+  beforeEach(() => {
+    mockedIsTauri.mockReturnValue(true);
+    mockedGetAvail.mockResolvedValue({ available: true });
+    mockedStartupState.mockResolvedValue({
+      state: 'ready',
+      message: 'ok',
+      excel_bridge_running: true,
+    });
+    mockedLaunch.mockResolvedValue({ running: true, pid: 4242, message: 'Excel bridge başlatıldı' });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ revision: 3, message: null }), { status: 200 }),
+    );
+  });
+
+  afterEach(() => {
+    vi.mocked(globalThis.fetch).mockRestore();
+  });
+
+  it('mutlu yol: köprü oturum verisiyle başlatılır ve yönetim kilidi açılır', async () => {
+    excelRequestSession();
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+
+    expect(result.current.managedExcelOpen).toBe(true);
+    expect(result.current.excelMessage).toBe(t('workbook.excelEditing'));
+    expect(mockedLaunch).toHaveBeenCalledTimes(1);
+    expect(mockedLaunch).toHaveBeenCalledWith({
+      workbook_path: 'sess-1/afg.xlsm',
+      sync_url: 'http://127.0.0.1:8000/api/v2/excel-sessions/sess-1/sync',
+      close_url: 'http://127.0.0.1:8000/api/v2/excel-sessions/sess-1',
+      session_token: 'tok-1',
+      base_revision: 3,
+      can_write: true,
+    });
+    // Başarılı açılış tanı gürültüsü üretmez.
+    expect(mockedWriteDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it('Masaüstü uygulaması değilse oturum açmadan bilgilendirir', async () => {
+    mockedIsTauri.mockReturnValue(false);
+    excelRequestSession();
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+
+    expect(result.current.excelMessage).toBe(t('workbook.excelUnavailable'));
+    expect(mockedLaunch).not.toHaveBeenCalled();
+    expect(
+      apiRequestMock.mock.calls.some(([path, options]) => String(path).endsWith('/excel-sessions') && options?.method === 'POST'),
+    ).toBe(false);
+    expect(mockedWriteDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 'excel-open:tauri-missing' }),
+    );
+  });
+
+  it('409 çakışmasında kurtarma bandını açar ve köprüyü hiç başlatmaz', async () => {
+    apiRequestMock.mockImplementation((path: unknown, options?: ApiRequestOptions) => {
+      const target = String(path);
+      if (target.startsWith('/api/v2/excel-preview/')) return previewPayload;
+      if (target.endsWith('/excel-sessions') && options?.method === 'POST') {
+        throw new ApiError(409, 'Başka bir Excel belgesi düzenleniyor.');
+      }
+      if (options?.method === 'PATCH') return appliedPatch;
+      return workbookBlob;
+    });
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+
+    expect(result.current.excelConflict).toBe(true);
+    expect(result.current.managedExcelOpen).toBe(false);
+    expect(mockedLaunch).not.toHaveBeenCalled();
+    // Oturum rezerve edilemedi: serbest bırakma DELETE'i yapılmaz.
+    expect(findReleaseDeleteCall()).toBeNull();
+    expect(mockedWriteDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 'excel-open:conflict' }),
+    );
+  });
+
+  it('köprü running:false dönerse oturum DELETE ile serbest kalır ve hata görünür olur', async () => {
+    excelRequestSession();
+    mockedLaunch.mockResolvedValue({ running: false, pid: null, message: 'Excel bulunamadı' });
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+
+    expect(result.current.managedExcelOpen).toBe(false);
+    expect(result.current.excelMessage).toContain('Excel bulunamadı');
+    const release = findReleaseDeleteCall();
+    expect(release).not.toBeNull();
+    expect(release?.path).toContain('/api/v2/excel-sessions/sess-1');
+    expect(release?.headers.Authorization).toBe('Bearer tok-1');
+    expect(mockedWriteDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 'excel-open:bridge-failed' }),
+    );
+  });
+
+  it('köprü IPC hatası verirse neden kullanıcıya taşınır ve oturum serbest kalır', async () => {
+    excelRequestSession();
+    mockedLaunch.mockRejectedValue(new Error('Tauri runtime bulunamadı'));
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+
+    expect(result.current.managedExcelOpen).toBe(false);
+    expect(result.current.excelMessage).toContain('Tauri runtime bulunamadı');
+    expect(findReleaseDeleteCall()).not.toBeNull();
+    expect(mockedWriteDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 'excel-open:bridge-failed' }),
+    );
+  });
+
+  it('çalışma kopyası hatası aşama koduyla tanıya yazılır', async () => {
+    apiRequestMock.mockImplementation((path: unknown, options?: ApiRequestOptions) => {
+      const target = String(path);
+      if (target.startsWith('/api/v2/excel-preview/')) return previewPayload;
+      if (target.endsWith('/excel-sessions') && options?.method === 'POST') {
+        throw new ApiError(500, 'sunucu hatası');
+      }
+      if (options?.method === 'PATCH') return appliedPatch;
+      return workbookBlob;
+    });
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+
+    expect(result.current.excelMessage).toContain('sunucu hatası');
+    expect(mockedLaunch).not.toHaveBeenCalled();
+    expect(findReleaseDeleteCall()).toBeNull();
+    expect(mockedWriteDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 'excel-open:working-copy:500' }),
+    );
+  });
+
+  it('köprü açıldıktan sonra ölürse yoklama oturumu serbest bırakır (kendini onarma)', async () => {
+    excelRequestSession();
+    const { result } = renderWorkbookHook('alis-workspace', '1');
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    await act(async () => {
+      await result.current.onOpenExcel();
+    });
+    expect(result.current.managedExcelOpen).toBe(true);
+
+    // Rust açılış penceresinden sonra köprü öldü: native durum köprüyü görmüyor.
+    mockedStartupState.mockResolvedValue({
+      state: 'ready',
+      message: 'ok',
+      excel_bridge_running: false,
+      excel_close_failed: true,
+    });
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response(JSON.stringify({ revision: 3, message: null }), { status: 200 }),
+    );
+
+    await act(async () => {
+      await sleep(1_700);
+    });
+
+    expect(result.current.managedExcelOpen).toBe(false);
+    expect(result.current.excelMessage).toBe(t('workbook.excelBridgeDied'));
+    const release = findReleaseDeleteCall();
+    expect(release).not.toBeNull();
+    expect(release?.path).toContain('/api/v2/excel-sessions/sess-1');
   });
 });

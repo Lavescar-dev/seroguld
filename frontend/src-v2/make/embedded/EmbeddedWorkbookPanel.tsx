@@ -15,6 +15,6 @@ type EmbeddedWorkbookPanelProps = {
  * same controlled grid and revision protocol.
  */
 export function EmbeddedWorkbookPanel({ kind, artifactKey, layoutMode = 'page', onClose, variant = 'classic' }: EmbeddedWorkbookPanelProps) {
-  const state = useEmbeddedWorkbookState(kind, artifactKey);
+  const state = useEmbeddedWorkbookState(kind, artifactKey, variant);
   return <EmbeddedWorkbookSurface {...state} layoutMode={layoutMode} onClose={onClose} variant={variant} />;
 }

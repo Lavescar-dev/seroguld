@@ -1678,3 +1678,27 @@ Regresyon kalkanı: `identityScanOcrContract.test.ts` (B serisi 10 yeni test)
    doldurulacak (saha testi). ET-3850 müşteri lokasyonundaki ağ yazıcısıdır;
    hp'de yoktur.
 
+**"Excel'de aç" saha raporu (2026-09-08) — teşhis kiti gönderildi:**
+
+Saha: "Excel'de aç deyince Excel açılmıyor; birkaç yerde aynı" (alış
+çalışma alanı deneme noktası seçildi). Paylaşılan zincir
+(`useEmbeddedWorkbookState.onOpenExcel` → POST `/api/v2/excel-sessions` →
+Rust `launch_excel_bridge` → Python `excel-bridge` runtime modu) uçtan uca
+denetlendi; frontend/backend mantık hatası bulunamadı ve onOpenExcel akışı
+7 yeni vitest ile mühürlendi. Windows'a özgü kalıntı şüpheler (VDS'te
+çalıştırılamaz): (a) paketlenmiş runtime'da pywin32/COM yüklemesi,
+(b) DispatchEx'in 1.2 sn'lik Rust açılış penceresinden sonra düşmesi — bu
+senaryo için kendini onarma eklendi (yoklama native `excel_bridge_running`
+false görürse oturumu DELETE ile serbest bırakır; eski davranışta 1 saatlik
+409 kilidi oluşuyordu), (c) kayıt defteri sezgisinin Excel'i görmemesi
+(buton pasif + "Yeniden dene" COM probe'u).
+
+**Müşteri makinesinde yapılacak:** Excel'de aç'ı bir kez dene; ardından
+`%APPDATA%\dk.seroguld.crm\logs\ui-diagnostics.jsonl` içindeki
+`excel-open:*` satırı + `logs/excel-bridge.log` ve `desktop.log`'daki
+`excel-launch-failed` satırı okunur. Aşama kodu kök nedeni kesin verir:
+`working-copy:<status>` → backend; `bridge-failed` → köprü süreci (exit
+koduna bak: 10 config, 11 dosya yok, 12 COM/Excel); `conflict` → takılı
+oturum (artık kendini onarar); `excel-missing`/`tauri-missing` → probe/
+paketleme. İlgili sürüm notu: CHANGELOG [Unreleased] "Excel'de aç".
+

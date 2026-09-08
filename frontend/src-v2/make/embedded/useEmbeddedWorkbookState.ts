@@ -7,10 +7,12 @@ import {
   closeManagedExcelSession,
   exportDocumentBytes,
   focusManagedExcelSession,
+  getDesktopStartupState,
   getExcelAvailability,
   isTauriRuntime,
   launchExcelBridge,
   probeExcelComAvailability,
+  writeUiDiagnostic,
 } from '@/lib/desktop';
 import { getLocale, t } from '@/lib/locale';
 import { useToast } from '@/lib/toast';
@@ -80,6 +82,7 @@ function isEditableArtifact(kind: string, key: string, preview: DocumentArtifact
 export function useEmbeddedWorkbookState(
   kind: string,
   artifactKey: string,
+  uiVariant: 'classic' | 'modern' = 'classic',
 ): EmbeddedWorkbookSurfaceProps {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -321,7 +324,32 @@ export function useEmbeddedWorkbookState(
     const session = excelSessionRef.current;
     if (!managedExcelOpen || !session) return undefined;
     const timer = window.setInterval(async () => {
+      if (excelSessionRef.current !== session) return;
       try {
+        // Rust yalnız ilk 1.2 sn'de köprü ölümünü görür; DispatchEx/COM gibi
+        // geç düşen başarısızlıklarda "running" raporlanır, köprü sonra ölür
+        // ve backend oturumu TTL'e kadar açık kalır — her yüzey 409 ile
+        // kilitlenirdi. Native tarafta köprü yoksa oturumu serbest bırak:
+        // temiz kopyada backend slotu anında açılır, kirli kopyada ise
+        // sonraki açma 409 + kurtarma bandı üretir (ikisi de eyleme dönük).
+        const native = await getDesktopStartupState();
+        if (excelSessionRef.current !== session) return;
+        if (native?.excel_bridge_running === false) {
+          excelSessionRef.current = null;
+          setManagedExcelOpen(false);
+          setExcelMessage(t('workbook.excelBridgeDied', getLocale()));
+          toast.warning(t('workbook.openExcel', getLocale()), t('workbook.excelBridgeDied', getLocale()));
+          try {
+            await fetch(buildApiUrl(`/api/v2/excel-sessions/${session.sessionId}`), {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${session.token}` },
+            });
+          } catch {
+            // Backend TTL/kurtarma mekanizması yine de denetimli davranır.
+          }
+          await queryClient.invalidateQueries({ queryKey: ['embedded-workbook', kind, artifactKey] });
+          return;
+        }
         const response = await fetch(buildApiUrl(`/api/v2/excel-sessions/${session.sessionId}`), {
           headers: { Authorization: `Bearer ${session.token}` },
         });
@@ -368,13 +396,30 @@ export function useEmbeddedWorkbookState(
     setCellEdits(next);
   };
 
+  // "Excel'de aç" sahadaki en çok raporlanan sessiz başarısızlıktır: hata
+  // yalnız 10px'lik bantta yaşar, kullanıcı "hiçbir şey olmadı" der. Her
+  // başarısız çıkışta aşama kodlu tanı kaydı (ui-diagnostics.jsonl) yazılır;
+  // böylece müşteri makinesinden gelen tek satır log hangi aşamanın
+  // düştüğünü (çalışma kopyası mı, köprü mü, çakışma mı) kesin söyler.
+  const reportExcelOpenFailure = (errorCode: string) => {
+    void writeUiDiagnostic({
+      occurredAt: new Date().toISOString(),
+      route: '/office-excel-open',
+      uiVariant,
+      frontendBuild: typeof __SERO_FRONTEND_BUILT_AT__ === 'string' ? __SERO_FRONTEND_BUILT_AT__ : 'dev',
+      errorCode,
+    });
+  };
+
   const onOpenExcel = async () => {
     if (managedExcelOpen || isOpeningExcel) return;
     if (!isTauriRuntime()) {
+      reportExcelOpenFailure('excel-open:tauri-missing');
       setExcelMessage(t('workbook.excelUnavailable', getLocale()));
       return;
     }
     if (excelAvailable === false) {
+      reportExcelOpenFailure('excel-open:excel-missing');
       setExcelMessage(t('workbook.excelMissing', getLocale()));
       return;
     }
@@ -434,18 +479,31 @@ export function useEmbeddedWorkbookState(
           // Backend expiry/recovery remains authoritative.
         }
       }
-      if (error instanceof ApiError && error.status === 409) {
+      const isConflict = error instanceof ApiError && error.status === 409;
+      if (isConflict) {
         setExcelConflict(true);
+        reportExcelOpenFailure('excel-open:conflict');
+      } else if (stage === 'bridge') {
+        reportExcelOpenFailure('excel-open:bridge-failed');
+      } else {
+        const status = error instanceof ApiError ? error.status : null;
+        reportExcelOpenFailure(
+          status !== null ? `excel-open:working-copy:${status}` : 'excel-open:working-copy:error',
+        );
       }
       const detail = error instanceof Error && error.message ? error.message : null;
       if (stage === 'working-copy') {
-        setExcelMessage(
-          detail
-            ? `${t('workbook.workingCopyFailed', getLocale())}: ${detail}`
-            : t('workbook.workingCopyFailed', getLocale()),
-        );
+        const message = detail
+          ? `${t('workbook.workingCopyFailed', getLocale())}: ${detail}`
+          : t('workbook.workingCopyFailed', getLocale());
+        setExcelMessage(message);
+        // 409'un kendi bandı ve kurtarma düğmeleri var; diğer çalışma kopyası
+        // hataları bantta kaybolmasın diye toast ile de görünür olsun.
+        if (!isConflict) toast.error(t('workbook.openExcel', getLocale()), message);
       } else {
-        setExcelMessage(detail || t('workbook.excelMissing', getLocale()));
+        const message = detail || t('workbook.excelMissing', getLocale());
+        setExcelMessage(message);
+        toast.error(t('workbook.openExcel', getLocale()), message);
       }
     } finally {
       setIsOpeningExcel(false);
