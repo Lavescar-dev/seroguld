@@ -2,8 +2,17 @@
 
 > **Amaç:** Sıfır bilgiyle gelen yeni bir geliştiricinin/teknisyenin projeyi *kendi başına* devralabilmesi için tasarlanmış kapsamlı kaynak. Mevcut `docs/PROJECT_SYSTEM_GUIDE_TR.md` "ne yaptığını" anlatır; bu dosya **"nasıl çalıştığını, nereye bakılacağını, neyin eksik olduğunu"** anlatır.
 >
-> **Son güncelleme:** 2026-08-30 · **Versiyon:** v0.3.25
+> **Son güncelleme:** 2026-09-08 · **Versiyon:** v0.3.37
 > **Repo kökü:** `C:\Users\Lavescar\Clients\Recai_Demir\seroguld-crm-latest-windows`
+
+> **v0.3.37 notu (8 Eyl 2026):** Sahadan gelen 7 nihai problemin toplu
+> çözümü. Yeni operasyonel yüzeyler: (1) Piyasa oranları artık WP'den
+> otomatik çekilir — `MARKET_RATES_WP_AUTO_PULL_ENABLED/MINUTES` env
+> anahtarları + drawer'daki "Otomatik çekmeyi durdur" checkbox'ı tam
+> manuel moda geçirir; 22k-2 (`22b`) asla otomatik güncellenmez.
+> (2) Kimlik taramada WIA 300 DPI zorunlu (sarı kart 419×288 yakalama
+> kök nedeni). (3) `docs/WOO_SITE_FIELD_AUDIT.md` tür-bazlı Woo spec
+> şeridi + SEO slot haritası. Ayrıntı: `CHANGELOG.md [0.3.37]`.
 
 ---
 
