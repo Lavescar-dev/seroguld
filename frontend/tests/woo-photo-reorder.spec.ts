@@ -14,13 +14,20 @@ import { login } from './helpers/login';
 const PNG_1PX_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
+// Smoke betiği backend'i AYRI portta açar ve uygulamaya mutlak
+// VITE_API_BASE_URL verir; vite dev'de /api proxy'si YOKTUR — sayfa
+// origin'ine göreli fetch 404 alır (CI 0.3.38 dersi). URL ortamdan
+// geçersiz kılınabilir, varsayılanı frontend-smoke.sh ile aynıdır.
+const BACKEND_URL = process.env.SERO_E2E_BACKEND_URL || 'http://127.0.0.1:38100';
+
 async function seedProductWithPhotos(page: Page, displayName: string): Promise<void> {
-  await page.evaluate(async (displayName) => {
+  // evaluate gövdesi tarayıcıda çalışır: modül sabitleri argument olarak geçilmeli.
+  await page.evaluate(async ({ backendUrl, displayName, pngBase64 }) => {
     const token = sessionStorage.getItem('seroguld.desktop.access_token');
     if (!token) throw new Error('oturum tokenı bulunamadı');
     const auth = { Authorization: `Bearer ${token}` };
 
-    const created = await fetch('/api/v2/depolama/products', {
+    const created = await fetch(`${backendUrl}/api/v2/depolama/products`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...auth },
       body: JSON.stringify({
@@ -34,20 +41,20 @@ async function seedProductWithPhotos(page: Page, displayName: string): Promise<v
     if (!created.ok) throw new Error(`ürün oluşturulamadı: ${created.status}`);
     const product = (await created.json()) as { id: string };
 
-    const bin = atob(PNG_1PX_BASE64);
+    const bin = atob(pngBase64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
     const form = new FormData();
     for (const name of ['e2e-reorder-a.png', 'e2e-reorder-b.png', 'e2e-reorder-c.png']) {
       form.append('files', new Blob([bytes], { type: 'image/png' }), name);
     }
-    const uploaded = await fetch(`/api/v2/woocommerce/products/${product.id}/photos`, {
+    const uploaded = await fetch(`${backendUrl}/api/v2/woocommerce/products/${product.id}/photos`, {
       method: 'POST',
       headers: auth,
       body: form,
     });
     if (!uploaded.ok) throw new Error(`fotoğraflar yüklenemedi: ${uploaded.status}`);
-  }, displayName);
+  }, { backendUrl: BACKEND_URL, displayName, pngBase64: PNG_1PX_BASE64 });
 }
 
 async function dragPhotoCard(page: Page, fromIndex: number, toIndex: number): Promise<void> {
@@ -68,6 +75,17 @@ async function dragPhotoCard(page: Page, fromIndex: number, toIndex: number): Pr
 
 async function openPhotoCards(page: Page, displayName: string): Promise<void> {
   await page.goto('/#/woocommerce');
+  // Modern Woo sayfası Woo kataloğu yüzeyiyle açılır; tohumlanan depolama
+  // ürünü "CRM ürünleri" yerel yüzeyinde listelenir. Liste sayfalıdır
+  // (25/sayfa) — isimle arayıp satırı seçmek şart.
+  await page.getByRole('button', { name: 'CRM ürünleri' }).click();
+  const search = page.getByLabel('Woo ürünlerinde ara');
+  await expect(search).toBeVisible();
+  await search.fill(displayName);
+  // Arama ~300ms debounce'ludur; debounce + fetch oturmadan satır seçilirse
+  // filtre biz Fotoğraf sekmesindeyken uygulanıp çalışma alanını sıfırlar
+  // (sekme Genel'e döner). Araç çubuğu sayacı filtre sonrası "1 ürün" olur.
+  await expect(page.getByText('1 ürün', { exact: true })).toBeVisible();
   await page.getByText(displayName).first().click();
   await page.getByRole('button', { name: 'Fotoğraf' }).click();
   await expect(page.getByTestId('woo-photo-dropzone')).toBeVisible();

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 
 /**
@@ -48,6 +48,10 @@ export function usePhotoReorder(options: {
 }): PhotoReorderController {
   const { ids, disabled = false, onCommit, onLocalReorder } = options;
   const [dragPhotoId, setDragPhotoId] = useState<string | null>(null);
+  // State'in ref aynası: dragstart ile drop aynı senkron JS task'ına düşebilir
+  // (Playwright dispatchEvent akışı böyle); state o task'ta hâlâ eskidir, ref
+  // ise anında güncel. Gerçek sürüklemede ikisi de aynı değeri taşır.
+  const dragPhotoIdRef = useRef<string | null>(null);
 
   const onDragStart = useCallback(
     (event: DragEvent<HTMLElement>, photoId: string) => {
@@ -55,6 +59,7 @@ export function usePhotoReorder(options: {
       // Firefox verisiz dragstart'ı hiç başlatmaz; text/plain zorunlu.
       event.dataTransfer.setData('text/plain', photoId);
       event.dataTransfer.effectAllowed = 'move';
+      dragPhotoIdRef.current = photoId;
       setDragPhotoId(photoId);
     },
     [disabled],
@@ -62,9 +67,9 @@ export function usePhotoReorder(options: {
 
   const onDragOverCard = useCallback(
     (event: DragEvent<HTMLElement>) => {
-      if (dragPhotoId) event.preventDefault();
+      if (dragPhotoIdRef.current) event.preventDefault();
     },
-    [dragPhotoId],
+    [],
   );
 
   const onDropCard = useCallback(
@@ -72,7 +77,8 @@ export function usePhotoReorder(options: {
       event.preventDefault();
       // Kap dropzone'u tetiklemesin (dosya yükleme yanılgısı).
       event.stopPropagation();
-      const dragId = dragPhotoId;
+      const dragId = dragPhotoIdRef.current;
+      dragPhotoIdRef.current = null;
       setDragPhotoId(null);
       if (!dragId || dragId === targetId) return;
       const next = moveId(ids, dragId, targetId);
@@ -89,10 +95,13 @@ export function usePhotoReorder(options: {
       if (onCommit) onCommit(next);
       else if (onLocalReorder) onLocalReorder(next);
     },
-    [dragPhotoId, ids, onCommit, onLocalReorder],
+    [ids, onCommit, onLocalReorder],
   );
 
-  const onDragEnd = useCallback(() => setDragPhotoId(null), []);
+  const onDragEnd = useCallback(() => {
+    dragPhotoIdRef.current = null;
+    setDragPhotoId(null);
+  }, []);
 
   return { dragPhotoId, onDragStart, onDragOverCard, onDropCard, onDragEnd };
 }
