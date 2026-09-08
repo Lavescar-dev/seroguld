@@ -86,6 +86,20 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 4096
     openai_timeout_seconds: float = 20.0
 
+    # R1-B: kimlik OCR üç katman. VLM katmanı BİLİNÇLİ OPT-IN'dir (default
+    # kapalı): Tier 0 barkod + Tier 1 doğrulama tamamen lokal çalışır, VLM
+    # yalnız bu bayrak + anahtar varken devreye girer. Model ucuz/min-max
+    # varsayılan (gpt-5-mini); gerçek kart benchmark'ı onaylamadan canlıya
+    # alınmaz. base_url boşsa openai_base_url devralınır (AB-residency
+    # projesi aynı URL ile çalışır; Çin ucuna kimlik verisi ASLA gitmez).
+    identity_extract_enabled: bool = False
+    identity_extract_model: str = ""
+    identity_extract_base_url: str = ""
+    identity_extract_timeout_seconds: float = 30.0
+    identity_extract_max_retries: int = 1
+    identity_extract_max_image_bytes: int = 8 * 1024 * 1024
+    identity_extract_confidence_threshold: float = 0.62
+
     opmc_api_url: str = "https://api.opmc.dk/v1"
     opmc_api_key: str = ""
     opmc_webhook_secret: str = ""

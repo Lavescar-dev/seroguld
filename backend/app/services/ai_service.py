@@ -98,6 +98,69 @@ class AIUsageSummary:
     raw_usage: dict[str, Any]
 
 
+def resolve_pricing_key(model_name: str) -> str | None:
+    """Model adını fiyat tablosu anahtarına eşler (uzun önek önce)."""
+    normalized = (model_name or "").strip().lower()
+    if not normalized:
+        return None
+
+    if normalized in MODEL_PRICING_USD_PER_1M:
+        return normalized
+
+    for key in sorted(MODEL_PRICING_USD_PER_1M.keys(), key=len, reverse=True):
+        if normalized.startswith(key):
+            return key
+    return None
+
+
+def build_ai_usage_summary(
+    response_payload: dict[str, Any],
+    *,
+    fallback_model: str = "",
+) -> AIUsageSummary:
+    """Chat-completions yanıtından maliyet özeti — AIUsageLog tek kaynağı.
+
+    R1-B: modül fonksiyonu — kimlik çıkarma servisi de AYNI sayacı ve fiyat
+    tablosunu kullanır (AIService delege eder, davranış değişmez).
+    """
+    usage = response_payload.get("usage") or {}
+    model_name = str(response_payload.get("model") or fallback_model or "").strip()
+
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except Exception:
+            return 0
+
+    prompt_tokens = _safe_int(usage.get("prompt_tokens", usage.get("input_tokens")))
+    completion_tokens = _safe_int(usage.get("completion_tokens", usage.get("output_tokens")))
+    total_tokens = _safe_int(usage.get("total_tokens")) or (prompt_tokens + completion_tokens)
+
+    pricing_key = resolve_pricing_key(model_name)
+    input_rate = Decimal("0")
+    output_rate = Decimal("0")
+    if pricing_key:
+        input_rate = MODEL_PRICING_USD_PER_1M[pricing_key]["input"]
+        output_rate = MODEL_PRICING_USD_PER_1M[pricing_key]["output"]
+
+    input_cost = (Decimal(prompt_tokens) / Decimal("1000000")) * input_rate
+    output_cost = (Decimal(completion_tokens) / Decimal("1000000")) * output_rate
+    total_cost = input_cost + output_cost
+
+    return AIUsageSummary(
+        provider="openai",
+        model=model_name or fallback_model,
+        pricing_key=pricing_key,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        input_cost_usd=input_cost.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
+        output_cost_usd=output_cost.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
+        total_cost_usd=total_cost.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
+        raw_usage=usage if isinstance(usage, dict) else {},
+    )
+
+
 class AIService:
     def __init__(self) -> None:
         settings = get_settings()
@@ -361,49 +424,11 @@ class AIService:
             return 0
 
     def _resolve_pricing_key(self, model_name: str) -> str | None:
-        normalized = (model_name or "").strip().lower()
-        if not normalized:
-            return None
-
-        if normalized in MODEL_PRICING_USD_PER_1M:
-            return normalized
-
-        for key in sorted(MODEL_PRICING_USD_PER_1M.keys(), key=len, reverse=True):
-            if normalized.startswith(key):
-                return key
-        return None
+        return resolve_pricing_key(model_name)
 
     def _build_usage_summary(self, response_payload: dict[str, Any]) -> AIUsageSummary:
-        usage = response_payload.get("usage") or {}
-        model_name = str(response_payload.get("model") or self.model or "").strip()
-
-        prompt_tokens = self._safe_int(usage.get("prompt_tokens", usage.get("input_tokens")))
-        completion_tokens = self._safe_int(usage.get("completion_tokens", usage.get("output_tokens")))
-        total_tokens = self._safe_int(usage.get("total_tokens")) or (prompt_tokens + completion_tokens)
-
-        pricing_key = self._resolve_pricing_key(model_name)
-        input_rate = Decimal("0")
-        output_rate = Decimal("0")
-        if pricing_key:
-            input_rate = MODEL_PRICING_USD_PER_1M[pricing_key]["input"]
-            output_rate = MODEL_PRICING_USD_PER_1M[pricing_key]["output"]
-
-        input_cost = (Decimal(prompt_tokens) / Decimal("1000000")) * input_rate
-        output_cost = (Decimal(completion_tokens) / Decimal("1000000")) * output_rate
-        total_cost = input_cost + output_cost
-
-        return AIUsageSummary(
-            provider="openai",
-            model=model_name or self.model,
-            pricing_key=pricing_key,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            input_cost_usd=input_cost.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
-            output_cost_usd=output_cost.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
-            total_cost_usd=total_cost.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP),
-            raw_usage=usage if isinstance(usage, dict) else {},
-        )
+        # R1-B: tek gerçek kaynak build_ai_usage_summary modül fonksiyonu.
+        return build_ai_usage_summary(response_payload, fallback_model=self.model)
 
     async def generate_description_with_usage(
         self, *, product: Product
