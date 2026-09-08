@@ -30,6 +30,7 @@ import { validateCpr } from '@/lib/cpr';
 import { ALIS_SHORTCUT_HINT } from '@/lib/shortcutHints';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { GOLD_MATRIX_ROWS, SILVER_MATRIX_ROWS, formatDecimalFixed, parseDecimalValue, syncMarketRateState } from '@/make/alis/marketRates';
+import { sortByKaratRank } from '@/make/alis/extraRowOrder';
 import { RelinkCustomerModal } from '@/make/alis/RelinkCustomerModal';
 import { resolveCustomerPanelView } from '@/make/alis/customerPanelState';
 import type { AlisPageProps } from '@/make/alis/AlisPage';
@@ -395,24 +396,29 @@ function AlisWorkbench({ state, workspace, hasSelectedCustomer, displayBridge, d
   const extraAll = state.extraRows || [];
   const extraGoldRows: ModernAlisRow[] = extraAll.filter((row) => row.metal === 'gold').map((row) => ({ key: row.row_key, name: row.label, type: row.karat === '22b' ? 'Altın' : row.kind === 'quarter' ? 'Çeyrek' : 'Kniv', purity: row.purity_percentage, karat: row.karat, lodighed: '—', unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
   const extraSilverRows: ModernAlisRow[] = extraAll.filter((row) => row.metal === 'silver').map((row) => ({ key: row.row_key, name: row.label, type: row.kind === 'quarter' ? 'Çeyrek' : 'Kniv', purity: row.purity_percentage, karat: '—', lodighed: row.karat, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  // R10-4: extra altın satırları (22K-2, kniv, çeyrek) grup sonuna DEĞİL,
+  // aynı karat rütbesindeki taban satırın yanına düşer — operatör talebi:
+  // 22K-2 her zaman 22K'nın hemen altında, "yeni satır en sonda" olmaz.
+  // Bar satırları fiziksel ürün bölümü olarak sonda kalır.
+  const goldBaseRows: ModernAlisRow[] = state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Altın', type: 'Altın', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk }));
+  // R2-10 takip / roadmap madde 2: sabit grid backend karat eşleşmesi yüzünden
+  // 22b taşımaz; 22K-2 dropdown'a 'add:' önekli suni satır olarak sunulur.
+  // Seçim AlisLedger'ın 'add:' dalına düşer ve onAddPresetRow GERÇEK boş
+  // quarter-extra satırını (karat '22b') oluşturur — eski 'extra:add-22b'
+  // anahtarı onUpdateExtraRow'da no-op olduğundan hayalet satır üretiyordu.
+  // R10-4: suni satır da grup sonuna değil, 22K'nın altına yerleşir.
+  const add22bRow: ModernAlisRow | null = extraAll.some((row) => row.metal === 'gold' && row.karat === '22b')
+    ? null
+    : { key: 'add:22b', name: '22K-2', type: 'Altın', purity: '91.67', karat: '22', lodighed: '916', unitPrice: state.marketRates.gold_rates_dkk?.['22b'] || '0', gram: '0', avance: '0', total: '0' };
   const goldRows: ModernAlisRow[] = [
-    ...state.goldRows.map((row) => ({ key: row.row_key, name: row.label || row.karat || 'Altın', type: 'Altın', purity: row.purity_percentage, karat: row.karat, lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk })),
+    ...sortByKaratRank([...goldBaseRows, ...extraGoldRows, ...(add22bRow ? [add22bRow] : [])]),
     ...goldBarRows,
-    ...extraGoldRows,
   ];
   const silverRows: ModernAlisRow[] = [
     ...state.silverRows.map((row) => ({ key: row.row_key, name: row.label || row.type_code || 'Gümüş', type: row.type_code, purity: row.purity_percentage, karat: '—', lodighed: row.lodighed, unitPrice: row.unit_price_dkk, gram: row.gram, avance: row.avance_percent, total: row.line_total_dkk })),
     ...silverBarRows,
     ...extraSilverRows,
   ];
-  // R2-10 takip / roadmap madde 2: sabit grid backend karat eşleşmesi yüzünden
-  // 22b taşımaz; 22K-2 dropdown'a 'add:' önekli suni satır olarak sunulur.
-  // Seçim AlisLedger'ın 'add:' dalına düşer ve onAddPresetRow GERÇEK boş
-  // quarter-extra satırını (karat '22b') oluşturur — eski 'extra:add-22b'
-  // anahtarı onUpdateExtraRow'da no-op olduğundan hayalet satır üretiyordu.
-  if (!extraAll.some((row) => row.metal === 'gold' && row.karat === '22b')) {
-    goldRows.push({ key: 'add:22b', name: '22K-2', type: 'Altın', purity: '91.67', karat: '22', lodighed: '916', unitPrice: state.marketRates.gold_rates_dkk?.['22b'] || '0', gram: '0', avance: '0', total: '0' });
-  }
   const totalGram = [...goldRows, ...silverRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.gram), 0);
   const totalOffer = [...goldRows, ...silverRows, ...ptpdRows].reduce((sum, row) => sum + parseDecimalValue(row.total), 0);
   const vatAmount = state.purchaseVatEnabled ? Math.round(totalOffer * 0.25 * 100) / 100 : 0;
