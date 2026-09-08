@@ -11,6 +11,10 @@ import {
   writeUiDiagnostic,
   type IdentityWatchStatus,
 } from '@/lib/desktop';
+import {
+  fetchIdentityExtractCapabilities,
+  requestIdentityExtract,
+} from '@/lib/identityExtract';
 
 import type { EditableCustomer } from './types';
 
@@ -697,7 +701,9 @@ function parseRepairedMrz(lines: string[]): IdentityParseResult | null {
 
 // Basılı dal primary: documentType ve dolu alanlar korunur; secondary (MRZ)
 // yalnız eksik alanları doldurur (ör. parlamada basılı belge no okunmazsa).
-function mergeParsedIdentity(primary: IdentityParseResult, secondary: IdentityParseResult): IdentityParseResult {
+// R1-B: VLM birleşiminde de aynı sözleşme — primary=VLM, secondary=yerel
+// regex zinciri (fallback asla silinmez, eksik alanı o doldurur).
+export function mergeParsedIdentity(primary: IdentityParseResult, secondary: IdentityParseResult): IdentityParseResult {
   return {
     documentType: primary.documentType,
     rawLines: [...secondary.rawLines, ...primary.rawLines],
@@ -707,6 +713,70 @@ function mergeParsedIdentity(primary: IdentityParseResult, secondary: IdentityPa
 
 export function hasParsedIdentityFields(result: IdentityParseResult | null | undefined): boolean {
   return Boolean(result && Object.values(result.fields).some((field) => Boolean(field?.value)));
+}
+
+// ---- R1-B: VLM çıkarım yanıtını yerel parse sözleşmesine eşleme -------------
+//
+// Backend /alis/identity/extract yanıtındaki alanlar (app/schemas/identity.py)
+// IdentityParseResult'a çevrilir. Kritik kural: CPR burada KIRPILMAZ — backend
+// barkod+doğrulamadan geçmiş tam 10 haneyi verir; 6'ya kırpmak R1-C'nin
+// amacını bozar. plausibleCprSix kırpması yalnız yerel regex dalında kalır.
+// birth_date/expiry_date EditableCustomer alanı olmadığından düşürülür.
+
+function identityDocumentTypeFromExtract(
+  documentType: string | null,
+  fields: Partial<Record<IdentityFieldName, ParsedIdentityField>>,
+): IdentityParseResult['documentType'] {
+  switch (documentType) {
+    case 'sundhedskort':
+      return 'health_card';
+    case 'passport':
+    case 'driver_license':
+    case 'id_card':
+      return documentType;
+    case 'residence_permit':
+      // Oturum izni kimlik kartı ailesindedir (canonical seçim için tür
+      // bilinmelidir); belge türü DEĞERİ yazılmaz — aşağıda yalnız üç bilinen
+      // enum yazılır.
+      return 'id_card';
+    default:
+      // other/null: tür söylenmemişse dolu alanlardan sınıfla — belge no varsa
+      // kimlik kartı, yoksa ad/CPR bloğu sundhedskort düzenidir. Bu yalnız
+      // yüzey birleşiminde canonical seçim içindir.
+      return fields.identity_doc_number?.value ? 'id_card' : 'health_card';
+  }
+}
+
+export function identityParseResultFromExtract(payload: {
+  document_type: string | null;
+  fields: Record<string, { value: string; review?: string }>;
+}): IdentityParseResult {
+  const extractFields = payload.fields ?? {};
+  const readField = (key: string): ParsedIdentityField | undefined => {
+    const entry = extractFields[key];
+    const value = typeof entry?.value === 'string' ? entry.value.trim() : '';
+    if (!value) return undefined;
+    return { value, review: entry.review === 'validated' ? 'validated' : 'needs_review' };
+  };
+  const fields = definedFields([
+    ['name', readField('full_name')],
+    // Tam 10 hane korunur (barkod/doğrulama kaynaklı; kırpma YOK).
+    ['cpr_number', readField('cpr_number')],
+    ['address', readField('address')],
+    ['postal_code', parsedField((readField('postal_code')?.value ?? '').replace(/\D/g, '').slice(0, 4), 'needs_review')],
+    ['city', readField('city')],
+    ['identity_doc_number', readField('doc_number')],
+    // Sundhedskort kimlik belgesi değildir — yerel daldaki kural aynen korunur.
+    ['identity_doc_type', ['passport', 'driver_license', 'id_card'].includes(payload.document_type ?? '')
+      ? { value: payload.document_type as string, review: 'validated' as const }
+      : undefined],
+    ['identity_doc_country', parsedField(normalizeCountry(readField('country')?.value ?? ''), 'needs_review')],
+  ]);
+  return {
+    documentType: identityDocumentTypeFromExtract(payload.document_type, fields),
+    rawLines: [],
+    fields,
+  };
 }
 
 // OCR'ın sahiplendiği alanlar iki gruptur: belge kimliği ve kişi+adres. Yeni
@@ -1000,6 +1070,29 @@ export function useIdentityScan({
   const [previews, setPreviews] = useState<Partial<Record<'front' | 'back', string>>>({});
   // Klasör izleme durumu (rozet); null = hiç sorgulanmadı / destek yok.
   const [watchStatus, setWatchStatus] = useState<IdentityWatchStatus | null>(null);
+  // R1-B: VLM katmanı (backend flag'i) — kapalıysa akış yalnız yerel OCR
+  // zinciriyle çalışır, davranış bugüne kadar aynıdır. Hata durumunda regex
+  // sonucu ekranda kalır ve operatör GÖRÜNÜR uyarılır (sessiz kalite kaybı yok).
+  const [vlmNotice, setVlmNotice] = useState<string | null>(null);
+  const vlmEnabledRef = useRef(false);
+  // Uçuşta VLM yanıtının eski taramaya yazılmasını kesen sıra: her receive,
+  // confirm ve clear bir sonrakini geçersiz kılar.
+  const vlmSeqRef = useRef(0);
+
+  useEffect(() => {
+    let disposed = false;
+    void fetchIdentityExtractCapabilities()
+      .then((extractCaps) => {
+        if (!disposed) vlmEnabledRef.current = extractCaps.extract_enabled;
+      })
+      .catch(() => {
+        // Yetenek sorgusu başarısız = VLM yok sayılır; yerel zincir çalışır.
+        // Sessiz geçilir çünkü VLM opsiyonel bir üst katmandır.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
   const result = useMemo(() => mergeSideScanResults(scanBySide.front, scanBySide.back), [scanBySide]);
   const resultRef = useRef(result);
   resultRef.current = result;
@@ -1129,6 +1222,25 @@ export function useIdentityScan({
     }
     setStatus('review');
     setError(null);
+    // R1-B motor seçimi: yerel regex sonucu zaten ekranda; VLM flag'i açık ve
+    // görüntü önizlemesi varsa arka planda çıkarım isteği atılır. Yanıt
+    // gelince VLM birincil, regex eksik-doldurucu birleşir (mergeParsedIdentity);
+    // hata yerel sonucu ASLA ezmez — sadece görünür uyarı üretir.
+    if (vlmEnabledRef.current && preview) {
+      const seq = (vlmSeqRef.current += 1);
+      void requestIdentityExtract(preview, side)
+        .then((payload) => {
+          if (seq !== vlmSeqRef.current) return;
+          const vlmResult = identityParseResultFromExtract(payload);
+          const merged = hasParsedIdentityFields(vlmResult) ? mergeParsedIdentity(vlmResult, nextResult) : nextResult;
+          setScanBySide((current) => ({ ...current, [side]: merged }));
+          setVlmNotice(null);
+        })
+        .catch(() => {
+          if (seq !== vlmSeqRef.current) return;
+          setVlmNotice('VLM doğrulaması yanıt vermedi — yerel OCR sonucu gösteriliyor, alanları kontrol edin.');
+        });
+    }
   }, [uiVariant]);
 
   const acquire = useCallback(async (side: 'front' | 'back' = 'front') => {
@@ -1230,6 +1342,8 @@ export function useIdentityScan({
 
   const confirm = useCallback(() => {
     if (!result) return;
+    // Uçuştaki VLM yanıtı artık eskidir — onaylanan sonuç yazıldı.
+    vlmSeqRef.current += 1;
     setCustomer((current) => applyConfirmedIdentityResult(current, result));
     setScanBySide({ front: null, back: null });
     setPreviews({});
@@ -1240,11 +1354,13 @@ export function useIdentityScan({
   }, [onApplied, result, setCustomer]);
 
   const clear = useCallback(() => {
+    vlmSeqRef.current += 1; // uçuştaki VLM yanıtı temizlenen taramaya yazmasın
     setScanBySide({ front: null, back: null });
     setPreviews({});
     setScanMeta(null);
     setError(null);
     setErrorCode(null);
+    setVlmNotice(null);
     setDiagnostic(null);
     setStatus(capabilities.scanner || capabilities.file ? 'ready' : 'unavailable');
     // Klasör izleme oturumu bilinçli olarak durmaz: temizleme yalnız tarama
@@ -1261,6 +1377,7 @@ export function useIdentityScan({
     diagnostic,
     scanMeta,
     ocrNotice,
+    vlmNotice,
     watchStatus,
     acquire,
     pickFile,
@@ -1270,5 +1387,5 @@ export function useIdentityScan({
     confirm,
     clear,
     refreshCapabilities,
-  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, errorCode, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, startWatch, status, stopWatch, watchStatus]);
+  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, errorCode, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, startWatch, status, stopWatch, vlmNotice, watchStatus]);
 }

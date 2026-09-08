@@ -199,6 +199,7 @@ export function CustomerOcrPanel({
         Pas / ID-kort / kørekort / sundhedskort görüntüsünü sürükleyip bırakın veya seçin — alanlar önerilen değer olarak dolar, kayıt onayınızla oluşur.
       </p>
       {identity.ocrNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.ocrNotice}</p> : null}
+      {identity.vlmNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.vlmNotice}</p> : null}
       {identity.error ? <p className="mt-1 text-[11px] font-semibold text-rose-700">{identity.error}</p> : null}
       {identity.error && identity.errorCode ? (
         <p className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[10px] font-bold text-rose-500">

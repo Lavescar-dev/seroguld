@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/desktop', () => ({
+  // identityScan -> identityExtract -> api/auth zinciri isTauriRuntime'e ihtiyac duyar.
+  isTauriRuntime: vi.fn(() => false),
   getIdentityScannerCapabilities: vi.fn(),
   acquireIdentityScan: vi.fn(),
   pickIdentityScanFile: vi.fn(),
