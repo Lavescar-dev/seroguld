@@ -29,6 +29,8 @@ UNVERIFIED_CPR = "0101901234"
 
 
 class _StubSettings:
+    # 0.3.39: yerel katman ayarları da stub'da taşınır (extract_identity
+    # artık VLM kapısı arkasına takılı değil).
     identity_extract_enabled = True
     identity_extract_model = "gpt-5-mini"
     identity_extract_base_url = "https://proxy.example/v1"
@@ -36,6 +38,9 @@ class _StubSettings:
     identity_extract_max_retries = 1
     identity_extract_max_image_bytes = 8 * 1024 * 1024
     identity_extract_confidence_threshold = 0.62
+    identity_local_ocr_enabled = False
+    identity_local_ocr_model_label = "rapidocr test etiketi"
+    identity_ocr_roi_overrides_json = ""
     openai_api_key = "test-key"
     openai_model = "gpt-5.6-luna"
     openai_base_url = "https://api.openai.com/v1"
@@ -90,36 +95,79 @@ def stub_settings(monkeypatch):
     return _StubSettings
 
 
-def test_capabilities_disabled_by_default(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_capabilities_local_engine_is_availability_not_flag(monkeypatch) -> None:
+    """0.3.39: ``local_engine`` bayraktan BAĞIMSIZ uygunluk göstergesidir.
+
+    Bayrak kapalıyken de motor sorgulanır: frontend bu alana bakarak extract
+    isteğini atar — bayrak kapalıyken barkod katmanı yine koşabilsin diye
+    (0.3.38'in "bayrak kapalı → istek hiç atılmaz → barkod hiç koşmaz"
+    tuzağına dönülmez). Bayrak yalnız yerel OCR'ın kendisini yönetir ve
+    ``local_enabled`` olarak AYRI döner.
+    """
+
     class OffSettings(_StubSettings):
         identity_extract_enabled = False
+        identity_local_ocr_enabled = False
 
     monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: OffSettings())
-    caps = identity_capabilities()
+    monkeypatch.setattr("app.services.identity_local_ocr_service.engine_available", lambda: True)
+    caps = await identity_capabilities()
     assert caps["extract_enabled"] is False
+    assert caps["vlm_enabled"] is False
     assert caps["model"] is None
+    # 0.3.39: barcode_available artık import probudur (hardcode değil).
     assert caps["barcode_available"] is True
+    assert caps["local_engine"] is True  # bayrak kapalı AMA motor kurulu
+    assert caps["local_enabled"] is False  # bayrak ayrı alanda dürüst döner
+    assert caps["local_model"] == "rapidocr test etiketi"
 
 
 @pytest.mark.asyncio
-async def test_extract_raises_503_when_flag_off(monkeypatch) -> None:
+async def test_capabilities_local_engine_false_when_not_installed(monkeypatch) -> None:
     class OffSettings(_StubSettings):
         identity_extract_enabled = False
 
     monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: OffSettings())
-    with pytest.raises(IdentityExtractUnavailable) as raised:
-        await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
-    assert raised.value.status_code == 503
+    monkeypatch.setattr("app.services.identity_local_ocr_service.engine_available", lambda: False)
+    caps = await identity_capabilities()
+    assert caps["local_engine"] is False
+    assert caps["local_enabled"] is False
+    assert caps["local_model"] is None
 
 
 @pytest.mark.asyncio
-async def test_extract_raises_503_without_api_key(monkeypatch, stub_settings) -> None:  # noqa: ARG001
+async def test_extract_flag_off_returns_barcode_result_without_503(monkeypatch) -> None:
+    """0.3.39: VLM bayrağı kapalıyken 503 YOK — barkod sonucu döner.
+
+    0.3.38'deki saha hatasıydı: bayrak kapalıyken zincir barkoda girmeden
+    503 atıyordu ve tezgah Windows OCR'e düşüyordu.
+    """
+    class OffSettings(_StubSettings):
+        identity_extract_enabled = False
+
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: OffSettings())
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.barcode is not None
+    assert result.barcode.cpr == VALID_CPR
+    assert result.source == "barcode"
+    # VLM koşmadı → maliyet satırı YOK.
+    assert result.usage is None
+    assert result.model is None
+    assert result.fields["cpr_number"].value == VALID_CPR
+    assert result.engine.name == "none"
+
+
+@pytest.mark.asyncio
+async def test_extract_without_api_key_still_returns_barcode_result(monkeypatch) -> None:
     class NoKey(_StubSettings):
         openai_api_key = ""
 
     monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: NoKey())
-    with pytest.raises(IdentityExtractUnavailable):
-        await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.barcode is not None
+    assert result.source == "barcode"
+    assert result.usage is None
 
 
 @pytest.mark.asyncio
@@ -195,15 +243,24 @@ async def test_extract_marks_birth_date_inconsistent_with_cpr(monkeypatch, stub_
 
 
 @pytest.mark.asyncio
-async def test_extract_http_error_raises_502_with_raw_detail(monkeypatch, stub_settings) -> None:
+async def test_extract_vlm_failure_degrades_to_barcode_result(monkeypatch, stub_settings) -> None:
+    """0.3.39 sözleşmesi: VLM hata verse bile barkod/yerel sonuç KAYBOLMAZ.
+
+    Eski davranış (502 fırlat, her şeyi çöpe at) kalktı: sağlayıcı hatası
+    uyarıya düşer, zincir barkod CPR'ıyla döner.
+    """
+
     async def failing_post_chat(**kwargs: Any) -> dict[str, Any]:
         raise IdentityExtractError("Kimlik çıkarma servisi hata döndü (400): strict format reddedildi")
 
     monkeypatch.setattr("app.services.identity_extract_service._post_chat", failing_post_chat)
-    with pytest.raises(IdentityExtractError) as raised:
-        await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
-    assert raised.value.status_code == 502
-    assert "strict format" in str(raised.value.detail)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.barcode is not None
+    assert result.barcode.cpr == VALID_CPR
+    assert result.fields["cpr_number"].value == VALID_CPR
+    assert result.usage is None  # VLM sağlıklı dönmedi → maliyet satırı yok
+    assert any(w.startswith("vlm_failed:") for w in result.warnings)
+    assert result.source == "barcode"
 
 
 @pytest.mark.asyncio
