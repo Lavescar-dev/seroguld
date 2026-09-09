@@ -447,6 +447,38 @@ function Assert-PackagedBootstrapLogin {
       -not [bool]$login.user.must_change_password) {
     throw "Packaged runtime temiz-kurulum admin girişi başarısız"
   }
+  # Kimlik OCR smoke'i ayni oturumu kullanir; token'i yukari tasima amaciyla dondur.
+  return [string]$login.access_token
+}
+
+function Assert-PackagedIdentityCapabilities {
+  param([int]$Port, [string]$BootstrapToken)
+  # Kimlik OCR paket sagligi (0.3.39): paketlenmis runtime'da capabilities ucu
+  # yerel RapidOCR motorunu raporlamali. require_password_change_complete kapisi
+  # must_change_password=true tokenini 403'ledigi icin once sifre degisimini
+  # tamamlayip temiz token ile probing yapariz.
+  $changeBody = @{
+    current_password = "admin"
+    new_password = "Admin123!"
+    new_password_confirmation = "Admin123!"
+  } | ConvertTo-Json -Compress
+  $changed = Invoke-RestMethod -Method Post -TimeoutSec 10 -ContentType "application/json" `
+    -Headers @{ Authorization = "Bearer $BootstrapToken" } -Body $changeBody `
+    -Uri "http://127.0.0.1:$Port/api/auth/change-password"
+  $token = [string]$changed.access_token
+  if ([string]::IsNullOrWhiteSpace($token)) {
+    throw "Kimlik OCR smoke: sifre degisimi sonrasi token alinamadi"
+  }
+  $caps = Invoke-RestMethod -TimeoutSec 10 -Headers @{ Authorization = "Bearer $token" } `
+    -Uri "http://127.0.0.1:$Port/api/v2/alis/identity/capabilities"
+  if ($null -eq $caps.local_engine) {
+    throw "Kimlik OCR smoke: capabilities local_engine alani yok (eski paket?)"
+  }
+  # identity_local_ocr_enabled bayragi 0.3.39'da acik gem ediliyorsa bu assertion
+  # dogru calisir; bayrak kapali gem edilirse bu blogu ayni commit'te gevsetin.
+  if (-not [bool]$caps.local_engine) {
+    throw "Kimlik OCR smoke: paketlenmis runtime yerel motoru yukleyemedi (local_engine=false)"
+  }
 }
 
 function Get-FreeLoopbackPort {
@@ -492,6 +524,14 @@ try {
   $buildPython = Join-Path $VenvDir "Scripts\python.exe"
   Invoke-Python -Executable $buildPython -Arguments @("-m", "pip", "install", "--upgrade", "pip") -WorkingDirectory $BackendDir
   Invoke-Python -Executable $buildPython -Arguments @("-m", "pip", "install", "-r", $RequirementsPath) -WorkingDirectory $BackendDir
+  # Kimlik OCR motoru (0.3.39): rapidocr, opencv-python (GUI) sert bagimliligini kurar;
+  # cv2/ dizininin tek saglikli derleme (headless) olmasi icin iki tat da kaldirilip
+  # headless --no-deps ile taze kurulur. requirements.txt yorumundaki notla ayni.
+  Invoke-Python -Executable $buildPython -Arguments @("-m", "pip", "uninstall", "-y", "opencv-python", "opencv-python-headless") -WorkingDirectory $BackendDir
+  Invoke-Python -Executable $buildPython -Arguments @("-m", "pip", "install", "--no-deps", "opencv-python-headless==4.11.0.86") -WorkingDirectory $BackendDir
+  Invoke-Python -Executable $buildPython -Arguments @(
+    "-c", "import cv2; lines = cv2.getBuildInformation().splitlines(); gui = [l for l in lines if l.strip().startswith('GUI:')]; assert gui and 'NONE' in gui[0], 'cv2 GUI build installed - headless fixup failed'; print('cv2 headless OK', cv2.__version__)"
+  ) -WorkingDirectory $BackendDir
   Invoke-Python -Executable $buildPython -Arguments @("-m", "PyInstaller", "--noconfirm", "--clean", "--distpath", $BuildDir, "--workpath", (Join-Path $BuildDir "pyinstaller"), $SpecPath) -WorkingDirectory $BackendDir
 
   $builtRuntimeDir = Join-Path $BuildDir "seroguld-runtime"
@@ -503,6 +543,13 @@ try {
     })
   if ($missingPackagedTemplates.Count -gt 0) {
     throw "Paketlenmiş runtime gerekli referans workbook'larını içermiyor: $($missingPackagedTemplates -join ', ')"
+  }
+  # Kimlik OCR motoru (0.3.39): RapidOCR PP-OCRv6 model dosyalari pakete girmeli.
+  # collect_all("rapidocr") wheel package-data'yi toplar; bu assertion o sozu
+  # yalnizca source'ta degil cikti onedir'de de dogrular (det+rec >= 2 model).
+  $packagedOcrModels = @(Get-ChildItem -LiteralPath (Join-Path $builtRuntimeDir "rapidocr\models") -Filter "*.onnx" -ErrorAction SilentlyContinue)
+  if ($packagedOcrModels.Count -lt 2) {
+    throw "Paketlenmis runtime RapidOCR modellerini icermiyor (rapidocr/models/*.onnx bekleniyordu)"
   }
   Assert-RuntimePayload -RuntimeRoot $builtRuntimeDir
   if (-not $SkipSmoke) {
@@ -532,7 +579,8 @@ try {
           } catch { Start-Sleep -Milliseconds 500 }
         }
         if (-not $ready) { throw "Packaged runtime /health 30 saniye içinde hazır olmadı" }
-        Assert-PackagedBootstrapLogin -Port $smokePort
+        $smokeBootstrapToken = Assert-PackagedBootstrapLogin -Port $smokePort
+        Assert-PackagedIdentityCapabilities -Port $smokePort -BootstrapToken $smokeBootstrapToken
       } finally {
         if ($serve -and -not $serve.HasExited) { $serve.Kill(); $serve.WaitForExit(10000) | Out-Null }
       }

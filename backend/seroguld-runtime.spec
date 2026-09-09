@@ -70,6 +70,12 @@ for package in (
     "email_validator",
     "orjson",
     "bcrypt",
+    # Kimlik OCR yerel motoru (0.3.39): RapidOCR PP-OCRv6 modelleri wheel package
+    # data olarak rapidocr/models/*.onnx içinde gelir — collect_all onları toplar;
+    # onnxruntime/cv2 ikili modülleri de hook kaçırma riskine karşı açık toplanır.
+    "rapidocr",
+    "onnxruntime",
+    "cv2",
 ):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas

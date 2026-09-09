@@ -23,3 +23,18 @@ reportlab==4.2.5
 pytest==8.3.4
 pytest-asyncio==0.25.2
 zxing-cpp==3.1.1
+# Kimlik OCR yerel motoru (0.3.39): RapidOCR PP-OCRv6 det/rec modelleri wheel'in
+# İÇİNDE gelir (rapidocr/models/*.onnx) — runtime indirme yok. onnxruntime
+# rapidocr 3.9.2'nin TEMEL bağımlılığı DEĞİL (extra da tanımlamıyor) — motorun
+# çalışması için açık pin şart; eksikse engine_available() sessizce False döner.
+# DİKKAT (cv2 çakışması): rapidocr opencv-python (GUI derlemesi) sert bağımlılığı çeker.
+# opencv-python-headless ile birlikte kurulunca ikisi aynı cv2/ dizinine yazar ve
+# hangisi SON kurulduysa o kazanır (pip kurulum sırasını garanti ETMEZ).
+# Kurulumdan SONRA şu düzeltme koşmalı (build-windows-runtime.ps1 otomatik yapıyor,
+# dev kurulumlarında da elle çalıştırın):
+#   pip uninstall -y opencv-python opencv-python-headless
+#   pip install --no-deps opencv-python-headless==4.11.0.86
+rapidocr==3.9.2
+onnxruntime==1.29.0
+opencv-python-headless==4.11.0.86
+numpy==2.5.3
