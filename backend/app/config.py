@@ -100,6 +100,23 @@ class Settings(BaseSettings):
     identity_extract_max_image_bytes: int = 8 * 1024 * 1024
     identity_extract_confidence_threshold: float = 0.62
 
+    # 0.3.39: kimlik OCR tamamen yerel motor (RapidOCR PP-OCRv6 ONNX, CPU).
+    # VLM katmanının aksine görüntü dükkândan HİÇ çıkmaz; bayrak default
+    # KAPALIDIR — canlıya alma yalnız benchmark kapısı geçilince (WP9/WP10:
+    # alan doğruluğu Windows tabanını geç + barkodlu her fotoğrafta tam-10
+    # CPR + p95 < 2s). Motor import/kurulum hatasında zarif düşer
+    # (local_engine=False) → Windows.Media.Ocr fallback'i devreye girer.
+    identity_local_ocr_enabled: bool = False
+    # Capabilities'te dönen insan-okur etiket (UI rozeti); motor sürümüyle
+    # elle senkron tutulur (requirements pin'iyle birlikte).
+    identity_local_ocr_model_label: str = (
+        "rapidocr 3.9.2 (PP-OCRv6 det+rec small, onnxruntime CPU)"
+    )
+    # ROI ince ayar verisi (benchmark --roi-dump çıktısından): normalize
+    # dikdörtgenleri defaults ÜZERİNE derin birleşir. Boş = gömülü tahminler.
+    # Bozuk JSON → uyarı loglanır, defaults ayakta kalır (asla crash yok).
+    identity_ocr_roi_overrides_json: str = ""
+
     opmc_api_url: str = "https://api.opmc.dk/v1"
     opmc_api_key: str = ""
     opmc_webhook_secret: str = ""
