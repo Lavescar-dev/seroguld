@@ -72,21 +72,28 @@ DEFAULT_ROIS: dict[str, tuple[FieldRoi, ...]] = {
     # og -sted, 4a Udstedt, 4b Gyldig til, 4c Udstedt af, 4d CPR-nr.,
     # 5 Kørekortnr. (4d her kartta basılı değildir — eski kartlar).
     "koerekort": (
-        _roi("full_name", "1", 0.20, 0.04, 0.78, 0.21, "Efternavn"),
-        _roi("full_name", "2", 0.20, 0.25, 0.78, 0.13, "Fornavne"),
-        _roi("birth_date", "3", 0.20, 0.33, 0.78, 0.14, "Fodselsdato og -sted"),
-        _roi("expiry_date", "4b", 0.55, 0.47, 0.43, 0.15, "Gyldig til"),
-        _roi("cpr_number", "4d", 0.20, 0.60, 0.78, 0.16, "CPR-nr."),
-        _roi("doc_number", "5", 0.50, 0.60, 0.48, 0.22, "Koerekortnr."),
+        # Pencereler benchmark kartlarında (1050x660 render) VE 0.3.5
+        # SPECIMEN fixture'larında ölçülerek iki düzeni birden kapsayacak
+        # şekilde ayarlandı: render'da læge-benzeri üst başlıklar ve 4c/4d
+        # kolonları fixture'dan farklı yerde — daraltmak yerine desen
+        # filtrelerine (rakam-beklenen pencere, etiket düşürme) güvenildi.
+        _roi("full_name", "1", 0.20, 0.05, 0.78, 0.32, "Efternavn + Fornavne"),
+        _roi("birth_date", "3", 0.20, 0.30, 0.78, 0.14, "Fodselsdato og -sted"),
+        _roi("expiry_date", "4b", 0.30, 0.42, 0.55, 0.18, "Gyldig til"),
+        _roi("cpr_number", "4d", 0.56, 0.44, 0.34, 0.09, "CPR-nr."),
+        _roi("doc_number", "5", 0.30, 0.52, 0.55, 0.20, "Koerekortnr."),
     ),
-    # Gul sundhedskort (sygesikringsbevis): sol üstte ad, altında CPR,
-    # sonra adres ve Postnr./by bloğu. Sağ kolon (läge/telefon) dışlanır.
+    # Gul sundhedskort (sygesikringsbevis): gerçekte üstte læge/klinika
+    # bloğu, ad onun ALTINDA, sonra CPR/adres/Postnr. og by — SPECIMEN
+    # fixture'ı ise adı en üste basar. Ad penceresi geniş tutulur ve
+    # parse katmanı penceredeki SON harf satırını ad alır (iki düzende
+    # de ad en alttaki harf satırıdır); sağ kolon (1813/telefon) dışlanır.
     "sundhedskort": (
-        _roi("full_name", "name", 0.02, 0.19, 0.53, 0.11, "Navn"),
-        _roi("cpr_number", "cpr", 0.02, 0.31, 0.43, 0.14, "CPR-nr."),
-        _roi("address", "address", 0.02, 0.45, 0.40, 0.11, "Adresse"),
-        _roi("postal_code", "postal", 0.02, 0.56, 0.40, 0.14, "Postnr. og by"),
-        _roi("city", "postal", 0.02, 0.56, 0.40, 0.14, "Postnr. og by"),
+        _roi("full_name", "name", 0.02, 0.20, 0.53, 0.28, "Navn"),
+        _roi("cpr_number", "cpr", 0.02, 0.29, 0.43, 0.13, "CPR-nr."),
+        _roi("address", "address", 0.02, 0.465, 0.40, 0.075, "Adresse"),
+        _roi("postal_code", "postal", 0.02, 0.515, 0.40, 0.17, "Postnr. og by"),
+        _roi("city", "postal", 0.02, 0.515, 0.40, 0.17, "Postnr. og by"),
     ),
     # Danmarks pas (TD3 MRZ): basılı soyad/ad satırları + alt MRZ şeridi.
     # Basılı ad transliterasyonsuzdur (PRØVE); MRZ adı PROEVE verir — ikisi

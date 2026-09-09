@@ -45,7 +45,12 @@ CANVAS = (ID1_CANVAS_WIDTH, ID1_CANVAS_HEIGHT)
 # Aynı satır sayılması için dikey örtüşme eşiği (ROI kutu-birleştirme).
 LINE_Y_OVERLAP_RATIO = 0.6
 
-_DATE_RE = re.compile(r"(\d{1,2})[.\-/\s](\d{1,2})[.\-/\s](\d{4})")
+# gg.aa.yyyy VEYA yyyy-aa-gg (ISO basan kartlar). Ayırıcı boşluk DEĞİL:
+# pencereye sızan komşu sayılar boşlukla tarihe yapışıp sahte tarih kurar
+# ('2058-03-15 150388-...' → '03-15 1503'). Nokta/tire/bölü yeterlidir.
+_DATE_RE = re.compile(
+    r"(?:(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})|(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2}))"
+)
 _POSTAL_RE = re.compile(r"\b(\d{4})\b")
 
 
@@ -356,6 +361,21 @@ def _alpha_words(words: list[OcrWord]) -> list[OcrWord]:
     return [word for word in words if _is_name_token(word.text)]
 
 
+def _last_alpha_line(words: list[OcrWord]) -> list[OcrWord]:
+    """Ad penceresindeki SON harf satırı.
+
+    Sundhedskort gerçek düzeninde adın ÜSTÜNDE kurum/klinika satırları
+    olabilir (læge bloğu kartın üstünde); ad, adres satırının hemen
+    üstündeki en alt harf satırıdır. Etiket düşürme bu çağrıdan ÖNCE
+    yapılır ki yalnız etiketten ibaret satır ("Navn") son satır sanılmasın.
+    """
+    for line in reversed(group_words_into_lines(words)):
+        alpha = _alpha_words(line)
+        if alpha:
+            return alpha
+    return []
+
+
 def _digit_runs(text: str) -> list[str]:
     runs: list[str] = []
     current: list[str] = []
@@ -372,12 +392,22 @@ def _digit_runs(text: str) -> list[str]:
 
 
 def _extract_date(text: str) -> str:
-    """İlk gg.aa.yyyy benzeri tarihi 'dd.mm.yyyy' biçiminde döner."""
-    match = _DATE_RE.search(repair_numeric_confusables(text))
-    if not match:
-        return ""
-    day, month, year = (part.zfill(2) if index < 2 else part for index, part in enumerate(match.groups()))
-    return f"{day}.{month}.{year}"
+    """Penceredeki SON tarihi 'dd.mm.yyyy' biçiminde döner.
+
+    Son eşleşme bilinçli seçimdir: 4a (Udstedt) 4b'nin (Gyldig til)
+    SOLUNDADIR ve cömert paylı pencere ikisini de kesebilir — okuma
+    sırasındaki son tarih 4b'ninkidir. Ay/gün aralık kontrolü sahte
+    eşleşmeyi ('ay 15') reddeder.
+    """
+    best = ""
+    for match in _DATE_RE.finditer(repair_numeric_confusables(text)):
+        day, month, year = match.group(1), match.group(2), match.group(3)
+        if day is None:  # ISO kolu: (yyyy, mm, dd)
+            year, month, day = match.group(4), match.group(5), match.group(6)
+        if not (1 <= int(month) <= 12 and 1 <= int(day) <= 31):
+            continue
+        best = f"{day.zfill(2)}.{month.zfill(2)}.{year}"
+    return best
 
 
 def _extract_cpr(text: str) -> tuple[str, bool]:
@@ -413,6 +443,9 @@ def _extract_doc_number(text: str) -> tuple[str, bool]:
     doc_number'ı needs_review ile sunmaktan iyidir hiç sunmamamak — operatör
     tam-kart metninden (ocr_text) bakar.
     """
+    # 4a/4b tarih satırları 5 penceresine taşabilir: gg.aa.yyyy token'ı
+    # noktaları sökülünce 8 hane kalır da belge no sanılır — önce çıkarılır.
+    text = re.sub(r"\d{1,2}[.\-/\s]\d{1,2}[.\-/\s]\d{4}", " ", text)
     compact = re.sub(r"[^A-Z0-9]", "", text.upper())
     repaired = re.sub(r"[^A-Z0-9]", "", repair_numeric_confusables(compact))
     if re.fullmatch(r"\d{8}", repaired):
@@ -664,6 +697,40 @@ def _compose_pas(raw: dict[str, tuple[str, float]], mrz_lines: list[str]) -> dic
     return fields
 
 
+def _split_koerekort_names(
+    raw: dict[str, tuple[str, float]],
+    words: list[OcrWord],
+    rois: dict[str, tuple[FieldRoi, ...]],
+    canvas: tuple[int, int],
+) -> None:
+    """Kørekort ad-soyadını SATIR SAYISINDAN ayrıştırır (raw["1"]/raw["2"]).
+
+    İki düzen sabit bantlarla ayrılamaz: gerçek karta yakın render'da
+    soyad/ad satırları sıkışıktır (y ~0.20/0.27), eğik/bulanık çekimde
+    satırlar aşağı kayar (y ~0.23/0.34) — render'ın doğum-yeri satırı
+    fixture'ın ad satırıyla aynı bantta düşer. Bunun yerine tek ad
+    penceresi alınır, etiketler düşürülür ve harf satırları sıralanır:
+    1. satır = soyad (Efternavn, kartta basılı alan no 1), 2. satır = ad
+    (Fornavne, alan no 2); 3.+ satırlar (doğum yeri gibi sızanlar) atılır.
+    """
+    name_row = next(
+        (row for row in rois.get("koerekort", ()) if row.key == "1" and row.field == "full_name"),
+        None,
+    )
+    if name_row is None:
+        return
+    scope = _drop_label_tokens(words_in_roi(words, name_row, canvas))
+    # Satır metni YALNIZ harf token'larından kurulur: '1.'/'2.' alan no'ları
+    # etiket olmadığından düşme listesinde değildir, satırdan atılır.
+    lines = [_alpha_words(line) for line in group_words_into_lines(scope)]
+    lines = [line for line in lines if line]
+    if not lines:
+        return
+    confidence = _scope_confidence(scope)
+    raw["1"] = (_scope_text(lines[0]), confidence)
+    raw["2"] = (_scope_text(lines[1]), confidence) if len(lines) > 1 else ("", 0.0)
+
+
 def parse_local_fields(
     words: list[OcrWord],
     *,
@@ -705,7 +772,12 @@ def parse_local_fields(
             continue
         if row.field in ("full_name", "city"):
             scope = _drop_label_tokens(scope)
-            scope = _alpha_words(scope) or scope
+            if row.key == "name" and document_type_key == "sundhedskort":
+                # Ad penceresi klinik/kurum satırlarını da kesebilir; ad
+                # pencerenin en alttaki harf satırıdır (son alfa satırı).
+                scope = _last_alpha_line(scope) or scope
+            else:
+                scope = _alpha_words(scope) or scope
             text = _scope_text(scope)
         elif row.field == "address":
             scope = _drop_label_tokens(scope)
@@ -727,6 +799,8 @@ def parse_local_fields(
         raw.setdefault(row.key, (text, confidence))
 
     mrz_lines = [line for line in ocr_text.splitlines() if "<" in line and len(line.replace(" ", "")) >= 30]
+    if document_type_key == "koerekort":
+        _split_koerekort_names(raw, words, table, active_canvas)
     if document_type_key in ("koerekort", "idkort"):
         result.fields = _compose_koerekort(raw)
         if document_type_key == "idkort":

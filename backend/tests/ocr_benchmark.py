@@ -59,6 +59,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
+# Kartta CPR BASILI tek fixture tipi sundhedskorttur (koerekort SPECIMEN'lerinde
+# 4d yok — "eski kartlar" notu; pas/idkort hiç basmaz). fixtures.json'daki
+# cpr_first6 doğum tarihinden TÜRETİLMİŞTİR, kartta yazılı DEĞİLDİR — basılı
+# olmayan alan X sayılmaz (motorun okumadığı alan, güç kaybı değildir).
+# Gerçek fotoğraflarda (--images) kural sidecar'dır: truth'a yalnız kartta
+# BASILI alanlar yazılır (docs/.../OKU.md kuralı).
+CPR_PRINTED_DOC_TYPES = {"sundhedskort", "health_card"}
+
 
 def _load_ground_truth() -> list[dict]:
     manifest = json.loads(FIXTURES_JSON.read_text(encoding="utf-8"))
@@ -74,7 +82,15 @@ def _mask_cpr(cpr: str) -> str:
 def _score_field(expected: str, actual: str | None) -> bool:
     if not expected:
         return True  # ground truth boşsa ölçülmez
-    return bool(actual) and actual.strip().casefold() == expected.strip().casefold()
+    # ÜRÜN SEMANTİĞİ: frontend eşleştirme anahtarı TRANSLİTERE edilerek
+    # karşılaştırılır (Æ→AE, Ø→OE...). OCR 'ÆGIDIUS' yerine 'AEGIDIUS'
+    # okuyabilir; ürün bunu doğru eşleştirir — benchmark da aynı ölçütle
+    # skorlar, ham casefold'tan daha sıkı olmaz.
+    from app.utils.identity_validate import transliterate_name
+
+    exp = transliterate_name(expected).strip().casefold()
+    act = transliterate_name(actual or "").strip().casefold()
+    return bool(act) and act == exp
 
 
 def _truth_for(directory: Path, stem: str) -> dict:
@@ -260,6 +276,8 @@ def run_local(images_dir: Path | None, roi_dump_dir: Path | None) -> int:
         path = FIXTURE_DIR / fixture["file"]
         if path.exists():
             expected = dict(fixture.get("expected_fields", {}))
+            if fixture.get("document_type") not in CPR_PRINTED_DOC_TYPES:
+                expected.pop("cpr_first6", None)  # kartta basılı değil
             # Koşul (clean/rotate/...) fixture gövdesindedir; skora taşınır.
             expected.setdefault("capture_condition", fixture.get("capture_condition", "gercek"))
             jobs.append((Path(fixture["file"]).stem, path, expected))

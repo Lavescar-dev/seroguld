@@ -247,7 +247,10 @@ def test_load_rois_defaults_and_document_types(stub_rois_settings) -> None:  # n
     table = load_rois()
     for key in ("koerekort", "sundhedskort", "pas", "idkort"):
         assert key in table and table[key]
-    assert {"1", "2", "3", "4b", "4d", "5"} <= {row.key for row in table["koerekort"]}
+    # koerekort ad-soyad TEK "1" penceresinden satır sayısına göre ayrılır
+    # (render ile eğik/bulanık çekim bantları kesiştiği için "2" penceresi
+    # yoktur; _split_koerekort_names raw["2"]'yi türetir).
+    assert {"1", "3", "4b", "4d", "5"} <= {row.key for row in table["koerekort"]}
 
 
 def test_load_rois_deep_merges_override_over_defaults(monkeypatch) -> None:
@@ -283,8 +286,10 @@ def test_load_rois_invalid_values_skipped(monkeypatch) -> None:
 
     monkeypatch.setattr("app.services.identity_ocr_rois.get_settings", lambda: _Settings())
     table = load_rois()
-    assert next(row for row in table["koerekort"] if row.key == "4d") == DEFAULT_ROIS["koerekort"][4]
-    assert next(row for row in table["koerekort"] if row.key == "5") == DEFAULT_ROIS["koerekort"][5]
+    for key in ("4d", "5"):
+        assert next(row for row in table["koerekort"] if row.key == key) == next(
+            row for row in DEFAULT_ROIS["koerekort"] if row.key == key
+        )
 
 
 def test_rois_for_unknown_type_returns_empty() -> None:
@@ -327,18 +332,21 @@ def test_guess_document_type_anchors_and_misread_tolerance() -> None:
 
 
 def _koerekort_words() -> list[OcrWord]:
-    """koerekort_01'in warp tuvalindeki ölçülmüş düzeninin sahte hali."""
+    """koerekort_01 SPECIMEN'inin warp tuvalinde ÖLÇÜLMÜŞ düzeninin sahte hali
+    (benchmark'taki gerçek motor çıktısıyla aynı bantlar)."""
     rows = [
-        (0.27, 0.075, "1."), (0.32, 0.075, "Efternavn"), (0.33, 0.125, "TESTESEN"),
-        (0.13, 0.218, "FOTO"), (0.27, 0.218, "2."), (0.31, 0.218, "Fornavn"),
+        (0.30, 0.070, "KØREKORT"), (0.42, 0.070, "DANMARK"),
+        (0.27, 0.075, "1."), (0.33, 0.075, "Efternavn"), (0.40, 0.125, "TESTESEN"),
+        (0.27, 0.212, "2."), (0.33, 0.212, "Fornavn"),
         (0.31, 0.262, "ANDERS"), (0.42, 0.262, "PRØVE"),
         (0.13, 0.303, "PLACE-"),
         (0.27, 0.350, "3."), (0.33, 0.350, "Fødselsdato"), (0.39, 0.350, "og"), (0.43, 0.350, "-sted"),
-        (0.32, 0.389, "17.11.1986"), (0.46, 0.389, "KØBENHAVN"),
+        (0.32, 0.394, "17.11.1986"), (0.46, 0.394, "KØBENHAVN"),
         (0.27, 0.486, "4a."), (0.32, 0.486, "Udstedt"), (0.67, 0.486, "4b."), (0.71, 0.486, "Gyldig"), (0.75, 0.486, "til"),
         (0.33, 0.536, "14.03.2021"), (0.72, 0.536, "14.03.2031"),
+        (0.30, 0.670, "Kommune"), (0.37, 0.670, "Hvidovre"),
         (0.66, 0.621, "5."), (0.72, 0.621, "Kørekortnr."),
-        (0.73, 0.780, "DK1000099"),
+        (0.73, 0.673, "DK1000099"),
     ]
     return [_word(text, nx, ny) for nx, ny, text in rows]
 
@@ -360,13 +368,14 @@ def test_parse_koerekort_fields_from_fake_words() -> None:
 
 
 def test_parse_koerekort_cpr_dash_join_and_mod11_soft_signal() -> None:
-    ok_words = _koerekort_words() + [_word("4d.", 0.27, 0.621), _word("010112-4002", 0.40, 0.621)]
+    # 4d penceresi gerçek kart düzenindedir: sağ kolon, 4b'nin altı (render).
+    ok_words = _koerekort_words() + [_word("4d.", 0.58, 0.485), _word("010112-4002", 0.68, 0.485)]
     ok_result = parse_local_fields(ok_words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
     assert ok_result.fields["cpr_number"].value == VALID_MOD11_CPR
     assert ok_result.fields["cpr_number"].checksum_ok is True
     assert ok_result.mod11_failed_soft is False
 
-    bad_words = _koerekort_words() + [_word("4d.", 0.27, 0.621), _word("010101-9999", 0.40, 0.621)]
+    bad_words = _koerekort_words() + [_word("4d.", 0.58, 0.485), _word("010101-9999", 0.68, 0.485)]
     bad_result = parse_local_fields(bad_words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
     assert bad_result.fields["cpr_number"].value == INVALID_MOD11_CPR
     assert bad_result.fields["cpr_number"].checksum_ok is False
@@ -374,7 +383,7 @@ def test_parse_koerekort_cpr_dash_join_and_mod11_soft_signal() -> None:
 
 
 def test_parse_repairs_confusables_in_cpr_but_not_in_doc_number() -> None:
-    words = _koerekort_words() + [_word("4d.", 0.27, 0.621), _word("OI01l2-4002", 0.40, 0.621)]
+    words = _koerekort_words() + [_word("4d.", 0.58, 0.485), _word("OI01l2-4002", 0.68, 0.485)]
     result = parse_local_fields(words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
     assert result.fields["cpr_number"].value == VALID_MOD11_CPR
     # doc_number'da harfler onarılmaz (ID1000066'daki I rakama çevrilirse bozulur).
@@ -385,7 +394,7 @@ def test_parse_repairs_confusables_in_cpr_but_not_in_doc_number() -> None:
 
 def test_parse_cpr_garbage_runs_do_not_become_administrativt() -> None:
     """Ayrı run'ların birleşimi 9 haneye ulaşsa da numara denemez (0.3.39 düzeltmesi)."""
-    words = _koerekort_words() + [_word("12.", 0.21, 0.753), _word("70.DK", 0.22, 0.753)]
+    words = _koerekort_words() + [_word("12.", 0.35, 0.60), _word("70.DK", 0.36, 0.60)]
     result = parse_local_fields(words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
     assert "cpr_number" not in result.fields
 
