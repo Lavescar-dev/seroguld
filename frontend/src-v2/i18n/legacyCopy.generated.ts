@@ -622,6 +622,18 @@ const ADDITIONAL_SOURCE: Record<string, { en: string; da: string }> = {
   // 0.3.38 — CPR 6/10 (R1-CPR): kısmi doğum-tarihi girişi artık geçerli
   "Yalnız doğum tarihi girildi — kalan 4 hane sonradan tamamlanır": { en: "Only the birth date was entered — the remaining 4 digits can be added later", da: "Kun fødselsdatoen er indtastet — de sidste 4 cifre kan tilføjes senere" },
   "CPR 6 (doğum tarihi) veya 10 haneli olmalı": { en: "CPR must be 6 (birth date) or 10 digits", da: "CPR skal være 6 (fødselsdato) eller 10 cifre" },
+  // 0.3.39 — kimlik OCR: yakalama rehberi + motor rozeti + katman uyarıları (WP5/WP7)
+  "Yakalama rehberi": { en: "Capture guidance", da: "Vejledning til optagelse" },
+  "Parlama olmasın — flaş kapalı, kartı düz zeminde tutun": { en: "Avoid glare — flash off, hold the card on a flat surface", da: "Undgå genskin — blits slukket, hold kortet fladt" },
+  "Kartı kadroya doldurun, yakından çekin": { en: "Fill the frame with the card and shoot close up", da: "Fyld kortet ud i rammen, og tag billedet tæt på" },
+  "Tarayıcıda 300 DPI kullanın": { en: "Use 300 DPI on the scanner", da: "Brug 300 DPI på scanneren" },
+  "Yerel motor": { en: "Local engine", da: "Lokal motor" },
+  "Windows OCR (yedek)": { en: "Windows OCR (fallback)", da: "Windows OCR (reserve)" },
+  "VLM": { en: "VLM", da: "VLM" },
+  "Yerel motor yanıt vermedi — Windows OCR sonucu gösteriliyor, alanları kontrol edin.": { en: "The local engine did not respond — the Windows OCR result is shown, check the fields.", da: "Den lokale motor svarede ikke — Windows OCR-resultatet vises, kontrollér felterne." },
+  "VLM doğrulaması yanıt vermedi — yerel OCR sonucu gösteriliyor, alanları kontrol edin.": { en: "The VLM verification did not respond — the local OCR result is shown, check the fields.", da: "VLM-valideringen svarede ikke — det lokale OCR-resultat vises, kontrollér felterne." },
+  "Kartta parlama algılandı — kartı düz bir zeminde koyup yeni bir görüntü çekin.": { en: "Glare was detected on the card — place the card on a flat surface and take a new picture.", da: "Der er fundet genskin på kortet — læg kortet fladt og tag et nyt billede." },
+  "Yerel motor için Danca OCR paketi bulunamadı. Windows'a Danca dil paketi kurun ya da şu komutu yönetici PowerShell'inde çalıştırın:": { en: "No Danish OCR package was found for the local engine. Install the Danish language pack in Windows or run this command in an admin PowerShell:", da: "Danish OCR-pakken blev ikke fundet til den lokale motor. Installér det danske sprogpakke i Windows, eller kør følgende kommando i PowerShell som administrator:" },
 };
 
 const ADDITIONAL_COPY: Record<LegacyCopyLocale, Record<string, string>> = {

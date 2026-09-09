@@ -70,6 +70,31 @@ function normalizeCountry(value: string): string {
   return country.length === 3 ? country : '';
 }
 
+// WP6 (0.3.39): basılı etiket dalında ülke YALNIZ beyaz listedeki ISO-3 kodu
+// olarak yazılır — OCR gürültüsü ("DANMARK / z", "Tyrkiej") ülke alanını
+// kirletmesin. Takma adlar (DK/DENMARK/DANMARK/GER) önce ISO-3'e çevrilir;
+// beyaz liste dışındaki 3 harfli diziler ülke değildir.
+const IDENTITY_COUNTRY_ALIASES: Record<string, string> = {
+  DK: 'DNK',
+  DNK: 'DNK',
+  DANMARK: 'DNK',
+  DENMARK: 'DNK',
+  SWE: 'SWE',
+  NOR: 'NOR',
+  DEU: 'DEU',
+  GER: 'DEU',
+  FRA: 'FRA',
+  FIN: 'FIN',
+  NLD: 'NLD',
+};
+
+const IDENTITY_COUNTRY_PATTERN = /\b(DANMARK|DENMARK|DNK|SWE|NOR|DEU|GER|FRA|FIN|NLD|DK)\b/;
+
+function normalizeIdentityCountry(raw: string): string {
+  const match = raw.toUpperCase().match(IDENTITY_COUNTRY_PATTERN);
+  return match ? IDENTITY_COUNTRY_ALIASES[match[1]] ?? '' : '';
+}
+
 function mrzCheckDigit(value: string): number {
   const weights = [7, 3, 1];
   return value.split('').reduce((sum, character, index) => {
@@ -224,12 +249,34 @@ const PRINTED_NAME_PART = /^[A-ZÆØÅÄÖÜÂÊÎÔÛ][A-ZÆØÅÄÖÜÂÊÎÔ�
 // değer sanılıp ada yazılmasın (Danca ad = isim).
 const IDENTITY_LABEL_WORDS = /NAVN$|^NAVN$|SURNAME|GIVEN NAMES|KOMMUNE|^REGION\b|SUNDHEDSKORT|^DANMARK\b|^ADRESSE\b|^POSTNR|^POSTNUMMER|^CPR\b|^TLF\b|^TELEFON\b|^L[AÆ]GE\b|^GYLDIG\b|^SYGEHUS\b|SYGESIKR|^PERSONNR\b|^F[ØO]EDT\b|^AD$|^EFTERNAVN\b|^FORNAVN\b/;
 
+// Belge BAŞLIK kelimeleri — ad değeri asla değildir. Satır-başı (^-çapalı)
+// guards bunları yalnız ham satırın başında yakalar; "(KØREKORT)" gibi
+// parantezli / kenar-gürültülü kalıntılar kenar toleransıyla çekirdeğe
+// sızabilir — bu kontrol hem ham satıra hem soyulmuş çekirdeğe bakar.
+// KONGERIGET burada: LABEL_WORDS yalnız ^DANMARK yakalar, "KONGERIGET
+// DANMARK" başlığı ad sanılabiliyordu.
+const IDENTITY_DOC_TITLE_WORDS = /[KMG][OØ0]E?REKORT|DRIVING\s+LICEN[CS]E|PERMIS\s+DE\s+CONDUIRE|F[ÜU]HRERSCHEIN|PASSPORT|IDENTITETSKORT|KONGERIGET/i;
+
 function isPrintedNamePart(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed || /DANSK|DANISH|DNK\b/.test(trimmed) || IDENTITY_LABEL_WORDS.test(trimmed.toUpperCase())) return false;
+  if (IDENTITY_DOC_TITLE_WORDS.test(trimmed)) return false;
   // Gerçek kartlarda ad karışık durumda basılır ("Testkay Denmtr"); sentetik
   // fixture'larda tamamen büyüktür — iki biçim de kabul edilir.
-  return PRINTED_NAME_PART.test(trimmed) || PRINTED_NAME_PART.test(trimmed.toUpperCase());
+  if (PRINTED_NAME_PART.test(trimmed) || PRINTED_NAME_PART.test(trimmed.toUpperCase())) return true;
+  // WP6 kenar toleransı: gerçek OCR ad satırının kenarına en fazla 2 harf-dışı
+  // gürültü karakteri (madde imi, parantez, başlık kalıntısı) bırakabilir —
+  // satırın TAMAMI harf olmak zorunda değil; kenar gürültüsü
+  // printedNameCandidate ile soyulup çekirdeğe bakılır (çekirdek harf-kuralı
+  // aynen korunur). Rakam taşıyan satır ad değildir: hane no / posta satırı
+  // ("Testgade 1", "1813") bu kapıyla elenir.
+  if (/\d/.test(trimmed)) return false;
+  const leadNoise = trimmed.match(/^[^\p{L}]+/u)?.[0].length ?? 0;
+  const trailNoise = trimmed.match(/[^\p{L}.]+$/u)?.[0].length ?? 0;
+  if (leadNoise > 2 || trailNoise > 2) return false;
+  const candidate = printedNameCandidate(trimmed);
+  if (candidate && IDENTITY_DOC_TITLE_WORDS.test(candidate)) return false;
+  return Boolean(candidate) && (PRINTED_NAME_PART.test(candidate) || PRINTED_NAME_PART.test(candidate.toUpperCase()));
 }
 
 // Ad satırı adayı: kenar gürültüsünü kırp (madde imi, nokta, etiket artığı),
@@ -248,6 +295,14 @@ function printedNameCandidate(line: string): string {
   if (!stripped) return '';
   const comma = stripped.match(/^(\p{L}[\p{L} .'’-]{0,39}),\s*(\p{L}[\p{L} .'’-]{0,39})$/u);
   return comma ? `${comma[2].trim()} ${comma[1].trim()}` : stripped;
+}
+
+// isPrintedNamePart kenar toleransıyla kabul ettiği satır HAM döner — ad
+// değeri olarak yazılmadan önce kenar gürültüsü soyulur (etiket yolundaki
+// pencere satırı aynen döndürdüğü için). Temiz değerde dokunulmaz.
+function cleanPrintedNameValue(value: string): string {
+  if (!value) return '';
+  return printedNameCandidate(value) || value;
 }
 
 function cprFirstSix(value: string): string {
@@ -344,7 +399,7 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     || (!identityDocTitle && Boolean(bareCpr) && /(^|\n)\s*c\s*[/\\]\s*o\b/i.test(raw));
   if (isSundhedskort) {
     const labels = [/^\s*navn\b\s*[:.]?/i, /CPR[-\s.]?n/i, /^\s*ad?resse\b\s*[:.]?/i, /r\.?\s*og\s*by/i, /^T[l1i]f|^TM\b|^Tif/i, /^L[æa]ge/i];
-    const name = valueAfterLabelLine(lines, /^\s*navn\b\s*[:.]?/i, labels, isPrintedNamePart);
+    const name = cleanPrintedNameValue(valueAfterLabelLine(lines, /^\s*navn\b\s*[:.]?/i, labels, isPrintedNamePart));
     const cprLine = valueAfterLabelLine(lines, /CPR[-\s.]?n/i, labels, (line) => /\d{6}/.test(line));
     const street = addressValueAfterLabelLine(lines, /^\s*ad?resse\b\s*[:.]?/i, labels);
     const postalLine = valueAfterLabelLine(lines, /r\.?\s*og\s*by/i, labels, (line) => /^\d{4}\s+\S/.test(line));
@@ -402,7 +457,12 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
       // satırları (Navn/Adresse/Postnr…) pencereyi kapatmadan atlanır —
       // 0.3.30 saha kartında isim etiketin ÜSTÜNDE kalabiliyordu.
       let nameCandidate = '';
-      for (let cursor = postalIndex - 2, depth = 0; cursor >= 0 && depth < 5; cursor -= 1, depth += 1) {
+      // WP6: pencere 5→7 satır — gerçek kartta ad ile posta bloğu arasına
+      // CPR/læge gürültüsü girebiliyor, dar pencere adı kaçırıyordu.
+      // Sert kırılmada TEK sıçrama hakkı: tanınmayan tek bozuk satır
+      // (etiket-artığı, kırpık kelime) pencereyi kapatmasın.
+      let hardBreakSkipped = false;
+      for (let cursor = postalIndex - 2, depth = 0; cursor >= 0 && depth < 7; cursor -= 1, depth += 1) {
         const line = lines[cursor]?.trim() ?? '';
         if (CARE_OF_LINE.test(line)) {
           careOf.unshift(line);
@@ -419,6 +479,10 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
           break;
         }
         if (IDENTITY_LABEL_WORDS.test(line.toUpperCase())) continue;
+        if (!hardBreakSkipped) {
+          hardBreakSkipped = true;
+          continue;
+        }
         break;
       }
       const blockPostal = lines[postalIndex].trim().match(/^(\d{4})\s+(.+)$/);
@@ -460,8 +524,8 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     const surnameLabel = /^1(?!\d)\s*[.:]?\s*/;
     const givenLabel = /^2(?!\d)\s*[.:]?\s*/;
     const labels = [surnameLabel, givenLabel, /^3[.:]/, /^4a[.:]/i, /^4b[.:]/i, /^4c[.:]/i, /^5[.:]/, /^8[.:]/, /^9[.:]/, /^12[.:]/];
-    let surname = valueAfterLabelLine(lines, surnameLabel, labels, isPrintedNamePart);
-    let givenName = valueAfterLabelLine(lines, givenLabel, labels, isPrintedNamePart);
+    let surname = cleanPrintedNameValue(valueAfterLabelLine(lines, surnameLabel, labels, isPrintedNamePart));
+    let givenName = cleanPrintedNameValue(valueAfterLabelLine(lines, givenLabel, labels, isPrintedNamePart));
     // Birleşik form: OCR iki fiziksel satırı tek satıra bindirebilir
     // ("1. Testove 2. TESTSEN" — hatta arkasından 3. tarih). 1 = soyad,
     // 2 = ad kurallı; her parça isim-şeklinde olmak zorundadır (başlık
@@ -557,19 +621,20 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     const cprRaw = raw.match(/4[db8]\s*[.:]?\s*(\d{6}[-\s]{0,2}\d{4})/i)?.[1]
       ?? raw.match(/(?<![\d-])(\d{6}[-\s]{0,2}\d{4})(?!\d)/i)?.[1]
       ?? '';
-    // Eski kart düzeninde 8. alan bopælsadresse (kayıtlı adres) taşır.
-    const addressLine = valueAfterLabelLine(lines, /^8[.:]/, labels, (line) => /\d/.test(line) || line.length > 4);
-    const addressPostal = addressLine.match(/\b(\d{4})\s+([^,\n]+)$/);
+    // WP6 (0.3.39): DK kørekortunda bopælsadresse BASILI DEĞİLDİR — 8. alan
+    // araması kaldırıldı. Eski yol kategori/commune satırlarından yanlış
+    // adres-posta-şehir üretiyordu (hata üreten yer); adres yalnız
+    // sundhedskorttan gelir.
     const name = [givenName, surname].filter(Boolean).join(' ');
+    // Belge türü tespiti yapısal olarak güçlüdür ama 'validated' yalnız ad VE
+    // belge no birlikte okunduğunda: eksik okumada operatör incelemesi kalır.
+    const docTypeReview: IdentityFieldReview = name && documentNumber ? 'validated' : 'needs_review';
     const fields = definedFields([
       ['name', parsedField(name, 'needs_review')],
       ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
-      ['identity_doc_type', name || documentNumber ? { value: 'driver_license', review: 'validated' as const } : undefined],
-      ['identity_doc_country', parsedField(/DANMARK|\bDNK\b|\bDK\b/.test(upper) ? 'DNK' : '', 'needs_review')],
+      ['identity_doc_type', name || documentNumber ? { value: 'driver_license', review: docTypeReview } : undefined],
+      ['identity_doc_country', parsedField(normalizeIdentityCountry(upper), 'needs_review')],
       ['cpr_number', parsedField(plausibleCprSix(cprRaw), 'needs_review')],
-      ['address', parsedField(addressLine.replace(/\b\d{4}\s+.*$/, '').replace(/[,-]\s*$/, ''), 'needs_review')],
-      ['postal_code', parsedField(addressPostal?.[1] || '', 'needs_review')],
-      ['city', parsedField(addressPostal?.[2]?.trim() || '', 'needs_review')],
     ]);
     return Object.keys(fields).length ? { documentType: 'driver_license', rawLines: lines, fields } : null;
   }
@@ -583,8 +648,8 @@ function parseDanishLabeled(raw: string, lines: string[]): IdentityParseResult |
     /dselsdato|Date of birth/i, /Udstedt|Date of issue/i, /Pasnr|Passport No/i, /Kortnr|card No/i,
     /^K[oø]n\b|\bSex\b/i, /Personnr|Personal No/i, /Udl[oø]ber|Date of expiry/i,
   ];
-  const surname = valueAfterLabelLine(lines, /ternavn|Surname/i, labels, isPrintedNamePart);
-  const givenName = valueAfterLabelLine(lines, /Fornavn|Given names/i, labels, isPrintedNamePart);
+  const surname = cleanPrintedNameValue(valueAfterLabelLine(lines, /ternavn|Surname/i, labels, isPrintedNamePart));
+  const givenName = cleanPrintedNameValue(valueAfterLabelLine(lines, /Fornavn|Given names/i, labels, isPrintedNamePart));
   const name = [givenName, surname].filter(Boolean).join(' ');
   const documentNumber = isPas
     ? valueAfterLabelLine(lines, /Pasnr|Passport No/i, labels, (line) => /^\d{7,9}$/.test(line.trim()))
@@ -612,23 +677,17 @@ function parseDriverLicense(raw: string, lines: string[]): IdentityParseResult |
   const looksLikeLicense = /[KMG][ØO]E?REKORT|DRIVING\s+LICEN[CS]E|PERMIS\s+DE\s+CONDUIRE|F[ÜU]HRERSCHEIN/.test(upper);
   if (!looksLikeLicense) return null;
 
-  const surname = valueAfterLabel(raw, '1');
-  const givenName = valueAfterLabel(raw, '2');
+  const surname = cleanPrintedNameValue(valueAfterLabel(raw, '1'));
+  const givenName = cleanPrintedNameValue(valueAfterLabel(raw, '2'));
   const name = [givenName, surname].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   const documentNumber = valueAfterLabel(raw, '5') || (raw.match(/(?:LICEN[CS]E|K[ØO]REKORT)\s*(?:NO|NR|NUMBER)?\s*[:#-]?\s*([A-Z0-9-]{5,})/i)?.[1] || '');
-  const addressLine = valueAfterLabel(raw, '8');
-  const postalMatch = addressLine.match(/\b(\d{4})\s+([^,\n]+)/) || raw.match(/\b(\d{4})\s+([A-ZÆØÅ][A-ZÆØÅ .'-]{2,})/i);
-  const countryMatch = upper.match(/\b(DNK|DK|DENMARK|DANMARK|SWE|NOR|DEU|GER|FRA|FIN|NLD)\b/);
-  const countryMap: Record<string, string> = { DK: 'DNK', DENMARK: 'DNK', DANMARK: 'DNK', GER: 'DEU' };
-  const country = countryMatch ? countryMap[countryMatch[1]] || countryMatch[1] : '';
+  // WP6 (0.3.39): adres/posta/şehir araması kaldırıldı — DK kørekortunda
+  // basılı değildir (bkz. parseDanishLabeled kørekort dalı).
   const fields = definedFields([
     ['name', parsedField(name, 'needs_review')],
     ['identity_doc_number', parsedField(documentNumber, 'needs_review')],
-    ['identity_doc_type', { value: 'driver_license', review: 'needs_review' as const }],
-    ['identity_doc_country', parsedField(normalizeCountry(country), 'needs_review')],
-    ['address', parsedField(addressLine.replace(/\b\d{4}\s+.*$/, '').replace(/[,-]\s*$/, ''), 'needs_review')],
-    ['postal_code', parsedField(postalMatch?.[1] || '', 'needs_review')],
-    ['city', parsedField(postalMatch?.[2] || '', 'needs_review')],
+    ['identity_doc_type', { value: 'driver_license', review: (name && documentNumber ? 'validated' : 'needs_review') as IdentityFieldReview }],
+    ['identity_doc_country', parsedField(normalizeIdentityCountry(raw), 'needs_review')],
   ]);
   return { documentType: 'driver_license', rawLines: lines, fields };
 }
@@ -741,15 +800,20 @@ function identityDocumentTypeFromExtract(
       return 'id_card';
     default:
       // other/null: tür söylenmemişse dolu alanlardan sınıfla — belge no varsa
-      // kimlik kartı, yoksa ad/CPR bloğu sundhedskort düzenidir. Bu yalnız
-      // yüzey birleşiminde canonical seçim içindir.
-      return fields.identity_doc_number?.value ? 'id_card' : 'health_card';
+      // kimlik kartı, ad bloğu varsa sundhedskort düzenidir. Yalnız CPR varsa
+      // (barkod-only yanıt) tür BELİRSİZDİR: 'health_card' sanmak Windows OCR'in
+      // doğru bulduğu türü ezerdi — 'unknown' döner, birleşimde karşı tarafın
+      // bilinen türü korunur.
+      if (fields.identity_doc_number?.value) return 'id_card';
+      if (fields.name?.value) return 'health_card';
+      return 'unknown';
   }
 }
 
 export function identityParseResultFromExtract(payload: {
   document_type: string | null;
   fields: Record<string, { value: string; review?: string }>;
+  barcode?: { cpr: string; verified: boolean } | null;
 }): IdentityParseResult {
   const extractFields = payload.fields ?? {};
   const readField = (key: string): ParsedIdentityField | undefined => {
@@ -758,10 +822,17 @@ export function identityParseResultFromExtract(payload: {
     if (!value) return undefined;
     return { value, review: entry.review === 'validated' ? 'validated' : 'needs_review' };
   };
+  // WP5: barkod CPR OTORİTEDİR (Code 128, tam 10 hane) — ROI'den CPR
+  // okunmadığında barkoddan doldurulur. Kırpma YOK; kısmi/bozuk değer
+  // taşınmaz (barkod hep 10 hanelidir).
+  const barcodeCpr = typeof payload.barcode?.cpr === 'string' ? payload.barcode.cpr.replace(/\D/g, '') : '';
+  const barcodeField: ParsedIdentityField | undefined = /^\d{10}$/.test(barcodeCpr)
+    ? { value: barcodeCpr, review: payload.barcode?.verified ? 'validated' : 'needs_review' }
+    : undefined;
   const fields = definedFields([
     ['name', readField('full_name')],
     // Tam 10 hane korunur (barkod/doğrulama kaynaklı; kırpma YOK).
-    ['cpr_number', readField('cpr_number')],
+    ['cpr_number', readField('cpr_number') ?? barcodeField],
     ['address', readField('address')],
     ['postal_code', parsedField((readField('postal_code')?.value ?? '').replace(/\D/g, '').slice(0, 4), 'needs_review')],
     ['city', readField('city')],
@@ -954,7 +1025,58 @@ export type IdentityScanMeta = {
   sourceWidth?: number;
   sourceHeight?: number;
   fieldKeys: string[];
+  // WP5 (0.3.39): görüntülenen alanları ÜRETEN katman — rozet ve tanı kodu
+  // etiketi buradan gelir. undefined = yalnız Windows-OCR regex zinciri.
+  engine?: IdentityScanEngine;
 };
+
+// WP5 — çıkarma katmanları. 'backend-local': RapidOCR (backend yerel motor);
+// 'vlm': bulut VLM; 'windows-ocr': Windows.Media.Ocr + regex (son çare).
+export type IdentityScanEngine = 'backend-local' | 'vlm' | 'windows-ocr';
+
+const IDENTITY_ENGINE_TAG: Record<IdentityScanEngine, string> = {
+  'backend-local': 'LOC',
+  vlm: 'VLM',
+  'windows-ocr': 'WIN',
+};
+
+export function identityEngineTag(engine: IdentityScanEngine): string {
+  return IDENTITY_ENGINE_TAG[engine];
+}
+
+// WP7: motor rozetinin görünen adı — üç yüzeyde (CustomerOcrPanel, klasik
+// CustomerEditorTable, modern ModernIdentityScanner) aynı sözleşme.
+export function identityEngineBadgeLabel(engine: IdentityScanEngine | undefined): string {
+  switch (engine) {
+    case 'backend-local':
+      return 'Yerel motor';
+    case 'vlm':
+      return 'VLM';
+    default:
+      return 'Windows OCR (yedek)';
+  }
+}
+
+// Çıkarım yanıtındaki izlerden görüntülenen alanları üreten katman seçilir.
+// Sıra: kaynakta VLM izi (birleşimde VLM birincildir) > yerel motor bloğu >
+// kaynakta yerel izi > beklenti (hiçbir iz yoksa). Beklenti, birleştirmenin
+// alan ekleyip eklemediğine göre 'windows-ocr' olabilir.
+export function identityEngineFromExtract(
+  payload: { engine?: unknown; source?: unknown },
+  fallback: IdentityScanEngine,
+): IdentityScanEngine {
+  const source = typeof payload.source === 'string' ? payload.source.toLowerCase() : '';
+  if (source.includes('vlm')) return 'vlm';
+  // engine nesnesi her yanıtta VARDIR (schema default'u name:"none") —
+  // katman koşmuş sayılması için name dolu VE "none" olmamalı. Nesnenin
+  // varlığına bakmak barkod-only yanıtı "yerel motor" sanıyordu.
+  const engineName = payload.engine && typeof payload.engine === 'object'
+    ? String((payload.engine as { name?: unknown }).name ?? '')
+    : '';
+  if (engineName && engineName !== 'none') return 'backend-local';
+  if (source.includes('local')) return 'backend-local';
+  return fallback;
+}
 
 const IDENTITY_FIELD_INITIAL: Record<string, string> = {
   name: 'N',
@@ -971,7 +1093,10 @@ export function buildIdentityScanDiagnosticCode(meta: IdentityScanMeta): string 
   const initials = meta.fieldKeys.map((key) => IDENTITY_FIELD_INITIAL[key] ?? 'X').join('');
   const language = (meta.language || 'none').replace(/[^A-Za-z0-9-]/g, '');
   const scaledTag = meta.scaled === undefined ? '' : meta.scaled ? '.S' : '.NS';
-  return `idscan.${meta.side}.${language}.${meta.lineCount}L.${meta.fieldKeys.length}F${scaledTag}.${initials || 'none'}`;
+  // Motor etiketi (.LOC/.VLM/.WIN): saha teshisinde hangi katmanın alan
+  // ürettiği ayrışır (ascii atom kısıtı korunur).
+  const engineTag = IDENTITY_ENGINE_TAG[meta.engine ?? 'windows-ocr'];
+  return `idscan.${meta.side}.${language}.${meta.lineCount}L.${meta.fieldKeys.length}F${scaledTag}.${initials || 'none'}.${engineTag}`;
 }
 
 // Düşük çözünürlük eşiği: saha taraması 419×288 geldiğinde OCR 9 çöp satır
@@ -1045,6 +1170,17 @@ export function describeScannerError(error: unknown): DescribedScannerError | nu
   return { code, message: hints[code] ?? fallback };
 }
 
+// WP5: hangi çıkarma katmanlarının açık olduğu (backend capabilities).
+// local = motor UYGUNLUĞU (kurulu mu — bayraktan bağımsız; extract isteği
+// buna bakar ki bayrak kapalıyken bile barkod katmanı koşsun), localEnabled
+// = bayrağın KENDİSİ (yerel OCR gerçekte koşuyor mu — da-DK kurulum
+// yönlendirmesi gibi "hangi katman okuyor" kararları buna bakar), barcode =
+// barkod katmanı kurulu (CPR otoritesi, backend'de her zaman koşar).
+export type IdentityExtractTiers = { local: boolean; vlm: boolean; barcode: boolean; localEnabled: boolean };
+
+// WP7: yerel ön-işlemenin glare_detected makine uyarısının saha metni.
+const IDENTITY_GLARE_NOTICE = 'Kartta parlama algılandı — kartı düz bir zeminde koyup yeni bir görüntü çekin.';
+
 export function useIdentityScan({
   customer: _customer,
   setCustomer,
@@ -1070,24 +1206,42 @@ export function useIdentityScan({
   const [previews, setPreviews] = useState<Partial<Record<'front' | 'back', string>>>({});
   // Klasör izleme durumu (rozet); null = hiç sorgulanmadı / destek yok.
   const [watchStatus, setWatchStatus] = useState<IdentityWatchStatus | null>(null);
-  // R1-B: VLM katmanı (backend flag'i) — kapalıysa akış yalnız yerel OCR
-  // zinciriyle çalışır, davranış bugüne kadar aynıdır. Hata durumunda regex
-  // sonucu ekranda kalır ve operatör GÖRÜNÜR uyarılır (sessiz kalite kaybı yok).
-  const [vlmNotice, setVlmNotice] = useState<string | null>(null);
-  const vlmEnabledRef = useRef(false);
-  // Uçuşta VLM yanıtının eski taramaya yazılmasını kesen sıra: her receive,
-  // confirm ve clear bir sonrakini geçersiz kılar.
-  const vlmSeqRef = useRef(0);
+  // R1-B / WP5 (0.3.39): çıkarma katmanları — backend artık yerel RapidOCR
+  // motorunu da döndürebiliyor (local_engine); VLM bulut katmanı bayraklı
+  // kalır (default KAPALI). Hiçbir katman açık değilse istek HİÇ atılmaz
+  // (0.3.38 saha dersi: capabilities'a bakmadan atılan istek 503 döndü).
+  const [extractTiers, setExtractTiers] = useState<IdentityExtractTiers>({ local: false, vlm: false, barcode: false, localEnabled: false });
+  const extractTiersRef = useRef<IdentityExtractTiers>({ local: false, vlm: false, barcode: false, localEnabled: false });
+  // Hata durumunda regex sonucu ekranda kalır ve operatör GÖRÜNÜR uyarılır
+  // (sessiz kalite kaybı yok): engineNotice hangi katmanın devre dışı
+  // kaldığını söyler; glareNotice yerel motorun parlama uyarısını taşır.
+  const [engineNotice, setEngineNotice] = useState<string | null>(null);
+  const [glareNotice, setGlareNotice] = useState<string | null>(null);
+  // Uçuşta çıkarım yanıtının eski taramaya yazılmasını kesen sıra: her
+  // receive, confirm ve clear bir sonrakini geçersiz kılar.
+  const extractSeqRef = useRef(0);
 
   useEffect(() => {
     let disposed = false;
     void fetchIdentityExtractCapabilities()
       .then((extractCaps) => {
-        if (!disposed) vlmEnabledRef.current = extractCaps.extract_enabled;
+        if (disposed) return;
+        // Eski backend yalnız extract_enabled döndürür: VLM o bayraktan,
+        // yerel motor + barkod kapalı varsayılır (geriye dönük uyum — eski
+        // uçta kapalı bayrakla extract 503 atardı, istek atılmaz).
+        const tiers: IdentityExtractTiers = {
+          local: Boolean(extractCaps.local_engine),
+          vlm: Boolean(extractCaps.vlm_enabled ?? extractCaps.extract_enabled),
+          barcode: Boolean(extractCaps.barcode_available),
+          localEnabled: Boolean(extractCaps.local_enabled),
+        };
+        extractTiersRef.current = tiers;
+        setExtractTiers(tiers);
       })
       .catch(() => {
-        // Yetenek sorgusu başarısız = VLM yok sayılır; yerel zincir çalışır.
-        // Sessiz geçilir çünkü VLM opsiyonel bir üst katmandır.
+        // Yetenek sorgusu başarısız = katmanlar yok sayılır; yerel Windows
+        // OCR zinciri çalışır. Sessiz geçilir çünkü çıkarma opsiyonel üst
+        // katmandır.
       });
     return () => {
       disposed = true;
@@ -1114,6 +1268,21 @@ export function useIdentityScan({
       : !ocrInfo.probeOk && capabilities.platform === 'windows'
         ? 'Danca OCR paketi doğrulanamadı — tarama hatalı çıkabilir; %APPDATA%\\dk.seroguld.crm\\logs\\ui-diagnostics.jsonl kodunu iletin.'
         : null;
+
+  // WP7 (D6): yerel katman gerçekte koşmuyorsa (bayrak) alan okumayı Windows
+  // OCR üstlenir; Windows'ta Danca paketi de yoksa Danca karakterler bozulur
+  // — kurulum komutuyla yönlendirme göster. Kapı BAYRAĞA bakar (localEnabled),
+  // motor uygunluğuna değil: motor kurulu ama bayrak kapalıysa Windows OCR
+  // yine de birincil okuyucudur. Rust probu yeniden kullanılır; tri-state
+  // 'null' (yoklama çalışamadı) burada uyarı üretmez.
+  const danishOcrInstall = useMemo(() => {
+    if (extractTiers.localEnabled || capabilities.platform !== 'windows' || ocrInfo?.danishAvailable !== false) return null;
+    return {
+      message:
+        'Yerel motor için Danca OCR paketi bulunamadı. Windows\'a Danca dil paketi kurun ya da şu komutu yönetici PowerShell\'inde çalıştırın:',
+      command: 'Add-WindowsCapability -Online -Name "Language.OCR~~~da-DK~0.0.1.0"',
+    };
+  }, [capabilities.platform, extractTiers.localEnabled, ocrInfo]);
 
   // Ortak hata bildirimi: describeScannerError iptali sessizce yutar (null),
   // diğerlerini teşhis kodu + saha metniyle state'e yazar. true = hata gösterildi.
@@ -1145,6 +1314,9 @@ export function useIdentityScan({
     const preview = extractIdentityScanPreview(value);
     if (preview) setPreviews((current) => ({ ...current, [side]: preview }));
     const nextResult = parseIdentityScan(raw);
+    // Yeni tarama eski katman uyarılarını taşımaz (parlama/geri-düşme).
+    setEngineNotice(null);
+    setGlareNotice(null);
     // Saha teshisi (0.3.30): her tarama — başarılı dahil — maskeli satır
     // önizlemesini ve atomik özeti üretir. Başarılı taramada isim yoksa
     // panel bunu görünür kılar; özet ui-diagnostics.jsonl'e yazılır.
@@ -1153,6 +1325,8 @@ export function useIdentityScan({
     const filledKeys = nextResult
       ? Object.entries(nextResult.fields).filter(([, field]) => Boolean(field?.value)).map(([key]) => key)
       : [];
+    // Bu noktada görüntülenen alanları üreten katman Windows-OCR regex
+    // zinciridir; backend yanıtı gelirse etiket güncellenir.
     const meta: IdentityScanMeta = {
       side,
       language: imageInfo.language,
@@ -1161,6 +1335,7 @@ export function useIdentityScan({
       sourceWidth: imageInfo.sourceWidth,
       sourceHeight: imageInfo.sourceHeight,
       fieldKeys: filledKeys,
+      engine: 'windows-ocr',
     };
     setScanMeta(meta);
     setDiagnostic(rawLines.length ? maskIdentityScanDiagnostic(rawLines) : null);
@@ -1171,8 +1346,107 @@ export function useIdentityScan({
       frontendBuild: typeof __SERO_FRONTEND_BUILT_AT__ === 'string' ? __SERO_FRONTEND_BUILT_AT__ : 'dev',
       errorCode: buildIdentityScanDiagnosticCode(meta),
     });
-    if (!hasParsedIdentityFields(nextResult)) {
-      if (!resultRef.current) setPreviews({});
+    // WP5 katman seçimi (0.3.39): barkod CPR otoritesidir ve bayrak KAPALIYKEN
+    // de koşar — istek "yerel motor kurulu" (local_engine UYGUNLUĞU), VLM
+    // VEYA barkod kuruluysa atılır. 0.3.38'in "yalnız local||vlm" kapısı
+    // motoru kurulu olmayan makinede isteği tamamen kesiyordu. İstek ayrıca
+    // regex'in kaçırdığı alanların KURTARMA yoludur: erken dönüşten ÖNCE
+    // atılır — Windows OCR kötü okuduğunda barkod CPR / RapidOCR tam-kart
+    // metni hâlâ alan getirebilir.
+    const tiers = extractTiersRef.current;
+    const shouldExtract = Boolean(preview) && Boolean(tiers.local || tiers.vlm || tiers.barcode);
+    const parsedOk = hasParsedIdentityFields(nextResult);
+    const otherSide: 'front' | 'back' = side === 'front' ? 'back' : 'front';
+    if (shouldExtract) {
+      const seq = (extractSeqRef.current += 1);
+      void requestIdentityExtract(preview, side)
+        .then((payload) => {
+          if (seq !== extractSeqRef.current) return;
+          // Regex bir şey tutamadıysa extract bunun üzerinden kurtarır.
+          let merged: IdentityParseResult = nextResult ?? { documentType: 'unknown', rawLines: [], fields: {} };
+          const ocrTextResult = payload.ocr_text ? parseIdentityScan(payload.ocr_text) : null;
+          const ocrTextUsable = hasParsedIdentityFields(ocrTextResult) ? ocrTextResult : null;
+          if (ocrTextUsable) merged = mergeParsedIdentity(ocrTextUsable, merged);
+          const extractResult = identityParseResultFromExtract(payload);
+          if (hasParsedIdentityFields(extractResult)) merged = mergeParsedIdentity(extractResult, merged);
+          // Tür korunumu: extract yanıtı türü bilmiyorsa (barkod-only CPR →
+          // 'unknown') birleşimde önceki katmanların BİLİNEN türü korunur —
+          // Windows OCR'in doğru bulduğu tür ezilmesin.
+          if (merged.documentType === 'unknown') {
+            const knownType = [extractResult, ocrTextUsable, nextResult]
+              .find((candidate) => candidate && candidate.documentType !== 'unknown');
+            if (knownType) merged = { ...merged, documentType: knownType.documentType };
+          }
+          // Son çare: hiçbir katman türü bilmiyor ama alan kurtarıldıysa
+          // (yalnız barkod CPR — sahadaki "isim okunamadı" sundhedskort
+          // durumu) mergeSideScanResults unknown-türü sonucu dışarı vermez,
+          // CPR görünmezdi. Belge no YOKSA düzen tahmini sundhedskort
+          // ailesidir (belge no olsaydı yukarıda id_card dönmişti); tür
+          // DEĞERİ yazılmadığı için kimlik belge akışı etkilenmez.
+          if (merged.documentType === 'unknown' && !merged.fields.identity_doc_number?.value) {
+            merged = { ...merged, documentType: 'health_card' };
+          }
+          if (!hasParsedIdentityFields(merged)) {
+            // Extract da alan getirmedi: sync hata durumu yerinde kalır,
+            // önizleme temizliği sync yolun kuralıyla aynı olur.
+            if (!parsedOk && !resultRef.current) setPreviews({});
+            if (Array.isArray(payload.warnings) && payload.warnings.includes('glare_detected')) setGlareNotice(IDENTITY_GLARE_NOTICE);
+            return;
+          }
+          // Karşı-yüz eskime denetimi kurtarma için de koşar: kurtarılan tür
+          // karşı yüzün türüyle çelişiyorsa karşı yüzün sonucu düşer.
+          const otherAfter = scanBySideRef.current[otherSide];
+          const staleAfter = merged.documentType !== 'unknown'
+            && otherAfter !== null
+            && otherAfter.documentType !== 'unknown'
+            && otherAfter.documentType !== merged.documentType;
+          setScanBySide((current) => {
+            const next: { front: IdentityParseResult | null; back: IdentityParseResult | null } = { ...current, [side]: merged };
+            if (staleAfter) next[otherSide] = null;
+            return next;
+          });
+          if (staleAfter) {
+            setPreviews((current) => {
+              const next = { ...current };
+              delete next[otherSide];
+              return next;
+            });
+          }
+          // Rozet/tanı etiketi: birleştirme alan eklediyse üreten katman,
+          // eklemediyse Windows-OCR sonucu hâlâ sahada demektir.
+          const engine = identityEngineFromExtract(
+            payload,
+            merged === nextResult ? 'windows-ocr' : tiers.vlm && !tiers.local ? 'vlm' : 'backend-local',
+          );
+          setScanMeta((current) => (current && current.side === side
+            ? {
+                ...current,
+                engine,
+                fieldKeys: Object.entries(merged.fields).filter(([, field]) => Boolean(field?.value)).map(([key]) => key),
+              }
+            : current));
+          setEngineNotice(null);
+          // Regex başarısızdı ve extract kurtardı: hata ekranı kalkar.
+          if (!parsedOk) {
+            setStatus('review');
+            setError(null);
+            setErrorCode(null);
+          }
+          // Yerel ön-işlemenin makine uyarıları: insan metni frontend işidir.
+          if (Array.isArray(payload.warnings) && payload.warnings.includes('glare_detected')) setGlareNotice(IDENTITY_GLARE_NOTICE);
+        })
+        .catch(() => {
+          if (seq !== extractSeqRef.current) return;
+          // Regex de başarısızsa ve extract de yanıt vermediyse alan kalıcı
+          // olarak yok — sync yolun önizleme kuralı uygulanır.
+          if (!parsedOk && !resultRef.current) setPreviews({});
+          setEngineNotice(tiers.vlm && !tiers.local
+            ? 'VLM doğrulaması yanıt vermedi — yerel OCR sonucu gösteriliyor, alanları kontrol edin.'
+            : 'Yerel motor yanıt vermedi — Windows OCR sonucu gösteriliyor, alanları kontrol edin.');
+        });
+    }
+    if (!parsedOk) {
+      if (!resultRef.current && !shouldExtract) setPreviews({});
       setStatus((current) => current === 'review' ? 'review' : 'error');
       // R2-04: tek genel mesaj yerine neden sınıfı — OCR metin verdi mi,
       // vermediyse cihaz/görüntü; verdiyse belge türü tanınmadı (hangi türler
@@ -1181,6 +1455,8 @@ export function useIdentityScan({
       // maskeli ham satır önizlemesi (yalnız ekranda, kalıcı kayıt yok).
       // Düşük çözünürlük kendi sınıfıdır: kök neden DPI (WIA varsayılanı
       // ~125) — genel "tanınamadı" metni yerine DPI/çekim yönlendirmesi.
+      // shouldExtract true ise hata ŞU AN doğrudur ama extract yanıtında
+      // kalkabilir (yukarıda !parsedOk dalı review'a yükseltir).
       const lowResMessage = describeLowResIdentityScan(imageInfo.sourceWidth, imageInfo.sourceHeight);
       const detailParts: string[] = [];
       if (imageInfo.language) detailParts.push(`OCR dili ${imageInfo.language}`);
@@ -1202,7 +1478,6 @@ export function useIdentityScan({
     // Yeniden tarama hijyeni: aynı yüze FARKLI TÜRDE bir belge düştüyse karşı
     // yüzün sonucu eski belgeye aittir — birleşim iki belgeyi karıştırırdı.
     // id_card ön+arka bilinçli akışı aynı türde kaldığı için bozulmaz.
-    const otherSide: 'front' | 'back' = side === 'front' ? 'back' : 'front';
     const otherResult = scanBySideRef.current[otherSide];
     const oppositeStale = nextResult.documentType !== 'unknown'
       && otherResult !== null
@@ -1222,25 +1497,6 @@ export function useIdentityScan({
     }
     setStatus('review');
     setError(null);
-    // R1-B motor seçimi: yerel regex sonucu zaten ekranda; VLM flag'i açık ve
-    // görüntü önizlemesi varsa arka planda çıkarım isteği atılır. Yanıt
-    // gelince VLM birincil, regex eksik-doldurucu birleşir (mergeParsedIdentity);
-    // hata yerel sonucu ASLA ezmez — sadece görünür uyarı üretir.
-    if (vlmEnabledRef.current && preview) {
-      const seq = (vlmSeqRef.current += 1);
-      void requestIdentityExtract(preview, side)
-        .then((payload) => {
-          if (seq !== vlmSeqRef.current) return;
-          const vlmResult = identityParseResultFromExtract(payload);
-          const merged = hasParsedIdentityFields(vlmResult) ? mergeParsedIdentity(vlmResult, nextResult) : nextResult;
-          setScanBySide((current) => ({ ...current, [side]: merged }));
-          setVlmNotice(null);
-        })
-        .catch(() => {
-          if (seq !== vlmSeqRef.current) return;
-          setVlmNotice('VLM doğrulaması yanıt vermedi — yerel OCR sonucu gösteriliyor, alanları kontrol edin.');
-        });
-    }
   }, [uiVariant]);
 
   const acquire = useCallback(async (side: 'front' | 'back' = 'front') => {
@@ -1342,25 +1598,28 @@ export function useIdentityScan({
 
   const confirm = useCallback(() => {
     if (!result) return;
-    // Uçuştaki VLM yanıtı artık eskidir — onaylanan sonuç yazıldı.
-    vlmSeqRef.current += 1;
+    // Uçuştaki çıkarım yanıtı artık eskidir — onaylanan sonuç yazıldı.
+    extractSeqRef.current += 1;
     setCustomer((current) => applyConfirmedIdentityResult(current, result));
     setScanBySide({ front: null, back: null });
     setPreviews({});
     setScanMeta(null);
     setDiagnostic(null);
+    setEngineNotice(null);
+    setGlareNotice(null);
     setStatus('applied');
     window.setTimeout(() => onApplied?.(), 0);
   }, [onApplied, result, setCustomer]);
 
   const clear = useCallback(() => {
-    vlmSeqRef.current += 1; // uçuştaki VLM yanıtı temizlenen taramaya yazmasın
+    extractSeqRef.current += 1; // uçuştaki çıkarım yanıtı temizlenen taramaya yazmasın
     setScanBySide({ front: null, back: null });
     setPreviews({});
     setScanMeta(null);
     setError(null);
     setErrorCode(null);
-    setVlmNotice(null);
+    setEngineNotice(null);
+    setGlareNotice(null);
     setDiagnostic(null);
     setStatus(capabilities.scanner || capabilities.file ? 'ready' : 'unavailable');
     // Klasör izleme oturumu bilinçli olarak durmaz: temizleme yalnız tarama
@@ -1377,7 +1636,10 @@ export function useIdentityScan({
     diagnostic,
     scanMeta,
     ocrNotice,
-    vlmNotice,
+    engineNotice,
+    glareNotice,
+    danishOcrInstall,
+    extractTiers,
     watchStatus,
     acquire,
     pickFile,
@@ -1387,5 +1649,5 @@ export function useIdentityScan({
     confirm,
     clear,
     refreshCapabilities,
-  }), [acquire, capabilities, clear, confirm, diagnostic, dropFile, error, errorCode, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, startWatch, status, stopWatch, vlmNotice, watchStatus]);
+  }), [acquire, capabilities, clear, confirm, danishOcrInstall, diagnostic, dropFile, engineNotice, error, errorCode, extractTiers, glareNotice, ocrNotice, pickFile, previews, refreshCapabilities, result, scanMeta, startWatch, status, stopWatch, watchStatus]);
 }

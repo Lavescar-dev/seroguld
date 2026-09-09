@@ -36,16 +36,22 @@ describe('purchase customer workflow parsers', () => {
   });
 
   it('marks Danish/EU driver-license heuristics as needing review', () => {
+    // WP6: DK kørekortunda bopælsadresse basılı değildir — adres/posta/şehir
+    // 8. alandan artık üretilmez; belge türü ad+numara tamamsa validated.
     const result = parseIdentityScan('KØREKORT\n1. NIELSEN\n2. LARS\n5. ABC123456\n8. Hovedgade 1, 2100 KOBENHAVN\nDK');
 
     expect(result.documentType).toBe('driver_license');
     expect(result.fields.identity_doc_number).toMatchObject({ value: 'ABC123456', review: 'needs_review' });
-    expect(result.fields.postal_code?.value).toBe('2100');
+    expect(result.fields.postal_code).toBeUndefined();
+    expect(result.fields.city).toBeUndefined();
     expect(applyConfirmedIdentityResult(emptyCustomer, result)).toMatchObject({
       identity_doc_type: 'driver_license',
       identity_doc_country: 'DNK',
-      postal_code: '2100',
-      city: 'KOBENHAVN',
+      // Ad okunduğu için kişi grubu (adres dahil) sıfırlanıp yeniden yazılır:
+      // körekortun üretmediği posta/şehir kalıntı olarak kalmaz.
+      address: '',
+      postal_code: '',
+      city: '',
     });
   });
 

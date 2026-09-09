@@ -712,6 +712,8 @@ describe('OCR parser regresyonları — 0.3.35 (etiket esnetme, erken dönüş, 
   it('B4 guard: KØREKORT başlığı + bopælsadresse + 4d CPR → driver_license KALIR', () => {
     // Kapı genişledikten sonra bile eski-tip kørekort (adres taşır) health_card
     // yutulmamalı — sundhedskort bloğu başlıktan ÖNCE guard ile ayrılır.
+    // WP6: DK kørekortunda adres BASILI DEĞİLDİR — 8. alan araması kaldırıldı,
+    // kategori/commune satırlarından adres-posta-şehir uydurulmaz.
     const raw = [
       'KØREKORT',
       '1. Hansen',
@@ -725,8 +727,46 @@ describe('OCR parser regresyonları — 0.3.35 (etiket esnetme, erken dönüş, 
     expect(result.documentType).toBe('driver_license');
     expect(result.fields.name?.value).toBe('Lars Hansen');
     expect(result.fields.identity_doc_number?.value).toBe('30998877');
-    expect(result.fields.address?.value).toBe('Testgade 1');
-    expect(result.fields.postal_code?.value).toBe('8000');
+    expect(result.fields.address).toBeUndefined();
+    expect(result.fields.postal_code).toBeUndefined();
+    expect(result.fields.city).toBeUndefined();
+    // WP6: ad + belge no birlikte okunduğunda tür 'validated' olur.
+    expect(result.fields.identity_doc_type).toEqual({ value: 'driver_license', review: 'validated' });
+  });
+
+  it('WP6: kørekortta ad okunamadığında belge türü incelemeye kalır', () => {
+    const raw = [
+      'KØREKORT',
+      '3. 1990-01-01',
+      '4d. 010190-1234',
+      '5. 30998877',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.documentType).toBe('driver_license');
+    expect(result.fields.name).toBeUndefined();
+    expect(result.fields.identity_doc_type).toEqual({ value: 'driver_license', review: 'needs_review' });
+  });
+
+  it('WP6: ülke yalnız beyaz listedeki ISO-3 kodu olarak yazılır; OCR gürültüsü ülke alanını kirletmez', () => {
+    // Danmark → DNK; 'Tyrkiej' gibi bozuk ülke satırı beyaz liste dışıdır.
+    const raw = [
+      'KØREKORT DANMARK',
+      '1. Hansen',
+      '2. Lars',
+      '3. 1990-01-01, Tyrkiej',
+      '4d. 010190-1234',
+      '5. 30998877',
+    ].join('\n');
+    const result = parseIdentityScan(raw);
+    expect(result.fields.identity_doc_country?.value).toBe('DNK');
+
+    const foreign = parseIdentityScan([
+      'KØREKORT',
+      '3. 1990-01-01',
+      '5. 30998877',
+    ].join('\n'));
+    // Başlıkta ülke yoksa alan hiç yazılmaz (boş değer taşımaz).
+    expect(foreign.fields.identity_doc_country).toBeUndefined();
   });
 
   it('B4 negatif: c/o + CPR son-çare kapısı kørekort başlığıyla AÇILMAZ', () => {

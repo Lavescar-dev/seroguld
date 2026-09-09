@@ -6,7 +6,7 @@ import type { PosWorkspaceBankInfo } from '@/types';
 
 import { normalizePostalCode, useAddressAutocomplete } from './addressAutocomplete';
 import { useCustomerMatch } from './customerMatch';
-import { type IdentityFieldName, useIdentityScan } from './identityScan';
+import { type IdentityFieldName, identityEngineBadgeLabel, useIdentityScan } from './identityScan';
 import type { EditableCustomer, PaymentMethod } from './types';
 
 const monoStyle = { fontFamily: "'IBM Plex Mono', monospace" } as const;
@@ -478,15 +478,38 @@ export function CustomerEditorTable({
           ) : null}
         </div>
 
+        {identity.status === 'ready' || identity.status === 'acquiring' ? (
+          <div className="border-b border-brand-700 bg-brand-900 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-brand-300">Yakalama rehberi</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] font-semibold text-brand-100">
+              <li>Parlama olmasın — flaş kapalı, kartı düz zeminde tutun</li>
+              <li>Kartı kadroya doldurun, yakından çekin</li>
+              <li>Tarayıcıda 300 DPI kullanın</li>
+            </ul>
+          </div>
+        ) : null}
+
         {identity.ocrNotice ? <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-800">{identity.ocrNotice}</p> : null}
-        {identity.vlmNotice ? <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-800">{identity.vlmNotice}</p> : null}
+        {identity.engineNotice ? <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-800">{identity.engineNotice}</p> : null}
+        {identity.glareNotice ? <p className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-800">{identity.glareNotice}</p> : null}
+        {identity.danishOcrInstall ? (
+          <div className="border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-800">
+            <p>{identity.danishOcrInstall.message}</p>
+            <code className="mono mt-1 block select-text whitespace-pre-wrap border border-amber-300 bg-white px-1.5 py-1 text-[10px] text-amber-900">{identity.danishOcrInstall.command}</code>
+          </div>
+        ) : null}
         {identity.error && identity.diagnostic ? (
           <pre className="max-h-28 overflow-y-auto whitespace-pre-line border-b border-brand-700 bg-brand-900 px-3 py-1.5 font-mono text-[10px] text-brand-200">{identity.diagnostic}</pre>
         ) : null}
 
         {identity.result ? (
           <div className="border-b border-emerald-300 bg-emerald-50 px-4 py-3">
-            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Okunan alanları inceleyin</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-700">Okunan alanları inceleyin</p>
+              <span className="flex-shrink-0 border border-emerald-300 bg-white px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-800">
+                {identityEngineBadgeLabel(identity.scanMeta?.engine)}
+              </span>
+            </div>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
               {Object.entries(identity.result.fields).map(([field, parsed]) => parsed ? (
                 <p key={field} className="text-xs text-emerald-900"><strong>{identityFieldLabel(field as IdentityFieldName)}:</strong> {parsed.value} <span className={parsed.review === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>({parsed.review === 'validated' ? 'doğrulandı' : 'inceleyin'})</span></p>

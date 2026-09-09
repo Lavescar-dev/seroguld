@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  identityEngineFromExtract,
   identityParseResultFromExtract,
   mergeParsedIdentity,
   parseIdentityScan,
@@ -67,8 +68,18 @@ describe('identityParseResultFromExtract', () => {
     // Bilinmeyen review değeri ihtiyatlı tarafta kalır.
     expect(unknownWithDoc.fields.identity_doc_number?.review).toBe('needs_review');
 
+    // M (0.3.39): yalnız CPR varsa (barkod-only yanıt) tür BELİRSİZDİR —
+    // 'health_card' sanmak Windows OCR'in doğru bulduğu türü ezerdi.
+    const barcodeOnly = identityParseResultFromExtract({
+      document_type: null,
+      fields: {},
+      barcode: { cpr: '0101011234', verified: true },
+    });
+    expect(barcodeOnly.documentType).toBe('unknown');
+    expect(barcodeOnly.fields.cpr_number?.value).toBe('0101011234');
+
     const empty = identityParseResultFromExtract({ document_type: null, fields: {} });
-    expect(empty.documentType).toBe('health_card');
+    expect(empty.documentType).toBe('unknown');
     expect(Object.keys(empty.fields)).toHaveLength(0);
   });
 
@@ -88,6 +99,59 @@ describe('identityParseResultFromExtract', () => {
       fields: { country: { value: 'Danmark', review: 'needs_review' } },
     });
     expect(bad.fields.identity_doc_country).toBeUndefined();
+  });
+
+  it('WP5: fields.cpr yoksa barkod CPR doldurulur — tam 10 hane, doğrulama rozetiyle', () => {
+    const fromBarcode = identityParseResultFromExtract({
+      document_type: 'driver_license',
+      fields: {},
+      barcode: { cpr: '0101011234', verified: true },
+    });
+    expect(fromBarcode.fields.cpr_number).toEqual({ value: '0101011234', review: 'validated' });
+
+    // Doğrulanamayan barkod needs_review ile taşınır (yorum operatördedir).
+    const unverified = identityParseResultFromExtract({
+      document_type: null,
+      fields: {},
+      barcode: { cpr: '0101011234', verified: false },
+    });
+    expect(unverified.fields.cpr_number).toEqual({ value: '0101011234', review: 'needs_review' });
+
+    // Kısmi/bozuk barkod taşınmaz (barkod hep 10 hanelidir; uydurma yok).
+    const partial = identityParseResultFromExtract({
+      document_type: null,
+      fields: {},
+      barcode: { cpr: '010101', verified: false },
+    });
+    expect(partial.fields.cpr_number).toBeUndefined();
+
+    // ROI değeri varsa barkod ezemez: ROI alanı birincildir.
+    const roiWins = identityParseResultFromExtract({
+      document_type: null,
+      fields: { cpr_number: { value: '0202034567', review: 'needs_review' } },
+      barcode: { cpr: '0101011234', verified: true },
+    });
+    expect(roiWins.fields.cpr_number?.value).toBe('0202034567');
+  });
+});
+
+describe('identityEngineFromExtract (WP5 — motor etiketi türetme)', () => {
+  it('source VLM izi taşıyorsa vlm kazanır (birleşimde VLM birincildir)', () => {
+    expect(identityEngineFromExtract({ source: 'merged+vlm' }, 'backend-local')).toBe('vlm');
+  });
+
+  it('engine bloğu ya da local izi backend-local döndürür', () => {
+    expect(identityEngineFromExtract({ engine: { name: 'rapidocr' } }, 'windows-ocr')).toBe('backend-local');
+    expect(identityEngineFromExtract({ source: 'local+barcode' }, 'windows-ocr')).toBe('backend-local');
+  });
+
+  it('iz yoksa beklenti (fallback) aynen döner', () => {
+    expect(identityEngineFromExtract({}, 'windows-ocr')).toBe('windows-ocr');
+    expect(identityEngineFromExtract({ source: 'vlm-only-tier' }, 'vlm')).toBe('vlm');
+    // L (0.3.39): engine nesnesi her yanıtta VARDIR (schema default'u
+    // name:"none") — "none" katman koşmuş sayılmaz, barkod-only yanıt
+    // yerel motor sanılmaz.
+    expect(identityEngineFromExtract({ engine: { name: 'none' }, source: 'barcode' }, 'windows-ocr')).toBe('windows-ocr');
   });
 });
 

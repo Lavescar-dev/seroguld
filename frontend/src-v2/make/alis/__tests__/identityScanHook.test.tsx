@@ -251,8 +251,9 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     const payload = mockedWriteDiagnostic.mock.calls[0][0];
     expect(payload.route).toBe('/alis/identity-scan');
     expect(payload.uiVariant).toBe('modern');
-    // Atomik özet: PII yok — yalnız yüz, dil, satır sayısı, ölçek etiketi ve dolu alan harfleri.
-    expect(payload.errorCode).toMatch(/^idscan\.front\.da-DK\.2L\.\d+F\.NS\.[A-Z]+$/);
+    // Atomik özet: PII yok — yalnız yüz, dil, satır sayısı, ölçek etiketi, dolu
+    // alan harfleri ve motor etiketi (WP5: .LOC/.VLM/.WIN).
+    expect(payload.errorCode).toMatch(/^idscan\.front\.da-DK\.2L\.\d+F\.NS\.[A-Z]+\.(LOC|VLM|WIN)$/);
     expect(payload.errorCode).not.toContain('ERIKSSON');
     expect(result.current.scanMeta).toMatchObject({
       side: 'front',
@@ -280,8 +281,10 @@ describe('useIdentityScan hook (roadmap madde 3)', () => {
     expect(result.current.status).toBe('review');
     expect(result.current.scanMeta?.fieldKeys).not.toContain('name');
     expect(result.current.scanMeta?.fieldKeys).toContain('identity_doc_number');
-    // Özetin alan harflerinde N (name) yok — son segment yalnız dolu alanların baş harfleri.
-    expect(mockedWriteDiagnostic.mock.calls[0][0].errorCode.split('.').pop()).not.toContain('N');
+    // Özetin alan harflerinde N (name) yok — alan harfleri sondan bir önceki
+    // segmentte (son segment artık motor etiketi .WIN/.LOC/.VLM).
+    const diagnosticSegments = mockedWriteDiagnostic.mock.calls[0][0].errorCode.split('.');
+    expect(diagnosticSegments[diagnosticSegments.length - 2]).not.toContain('N');
   });
 
   it('confirm uygulanan sonucu setCustomer a aktarir ve durumu temizler', async () => {

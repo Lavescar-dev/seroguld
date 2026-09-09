@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Camera, CheckCircle2, FileImage, FolderInput, Loader2, Radio, RefreshCw, ScanLine, X } from 'lucide-react';
 
 import { getIdentityWatchStatus, stopIdentityWatch, type IdentityWatchStatus } from '@/lib/desktop';
-import { buildIdentityScanDiagnosticCode, useIdentityScan } from '@/make/alis/identityScan';
+import { buildIdentityScanDiagnosticCode, identityEngineBadgeLabel, useIdentityScan } from '@/make/alis/identityScan';
 import type { EditableCustomer } from '@/make/alis/types';
 import type { CustomerDraft } from './types';
 
@@ -198,8 +198,29 @@ export function CustomerOcrPanel({
       <p className="mt-1 text-[11px] text-brand-500">
         Pas / ID-kort / kørekort / sundhedskort görüntüsünü sürükleyip bırakın veya seçin — alanlar önerilen değer olarak dolar, kayıt onayınızla oluşur.
       </p>
+      {/* WP7: yakalama rehberi — taramadan ÖNCE görünen çekim kuralları; sonuç
+          gelince blok kapanır (inceleme yüzeyini işgal etmesin). */}
+      {identity.status === 'ready' || identity.status === 'acquiring' ? (
+        <div className="mt-2 border border-brand-200 bg-brand-900 px-3 py-2">
+          <p className="text-[10px] font-black uppercase tracking-widest text-brand-300">Yakalama rehberi</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] font-semibold text-brand-100">
+            <li>Parlama olmasın — flaş kapalı, kartı düz zeminde tutun</li>
+            <li>Kartı kadroya doldurun, yakından çekin</li>
+            <li>Tarayıcıda 300 DPI kullanın</li>
+          </ul>
+        </div>
+      ) : null}
       {identity.ocrNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.ocrNotice}</p> : null}
-      {identity.vlmNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.vlmNotice}</p> : null}
+      {/* WP5: katman uyarısı (vlmNotice'in yerini engineNotice aldı) + yerel
+          ön-işlemenin parlama uyarısı + da-DK paketi kurulum yönlendirmesi. */}
+      {identity.engineNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.engineNotice}</p> : null}
+      {identity.glareNotice ? <p className="mt-1 text-[11px] font-semibold text-amber-700">{identity.glareNotice}</p> : null}
+      {identity.danishOcrInstall ? (
+        <div className="mt-1 border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold text-amber-800">
+          <p>{identity.danishOcrInstall.message}</p>
+          <code className="mono mt-1 block select-text whitespace-pre-wrap border border-amber-300 bg-white px-1.5 py-1 text-[10px] text-amber-900">{identity.danishOcrInstall.command}</code>
+        </div>
+      ) : null}
       {identity.error ? <p className="mt-1 text-[11px] font-semibold text-rose-700">{identity.error}</p> : null}
       {identity.error && identity.errorCode ? (
         <p className="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[10px] font-bold text-rose-500">
@@ -220,6 +241,10 @@ export function CustomerOcrPanel({
       {identity.status === 'review' && scannedFields.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-brand-200 pt-2">
           <span className="text-[10px] font-black uppercase tracking-widest text-emerald-800">Okunan:</span>
+          {/* WP7: alanları üreten katmanın rozeti — saha hangi motorun okuduğunu görür. */}
+          <span className="border border-emerald-300 bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-800">
+            {identityEngineBadgeLabel(identity.scanMeta?.engine)}
+          </span>
           {scannedFields.map(([field, parsed]) => (
             <span key={field} className="border border-emerald-300 bg-white px-2 py-0.5 text-[11px] text-brand-800">
               {parsed?.value}
