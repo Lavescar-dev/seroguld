@@ -285,6 +285,9 @@ kimlik verisini görmez), `IDENTITY_EXTRACT_MODEL=gpt-5-mini`,
 `IDENTITY_EXTRACT_ENABLED` (canlı açma benchmark kapısına bağlı).
 Foundry'de deployment tipi **EU Data Zone/Regional** olmalı — Global
 yasak (veri bölge dışına çıkar). Ayrıntı: `IDENTITY_VLM_DPIA_NOTE_TR.md`.
+Ucu tek komutla doğrulama: `bash scripts/vlm-endpoint-smoke.sh` (sentetik
+barkodla uçtan uca; OpenRouter yalnız sentetik test ucu olarak kullanılır,
+gerçek kart görüntüsü AB dışı işlemeçye gitmez).
 
 Panel uyarıları: *"Kartta parlama algılandı…"* → kartı mat, koyu bir
 zeminde yeniden çekin. *"Yerel motor yanıt vermedi…"* → alanlar Windows
