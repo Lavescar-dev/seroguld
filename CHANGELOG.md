@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.3.39] — 2026-09-09
+
+### Kimlik OCR — yerel PP-OCRv6 motoru + barkod bayraktan ayrıldı
+
+- **Kök neden (0.3.38 saha dersi):** üç katmanlı mimari müşteri makinesinde
+  HİÇ çalışmadı — `identity_extract_enabled` kapalıydı, frontend
+  capabilities'a bakıp isteği hiç atmıyor, backend bayrak kapalıyken
+  barkoda girmeden 503 atıyordu. Tezgah hep eski Windows-OCR zincirinde
+  kaldı ("tamamen birebir aynı" sonucu bu yüzden).
+- **Barkod bayraktan ayrıldı:** `POST /alis/identity/extract` artık VLM
+  bayrağı arkasında DEĞİL — Tier 0 barkod (Code 128, checksum'lı tam-10
+  CPR) HER ZAMAN koşar; yerel motor `IDENTITY_LOCAL_OCR_ENABLED`
+  bayrağıyla, VLM bayrak+anahtarla katılır. Bayrak kapalıyken 503 YOK.
+- **Yerel motor (RapidOCR / PP-OCRv6, offline):** görüntü dükkân
+  PC'sinden hiç çıkmaz. Ön-işleme yeni: kart dörtgen algılama +
+  perspektif düzeltme (ID-1 tuvaline warp), CLAHE kutup düzeltme,
+  parlama algılama (çift kapı), ROI kırpımları 2.5× büyütme. Modeller
+  wheel package-data olarak installer'a gömülür — runtime indirme YOK.
+- **`local_engine` uygunluk göstergesi oldu:** capabilities'teki
+  `local_engine` bayraktan BAĞIMSIZ motor-kurulu sinyalidir; frontend
+  buna bakarak extract isteğini atar (bayrak kapalıyken de barkod
+  katmanı koşabilsin diye — 0.3.38 tuzağına dönülmez). Capabilities
+  GET auth'u `require_password_change_complete`'e gevşedi (yalnız
+  bool/etiket döner, PII yok); extract POST admin kaldı.
+- **Frontend birleşim zinciri:** backend alanları > RapidOCR tam-kart
+  metni (`ocr_text` regex) > Windows-OCR metni — `mergeParsedIdentity`
+  geriye doğru zincirle. Barkod CPR'ı ROI CPR okunamazsa doldurur (tam
+  10 hane, KIRPMA YOK). Motor rozeti ("Yerel motor" / "Windows OCR
+  (yedek)" / "VLM") üç diyalog yüzeyinde + tanı koduna `.LOC/.VLM/.WIN`
+  etiketi. Parlama uyarısı + yakalama rehberi + da-DK paket kontrolü.
+- **Parse quick-win'leri:** DK kørekortunda basılı OLMAYAN
+  adres/posta/şehir araması kaldırıldı (yalnız hata üretiyordu);
+  sundhedskort isim penceresi 5→7 satır + tek bozuk satır atlama;
+  ülke beyaz liste (ISO-3 + takma adlar); `identity_doc_type`
+  validated ancak ad+numara birlikte okunduysa.
+- **Benchmark kapısı (canlıya ALMA koşulu):** gerçek kart fotoğrafları
+  repodan BAĞIMSIZ `~/card-photos/` + truth yan dosyası;
+  `ocr_benchmark.py --engine local --roi-dump` ROI kalibrasyonu,
+  `IDENTITY_OCR_ROI_OVERRIDES_JSON` env override. Kapı: doğruluk ≥
+  vitest taban çizgisi VE barkodlu her fotoğrafta tam-10 CPR VE p95
+  < 2 sn — üçü sağlanmadan bayrak açılmaz
+  (`docs/IDENTITY_LOCAL_OCR_BENCHMARK_TR.md`).
+- Paketleme: requirements +`rapidocr==3.9.2` +
+  `opencv-python-headless` (GUI cv2 tuzağı build script'te fixup +
+  assertion); PyInstaller spec `collect_all` +rapidocr/onnxruntime/cv2;
+  paketli smoke'a capabilities `local_engine` denetimi eklendi.
+
 ## [0.3.38] — 2026-09-08
 
 ### WooCommerce foto sürükle-sıralama — 4 yüzeyde tek etkileşim
