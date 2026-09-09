@@ -1,6 +1,6 @@
 # Identitets-Scanner Runbook / Kimlik Tarayıcı Runbook (DK + TR)
 
-> **Sidst opdateret / Son güncellenme:** 2026-09-08 (0.3.35)
+> **Sidst opdateret / Son güncellenme:** 2026-09-09 (0.3.39)
 > **Gælder / Geçerli:** v0.3.31+ desktop (Windows), Epson ET-3850 (netværk)
 > **Primær sprog: Dansk. Tyrkisk udgave følger i del 2.**
 
@@ -95,6 +95,25 @@ den er meningen, du læser højt, når du ringer til support.
 Når kunden ringer: få koden læst op (`Hata kodu: …`). Koden adskilder
 "enhed væk" fra "annulleret" — det var netop forvekslingen, der gjorde, at
 skanne-fejl tidligere lød som bruger-annulleringer.
+
+### 1.7 Læselag-rækkefølge (0.3.39)
+
+Appen læser et ID-kort i **flere lag** (afhængigt af hvad backenden kan —
+panelets motor-badge viser hvilket lag der leverede felterne):
+
+1. **Stregkode (altid på):** Code 128-stregkoden på sundhedskortet afkodes
+   lokalt med zxing — CPR kommer med check-ciffer og hele 10 cifre. Denne
+   lag kører uafhængigt af alle indstillinger.
+2. **Lokal motor (RapidOCR/PP-OCRv6, offline):** billedet forbehandles
+   (perspektiv-udretning, lys/contrast, ROI-udsnit) og læses helt lokalt —
+   billedet forlader aldrig PC'en. Slået til/fra med `IDENTITY_LOCAL_OCR_ENABLED`.
+3. **Windows OCR (reserve):** hvis den lokale motor ikke svarer, falder
+   appen tilbage til Windows.Media.Ocr + regex-læsningen (0.3.38-adfærden).
+4. **VLM (sky, standard OFF):** aktiveres kun med eksplicit nøgle+flag.
+
+Advarsler i panelet: *"Der er fundet genskin på kortet…"* → nyt billede på
+mat, mørk baggrund. *"Lokal motor svarer ikke…"* → felterne kommer fra
+Windows OCR — kontrollér dem ekstra.
 
 ---
 
@@ -228,10 +247,11 @@ sonra eski değere döndürün.
   her taramada bir satır; kişisel veri İÇERMEZ.
 - **Atomik teşhis kodu** (tarama sonrası panelde, kopyalanabilir):
 
-  `idscan.<yüz>.<dil>.<satır>L.<alan>F.<S|NS>.<harfler>`
+  `idscan.<yüz>.<dil>.<satır>L.<alan>F.<S|NS>.<harfler>.<LOC|VLM|WIN>`
 
-  ör. `idscan.front.da-DK.9L.4F.NS.NCAP` → ön yüz, da-DK, 9 satır, 4 alan,
-  görüntü ölçeklenmedi (NS), dolu alanlar N/C/A/P. **NS görüyorsanız 400 dpi
+  ör. `idscan.front.da-DK.9L.4F.NS.NCAP.LOC` → ön yüz, da-DK, 9 satır, 4 alan,
+  görüntü ölçeklenmedi (NS), dolu alanlar N/C/A/P, alanları **yerel motor**
+  üretti (LOC; VLM = bulut, WIN = Windows OCR yedeği). **NS görüyorsanız 400 dpi
   ile tekrar tarayın** — 300 dpi taramalar ~1010 px genişlikte kalır ve ölçekleme
   eşiğinin sınırlarında okunabilirlik kaybeder.
 - **Maskeli ham satırlar** (yalnız ekranda): "Maskeli ham satırlar" başlığından
@@ -240,3 +260,24 @@ sonra eski değere döndürün.
 **Tarama çözünürlüğü önerisi:** Epson profilinde **300–400 dpi**. 300 dpi
 sorunlu çıkarsa (NS kodu, eksik isim) 400 dpi'ye çıkın; daha yüksek
 çözünürlük 10 MB dosya sınırını zorlayabilir.
+
+### 2.9 Katman sırası (0.3.39)
+
+Uygulama bir kimlik kartını **katman katman** okur (backend'in
+yeteneklerine göre — paneldeki motor rozeti hangi katmanın alanları
+ürettiğini gösterir):
+
+1. **Barkod (her zaman açık):** sundhedskorttaki Code 128 barkodu zxing ile
+   yerel çözülür — CPR check-character doğrulamalı ve TAM 10 haneli gelir.
+   Bu katman hiçbir ayardan bağımsız koşar.
+2. **Yerel motor (RapidOCR/PP-OCRv6, offline):** görüntü ön-işlemeden
+   geçer (perspektif düzeltme, ışık/kontrast, ROI kırpımları) ve tamamen
+   yerel okunur — görüntü PC'den ASLA çıkmaz. `IDENTITY_LOCAL_OCR_ENABLED`
+   bayrağıyla açılıp kapanır.
+3. **Windows OCR (yedek):** yerel motor yanıt vermezse uygulama
+   Windows.Media.Ocr + regex zincirine düşer (0.3.38 davranışı).
+4. **VLM (bulut, default KAPALI):** yalnız açık anahtar+bayrakla katılır.
+
+Panel uyarıları: *"Kartta parlama algılandı…"* → kartı mat, koyu bir
+zeminde yeniden çekin. *"Yerel motor yanıt vermedi…"* → alanlar Windows
+OCR'dan geliyor — ekstra kontrol yapın.
