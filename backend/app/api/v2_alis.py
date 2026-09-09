@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import require_admin, require_password_change_complete
 from app.models.ai_usage_log import AIUsageLog
 from app.models.pos_document import PosDocument
 from app.models.pos_document_audit import PosDocumentAudit
@@ -396,10 +396,15 @@ async def post_alis_customer_match_v2(
 
 @router.get("/alis/identity/capabilities", response_model=IdentityCapabilitiesOut)
 async def get_alis_identity_capabilities_v2(
-    _: User = Depends(require_admin),
+    _: User = Depends(require_password_change_complete),
 ) -> IdentityCapabilitiesOut:
-    """Frontend motor seçimi: VLM bayrağı + model + barkod varlığı."""
-    return IdentityCapabilitiesOut(**identity_capabilities())
+    """Frontend motor seçimi: VLM bayrağı + yerel motor + barkod varlığı.
+
+    D3: yalnız bool/etiket döner (PII yok) — admin dışı tezgah personelinin
+    de "sessizce yerelde kalma" tuzağına düşmemesi için auth admin'den
+    gevşetilir; extract POST admin kalır (AIUsageLog admin.id'li).
+    """
+    return IdentityCapabilitiesOut(**await identity_capabilities())
 
 
 @router.post("/alis/identity/extract", response_model=IdentityExtractOut)

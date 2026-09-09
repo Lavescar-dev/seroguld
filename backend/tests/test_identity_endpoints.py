@@ -3,9 +3,15 @@
 Uçlar incedir (servis çağır + AIUsageLog yaz); servis mantığı
 test_identity_extract.py'da kapsanır. Burada doğrudan uç fonksiyonları
 çağırıyoruz (mevcut v2_alis test deseni).
+
+0.3.39 ekleri: capabilities'in yeni yetenek alanları (vlm_enabled/
+local_engine/local_model), auth gevşetmesinin uç imzasında pinlenmesi
+(D3) ve yerel katmanlı yanıtın şekli (engine + ocr_text, usage YOK).
 """
 
 from __future__ import annotations
+
+import inspect
 
 import pytest
 
@@ -13,6 +19,7 @@ import app.api.v2  # noqa: F401  # dairesel import sırası
 import app.api.v2_alis as v2_alis
 from app.schemas.identity import (
     AIUsageOut,
+    IdentityEngineOut,
     IdentityExtractOut,
     IdentityFieldOut,
 )
@@ -59,14 +66,49 @@ def _extract_out(*, with_usage: bool) -> IdentityExtractOut:
 
 @pytest.mark.asyncio
 async def test_capabilities_endpoint_wires_service(monkeypatch) -> None:
-    monkeypatch.setattr(
-        v2_alis,
-        "identity_capabilities",
-        lambda: {"extract_enabled": False, "model": None, "barcode_available": True},
-    )
+    async def caps_plain() -> dict:
+        return {"extract_enabled": False, "model": None, "barcode_available": True}
+
+    monkeypatch.setattr(v2_alis, "identity_capabilities", caps_plain)
     out = await v2_alis.get_alis_identity_capabilities_v2(_=None)
     assert out.extract_enabled is False
     assert out.barcode_available is True
+
+
+@pytest.mark.asyncio
+async def test_capabilities_endpoint_exposes_local_tier_fields(monkeypatch) -> None:
+    """0.3.39: yetenek gövdesi yerel katman alanlarını şemaya aynen taşır."""
+
+    async def caps_with_local() -> dict:
+        return {
+            "extract_enabled": False,
+            "vlm_enabled": False,
+            "model": None,
+            "barcode_available": True,
+            "local_engine": True,
+            "local_enabled": False,
+            "local_model": "RapidOCR PP-OCRv6 (offline)",
+        }
+
+    monkeypatch.setattr(v2_alis, "identity_capabilities", caps_with_local)
+    out = await v2_alis.get_alis_identity_capabilities_v2(_=None)
+    assert out.vlm_enabled is False
+    assert out.local_engine is True
+    assert out.local_model == "RapidOCR PP-OCRv6 (offline)"
+    assert out.local_enabled is False
+    # Eski alan adı dip sabittir (frontend sözleşmesi).
+    assert out.extract_enabled is False and out.barcode_available is True
+
+
+def test_identity_endpoint_auth_contract_is_pinned() -> None:
+    """D3: capabilities GET admin'den GEVŞETİLDİ, extract POST admin kalır.
+
+    Yol: Dependant nesnesi default argümanın .dependency'sinde yaşar.
+    """
+    caps_default = inspect.signature(v2_alis.get_alis_identity_capabilities_v2).parameters["_"].default
+    assert caps_default.dependency is v2_alis.require_password_change_complete
+    extract_default = inspect.signature(v2_alis.post_alis_identity_extract_v2).parameters["admin"].default
+    assert extract_default.dependency is v2_alis.require_admin
 
 
 @pytest.mark.asyncio
@@ -122,3 +164,46 @@ async def test_extract_endpoint_propagates_503(monkeypatch) -> None:
             admin=_Admin(),  # type: ignore[arg-type]
         )
     assert db.added == []
+
+
+def _local_extract_out() -> IdentityExtractOut:
+    """Yerel katman koştuğunda servisin döndürdüğü yanıt şekli (VLM'siz)."""
+    return IdentityExtractOut(
+        document_type="driver_license",
+        fields={"full_name": IdentityFieldOut(value="ANDERS PRØVE TESTESEN", review="validated", confidence=0.97)},
+        barcode=None,
+        warnings=["Barkod okunamadı — CPR yalnız görüntüden okundu, kontrol edin."],
+        source="local",
+        model=None,
+        usage=None,
+        engine=IdentityEngineOut(
+            name="local",
+            latency_ms=812.3,
+            warped=True,
+            quad_detected=True,
+            roi_fields=["1", "2", "3", "4b", "5"],
+        ),
+        ocr_text="1. TESTESEN\n2. ANDERS PRØVE",
+    )
+
+
+@pytest.mark.asyncio
+async def test_extract_endpoint_local_tier_shape_without_usage_log(monkeypatch) -> None:
+    """Yerel katman yanıtı: engine + ocr_text taşınır, usage YOK → log YOK."""
+    async def fake_extract(*, image_data_url: str, side: str = "front"):
+        return _local_extract_out()
+
+    monkeypatch.setattr(v2_alis, "extract_identity", fake_extract)
+    db = _FakeDb()
+    out = await v2_alis.post_alis_identity_extract_v2(
+        payload=type("P", (), {"image_data_url": "data:image/png;base64,AAAA", "side": "front"})(),
+        db=db,  # type: ignore[arg-type]
+        admin=_Admin(),  # type: ignore[arg-type]
+    )
+    assert out.source == "local"
+    assert out.engine is not None and out.engine.name == "local"
+    assert out.engine.latency_ms == 812.3
+    assert out.engine.roi_fields == ["1", "2", "3", "4b", "5"]
+    assert out.ocr_text == "1. TESTESEN\n2. ANDERS PRØVE"
+    assert out.usage is None and out.model is None
+    assert db.added == [] and db.commits == 0  # VLM koşmadı → maliyet satırı YOK
