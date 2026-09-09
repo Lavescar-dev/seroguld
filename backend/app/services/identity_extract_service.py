@@ -108,6 +108,16 @@ def _barcode_available() -> bool:
     return find_spec("zxingcpp") is not None and find_spec("PIL") is not None
 
 
+def _vlm_api_key(settings) -> str:
+    """VLM katmanının anahtarı: identity'ye özel anahtar ÖNCE, global sonra.
+
+    Azure kurulumunda (0.3.39 sonrası) kimlik görüntüsünü yalnız identity
+    anahtarının ucu görür — genel sohbet anahtarı (GLM/Çin ucu) kimlik
+    verisini ASLA görmez.
+    """
+    return settings.identity_extract_api_key.strip() or settings.openai_api_key.strip()
+
+
 async def identity_capabilities() -> dict[str, Any]:
     """GET /alis/identity/capabilities gövdesi — yalnız bool/etiket, PII yok.
 
@@ -125,7 +135,7 @@ async def identity_capabilities() -> dict[str, Any]:
     """
     settings = get_settings()
     model = (settings.identity_extract_model or "").strip() or settings.openai_model
-    vlm_enabled = bool(settings.identity_extract_enabled and settings.openai_api_key.strip())
+    vlm_enabled = bool(settings.identity_extract_enabled and _vlm_api_key(settings))
 
     # D1: motor kurulumu başarısızsa False — zarif düşüş sinyali. İlk çağrı
     # motoru KURAR (~0,7 sn) — olay döngüsünü kilitlememek için thread'de.
@@ -383,7 +393,7 @@ async def extract_identity(
     vlm_fields: dict[str, IdentityFieldOut] = {}
     doc_type: str | None = None
     usage_summary = None
-    if settings.identity_extract_enabled and settings.openai_api_key.strip():
+    if settings.identity_extract_enabled and _vlm_api_key(settings):
         model = (settings.identity_extract_model or "").strip() or settings.openai_model
         base_url = (settings.identity_extract_base_url or "").strip().rstrip("/") or settings.openai_base_url.rstrip("/")
         try:
@@ -547,7 +557,7 @@ async def _call_vlm(
     try:
         return await _post_chat(
             url=f"{base_url}/chat/completions",
-            api_key=get_settings().openai_api_key.strip(),
+            api_key=_vlm_api_key(get_settings()),
             payload=payload,
             timeout=timeout,
         )

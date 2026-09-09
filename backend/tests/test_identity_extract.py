@@ -34,6 +34,7 @@ class _StubSettings:
     identity_extract_enabled = True
     identity_extract_model = "gpt-5-mini"
     identity_extract_base_url = "https://proxy.example/v1"
+    identity_extract_api_key = ""
     identity_extract_timeout_seconds = 5
     identity_extract_max_retries = 1
     identity_extract_max_image_bytes = 8 * 1024 * 1024
@@ -209,6 +210,61 @@ async def test_extract_barcode_cpr_wins_and_is_validated(monkeypatch, stub_setti
     assert result.fields["birth_date"].review == "validated"
     assert result.usage is not None
     assert result.usage.total_tokens == 1010
+
+
+@pytest.mark.asyncio
+async def test_extract_identity_key_overrides_global(monkeypatch, stub_settings) -> None:  # noqa: ARG001
+    """0.3.39 sonrası (Azure): kimlik VLM'i KENDİ anahtarını kullanır.
+
+    Global openai_api_key (genel sohbet/GLM ucu) kimlik isteğine ASLA
+    karışmaz — kimlik görüntüsü yalnız identity anahtarının ucu görür.
+    Azure v1 ucu Bearer ile OpenAI-uyumludur; taşıma kodu değişmez.
+    """
+
+    class AzureSettings(_StubSettings):
+        identity_extract_enabled = True
+        identity_extract_api_key = "azure-identity-key"
+        identity_extract_base_url = "https://kaynak.example.openai.azure.com/openai/v1"
+
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AzureSettings())
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(*, url: str, api_key: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+        seen["url"] = url
+        seen["api_key"] = api_key
+        return _vlm_payload({"full_name": ("Test Person", 0.9)})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+
+    assert seen["api_key"] == "azure-identity-key"  # global "test-key" DEĞİL
+    assert seen["url"] == "https://kaynak.example.openai.azure.com/openai/v1/chat/completions"
+    assert result.model == "gpt-5-mini"
+
+
+@pytest.mark.asyncio
+async def test_capabilities_vlm_enabled_with_identity_key_only(monkeypatch) -> None:
+    """Identity anahtarı TEK başına da VLM kapısını açar (global boş olsa bile)."""
+
+    class KeyOnly(_StubSettings):
+        identity_extract_enabled = True
+        identity_extract_api_key = "azure-key"
+        openai_api_key = ""
+
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: KeyOnly())
+    monkeypatch.setattr("app.services.identity_local_ocr_service.engine_available", lambda: False)
+    caps = await identity_capabilities()
+    assert caps["vlm_enabled"] is True
+    assert caps["extract_enabled"] is True
+
+    class NoKeyAtAll(_StubSettings):
+        identity_extract_enabled = True
+        identity_extract_api_key = ""
+        openai_api_key = ""
+
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: NoKeyAtAll())
+    caps_off = await identity_capabilities()
+    assert caps_off["vlm_enabled"] is False
 
 
 @pytest.mark.asyncio

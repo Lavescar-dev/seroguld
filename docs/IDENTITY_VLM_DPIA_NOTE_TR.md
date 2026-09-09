@@ -60,6 +60,28 @@ yeni bir amaç eklenmez.
 - Barkod ve doğrulama katmanları %100 lokaldir (ağ trafiği yok) — flag kapalı
   üretim modunda kimlik verisinin işlemciye giden bir bileşeni yoktur.
 
+## Azure OpenAI (AB) kurulumu — 0.3.39 sonrası
+
+Müşteri kiracısında açılan Azure OpenAI kaynağı VLM katmanının hedefidir
+(uç: `https://<kaynak>.openai.azure.com/openai/v1`, Bearer uyumlu — taşıma
+kodunda değişiklik yok). Zorunlu kurallar:
+
+- **Deployment tipi EU Data Zone (veya Regional/Sweden) olmalı; Global
+  YASAK** — Global deployment veriyi bölge dışında işleyebilir, AB
+  veri yerleşimi ihlal edilir.
+- **Anahtar ayrımı**: `IDENTITY_EXTRACT_API_KEY` kimlik katmanının KENDİ
+  anahtarıdır; global `OPENAI_API_KEY` (genel sohbet/GLM ucu) kimlik
+  görüntüsünü asla görmez (config kalıbı: `opmc_api_key` gibi per-feature).
+  Anahtar yalnız `.env`'de yaşar (gitignore'lu), repoya asla girmez; sızı
+  şüphesinde portaldan regenerate + tüm makinelerde değiştirme.
+- Model: `gpt-5-mini` (GA, ~$0.0009/tarama). Alternatif `gpt-5.4-mini`
+  yalnız gerçek-kart benchmark'ı düşük gösterirse.
+- Canlı açma (`IDENTITY_EXTRACT_ENABLED=true`) yine benchmark kapısına
+  bağlıdır; bu belge uç değişikliğini değil, işlemcinin kimliğini
+  günceller: işlemci = Microsoft (Azure OpenAI, AB bölgesi), veri
+  aktarımı AB içi, aktarılan veri = tarama anındaki görüntü (kalıcılık
+  yok, istek yaşam döngüsüyle silinir).
+
 ## Retention
 
 - Görüntü: istek yaşam döngüsüyle silinir (saniyeler; kalıcılık yok).

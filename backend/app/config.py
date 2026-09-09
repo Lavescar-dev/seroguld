@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     identity_extract_enabled: bool = False
     identity_extract_model: str = ""
     identity_extract_base_url: str = ""
+    # 0.3.39 sonrası (Azure): kimlik VLM'i kendi anahtarıyla çalışır —
+    # global openai_api_key (genel sohbet/GLM ucu) kimlik görüntüsünü ASLA
+    # görmez. Boşsa geriye dönük uyum için openai_api_key'e düşer (kalıp:
+    # opmc_api_key). Azure uçları Bearer kabul eder: identity_extract_base_url
+    # = https://<kaynak>.openai.azure.com/openai/v1 (deployment adı = model).
+    identity_extract_api_key: str = ""
     identity_extract_timeout_seconds: float = 30.0
     identity_extract_max_retries: int = 1
     identity_extract_max_image_bytes: int = 8 * 1024 * 1024

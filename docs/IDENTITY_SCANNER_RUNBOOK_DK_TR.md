@@ -278,6 +278,14 @@ yeteneklerine göre — paneldeki motor rozeti hangi katmanın alanları
    Windows.Media.Ocr + regex zincirine düşer (0.3.38 davranışı).
 4. **VLM (bulut, default KAPALI):** yalnız açık anahtar+bayrakla katılır.
 
+**VLM Azure kurulumu (0.3.39 sonrası):** `.env`'e dört satır —
+`IDENTITY_EXTRACT_BASE_URL=https://<kaynak>.openai.azure.com/openai/v1`,
+`IDENTITY_EXTRACT_API_KEY` (kimliğe ÖZEL anahtar; genel sohbet anahtarı
+kimlik verisini görmez), `IDENTITY_EXTRACT_MODEL=gpt-5-mini`,
+`IDENTITY_EXTRACT_ENABLED` (canlı açma benchmark kapısına bağlı).
+Foundry'de deployment tipi **EU Data Zone/Regional** olmalı — Global
+yasak (veri bölge dışına çıkar). Ayrıntı: `IDENTITY_VLM_DPIA_NOTE_TR.md`.
+
 Panel uyarıları: *"Kartta parlama algılandı…"* → kartı mat, koyu bir
 zeminde yeniden çekin. *"Yerel motor yanıt vermedi…"* → alanlar Windows
 OCR'dan geliyor — ekstra kontrol yapın.
