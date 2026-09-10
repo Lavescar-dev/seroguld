@@ -107,12 +107,12 @@ class Settings(BaseSettings):
     identity_extract_confidence_threshold: float = 0.62
 
     # 0.3.39: kimlik OCR tamamen yerel motor (RapidOCR PP-OCRv6 ONNX, CPU).
-    # VLM katmanının aksine görüntü dükkândan HİÇ çıkmaz; bayrak default
-    # KAPALIDIR — canlıya alma yalnız benchmark kapısı geçilince (WP9/WP10:
-    # alan doğruluğu Windows tabanını geç + barkodlu her fotoğrafta tam-10
-    # CPR + p95 < 2s). Motor import/kurulum hatasında zarif düşer
-    # (local_engine=False) → Windows.Media.Ocr fallback'i devreye girer.
-    identity_local_ocr_enabled: bool = False
+    # VLM katmanının aksine görüntü dükkândan HİÇ çıkmaz. Benchmark kapısı
+    # 10 Eyl 2026'da geçildi (kullanıcı kartları: 118/120 alan, kartlar
+    # 70/70, cpr 25/25, p95 ~1.0 sn) → bayrak AÇIK geldi. Motor import/
+    # kurulum hatasında zarif düşer (local_engine=False) →
+    # Windows.Media.Ocr fallback'i devreye girer.
+    identity_local_ocr_enabled: bool = True
     # Capabilities'te dönen insan-okur etiket (UI rozeti); motor sürümüyle
     # elle senkron tutulur (requirements pin'iyle birlikte).
     identity_local_ocr_model_label: str = (
