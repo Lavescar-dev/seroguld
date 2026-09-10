@@ -32,16 +32,43 @@ from app.services.identity_ocr_rois import (
 logger = logging.getLogger(__name__)
 
 # --- D4 toleransları (benchmark'ta ayarlanır) -------------------------------
-QUAD_MIN_AREA_RATIO = 0.08          # dörtgen alanı ≥ karenin %8'i
+QUAD_MIN_AREA_RATIO = 0.05          # dörtgen alanı ≥ karenin %5'i. Gerçek ID-1
+                                     # kart (86x54mm) A4 @300 DPI tam sayfada
+                                     # karenin %7.45'idir — %8 eşiği onu REDDEDİYOR,
+                                     # saha taraması card_not_detected'e düşüyordu
+                                     # (10 Eyl 2026: dükkân WIA taraması çöp alan).
 QUAD_MAX_AREA_RATIO = 0.95          # >%95 = kare ÇERÇEVESİ: kart değil, tüm fotoğraf
                                      # (karanlık kart + parlak masa: Otsu çerçeve
                                      # dış hattını "kart" sanırdı — whole-frame guard)
 QUAD_ANGLE_TOLERANCE_DEG = 25.0     # köşe açıları 90°±25°
 QUAD_ASPECT_TOLERANCE = 0.35        # warp sonrası en-boy 1.586±%35
+                                     # (telefon fotoğrafı perspektifi en-boyu
+                                     # belirgin bozar — yatay taraf geniş)
+QUAD_ASPECT_TOLERANCE_PORTRAIT = 0.15  # dikey kart hedefi 1/1.586±%15: gerçek
+                                     # portre kartın dörtgeni ~0.63'te SIKI
+                                     # durur; ±%35'lik bant pasaportun sol
+                                     # şeridi gibi DİKEY METİN BLOKLARINI
+                                     # (0.77) kart sanıyordu (fixture
+                                     # regresyonu 10 Eyl 2026)
 ID1_FRAME_TOLERANCE = 0.10          # flatbed: kare en-boy ID-1±%10
                                      # (%15 A4-dikey-taramayı (1.415) kabul
                                      # ediyordu: kart sayfada küçük kalır, ROI'ler
                                      # boş luğa düşerdi — daraltıldı)
+FRAME_FILL_QUAD_MIN_RATIO = 0.50    # kadraj-kabul yolunda dörtgen yalnız
+                                     # karenin ≥%50'sini dolduruyorsa geçerli
+                                     # kart sınırıdır: iç blok (foto/metin, ~%29)
+                                     # bu kapının altında kalır (asis CLAHE
+                                     # regresyonu), gerçek kart kenar marjıyla
+                                     # dizilse bile ≥%70'dir
+ORTHO_FILL_QUAD_MIN_RATIO = 0.30    # kadraja DİK yerleşmiş kart sondası:
+                                     # manzara kadrajda (3:2/16:10 foto) dikey
+                                     # kart en çok %36-44 dolabilir (0.63/r),
+                                     # ≥%50 kapısına geometrik olarak takılırdı
+                                     # ve ham kare 90° yanlış okunuyordu (0.3.40
+                                     # incelemesi). Dik-yön dörtgeni ≥%30 ister:
+                                     # gerçek kart %36+; kartın iç foto bloğu
+                                     # kadrajın ~%16'sıdır (kart %90 dolguda),
+                                     # kapının altında kalır
 DOWNSCALE_LONG_EDGE = 1600          # det öncesi gecikme üst sınırı
 ROI_UPSCALE_FACTOR = 2.5            # küçük ROI kırpımı büyütme (INTER_CUBIC)
 
@@ -131,8 +158,20 @@ def detect_card_quad(
     min_area_ratio: float = QUAD_MIN_AREA_RATIO,
     angle_tolerance_deg: float = QUAD_ANGLE_TOLERANCE_DEG,
     aspect_tolerance: float = QUAD_ASPECT_TOLERANCE,
-) -> np.ndarray | None:
+    portrait_aspect_tolerance: float = QUAD_ASPECT_TOLERANCE_PORTRAIT,
+    orientation: str = "any",
+) -> tuple[np.ndarray, bool] | None:
     """En büyük uygun dörtgen konturu bulur; yoksa None döner.
+
+    Dönüş: ``(noktalar, yan_yatik)``. Kart DİKEY yerleştirilmişse (uzun kenar
+    düşey — flatbed camına dikey konan kart) noktalar bir kaydırmayla yatay
+    eşlenir ve ``yan_yatik=True`` döner: warp tuvali yine 1280x808'dir ama
+    içerik 90° dönük basılır; motor katmanı tuvali her iki yönde çevirip
+    hangisi okunursa onu kullanır (saha: kart her zaman yatay konmuyor).
+
+    ``orientation``: "any" (default) her iki bant, "portrait"/"landscape"
+    yalnız o en-boy bandındaki dörtgeni kabul eder — kadraja DİK kart sondası
+    kadraj yönündeki iç blokları bilinçli dışlar.
 
     İki geçiş: Canny kenarları, sonra Otsu ikili masası (düşük kontrastlı
     fotoğraflarda kenar zayıf kalır). Her iki geçiş de aynı kabul kapılarını
@@ -150,7 +189,15 @@ def detect_card_quad(
     ]
     _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     masks.append(otsu)
+    # Açık/beyaz kapak: kart-zemin kontrastı Otsu ve Canny eşiğinin altında
+    # kalır (deney: beyaz kapağın en büyük konturu %4 — kart değil). CLAHE
+    # yerel kontrastı eşitleyip kart kenarını geri getirir; SON geçiştir,
+    # yalnız ilk ikisi kart bulamadığında koşar.
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray)
+    masks.append(cv2.dilate(cv2.Canny(clahe, 30, 90), np.ones((3, 3), np.uint8), iterations=1))
 
+    landscape_ok = orientation in ("any", "landscape")
+    portrait_ok = orientation in ("any", "portrait")
     for mask in masks:
         contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
@@ -172,25 +219,36 @@ def detect_card_quad(
             if any(abs(angle - 90.0) > angle_tolerance_deg for angle in _corner_angles(quad)):
                 continue
             warped_aspect = _quad_aspect(quad)
-            if warped_aspect is None:
+            if warped_aspect is None or warped_aspect <= 0:
                 continue
-            if abs(warped_aspect - ID1_ASPECT) / ID1_ASPECT > aspect_tolerance:
-                continue
-            return quad
+            if landscape_ok and abs(warped_aspect - ID1_ASPECT) / ID1_ASPECT <= aspect_tolerance:
+                return quad, False
+            # Dikey kart: hedef en-boy 1/1.586 ≈ 0.63. Dörtgen OLDUĞU GİBİ
+            # döner (nokta kaydırma YOK — kaydırmalı warp kartı yatay tuvale
+            # 2.45x GERER, metni bozar). Kart portre tuvale (808x1280) gerilir
+            # ve motor katmanı tuvali ±90° çevirip dik okur.
+            portrait_target = 1.0 / ID1_ASPECT
+            if portrait_ok and abs(warped_aspect - portrait_target) / portrait_target <= portrait_aspect_tolerance:
+                return quad, True
     return None
 
 
 def _quad_aspect(quad: np.ndarray) -> float | None:
+    """İŞARETLİ en-boy: üst/alt kenar ortalaması ÷ sol/sağ kenar ortalaması.
+
+    Yatay kartta ~1.59, dikey kartta ~0.63 döner (eski sürüm her zaman ≥1
+    döndüğü için dikey kart en-boy kapısından DÜŞÜYOR ve tarama
+    card_not_detected oluyordu).
+    """
     points = np.asarray(quad, dtype=np.float64).reshape(4, 2)
     top = float(np.linalg.norm(points[1] - points[0]))
     bottom = float(np.linalg.norm(points[2] - points[3]))
     left = float(np.linalg.norm(points[3] - points[0]))
     right = float(np.linalg.norm(points[2] - points[1]))
-    width = max(top, bottom)
-    height = max(left, right)
+    height = (left + right) / 2.0
     if height <= 0:
         return None
-    return width / height
+    return ((top + bottom) / 2.0) / height
 
 
 def warp_to_id1(
@@ -221,11 +279,20 @@ def looks_like_id1_frame(
     aspect: float = ID1_ASPECT,
     tolerance: float = ID1_FRAME_TOLERANCE,
 ) -> bool:
-    """Kare (flatbed taraması) ID-1 en-boy oranının ±%10'u içinde mi?"""
+    """Kare (flatbed/auto-crop taraması) ID-1 kadrajında mı — yatay VEYA dikey?
+
+    Dikey yerleşim (kart yan konmuş, kadraj portre 1:1.586) de kart-dolu
+    kadrajdır; dörtgen aramak yine içerideki blokları yanlışlıkla 'kart'
+    sanabilir. Portre kadraj ``isolate_card``da ``sideways=True`` üretilir,
+    motor katmanı ±90° çevirip okur.
+    """
     ratio = frame_aspect_ratio(image)
     if ratio <= 0:
         return False
-    return abs(ratio - aspect) / aspect <= tolerance
+    return (
+        abs(ratio - aspect) / aspect <= tolerance
+        or abs(ratio - 1.0 / aspect) * aspect <= tolerance
+    )
 
 
 @dataclass(slots=True)
@@ -237,27 +304,99 @@ class CardRegion:
     quad_detected: bool
     rois_enabled: bool
     warnings: list[str]
+    # Kart camın/fotoğrafın düzleminde 90° dönük yakalandıysa True: tuval
+    # 1280x808'dir ama içerik yan yatık — motor katmanı çevirip yeniden okur.
+    sideways: bool = False
 
 
-def isolate_card(image: np.ndarray) -> CardRegion:
-    """D4 zinciri: dörtgen → warp; yoksa flatbed; o da yoksa tam-kare OCR.
+def isolate_card(image: np.ndarray, *, warp_source: np.ndarray | None = None) -> CardRegion:
+    """D4 zinciri: ID-1 kadraj → dörtgen/warp → tam-kare OCR.
 
-    - dörtgen bulundu → warp, ROI'ler açık
-    - dörtgen yok ama kare ID-1±%15 → flatbed taraması kabulü, warp yok,
-      ROI'ler açık (taramada kart zaten düz ve kadrajda)
+    ``warp_source``: dörtgen ``image`` üzerinde aranır (gecikme — küçük kare),
+    warp bu kareden yapılır (kalite — tam çözünürlük). A4 @300 DPI taramada
+    kart 1600px sınırında ~460px'e düşer; küçük kareden warp 2.8x büyütmek
+    yerine tam çözünürlükten 1.3x büyütmek metin tanınmasını belirgin
+    iyileştirir (saha 10 Eyl 2026). Boyutlar aynıysa fark yoktur.
+
+    - kare zaten ID-1±%10 kadrajında (yatay VEYA dikey) → flatbed/auto-crop
+      kabulü. SERBEST dörtgen aranmaz (iç blok — foto/metin alanı — en-boy
+      eşiğine uyan YANLIŞ dörtgen üretür), ama karenin ≥%50'sini dolduran
+      dörtgen gerçek kart sınırı sayılır ve warp edilir (marj kırpılır,
+      tuval ölçeği garanti edilir — küçük kareyi ham okumak başlığı
+      parçalatıyordu: 'DANMARK'→'DAN M ARK'). Dörtgen yoksa kare olduğu
+      gibi kullanılır (büyütme YOK — suni ölçek tanınmayı bozuyor).
+      Kalan eğim kelime katmanında düzeltilir (deskew); dikey kadrajda
+      ``sideways=True`` döner (motor katmanı çevirir).
+    - dörtgen bulundu → warp, ROI'ler açık (dikey kartsa ``sideways=True``)
     - ikisi de değil → tam-kare OCR + ``card_not_detected``, ROI'ler kapalı
     """
-    quad = detect_card_quad(image)
-    if quad is not None:
+
+    def _warp(quad: np.ndarray, sideways: bool) -> np.ndarray:
+        source = image if warp_source is None else warp_source
+        canvas = (ID1_CANVAS_HEIGHT, ID1_CANVAS_WIDTH) if sideways else (ID1_CANVAS_WIDTH, ID1_CANVAS_HEIGHT)
+        if source is image or source.shape == image.shape:
+            return warp_to_id1(source, quad, canvas=canvas)
+        source_quad = quad * np.array(
+            [source.shape[1] / image.shape[1], source.shape[0] / image.shape[0]],
+            dtype=np.float32,
+        )
+        return warp_to_id1(source, source_quad, canvas=canvas)
+
+    if looks_like_id1_frame(image):
+        ratio = frame_aspect_ratio(image)
+        frame_sideways = abs(ratio - 1.0 / ID1_ASPECT) * ID1_ASPECT <= ID1_FRAME_TOLERANCE
+        # Serbest dörtgen arama YASAK (iç blok yanılgısı), ama TUVALİ DOLDURAN
+        # dörtgen (≥%50) gerçek kart sınırıdır: kenar marjlı karede warp hem
+        # marjı kırpıp metni tuval ölçeğine taşır hem kalan perspektifi düzeltir.
+        found = detect_card_quad(image, min_area_ratio=FRAME_FILL_QUAD_MIN_RATIO)
+        if found is not None:
+            quad, sideways = found
+            return CardRegion(
+                image=_warp(quad, sideways),
+                warped=True,
+                quad_detected=True,
+                rois_enabled=True,
+                warnings=[],
+                sideways=sideways,
+            )
+        # Kadraja DİK yerleşmiş kart: manzara kadrajda (3:2/16:10) dikey kart
+        # en çok %44 dolabildiğinden ≥%50 kapısına takılır, ham kare 90° yanlış
+        # okunurdur. Yalnız ORTOGONAL en-boy bandında dörtgen aranır — kadraj
+        # yönündeki iç bloklar (foto/metin) bant dışı kalır, kapı da %30'dur.
+        found = detect_card_quad(
+            image,
+            min_area_ratio=ORTHO_FILL_QUAD_MIN_RATIO,
+            orientation="portrait" if ratio >= 1.0 else "landscape",
+        )
+        if found is not None:
+            quad, sideways = found
+            return CardRegion(
+                image=_warp(quad, sideways),
+                warped=True,
+                quad_detected=True,
+                rois_enabled=True,
+                warnings=[],
+                sideways=sideways,
+            )
         return CardRegion(
-            image=warp_to_id1(image, quad),
+            image=image,
+            warped=False,
+            quad_detected=False,
+            rois_enabled=True,
+            warnings=[],
+            sideways=frame_sideways,
+        )
+    found = detect_card_quad(image)
+    if found is not None:
+        quad, sideways = found
+        return CardRegion(
+            image=_warp(quad, sideways),
             warped=True,
             quad_detected=True,
             rois_enabled=True,
             warnings=[],
+            sideways=sideways,
         )
-    if looks_like_id1_frame(image):
-        return CardRegion(image=image, warped=False, quad_detected=False, rois_enabled=True, warnings=[])
     return CardRegion(
         image=image,
         warped=False,
@@ -401,7 +540,9 @@ def debug_card_region(
     if frame is None:
         return None, None
     scaled = downscale_long_edge(frame, long_edge)
-    quad = detect_card_quad(scaled)
-    if quad is not None:
-        return warp_to_id1(scaled, quad), quad
+    found = detect_card_quad(scaled)
+    if found is not None:
+        quad, sideways = found
+        canvas = (ID1_CANVAS_HEIGHT, ID1_CANVAS_WIDTH) if sideways else (ID1_CANVAS_WIDTH, ID1_CANVAS_HEIGHT)
+        return warp_to_id1(scaled, quad, canvas=canvas), quad
     return scaled, None

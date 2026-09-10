@@ -26,6 +26,8 @@ from app.services.identity_local_parse import (
     OcrWord,
     birth_date_consistent_with_cpr,
     build_ocr_text,
+    deskew_words,
+    estimate_skew_deg,
     group_words_into_lines,
     guess_document_type,
     local_fields_to_identity_fields,
@@ -84,15 +86,19 @@ def _gradient_flatbed_image(width: int = 1017, height: int = 648) -> bytes:
 
 
 def _tilted_card_image() -> bytes:
-    """Koyu zeminde 4° eğik açık kart — dörtgen tespiti + warp yolunu besler."""
+    """Koyu zeminde 4° eğik açık kart — dörtgen tespiti + warp yolunu besler.
+
+    Zemin 720x560 (en-boy 1.29): ID-1 kadraj bandının DIŞINDAdır — kadraj
+    önceliği (isolate_card) dörtgen aramasına bırakır.
+    """
     import cv2
 
-    background = np.full((480, 720, 3), 40, dtype=np.uint8)
+    background = np.full((560, 720, 3), 40, dtype=np.uint8)
     card = np.full((302, 480, 3), 225, dtype=np.uint8)  # ID-1 ± tolerans
     center = (240.0, 151.0)
     rotation = cv2.getRotationMatrix2D(center, 4.0, 1.0)
     rotated = cv2.warpAffine(card, rotation, (480, 302), borderValue=(225, 225, 225))
-    background[80:80 + 302, 120:120 + 480] = rotated
+    background[120:120 + 302, 120:120 + 480] = rotated
     ok, encoded = cv2.imencode(".png", background)
     assert ok
     return encoded.tobytes()
@@ -177,16 +183,53 @@ def test_order_quad_points_is_tl_tr_br_bl() -> None:
 
 
 def test_detect_card_quad_finds_tilted_card() -> None:
-    quad = detect_card_quad(decode_to_bgr(_tilted_card_image()))
-    assert quad is not None and quad.shape == (4, 2)
+    found = detect_card_quad(decode_to_bgr(_tilted_card_image()))
+    assert found is not None
+    quad, sideways = found
+    assert quad.shape == (4, 2) and sideways is False
     width = float(quad[:, 0].max() - quad[:, 0].min())
     height = float(quad[:, 1].max() - quad[:, 1].min())
     assert abs((width / height) - 1.586) / 1.586 < 0.35
 
 
+def test_detect_card_quad_real_size_a4_card_is_found() -> None:
+    """Saha regresyonu (10 Eyl 2026): gerçek boyut ID-1 kart (86x54mm) A4
+    @300 DPI sayfada karenin %7.45'idir — eski %8 alan eşiği onu REDDEDİYOR,
+    dükkân taraması card_not_detected'e düşüyordu. Yeni %5 eşiği bulmalı."""
+    page = np.full((1754, 1240, 3), 60, dtype=np.uint8)  # A4 @150 DPI (ölçekli)
+    card = np.full((319, 508, 3), 235, dtype=np.uint8)   # 86x54mm @150 DPI
+    page[(1754 - 319) // 2:(1754 - 319) // 2 + 319, (1240 - 508) // 2:(1240 - 508) // 2 + 508] = card
+    found = detect_card_quad(page)
+    assert found is not None and found[1] is False
+
+
+def test_detect_card_quad_white_page_low_contrast_is_found() -> None:
+    """Açık/beyaz kapak: kart-zemin kontrastı zayıftır (CLAHE geçişi)."""
+    page = np.full((700, 1000, 3), 225, dtype=np.uint8)
+    card = np.full((486, 770, 3), 252, dtype=np.uint8)
+    for i in range(8):  # kart içi metin bantları
+        card[60 + i * 50:74 + i * 50, 40:730] = 90
+    page[107:107 + 486, 115:115 + 770] = card
+    assert detect_card_quad(page) is not None
+
+
+def test_detect_card_quad_portrait_card_returns_sideways() -> None:
+    """Dikey yerleştirilmiş kart: dörtgen OLDUĞU GİBİ döner, sideways=True.
+
+    Eski kod portre en-boyu (0.63) işaretsiz en-boy kapısından düşürüyor ve
+    dörtgeni kaydırıp yatay tuvale GERİYORDU (metin 2.45x bozuluyordu)."""
+    page = np.full((560, 720, 3), 40, dtype=np.uint8)
+    card = np.full((480, 302, 3), 225, dtype=np.uint8)  # portre ID-1
+    page[40:520, 210:512] = card
+    found = detect_card_quad(page)
+    assert found is not None
+    _quad, sideways = found
+    assert sideways is True
+
+
 def test_detect_card_quad_rejects_tiny_card() -> None:
     background = np.full((480, 720, 3), 40, dtype=np.uint8)
-    background[230:250, 350:370] = 225  # 20x20 → alan kapısı (%8) altı
+    background[230:250, 350:370] = 225  # 20x20 → alan kapısı (%5) altı
     assert detect_card_quad(background) is None
 
 
@@ -194,18 +237,75 @@ def test_isolate_card_tilted_warps_to_id1_canvas() -> None:
     region = isolate_card(downscale_long_edge(decode_to_bgr(_tilted_card_image())))
     assert region.warped is True and region.quad_detected is True
     assert region.rois_enabled is True and region.warnings == []
+    assert region.sideways is False
     assert region.image.shape[:2] == (808, 1280)
+
+
+def test_isolate_card_portrait_quad_warps_portrait_canvas() -> None:
+    """Portre kart portre tuvale (808x1280) warp edilir — içerik 90° yan
+    yatık basılır, motor katmanı çevirip okur (en-boy korunur, bozulma yok)."""
+    import cv2
+
+    page = np.full((560, 720, 3), 40, dtype=np.uint8)
+    card = np.full((480, 302, 3), 235, dtype=np.uint8)
+    page[40:520, 210:512] = card
+    ok, encoded = cv2.imencode(".png", page)
+    region = isolate_card(downscale_long_edge(decode_to_bgr(encoded.tobytes())))
+    assert region.warped is True and region.sideways is True
+    assert region.rois_enabled is True and region.warnings == []
+    assert region.image.shape[:2] == (1280, 808)  # (h, w) portre tuval
 
 
 def test_isolate_card_flatbed_frame_is_accepted() -> None:
     region = isolate_card(downscale_long_edge(decode_to_bgr(_gradient_flatbed_image())))
     assert region.warped is False and region.quad_detected is False
     assert region.rois_enabled is True and region.warnings == []
+    assert region.sideways is False
 
 
-def test_isolate_card_portrait_emits_card_not_detected() -> None:
+def test_isolate_card_portrait_frame_accepted_as_sideways() -> None:
+    """Portre kadrajlı tam-kare tarama da kart-dolu kadrajdır (sideways)."""
     portrait = _png_bytes(Image.new("RGB", (600, 900), (120, 120, 120)))
     region = isolate_card(downscale_long_edge(decode_to_bgr(portrait)))
+    assert region.warped is False and region.rois_enabled is True
+    assert region.sideways is True and region.warnings == []
+
+
+def test_isolate_card_portrait_card_in_landscape_frame_gets_ortho_probe() -> None:
+    """Kadraja DİK kart (0.3.40 incelemesi): 3:2 manzara kadraj (1.50 — ID-1
+    bandı İÇİNDE) dikey kart en çok %44 dolabilir, ≥%50 kapısına geometrik
+    olarak takılır ve ham kare 90° yanlış okunuyordu. Dik-yön sondası (yalnız
+    portre bandı, %30 dolgu) kartı bulup portre tuvale warp etmeli."""
+    import cv2
+
+    page = np.full((1000, 1500, 3), 40, dtype=np.uint8)  # 3:2 manzara kadraj
+    card = np.full((1000, 632, 3), 235, dtype=np.uint8)  # portre ID-1 kart
+    page[0:1000, 434:1066] = card
+    ok, encoded = cv2.imencode(".png", page)
+    region = isolate_card(downscale_long_edge(decode_to_bgr(encoded.tobytes())))
+    assert region.warped is True and region.quad_detected is True
+    assert region.sideways is True
+    assert region.image.shape[:2] == (1280, 808)  # (h, w) portre tuval
+
+
+def test_isolate_card_id1_frame_skips_internal_block_quad() -> None:
+    """Kadraj önceliği regresyon pini (10 Eyl 2026): kart çerçeveyi dolduran
+    ID-1 karede İÇ blok (foto/metin alanı) en-boy eşiğine uyan yanlış bir
+    dörtgen üretebiliyordu (CLAHE geçişi + asis kart → type=None). ID-1
+    kadrajda dörtgen ARANMAZ."""
+    import cv2
+
+    frame = np.full((660, 1050, 3), 235, dtype=np.uint8)
+    frame[80:580, 350:950] = 120  # en-boy ~1.6 iç blok (alan %29 → eşik üstü)
+    ok, encoded = cv2.imencode(".png", frame)
+    region = isolate_card(downscale_long_edge(decode_to_bgr(encoded.tobytes())))
+    assert region.warped is False and region.quad_detected is False
+    assert region.rois_enabled is True and region.sideways is False
+
+
+def test_isolate_card_extreme_portrait_emits_card_not_detected() -> None:
+    extreme = _png_bytes(Image.new("RGB", (500, 1200), (120, 120, 120)))
+    region = isolate_card(downscale_long_edge(decode_to_bgr(extreme)))
     assert region.rois_enabled is False
     assert region.warnings == ["card_not_detected"]
 
@@ -417,6 +517,114 @@ def test_parse_sundhedskort_fields_and_birth_derived_from_cpr() -> None:
     assert result.fields["birth_date"].value == "01.01.2012"
 
 
+def test_estimate_skew_projection_search_and_deskew_align_rows() -> None:
+    """İzdüşüm araması (saha 10 Eyl 2026): 5° eğik kartta satır-temelli
+    kestirim ~0.2° ölçüyordu (gruplama ZATEN satırları birleştirmişti) —
+    kestirim gruplamadan bağımsız olmalı."""
+    import math
+
+    canvas = (1280, 808)
+    width, height = canvas
+    tan_a = math.tan(math.radians(5.0))
+    words: list[OcrWord] = []
+    for row, ny in enumerate((0.20, 0.35, 0.50, 0.65)):
+        for col, nx in enumerate((0.15, 0.30, 0.45, 0.60, 0.75)):
+            cx = nx * width
+            cy = ny * height + tan_a * (nx - 0.5) * width
+            words.append(
+                OcrWord(text=f"w{row}{col}", score=0.99, box=(int(cx - 30), int(cy - 10), int(cx + 30), int(cy + 10)))
+            )
+    assert abs(estimate_skew_deg(words, canvas) - 5.0) <= 0.5
+    fixed = deskew_words(words, canvas)
+    # Düzeltme sonrası her satırın y-merkez yayılımı satır aralığından küçük.
+    lines = group_words_into_lines(fixed)
+    assert len(lines) == 4
+    for line in lines:
+        ys = [w.center_y for w in line]
+        assert max(ys) - min(ys) < height * 0.02
+
+
+def test_deskew_noop_on_flat_and_sparse_words() -> None:
+    flat = [_word("A", 0.2, 0.2), _word("B", 0.5, 0.205), _word("C", 0.8, 0.6), _word("D", 0.5, 0.9)]
+    assert estimate_skew_deg(flat, CANVAS) == 0.0
+    assert deskew_words(flat, CANVAS) == flat  # dokunulmaz
+    assert estimate_skew_deg(flat[:2], CANVAS) == 0.0  # kelime/çift az → yargı yok
+
+
+def test_deskew_skips_full_page_word_counts() -> None:
+    """Kelime tavanı (0.3.40 incelemesi): O(n^2)x77 kestirim 200+ kelimede
+    (tam sayfa — card_not_detected yolu, yanlış belge taraması) 0.4-2.2 sn
+    CPU yakıyordu. Kart asla 200 kelime vermez; tavan üstünde yargı yok."""
+    import time
+
+    dense = [
+        _word(f"w{i}", 0.1 + (i % 9) * 0.1, 0.1 + (i // 9) * 0.02) for i in range(250)
+    ]
+    started = time.perf_counter()
+    assert estimate_skew_deg(dense, CANVAS) == 0.0
+    assert time.perf_counter() - started < 0.05  # tavan üstü = anında çıkış
+
+
+def test_parse_koerekort_title_noise_anchored_by_field_numbers() -> None:
+    """Portre tarama warp kayması (saha 10 Eyl 2026): başlık ('DANM ARK')
+    ad penceresine sızmış, konumsal 'ilk iki harf satırı' onu SOYAD sanıyordu.
+    Kart satır başı alan no basar: '1.'/'2.' çapası satırı kesin seçer."""
+    words = [
+        _word("KØREKORT", 0.30, 0.060), _word("DANM", 0.42, 0.060), _word("ARK", 0.48, 0.060),
+        _word("1.", 0.27, 0.125), _word("Jensen", 0.33, 0.125),
+        _word("2.", 0.27, 0.210), _word("Thomas", 0.33, 0.210),
+    ]
+    result = parse_local_fields(words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "Thomas Jensen"
+
+
+def test_parse_koerekort_merged_name_line_splits_at_anchors() -> None:
+    """İki alan satırı TEK satırda birleşmiş ('1. Jensen 2. Thomas' — eğik
+    tarama gruplaması): çapa SATIR BAŞINDA aranmayıp token taramasına
+    geçildi, birleşik bölme dalı artık erişilebilir (0.3.40 incelemesi —
+    eskiden 'Jensen Thomas' birleşik ve TERS dönüyordu)."""
+    words = [
+        _word("KØREKORT", 0.30, 0.060), _word("DANMARK", 0.42, 0.060),
+        _word("1.", 0.27, 0.165), _word("Jensen", 0.33, 0.170),
+        _word("2.", 0.55, 0.160), _word("Thomas", 0.61, 0.165),
+    ]
+    result = parse_local_fields(words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "Thomas Jensen"
+
+
+def test_parse_sundhedskort_label_only_windows_produce_no_fields() -> None:
+    """Saha 10 Eyl 2026: 'Sikr.' AD olmuş, 'SUNDHEDSKORT' ADRES olmuştu.
+    Pencere yalnız etiket içeriyorsa alan ÜRETİLMEZ — etiketler değer
+    olarak geri iade edilmez."""
+    words = [
+        _word("SUNDHEDSKORT", 0.10, 0.10),
+        _word("Navn", 0.05, 0.245), _word("Sikr.", 0.20, 0.30), _word("1", 0.30, 0.30),
+        _word("Gyldigt", 0.40, 0.30), _word("01.01.2026", 0.55, 0.30),
+        _word("SUNDHEDSKORT", 0.05, 0.505),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert "full_name" not in result.fields
+    assert "address" not in result.fields
+
+
+def test_parse_sundhedskort_address_strips_name_and_postal_leak() -> None:
+    """Eğik taramada ad satırı adrese sızar, pencere alt kenarı posta
+    satırının '2650'sini keser (saha 10 Eyl 2026: adrese isim/posta yazılıyor)."""
+    words = [
+        _word("Thomas", 0.10, 0.245), _word("Jensen", 0.30, 0.245),
+        _word("010112-4002", 0.20, 0.375),
+        _word("Thomas", 0.05, 0.505), _word("Hvidovrevej", 0.12, 0.505),
+        _word("120,", 0.30, 0.505), _word("st.", 0.38, 0.505), _word("tv.", 0.42, 0.505),
+        _word("2650", 0.48, 0.505), _word("Jensen", 0.60, 0.505),
+        _word("2650", 0.26, 0.63), _word("Hvidovre", 0.36, 0.63),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "Thomas Jensen"
+    assert result.fields["address"].value == "Hvidovrevej 120, st. tv."
+    assert result.fields["postal_code"].value == "2650"
+    assert result.fields["city"].value == "Hvidovre"
+
+
 def test_parse_pas_td3_mrz_with_printed_name_preference() -> None:
     words = [
         _word("Efternavn", 0.32, 0.275), _word("TESTESEN", 0.35, 0.271),
@@ -574,16 +782,56 @@ def test_run_local_ocr_warning_tokens_are_contract_only(monkeypatch) -> None:
     assert set(outcome.warnings) <= allowed
 
 
-def test_run_local_ocr_portrait_keeps_only_card_not_detected(monkeypatch) -> None:
+def test_run_local_ocr_extreme_portrait_keeps_only_card_not_detected(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.identity_local_ocr_service.get_local_ocr_engine",
         lambda: _fake_sundhedskort_engine(),
     )
-    portrait = _png_bytes(Image.new("RGB", (600, 900), (120, 120, 120)))
-    outcome = run_local_ocr(portrait)
+    extreme = _png_bytes(Image.new("RGB", (500, 1200), (120, 120, 120)))
+    outcome = run_local_ocr(extreme)
     assert outcome.warnings == ["card_not_detected"]
     assert outcome.rois_enabled is False
     assert outcome.parse is not None and outcome.parse.fields == {}
+
+
+def test_run_local_ocr_portrait_sparse_first_shot_retries_other_direction(monkeypatch) -> None:
+    """180° ters yön tek-alan çöpüne güvenmez (0.3.40 incelemesi): motorun cls
+    katmanı ters metni OKUR ama kutular 180° kayar → tip tanınır, TEK alan
+    ('T. ECIMEN' gibi) döner. Eski '_weak' bunu ikna edici sayıp ilk atışta
+    kırıyordu; artık ≥2 alan yoksa öbür yön denenir."""
+    engine = _FakeEngine(
+        [
+            ("Sundhedskort", 0.06, 0.10, 0.95),
+            ("sygesikringsbevis", 0.30, 0.10, 0.95),
+            ("TESTESEN", 0.30, 0.245, 0.97),  # tip + tek alan → zayıf
+        ]
+    )
+    monkeypatch.setattr("app.services.identity_local_ocr_service.get_local_ocr_engine", lambda: engine)
+    portrait_frame = _png_bytes(Image.new("RGB", (600, 900), (200, 200, 200)))
+    outcome = run_local_ocr(portrait_frame)
+    assert engine.calls == 2  # tek-alan ilk atış ikna edici değil → öbür yön
+    assert outcome.document_type == "sundhedskort"  # en iyi aday tipi korunur
+    assert outcome.parse is not None and "full_name" in outcome.parse.fields
+
+
+def test_run_local_ocr_portrait_frame_parses_after_rotation(monkeypatch) -> None:
+    """Dikey kadraj taraması: region sideways döner, servis tuvali ±90°
+    çevirip ÇEVRİLEN kare koordinatında parse eder (koordinat geri-eşleme
+    YOKTUR — saha 10 Eyl 2026 portre kartı hiç okunmuyordu). Yön seçimi
+    FOTO-SOL asimetrisiyle OCR'SİZ yapılır (Danimarka kartlarında foto dik
+    karede sol üçtebirde: kenar yoğunluğu sol>sağ = dik; iki aday 180°
+    fark içerdiğinden satır-bandı istatistiği yön ayırt ETMEZ — 21/50
+    çöküşü); kazanan yönde TEK motor atışı koşar (p95 kapısı: iki tam OCR
+    ~2.8s tutuyordu)."""
+    engine = _fake_sundhedskort_engine()
+    monkeypatch.setattr("app.services.identity_local_ocr_service.get_local_ocr_engine", lambda: engine)
+    portrait_frame = _png_bytes(Image.new("RGB", (600, 900), (200, 200, 200)))
+    outcome = run_local_ocr(portrait_frame)
+    assert outcome.document_type == "sundhedskort"
+    assert outcome.parse is not None
+    assert outcome.parse.fields["cpr_number"].value == VALID_MOD11_CPR
+    assert outcome.parse.fields["city"].value == "Hvidovre"
+    assert engine.calls == 1  # ilk (istatistikle seçilen) yön ikna edici → tek atış
 
 
 # ---------------------------------------------------------------------------

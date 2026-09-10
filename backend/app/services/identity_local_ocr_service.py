@@ -215,38 +215,117 @@ def run_local_ocr(
         return outcome
     scaled = downscale_long_edge(frame, long_edge)
 
-    region: CardRegion = isolate_card(scaled)
+    region: CardRegion = isolate_card(scaled, warp_source=frame)
     outcome.quad_detected = region.quad_detected
     outcome.warped = region.warped
     outcome.rois_enabled = region.rois_enabled
     outcome.warnings.extend(region.warnings)
 
-    # Parlama tespiti kart bölgesinde yapılır: warp sonrası yüzey düz olduğu
-    # için blob oranı gerçek yansımayı sayar (köşe dışı arka plan saymaz).
-    if detect_glare(region.image):
+    # Parlama tespiti yalnız KART izole edilmişken yapılır: kart bulunamayan
+    # flatbed sayfasında parlak kart + koyu kapak yanlışlıkla 'yansıma'
+    # sanılıyordu (saha 10 Eyl 2026 — sayfa ortalaması koyu, kart 'doygun'
+    # kalıyordu). Warp sonrası yüzey düz olduğu için blob oranı gerçek
+    # yansımayı sayar.
+    if region.rois_enabled and detect_glare(region.image):
         outcome.warnings.append("glare_detected")
 
-    try:
-        words = engine.recognize(region.image)
-    except Exception as exc:  # noqa: BLE001 — sarmalayıcı zaten yakalar; yine de zincir düşmesin
-        logger.warning("Yerel kimlik OCR çıkarsama hatası: %s", type(exc).__name__)
-        words = []
-    document_type_key = guess_document_type(words)
-    if document_type_key is None and region.rois_enabled:
+    def recognize_quietly(card_image):
+        """Motor çağrısı — hata halinde boş kelime listesi (zincir düşmez)."""
+        try:
+            return engine.recognize(card_image)
+        except Exception as exc:  # noqa: BLE001 — sarmalayıcı zaten yakalar
+            logger.warning("Yerel kimlik OCR çıkarsama hatası: %s", type(exc).__name__)
+            return []
+
+    def parse_words(words, source_image):
+        """Tip tahmini + ROI parse — kelimeler source_image koordinatında."""
+        document_type_key = guess_document_type(words)
+        return parse_local_fields(
+            words,
+            document_type_key=document_type_key,
+            rois_enabled=region.rois_enabled and document_type_key is not None,
+            threshold=threshold,
+            rois=rois,
+            # Normalize ROI pencereleri kelimelerin GELDİĞİ kareye eşlenir:
+            # warp tuvalinde sabit (1280x808), flatbed karesinde gerçek boyut.
+            canvas=(int(source_image.shape[1]), int(source_image.shape[0])),
+            # Kalan eğim her yolda düzeltilir AMA warp yapılmış karede dörtgen
+            # eğimin çoğunu gidermiştir — kestirim sıkı kapıyla koşar (±5°,
+            # 1.8x skor marjı): blur gürültüsü yanlış açı üretip satırları
+            # karıştırmasın, dörtgenin kırpamadığı dış-çerçeve eğimi yakalansın.
+            skew_strict=region.warped,
+        )
+
+    if region.sideways:
+        # Dikey kart portre tuvalde (808x1280) warp edildi; içerik 90° yan
+        # yatık. Tuvali ±90° çevirince 1280x808 yatay kareye DİK kart düşer —
+        # iki aday 180° farkla ayrılır (ikisinde de metin YATAYDIR; satır
+        # bandı istatistiği yön ayırt ETMEZ). Ayırt eden FOTO konumudur:
+        # Danimarka kartlarında (koerekort/idkort/sundhedskort/pas) foto DİK
+        # karede SOL üçtebirdeki en yoğun bloktur — çevrilince sağa geçer.
+        # Kenar yoğunluğu sol-sağ asimetrisi (~20ms) yönü seçer; kazanan
+        # yönde TEK motor atışı koşar (p95: iki tam atış ~2.8s tutuyordu),
+        # sonuç zayıfsa (tip yok / alan yok / tarihler ters) öbür yön denenir.
+        import cv2
+
+        def _photo_left_asym(bgr) -> float:
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 60, 180)
+            width = edges.shape[1]
+            return float(edges[:, : width // 3].mean() - edges[:, -width // 3 :].mean())
+
+        def _year(field_value: str) -> int:
+            digits = field_value.replace(".", "")
+            return int(digits[4:8]) if len(digits) >= 8 else 0
+
+        def _candidate_score(cand) -> tuple:
+            fields = cand.fields
+            checks = sum(1 for local in fields.values() if local.checksum_ok)
+            birth = fields.get("birth_date")
+            expiry = fields.get("expiry_date")
+            plausible = 1
+            if birth and expiry and _year(birth.value) and _year(expiry.value):
+                plausible = int(_year(birth.value) < _year(expiry.value))
+            name = fields.get("full_name")
+            tokens = [token for token in (name.value.split() if name else []) if any(ch.isalpha() for ch in token)]
+            name_quality = (
+                sum(1 for token in tokens if len(token.strip(".,-")) >= 3) / len(tokens) if tokens else 0.0
+            )
+            return (cand.document_type is not None, len(fields), checks, plausible, name_quality)
+
+        def _weak(cand) -> bool:
+            score = _candidate_score(cand)
+            # 180° ters aday da 'ikna edici' görünebilir: motorun cls katmanı
+            # ters metni OKUR ama kutuları 180° kayar → tip tanınır, TEK çöp
+            # alan ('T. ECIMEN') döner (kart ARKA yüzü foto içermez, asimetri
+            # gürültüdür). En az 2 alan istenmezse yanlış yön tek atışta
+            # kalıyordu (0.3.40 incelemesi). Doğru yönde okunabilir kart ≥2
+            # alan verir; seyrek okuma öbür yönü dener (+~0.7 sn, nadir).
+            return not score[0] or score[1] < 2 or score[3] == 0
+
+        rotated_cw = cv2.rotate(region.image, cv2.ROTATE_90_CLOCKWISE)
+        rotated_ccw = cv2.rotate(region.image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        if _photo_left_asym(rotated_cw) >= _photo_left_asym(rotated_ccw):
+            order = (rotated_cw, rotated_ccw)
+        else:
+            order = (rotated_ccw, rotated_cw)
+
+        best_score = None
+        best_result = None
+        for index, rotated in enumerate(order):
+            candidate = parse_words(recognize_quietly(rotated), rotated)
+            score = _candidate_score(candidate)
+            if best_score is None or score > best_score:
+                best_score, best_result = score, candidate
+            if index == 0 and not _weak(candidate):
+                break  # istatistik yönü doğru tuttu — ikinci atışa gerek yok
+        parse_result = best_result
+    else:
+        parse_result = parse_words(recognize_quietly(region.image), region.image)
+
+    if parse_result.document_type_key is None and region.rois_enabled:
         # Tip tanınamadıysa ROI eşleme yapılamaz; tam-kart metni kalır (D5).
         outcome.warnings.append("roi_low_confidence")
-        document_type_key = None
-
-    parse_result = parse_local_fields(
-        words,
-        document_type_key=document_type_key,
-        rois_enabled=region.rois_enabled and document_type_key is not None,
-        threshold=threshold,
-        rois=rois,
-        # Normalize ROI pencereleri kelimelerin GELDİĞİ kareye eşlenir: warp
-        # tuvalinde sabit (1280x808), flatbed karesinde gerçek boyut.
-        canvas=(int(region.image.shape[1]), int(region.image.shape[0])),
-    )
     outcome.parse = parse_result
     outcome.document_type = parse_result.document_type
     outcome.ocr_text = parse_result.ocr_text

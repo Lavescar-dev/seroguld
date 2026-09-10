@@ -80,4 +80,51 @@ sayılır (barkod CPR'ı bayraktan bağımsız açıktır), sonuçlar buraya not
 
 ## Sonuçlar
 
-<!-- Buraya tarih + skor tablosu (maskeli) işlenir. -->
+### 0.3.39 — canlıya alma kapısı GEÇİLDİ (10 Eyl 2026)
+
+| Kapı | Ölçüm | Sonuç |
+|---|---|---|
+| Doğruluk | fixture as-is 48/50 (tek fail: pas_05_glare — parlama MRZ'yi silmiş, taban davranışı) + gerçek kartlar 70/70 → **118/120** | PASS |
+| CPR | barkodlu kartlarda tam 10 hane + validated (cpr 25/25) | PASS |
+| Gecikme | p95 ~1.0 sn (n=60) | PASS |
+
+Bayrak `identity_local_ocr_enabled=True` default'a alındı (a40e2ca).
+
+### 0.3.40 — dükkân taraması koşulları (flatbed/eğik/portre), 10 Eyl 2026
+
+Saha geribildirimi: gerçek WIA flatbed A4 taramasında alanlar çöp çıkıyordu
+(adrese başlık, ad yerine etiket, portre kart hiç okunmuyordu). Sim katmanı
+(`--simulate flatbed|autocrop|portrait [--tilt N]`) bu dağılımı bench'e taşıdı —
+as-is skor tarama koşulunu temsil ETMEZ, ayrı ölçülür.
+
+| Sim koşulu | 0.3.39 taban | 0.3.40 | p95 |
+|---|---|---|---|
+| fixture as-is (regresyon) | 48/50 | 48/50 | 1,7 sn |
+| gerçek kartlar as-is | 70/70 | 70/70 | 1,2 sn |
+| flatbed A4 @300DPI gerçek boyut | — | 48/50 | 1,3 sn |
+| flatbed + 3° eğim | — | 48/50 | 1,2 sn |
+| autocrop ~%8 marj | — | 47/50 | 1,3 sn |
+| portre (kart 90° dikey) | 0/50 | 41/50 | 1,2 sn |
+
+Değişiklik zinciri (hepsi `git log 0.3.40` commit'lerinde):
+
+- **Kadraj-önceliği**: kare ID-1±%10 kadrajındaysa SERBEST dörtgen aranmaz
+  (iç foto/metin bloğu ~%29 yanlış dörtgen üretir); karenin ≥%50'sini dolduran
+  dörtgen gerçek kart sınırı sayılır ve TAM ÇÖZÜNÜRLÜKLÜ kareden warp edilir
+  (küçük kareden 2,8× büyütmek yerine 1,3× — tanınma belirgin iyileşir).
+- **Kalıntı eğim (deskew)**: warp sonrası 2–6° kalan eğim kelime kutularından
+  izdüşüm aramasıyla kestirilir (görüntü yeniden okunmaz). Sıkı kapı: warp'lı
+  karede |açı| ≤ 5° VE skor ≥ 1,8× düz-hipotez (ölçüm: gerçek artık +2,75°/3,3×
+  geçer; blur yanlış-pozitifi +9,0°/1,4× düşer). Punto filtresi: başlık↔gövde
+  çiftleri (≥2,2× yükseklik farkı) taban hizası taşımaz, çift kurmaz.
+- **Portre kurtarma**: dikey kart portre tuvale warp edilir, ±90° iki aday
+  180° fark içerir — satır-bandı istatistiği yön ayırt ETMEZ. Danimarka
+  kartlarında foto DİK karede soldadır: sol/sağ üçtebir kenar-yoğunluk
+  asimetrisi (~20 ms) yönü seçer, kazanan yönde TEK motor atışı koşar
+  (iki tam atış p95 ~2,8 sn tutuyordu); sonuç zayıfsa öbür yön denenir.
+
+Kalan bilinen kuyruk (kabul): pas_05_glare (taban), blur/lowlight/glare +
+rotate-baked marjinal ad kayıpları sim koşullarında, koerekort_02 portre
+(tilt-baked fixture + portre + yeniden kodlama birikimi), idkort ad penceresi
+koerekort geometrisiyle çalıştığından çifte-dönüşümde tarih satırı sızabilir
+(sundhedskort/kørekort etkilenmez; idkort MRZ yedeği ayakta).

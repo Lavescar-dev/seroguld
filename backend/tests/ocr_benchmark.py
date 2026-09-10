@@ -259,7 +259,52 @@ def _dump_roi_crops(dump_dir: Path, name: str, image_bytes: bytes, outcome) -> N
             )
 
 
-def run_local(images_dir: Path | None, roi_dump_dir: Path | None) -> int:
+def _simulate_capture(image_bytes: bytes, mode: str, tilt: float) -> bytes:
+    """Bench kartını dükkân taraması koşullarına çevirir (bellek içi, 0.3.40).
+
+    flatbed: A4 300 DPI koyu kapak sayfası, kart GERÇEK boyutunda (genişlik
+    86mm = 1016px, en-boy KORUNUR — pasaport ID-3 125x88mm'dir, ID-1'e
+    zorlamak simülasyon yapaylığıdır) ortada — WIA flatbed taramasının
+    taklidi (saha 10 Eyl 2026: bu koşulda kart karenin %7.45'idir, asis
+    bench kartıysa çerçeveyi doldurur; iki dağılım AYNI değildir, ayrı
+    ölçülmelidir).
+    autocrop: kart + ~%8 marj, koyu kenar (tarayıcı/uygulama auto-crop'u).
+    portrait: autocrop ama kart 90° döndürülmüş (camın dikey konumu).
+    tilt: kartı yapıştırmadan önce verilen dereceyle eğer (tüm modlar).
+    """
+    import cv2
+    import numpy as np
+
+    data = np.frombuffer(image_bytes, dtype=np.uint8)
+    card = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if card is None:
+        return image_bytes
+    height, width = card.shape[:2]
+    card = cv2.resize(card, (1016, max(1, int(round(height * 1016 / width)))), interpolation=cv2.INTER_AREA)
+    if mode == "portrait":
+        card = cv2.rotate(card, cv2.ROTATE_90_CLOCKWISE)
+    if tilt:
+        height, width = card.shape[:2]
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), tilt, 1.0)
+        card = cv2.warpAffine(card, matrix, (width, height))
+    ch, cw = card.shape[:2]
+    if mode == "flatbed":
+        page = np.full((3508, 2480, 3), 60, dtype=np.uint8)
+    else:  # autocrop / portrait — kenarlarda ~%8 marj
+        page = np.full((ch + 100, cw + 130, 3), 60, dtype=np.uint8)
+    y, x = (page.shape[0] - ch) // 2, (page.shape[1] - cw) // 2
+    page[y : y + ch, x : x + cw] = card
+    ok, encoded = cv2.imencode(".jpg", page, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return encoded.tobytes() if ok else image_bytes
+
+
+def run_local(
+    images_dir: Path | None,
+    roi_dump_dir: Path | None,
+    *,
+    simulate: str | None = None,
+    tilt: float = 0.0,
+) -> int:
     """Yerel motor kanalı: fixture + opsiyonel gerçek fotoğraflar üzerinde skor."""
     from app.services.identity_local_ocr_service import engine_available, run_local_ocr
     from app.services.identity_ocr_rois import load_rois
@@ -290,6 +335,9 @@ def run_local(images_dir: Path | None, roi_dump_dir: Path | None) -> int:
         print("Ölçülebilir görüntü yok.")
         return 1
 
+    sim_label = f"[{simulate}{'%+.0f' % tilt if tilt else ''}]" if simulate else ""
+    if simulate:
+        print(f"== SİMÜLASYON: {sim_label} (kart gerçek boyutta yeniden kadranlanıyor) ==")
     print("== local kanalı (RapidOCR PP-OCRv6, onnxruntime CPU, tamamen offline) ==")
     field_hits: dict[str, list[bool]] = defaultdict(list)
     per_condition: dict[str, list[bool]] = defaultdict(list)
@@ -301,6 +349,8 @@ def run_local(images_dir: Path | None, roi_dump_dir: Path | None) -> int:
     errors = 0
     for name, path, expected in jobs:
         image_bytes = path.read_bytes()
+        if simulate:
+            image_bytes = _simulate_capture(image_bytes, simulate, tilt)
         outcome = run_local_ocr(image_bytes, threshold=0.62, rois=load_rois())
         latencies.append(outcome.latency_ms)
         if outcome.quad_detected:
@@ -316,12 +366,13 @@ def run_local(images_dir: Path | None, roi_dump_dir: Path | None) -> int:
         fields = {key: local.value for key, local in (outcome.parse.fields.items() if outcome.parse else {})}
         if outcome.parse is None:
             errors += 1
-            print(f"  {name}: yerel katman koşmadı (motor kurulumu?)")
+            print(f"  {name}{sim_label}: yerel katman koşmadı (motor kurulumu?)")
             continue
         parts = [
-            f"{name}: tip={outcome.document_type or '?'}",
+            f"{name}{sim_label}: tip={outcome.document_type or '?'}",
             f"roi={'/'.join(outcome.roi_fields) or '-'}",
         ]
+        condition = f"sim-{simulate}" if simulate else expected.get("capture_condition", "gercek")
         for key, expected_value in (
             ("full_name", expected.get("full_name", "")),
             ("cpr_number", expected.get("cpr_first6", "")),
@@ -335,7 +386,7 @@ def run_local(images_dir: Path | None, roi_dump_dir: Path | None) -> int:
             actual = fields.get(key, "")
             ok = _score_field(compare_to, actual[:6] if key == "cpr_number" else actual)
             field_hits[key].append(ok)
-            per_condition[expected.get("capture_condition", "gercek")].append(ok)
+            per_condition[condition].append(ok)
             parts.append(f"{key}={'OK' if ok else 'X'}")
         print("  " + ", ".join(parts) + f"  [{outcome.latency_ms:.0f} ms]")
         if dump_dir is not None:
@@ -493,6 +544,18 @@ def main() -> int:
         metavar="DIR",
         help="Yalnız --engine local: ROI kirpim PNG'leri + ham metin + dörtgen katmanı yazılır. REPO DIŞINA yazın (repo agacındaki yol reddedilir); örnek: --roi-dump ~/roi-tune",
     )
+    parser.add_argument(
+        "--simulate",
+        choices=["flatbed", "autocrop", "portrait"],
+        default=None,
+        help="Yalnız --engine local: bench kartını dükkân taraması koşuluna çevir (as-is yerine). flatbed=A4@300DPI gerçek boyut kart, autocrop=%8 marj, portrait=90° döndürülmüş.",
+    )
+    parser.add_argument(
+        "--tilt",
+        type=float,
+        default=0.0,
+        help="Simülasyon kartının eğimi derece (ör. 3.0); yalnız --simulate ile anlamlı.",
+    )
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -502,7 +565,7 @@ def main() -> int:
     if args.engine == "barcode":
         return run_barcode(images_dir)
     if args.engine == "local":
-        return run_local(images_dir, args.roi_dump)
+        return run_local(images_dir, args.roi_dump, simulate=args.simulate, tilt=args.tilt)
     return run_vlm(images_dir, args.side, args.model)
 
 

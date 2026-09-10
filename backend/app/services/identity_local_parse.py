@@ -15,6 +15,7 @@ Kurallar (plan WP2):
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field as dc_field
 
@@ -44,6 +45,33 @@ CANVAS = (ID1_CANVAS_WIDTH, ID1_CANVAS_HEIGHT)
 
 # Aynı satır sayılması için dikey örtüşme eşiği (ROI kutu-birleştirme).
 LINE_Y_OVERLAP_RATIO = 0.6
+
+# Kalıntı eğim düzeltmesi (saha 10 Eyl 2026): warp/flatbed sonrası kartta
+# 2-6° kalan eğim satır gruplamayı bozuyordu — ad penceresi bir alt satırın
+# parçasını ('Sikr.') son harf satırı sanıp AD yazıyordu. Eğim OCR KELIME
+# kutularından kestirilir ve yalnız GRUPLAMA/PENCERE eşlemesi için kelime
+# merkezleri döndürülür (görüntü yeniden okunmaz — gecikme etkisi ~0).
+SKEW_MIN_DEG = 0.35   # bu eşik altı ölçüm gürültüdür, dokunma
+SKEW_MAX_DEG = 10.0   # bu eşik üstü ölçüm yanılgıdır, dokunma
+# En iyi aday DÜZ hipotezden (0°) belirgin iyileşme sağlamıyorsa eğim YOK
+# sayılır: seyrek başlık/etiket kelimeleri sahte bir tepeyi 0.5-1.5°'de
+# tutabiliyor ve yanlış döndürme satırları KARIŞTIRIYORDU (fixture
+# regresyonu 10 Eyl 2026: 'ANDERS REGION' birleşik satırı). Gerçek 2-6°
+# eğim düz hipoteze göre çok daha büyük skor getirir — marj güvenli.
+SKEW_IMPROVEMENT_FACTOR = 1.30
+SKEW_PAIR_HEIGHT_RATIO = 2.2  # farklı punto çiftleri (başlık↔gövde) taban
+                              # hizası taşımaz — çift kurmaz
+# WARP YAPILMIŞ kare için sıkı kapı: dörtgen perspektif düzeltmesi eğimin
+# çoğunu giderdiğini varsayar — kalan ±5°'den büyük 'ölçüm' yanılgıdır ve
+# skorun düz hipoteze göre en az 1.8x iyi olması gerekir (ölçüm 10 Eyl 2026:
+# gerçek artık eğim +2.75°/oran 3.3; blur yanlış-pozitifi +9.0°/oran 1.4).
+SKEW_WARPED_MAX_DEG = 5.0
+SKEW_WARPED_IMPROVEMENT = 1.80
+# Kelime tavanı: çift kurulum O(n^2)x77 adayla koşar — kart ASLA 200 kelime
+# vermez, tam sayfa (yanlış belge taraması, card_not_detected yolu) verir ve
+# orada 0.4-2.2 sn CPU yakıyordu (0.3.40 incelemesi). Sayfa eğimi ROI için
+# anlamsızdır: tavan üstünde kestirim yok sayılır.
+SKEW_MAX_WORDS = 200
 
 # gg.aa.yyyy VEYA yyyy-aa-gg (ISO basan kartlar). Ayırıcı boşluk DEĞİL:
 # pencereye sızan komşu sayılar boşlukla tarihe yapışıp sahte tarih kurar
@@ -150,6 +178,19 @@ _LABEL_TOKENS = {
     "koen",
     "men",
     "identitetskort",
+    # Sundhedskort satır kalıntıları (saha 10 Eyl 2026): 'Sikr. 1' / 'Gyldigt
+    # fra:' satırı ad penceresinin altına sızıp SON HARF satırı sanılıyordu —
+    # 'Sikr.' AD olarak dönüyordu. Başlık/kurum sözcükleri de aynı listede:
+    # 'SUNDHEDSKORT' başlığı yalnız başına adres penceresine düşünce DEĞER
+    # olmamalı (hepsi-etiket kuralı aşağıda).
+    "sikr",
+    "sikkerhedsgruppe",
+    "gyldigt",
+    "gyldig",
+    "fra",
+    "akuttelefonen",
+    "kommune",
+    "hovedstaden",
 }
 
 
@@ -260,6 +301,130 @@ def words_in_roi(
     return ordered
 
 
+def estimate_skew_deg(words: list[OcrWord], canvas: tuple[int, int], *, strict: bool = False) -> float:
+    """Kalan eğimi kelime merkezlerinden İZDÜŞÜM ARAMASIYLA kestirir.
+
+    Satır-eğimi kestirimi (grupla → satır eğimlerinin ortancası) ölür
+    nokta: 5-6° eğik kartta gruplama ZATEN satırları yanlış birleştirir ve
+    birleşik satırın eğimi ~0 görünür (saha deneyi: 5° kartta 0.2° ölçtü).
+    Kestirim bu yüzden gruplamadan BAĞIMSIZdır: aday açılar (-9.5..+9.5°,
+    0.25° adım) denenir, kelimeler adayın TERSİNE çevrilince AYNI satırda
+    olan (yatayda uzak) kelime çiftlerinin Δy'si sıfıra iner — izdüşüm
+    yoğunluğunu (Gaussian çekirdek, yatay uzaklıkla ağırlıklı: yakın çiftler
+    her açıda kümelenir, bilgi taşımaz) en yüksek yapan açı kalan eğimdir.
+    Kelime/çift azsa 0 döner (düz karta dokunma).
+
+    ``strict=True`` WARP yapılmış kare içindir: dörtgen perspektif düzeltmesi
+    eğimin çoğunu gidermiştir — ±5° üstü 'ölçüm' yanılgıdır ve skorun düz
+    hipotezden 1.8x belirgin iyi olması gerekir (ölçüm 10 Eyl 2026: gerçek
+    artık eğim +2.75°/oran 3.3 geçer; blur yanlış-pozitifi +9.0°/oran 1.4
+    düşer).
+    """
+    if len(words) < 4 or len(words) > SKEW_MAX_WORDS:
+        return 0.0
+    width, _height = canvas
+    # Yatayda ≥%15 aralıkli çiftler eğim taşır; ağırlık %30 genişlikte doyar.
+    pairs: list[tuple[float, float, float]] = []
+    for i in range(len(words)):
+        for j in range(i + 1, len(words)):
+            dx = words[j].center_x - words[i].center_x
+            if abs(dx) < 0.15 * width:
+                continue
+            if max(words[i].height, words[j].height) > SKEW_PAIR_HEIGHT_RATIO * min(words[i].height, words[j].height):
+                continue
+            dy = words[j].center_y - words[i].center_y
+            pairs.append((dx, dy, min(abs(dx) / (0.3 * width), 1.0)))
+    if not pairs:
+        return 0.0
+    heights = sorted(word.height for word in words)
+    band = 0.5 * heights[len(heights) // 2]
+    if band <= 0.0:
+        return 0.0
+    # Adaylar |derece| küçüktür sırasıyla: skor eşitliğinde küçük açı kazanır
+    # (0.25°'lik sahte tepeler yerine düz kart 0'da kalır).
+    candidates: list[float] = []
+    for magnitude in range(0, 39):  # 0, ±0.25, ..., ±9.5
+        if magnitude == 0:
+            candidates.append(0.0)
+        else:
+            candidates.append(magnitude * 0.25)
+            candidates.append(-magnitude * 0.25)
+    best_deg = 0.0
+    best_score = None
+    best_support = 0
+    flat_score = 0.0
+    for degrees in candidates:
+        radians = math.radians(degrees)
+        sin_a = math.sin(radians)
+        cos_a = math.cos(radians)
+        score = 0.0
+        support = 0
+        for dx, dy, weight in pairs:
+            delta = dy * cos_a - dx * sin_a
+            if abs(delta) <= band:
+                support += 1  # çift bu açıda 'aynı satırda' sayılır
+            score += weight * math.exp(-((delta / band) ** 2))
+        if degrees == 0.0:
+            flat_score = score  # düz hipotez — marj kapısının referansı
+        if best_score is None or score > best_score:
+            best_score, best_deg, best_support = score, degrees, support
+    # Tek çiftin hizalanması gürültüdür (yuvarlama kaynaklı 0.25-0.75° sahte
+    # tepe: düz kartta A-B çifti 0.5°'de 'daha iyi' görünür). Gerçek eğim
+    # birden çok satır çiftini birlikte hizalar VE düz hipotezden belirgin
+    # iyileşme getirir — ikisi de yoksa karta dokunma. Sıkı kapı (warp sonrası)
+    # açıyı da ±5°'e kısar: quad düzelttikten sonra 9° 'kalıntı' okunamaz.
+    if best_deg == 0.0 or best_support < 2:
+        return 0.0
+    max_deg = SKEW_WARPED_MAX_DEG if strict else SKEW_MAX_DEG
+    min_gain = SKEW_WARPED_IMPROVEMENT if strict else SKEW_IMPROVEMENT_FACTOR
+    if abs(best_deg) > max_deg:
+        return 0.0
+    if flat_score > 0.0 and best_score < min_gain * flat_score:
+        return 0.0
+    return best_deg
+
+
+def deskew_words(words: list[OcrWord], canvas: tuple[int, int], *, strict: bool = False) -> list[OcrWord]:
+    """Kelime MERKEZLERİNİ kalan eğimin tersine döndürür (görüntüye dokunmaz).
+
+    Warp kusuru veya eğik flatbed yerleşimi 2-6° kalıntı bırakınca satır
+    gruplama yanlış satırları birleştiriyor ve ROI pencereleri bir alt/üst
+    satırı kesiyordu. Kelime kutuları zaten OKUNMUŞ metindir: geometriyi
+    düzeltmek için merkezleri döndürmek yeter — ikinci bir OCR yok.
+    ``strict`` warp sonrası kalan eğim için sıkı kestirim kapısıdır.
+    """
+    degrees = estimate_skew_deg(words, canvas, strict=strict)
+    if not (SKEW_MIN_DEG <= abs(degrees) <= SKEW_MAX_DEG):
+        return words
+    radians = math.radians(-degrees)
+    cos_a = math.cos(radians)
+    sin_a = math.sin(radians)
+    width, height = canvas
+    center_x = width / 2.0
+    center_y = height / 2.0
+    rotated: list[OcrWord] = []
+    for word in words:
+        dx = word.center_x - center_x
+        dy = word.center_y - center_y
+        new_x = center_x + dx * cos_a - dy * sin_a
+        new_y = center_y + dx * sin_a + dy * cos_a
+        half_w = (word.box[2] - word.box[0]) / 2.0
+        half_h = (word.box[3] - word.box[1]) / 2.0
+        rotated.append(
+            OcrWord(
+                text=word.text,
+                score=word.score,
+                box=(
+                    int(round(new_x - half_w)),
+                    int(round(new_y - half_h)),
+                    int(round(new_x + half_w)),
+                    int(round(new_y + half_h)),
+                ),
+            )
+        )
+    return rotated
+
+
 def build_ocr_text(words: list[OcrWord]) -> str:
     """Tam-kart metni: satır birleştirme + yeniyle ayrılmış satırlar.
 
@@ -320,7 +485,12 @@ def _scope_confidence(words: list[OcrWord]) -> float:
 
 
 def _drop_label_tokens(words: list[OcrWord], *, numeric: bool = False) -> list[OcrWord]:
-    """Basılı alan etiketlerini düşürür; hepsi etiketse düşürmez (değer kaybı yok).
+    """Basılı alan etiketlerini düşürür; hepsi etiketse BOŞ döner.
+
+    Pencereye yalnız etiket düştüyse ('SUNDHEDSKORT' başlığı adres penceresine
+    sızmışsa) o etiketleri DEĞER olarak geri iade etmek yok: saha taramasında
+    'SUNDHEDSKORT' adres olarak doğrulanmış sunuluyordu (10 Eyl 2026). Boş
+    kapsam → alan üretilmez; operatör tam-kart metninden bakar.
 
     ``numeric=True`` rakam-beklenen pencereler içindir: etiketlerin yanı sıra
     rakam taşımayan ve 2 karakterden kısa alnum token'lar da atılır ("4a.",
@@ -335,7 +505,7 @@ def _drop_label_tokens(words: list[OcrWord], *, numeric: bool = False) -> list[O
         and not _is_label_token(word.text)
         and not (numeric and not _looks_like_numeric_value(word.text))
     ]
-    return kept or words
+    return kept
 
 
 def _is_label_token(token: str) -> bool:
@@ -581,14 +751,42 @@ def _compose_sundhedskort(raw: dict[str, tuple[str, float]]) -> dict[str, LocalF
                 checksum_ok=cpr_format_ok,
             )
 
+    postal_text, postal_conf = raw.get("postal", ("", 0.0))
+    postal, city = _extract_postal(postal_text)
+
     address_text, address_conf = raw.get("address", ("", 0.0))
+    if address_text and postal_text:
+        # Adres penceresinin alt kenarı ALTINDAKİ posta satırının başını
+        # ('2650') kesebilir (marjlı flatbed kadrajında tüm içerik pencereye
+        # göre ~%7 kayar). Adresin KUYRUĞUNDAKI, posta metninin BAŞ token'ı
+        #yla aynı olan token'lar düşürülür — ev numarasıyla çakışma riski
+        # önemsizdir ('Hvidovrevej 2650' + posta 2650 aynı anda görülmez).
+        postal_lead = postal_text.split()[0] if postal_text.split() else ""
+        tokens = address_text.split()
+        while postal_lead and tokens and tokens[-1] == postal_lead:
+            tokens.pop()
+        address_text = " ".join(tokens)
+    if address_text and name_text:
+        # Eğik taramada ad satırı adres satırıyla birleşebilir (satır
+        # gruplaması aynı hizada sayar) ve ad token'ları adrese sızar
+        # ('Thomas Hvidovrevej ...'). Ad penceresinden çıkan adın
+        # token'ları adresten düşürülür — tam eşleşme, transliterasyonlu
+        # (Ø/Æ yazım farkı okuma değiştirebilir). Yalnız tam kelime
+        # eşleşmesi: 'Jensen' düşer, 'Jensenvej' düşmez.
+        def _token_key(token: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", transliterate_name(token).lower())
+
+        name_keys = {_token_key(token) for token in name_text.split()}
+        kept = [
+            token
+            for token in address_text.split()
+            if not _token_key(token) or _token_key(token) not in name_keys
+        ]
+        address_text = " ".join(kept).strip()
     if address_text:
         fields["address"] = LocalField(
             value=address_text, confidence=address_conf, roi_key="address", checksum_ok=True
         )
-
-    postal_text, postal_conf = raw.get("postal", ("", 0.0))
-    postal, city = _extract_postal(postal_text)
     if postal:
         fields["postal_code"] = LocalField(
             value=postal,
@@ -697,21 +895,25 @@ def _compose_pas(raw: dict[str, tuple[str, float]], mrz_lines: list[str]) -> dic
     return fields
 
 
+def _field_anchor(token: str) -> str | None:
+    """Satır başı alan-no çapası: '1.'/'2' → '1'/'2', değilse None."""
+    match = re.match(r"^([12])[.:]?$", token.strip())
+    return match.group(1) if match else None
+
+
 def _split_koerekort_names(
     raw: dict[str, tuple[str, float]],
     words: list[OcrWord],
     rois: dict[str, tuple[FieldRoi, ...]],
     canvas: tuple[int, int],
 ) -> None:
-    """Kørekort ad-soyadını SATIR SAYISINDAN ayrıştırır (raw["1"]/raw["2"]).
+    """Kørekort ad-soyadını alan-no ÇAPASINDAN ayrıştırır (raw["1"]/raw["2"]).
 
-    İki düzen sabit bantlarla ayrılamaz: gerçek karta yakın render'da
-    soyad/ad satırları sıkışıktır (y ~0.20/0.27), eğik/bulanık çekimde
-    satırlar aşağı kayar (y ~0.23/0.34) — render'ın doğum-yeri satırı
-    fixture'ın ad satırıyla aynı bantta düşer. Bunun yerine tek ad
-    penceresi alınır, etiketler düşürülür ve harf satırları sıralanır:
-    1. satır = soyad (Efternavn, kartta basılı alan no 1), 2. satır = ad
-    (Fornavne, alan no 2); 3.+ satırlar (doğum yeri gibi sızanlar) atılır.
+    Kart satır başına alan numarası basar ('1. Jensen', '2. Thomas'): pencereye
+    başlık ('DANM ARK') ya da doğum yeri satırı sızsa da çapa satırı kesin
+    seçer (saha 10 Eyl 2026: portre tarama warp kaymasında başlık, soyad
+    sanılıyordu). Çapa okunamadıysa (bulanık çekim) konumsal kural — ilk iki
+    harf satırı 1=soyad, 2=ad — yedek olarak kalır; 3.+ satırlar atılır.
     """
     name_row = next(
         (row for row in rois.get("koerekort", ()) if row.key == "1" and row.field == "full_name"),
@@ -720,15 +922,55 @@ def _split_koerekort_names(
     if name_row is None:
         return
     scope = _drop_label_tokens(words_in_roi(words, name_row, canvas))
-    # Satır metni YALNIZ harf token'larından kurulur: '1.'/'2.' alan no'ları
-    # etiket olmadığından düşme listesinde değildir, satırdan atılır.
-    lines = [_alpha_words(line) for line in group_words_into_lines(scope)]
-    lines = [line for line in lines if line]
-    if not lines:
-        return
+    lines = group_words_into_lines(scope)
     confidence = _scope_confidence(scope)
-    raw["1"] = (_scope_text(lines[0]), confidence)
-    raw["2"] = (_scope_text(lines[1]), confidence) if len(lines) > 1 else ("", 0.0)
+    # Çapa SATIR BAŞINDA aranmaz — eğik taramada iki alan satırı TEK satırda
+    # birleşir ('1. Jensen 2. Thomas') ve '2.' çapası satır başına hiç
+    # düşmez; ilk token'a bakmak birleşik dalı ölü kod bırakıyordu (0.3.40
+    # incelemesi). Çapa satır içi HER konumda aranır.
+    def anchor_at(anchor: str) -> tuple[int, int] | None:
+        for i, line in enumerate(lines):
+            for t, word in enumerate(line):
+                if _field_anchor(word.text) == anchor:
+                    return i, t
+        return None
+
+    a1 = anchor_at("1")
+    a2 = anchor_at("2")
+    if a1 is not None and a2 is not None and a1[0] <= a2[0]:
+        if a1[0] == a2[0]:
+            # İki alan TEK satırda birleşmiş ('1. Jensen 2. Thomas'): çapa
+            # konumları arasından böl.
+            tokens = [word.text for word in lines[a1[0]]]
+            t1, t2 = a1[1], a2[1]
+            if t2 > t1 + 1:
+                raw["1"] = (" ".join(tokens[t1 + 1 : t2]), confidence)
+            if len(tokens) > t2 + 1:
+                raw["2"] = (" ".join(tokens[t2 + 1 :]), confidence)
+            return
+        # İki düzen: değer alan-no ile AYNI satırda ('1. Jensen') VEYA bir alt
+        # satırda ('1. Efternavn' başlığı + 'TESTESEN'). Değer = çapa satırı
+        # (boşsa hemen altındaki) ilk dolu harf satırı; soyad segmenti 2'nin
+        # çapasıyla sınırlıdır — başlık ('DANM ARK') ve doğum yeri sızamaz.
+        def first_alpha_text(segment: list[list[OcrWord]]) -> str:
+            for line in segment:
+                alpha = _alpha_words(line)
+                if alpha:
+                    return _scope_text(alpha)
+            return ""
+
+        surname = first_alpha_text(lines[a1[0] : a1[0] + 2])
+        given = first_alpha_text(lines[a2[0] : a2[0] + 2])
+        if surname:
+            raw["1"] = (surname, confidence)
+        if given:
+            raw["2"] = (given, confidence)
+        return
+    alpha_lines = [line for line in (_alpha_words(line) for line in lines) if line]
+    if not alpha_lines:
+        return
+    raw["1"] = (_scope_text(alpha_lines[0]), confidence)
+    raw["2"] = (_scope_text(alpha_lines[1]), confidence) if len(alpha_lines) > 1 else ("", 0.0)
 
 
 def parse_local_fields(
@@ -739,6 +981,8 @@ def parse_local_fields(
     threshold: float,
     rois: dict[str, tuple[FieldRoi, ...]] | None = None,
     canvas: tuple[int, int] | None = None,
+    deskew: bool = True,
+    skew_strict: bool = False,
 ) -> LocalParseResult:
     """Kelime listesini ROI pencereleriyle soyut alanlara eşler.
 
@@ -747,9 +991,18 @@ def parse_local_fields(
 
     ``canvas`` kelimelerin geldiği görüntü boyutudur (varsayılan warp tuvali);
     flatbed karesinde gerçek boyut verilmezse pencereler kayar.
+
+    ``deskew``: kalan eğim düzeltmesi (gruplamadan önce kelime merkezleri
+    döndürülür). ``skew_strict`` warp yapılmış kare içindir: dörtgen eğimin
+    çoğunu gidermiştir, kestirim sıkı kapıyla koşar (±5°, 1.8x skor marjı)
+    ki blur gürültüsü yanlış açı üretip satırları karıştırmasın.
     """
     table = rois if rois is not None else load_rois()
     active_canvas = canvas if canvas is not None else CANVAS
+    # Kalıntı eğim düzeltmesi gruplamadan ÖNCE: hem satır birleştirme hem
+    # pencere eşlemesi düzeltilmiş merkezlerle çalışır.
+    if deskew:
+        words = deskew_words(words, active_canvas, strict=skew_strict)
     ocr_text = build_ocr_text(words)
     result = LocalParseResult(
         document_type=document_type_value(document_type_key),
@@ -775,9 +1028,11 @@ def parse_local_fields(
             if row.key == "name" and document_type_key == "sundhedskort":
                 # Ad penceresi klinik/kurum satırlarını da kesebilir; ad
                 # pencerenin en alttaki harf satırıdır (son alfa satırı).
-                scope = _last_alpha_line(scope) or scope
+                # Boş kalırsa AD YOKTUR — düşürülen etiketleri geri iade
+                # etmek yok ('Sikr.'/'SUNDHEDSKORT' ad olmaz; saha 10 Eyl).
+                scope = _last_alpha_line(scope)
             else:
-                scope = _alpha_words(scope) or scope
+                scope = _alpha_words(scope)
             text = _scope_text(scope)
         elif row.field == "address":
             scope = _drop_label_tokens(scope)
