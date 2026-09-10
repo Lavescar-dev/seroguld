@@ -128,3 +128,69 @@ rotate-baked marjinal ad kayıpları sim koşullarında, koerekort_02 portre
 (tilt-baked fixture + portre + yeniden kodlama birikimi), idkort ad penceresi
 koerekort geometrisiyle çalıştığından çifte-dönüşümde tarih satırı sızabilir
 (sundhedskort/kørekort etkilenmez; idkort MRZ yedeği ayakta).
+
+### 0.3.41 — VLM yedeği adayı bench'i: Mistral ailesi GEÇEMEDİ (11 Eyl 2026)
+
+GDPR gerekçesiyle yalnız AB-uçlu VLM yedeği arayışında Mistral (Paris) tek onaylı
+adaydı. Kapı: aynı modelin **OpenRouter** dağıtımıyla (sentetik fixture, maliyet
+~$0.01) yerel tabanı geriletmeyecek parite. Sonuç — **aile üyelerinin üçü de
+merge zincirini geriletir, kapı geçilmedi, Mistral hesabı açılmadı:**
+
+| Kanal | full_name | cpr* | doc_number | postal+city | TOPLAM |
+|---|---|---|---|---|---|
+| Taban (yerel+barkod, VLM yok) | **19/20** | 0/20* | 14/15 | 10/10 | **43/65** |
+| Mistral Small 3.2 | 11/20 | 2/20 | 14/15 | 10/10 | 37/65 |
+| Mistral Small 2603 | 7/20 | 5/20 | 15/15 | 10/10 | 37/65 |
+| Mistral Large 2512 | 15/20 | 0/20 | 15/15 | 10/10 | 40/65 |
+
+\* cpr, sentetik fixture'larda ölçülmez (barkod bölgesi çizilidir, zxing çözmez);
+gerçek kart cpr'ı barkod katmanından gelir. Karar full_name/doc_number üzerinedir.
+
+İki teknik not:
+
+- **Merge politikası gerilemenin ana nedeni**: `_merge_tiers` VLM alanını yerelin
+  ÜZERİNE koşulsuz yazar — zayıf VLM, doğru yerel okumayı ezer (Small 3.2 8,
+  Small 2603 12, Large 4 ad-regresyonu). VLM yedeği yeniden değerlendirilmeden
+  önce "VLM yalnız yerel boşluğu doldurur + çelişki needs_review" politikası
+  gerekir (0.3.42+ adayı).
+- **Koşul kırılımı**: taban clean/blur/lowlight/rotate 9/13 iken Mistral varyantları
+  7-9/13'te gezinir; VLM'in clean fixture'da bile hatası, modellerin küçük puntolu
+  Danca serif adlarda zayıf olduğunu gösterir.
+
+Runbook: `~/Clients/Recai_Demir/vlm-yedegi-etkinlestirme.md` (tetikleyici eşikleri,
+.env şablonu, smoke/parite adımları; hesap açma kararı bu kapıya bağlı kalır).
+
+## Saha telemetrisi nasıl okunur (0.3.41+)
+
+Her tarama iki tür satır yazar: (1) tarama özeti — `idscan.{side}.{lang}.{n}L.{n}F[.S|.NS].{initials}.{engineTag}`
+(mevcut, 0.3.30'dan beri); (2) **makine uyarı satırları — `idscan.warn.{side}.{type}.{token}`
+(0.3.41)**. Uyarı token'ları backend'in makine kodlarıdır: `glare_detected`,
+`roi_low_confidence`, `cpr_mod11_failed_soft`, `card_not_detected`, `vlm_failed:{code}`;
+extract hiç yanıt vermezse `extract_unreachable`. Dosya:
+`%APPDATA%\dk.seroguld.crm\logs\ui-diagnostics.jsonl` (metadata-only: görüntü,
+OCR metni, alan değeri kodlara ASLA girmez — atom kısıtı `[A-Za-z0-9-_.:+]`, ≤64).
+
+```bash
+# Tarama özeti kodlarının kırılımı
+jq -r '.errorCode | select(test("^idscan\\."))' ui-diagnostics.jsonl | sort | uniq -c | sort -rn
+
+# Tam-başarısız tarama orani: L.0F. = 0 alan uretilen taramalar
+TOTAL=$(grep -c '"errorCode":"idscan\.' ui-diagnostics.jsonl)
+ZERO=$(grep -c 'L\.0F\.' ui-diagnostics.jsonl)
+awk -v z=$ZERO -v t=$TOTAL 'BEGIN { printf "0F orani: %.1f%% (%d/%d)\n", 100*z/t, z, t }'
+
+# Uyarı satirlarinin kirilimi (0.3.41)
+jq -r '.errorCode | select(test("^idscan\\.warn\\."))' ui-diagnostics.jsonl | sort | uniq -c | sort -rn
+
+# Gizlilik denetimi (journal basmadan once): gorsel/metin sizmasi = 0 satir
+grep -ci 'base64\|data:image' ui-diagnostics.jsonl
+```
+
+Eşikler (VLM yedeği tetikleyicisi; tamamları runbook'ta):
+
+| Sinyal | Eşik | Eylem |
+|---|---|---|
+| `L.0F.` satır oranı | > %5 / 2 hafta | VLM yedeği gündemi |
+| `roi_low_confidence` oranı | > %15 / 2 hafta | VLM yedeği gündemi |
+| `glare_detected` | > %20 | Kamera/parlama eğitimi |
+| `extract_unreachable` | > %5 | Backend/servis teşhisi |

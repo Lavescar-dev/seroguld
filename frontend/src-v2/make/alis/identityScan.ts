@@ -1125,6 +1125,25 @@ export function buildIdentityScanLowResCode(width?: number, height?: number): st
   return width !== undefined && height !== undefined ? `idscan.lowres.${width}x${height}` : 'idscan.lowres';
 }
 
+// Saha telemetrisi (0.3.41): extract yanıtının makine uyarı token'ları
+// (glare_detected, roi_low_confidence, cpr_mod11_failed_soft,
+// card_not_detected, vlm_failed:*) idscan.* ailesine yazılır —
+// ui-diagnostics.jsonl'den saha arıza oranları okunur. Görüntü/OCR metni/
+// alan değeri YASAK: koda yalnız uyarı kodu + taraf + belge tipi girer.
+// Rust validate_ui_diagnostic atom kısıtı: [A-Za-z0-9-_.:+], en fazla 64
+// karakter — dışı temizlenir, taşan kırpılır.
+export function buildIdentityScanWarnCodes(
+  side: 'front' | 'back',
+  documentType: string | null | undefined,
+  warnings: readonly unknown[],
+): string[] {
+  const type = (documentType || 'unknown').replace(/[^A-Za-z0-9-]/g, '').slice(0, 16) || 'unknown';
+  return warnings
+    .filter((token): token is string => typeof token === 'string' && Boolean(token.trim()))
+    .map((token) => `idscan.warn.${side}.${type}.${token.trim().replace(/[^A-Za-z0-9-_.:+]/g, '')}`)
+    .map((code) => (code.length > 64 ? `${code.slice(0, 61)}...` : code));
+}
+
 // Çoklu tarama birleşimi: ÖN YÜZ kanoniktir. Arka yüz taraması (MRZ
 // transliterasyonu "SOERENSEN AABERG", kategori legend gürültüsü, ikinci bir
 // kartın karışması) ön yüzden gelen doğru dolumları EZMEZ — yalnız eksik
@@ -1362,6 +1381,24 @@ export function useIdentityScan({
       void requestIdentityExtract(preview, side)
         .then((payload) => {
           if (seq !== extractSeqRef.current) return;
+          // Saha telemetrisi (0.3.41): extract yanıtının makine uyarı
+          // token'ları jsonl'e yazılır — alan üretmeyen erken-dönüş dahil
+          // her yol buradan geçer. Metadata-only: uyarı kodu + taraf +
+          // belge tipi; görüntü/OCR metni/alan değeri yazılmaz.
+          const warnCodes = buildIdentityScanWarnCodes(
+            side,
+            payload.document_type,
+            Array.isArray(payload.warnings) ? payload.warnings : [],
+          );
+          warnCodes.forEach((errorCode) => {
+            void writeUiDiagnostic({
+              occurredAt: new Date().toISOString(),
+              route: '/alis/identity-scan',
+              uiVariant,
+              frontendBuild: typeof __SERO_FRONTEND_BUILT_AT__ === 'string' ? __SERO_FRONTEND_BUILT_AT__ : 'dev',
+              errorCode,
+            });
+          });
           // Regex bir şey tutamadıysa extract bunun üzerinden kurtarır.
           let merged: IdentityParseResult = nextResult ?? { documentType: 'unknown', rawLines: [], fields: {} };
           const ocrTextResult = payload.ocr_text ? parseIdentityScan(payload.ocr_text) : null;
@@ -1437,6 +1474,15 @@ export function useIdentityScan({
         })
         .catch(() => {
           if (seq !== extractSeqRef.current) return;
+          // Saha telemetrisi (0.3.41): extract isteği hiç yanıt vermedi —
+          // arıza oranında ayrı imza.
+          void writeUiDiagnostic({
+            occurredAt: new Date().toISOString(),
+            route: '/alis/identity-scan',
+            uiVariant,
+            frontendBuild: typeof __SERO_FRONTEND_BUILT_AT__ === 'string' ? __SERO_FRONTEND_BUILT_AT__ : 'dev',
+            errorCode: `idscan.warn.${side}.extract_unreachable`,
+          });
           // Regex de başarısızsa ve extract de yanıt vermediyse alan kalıcı
           // olarak yok — sync yolun önizleme kuralı uygulanır.
           if (!parsedOk && !resultRef.current) setPreviews({});
