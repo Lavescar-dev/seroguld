@@ -167,6 +167,38 @@ gerçek kart cpr'ı barkod katmanından gelir. Karar full_name/doc_number üzeri
 Runbook: `~/Clients/Recai_Demir/vlm-yedegi-etkinlestirme.md` (tetikleyici eşikleri,
 .env şablonu, smoke/parite adımları; hesap açma kararı bu kapıya bağlı kalır).
 
+### 0.3.41 — Azure adayları bench'i (OpenRouter): gpt-4.1-mini PARİTE (12 Eyl 2026)
+
+Mistral kapıyı geçemeyince Azure EU Data Zone'da kullanılabilecek adaylar aynı
+sentetik sette (OpenRouter dağıtımıyla) ölçüldü. **Üç model tabanla BİREBİR parite** —
+tek fail yine bilinen pas_05_glare, ek kayıp sıfır:
+
+| Kanal | full_name | doc_number | postal+city | TOPLAM | gecikme/kart | Azure EU DZ |
+|---|---|---|---|---|---|---|
+| Taban (yerel+barkod) | 19/20 | 14/15 | 10/10 | **43/65** | 0,6-1,5 sn | - |
+| **gpt-4.1-mini** | 19/20 | 14/15 | 10/10 | **43/65** | **0,9-1,5 sn** | EVET (teyitli) |
+| gpt-5-mini | 19/20 | 14/15 | 10/10 | **43/65** | 18-32 sn | EVET (teyitli) |
+| gpt-5-nano | 19/20 | 14/15 | 10/10 | **43/65** | 10-18 sn | teyitsiz |
+| gpt-4.1-nano | 8/20 | 14/15 | 10/10 | 33/65 | <1 sn | EVET (teyitli) |
+| gpt-5.6-luna | 7/20 | 15/15 | 10/10 | 32/65 | ~2-4 sn | EVET (teyitli) |
+| gpt-5.4-nano | 7/20 | 13/15 | 9/10 | 29/65 | ~2-5 sn | EVET (teyitli) |
+
+Üç teknik not:
+
+- **Küçük-katman çöküşü**: nano/luna katmanları (4.1-nano 33, 5.6-luna 32,
+  5.4-nano 29) CLEAN fixture'larda bile adı bozuyor (7-8/20) - Mistral'da
+  görülen aynı tablo; model küçüklüğü küçük puntolu Danca adlarda ölümcül.
+- **Parite üçlüsünden üretim adayı gpt-4.1-mini**: parite + ~1 sn çağrı
+  (muhakemesiz hızlı model; gpt-5 ailesi muhakeme tokenlarıyla 10-32 sn) +
+  Azure EU Data Zone teyitli + ~$1/ay üretim maliyeti (50 kart/gün). gpt-5-mini
+  yedek aday (parite ama yavaş). gpt-5-nano paritesi kayda değer ama Azure
+  kullanılabilirliği teyitsiz.
+- **Resmi uç paritesi hâlâ şart**: OpenRouter sonucu kapı ölçümüdür; açma
+  kararı Azure ucu üzerinde aynı bench'in tekrarına bağlı (parite kuralı ±2).
+  Ve `_merge_tiers` koşulsuz-ezme politikası aynen geçerli: parite sentetikte
+  zararsız olsa da gerçek kartta VLM'in doğru yerel okumayı ezme riski durur
+  (0.3.42+ merge politikası adayı).
+
 ## Saha telemetrisi nasıl okunur (0.3.41+)
 
 Her tarama iki tür satır yazar: (1) tarama özeti — `idscan.{side}.{lang}.{n}L.{n}F[.S|.NS].{initials}.{engineTag}`
