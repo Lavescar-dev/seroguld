@@ -199,6 +199,34 @@ tek fail yine bilinen pas_05_glare, ek kayıp sıfır:
   zararsız olsa da gerçek kartta VLM'in doğru yerel okumayı ezme riski durur
   (0.3.42+ merge politikası adayı).
 
+### 0.3.41 — Azure katalog genişletmesi: Llama-4 ve elenmiş katalog katmanları (12 Eyl 2026)
+
+"Tablo dışında Azure'da vision/document adayı var mı?" araştırması (Microsoft Learn
+Foundry Models kataloğu + bölge tabloları, 12 Eyl 2026) ve aynı sette Llama-4 ölçümü:
+
+| Kanal | full_name | doc_number | postal+city | TOPLAM | gecikme/kart | Azure EU DZ |
+|---|---|---|---|---|---|---|
+| **llama-4-maverick** (17B-128E FP8) | 18/20 | 14/15 | 10/10 | **44/65** | 0,8-19,7 sn | EVET (teyitli) |
+| llama-4-scout | 13/20 | 12/15 | 9/10 | 34/65 | 7,3-22,1 sn | (Maverick ile aynı aile) |
+
+- **Maverick parite kuralı ±2 İÇİNDE (+1)** — tabanın tek fail'ine (pas_05_glare)
+  ek olarak pas_01_clean'i bozdu ama cpr'da 2 kurtarma (sentetik artefakt bölgesi);
+  doc_number tabanla aynı. gpt-4.1-mini'nin ardından **resmi-uç bench'e geçmeye hak
+  kazanan ikinci model**; token-verimli (20 fixture'da 10,8k token — nano 56k).
+- **Scout geçemedi**: ad 13/20 — nano/luna/Mistral katmanlarındaki çöküşle aynı tablo.
+- **Ölçülemeyen Azure-EU-DZ vision adayları**: Phi-4-multimodal-instruct (OpenRouter
+  'da yok; Azure ucu canlanınca doğrudan bench'lenecek) ve mistral-document-ai-2512
+  (çıktı metin — strict-JSON chat/completions protokole uyumsuz).
+- **Elenen katalog katmanları** (EU Data Zone yok veya emekli): Claude ailesi
+  (EU DZ YOK — "2026'da gelir" tarihsiz), Grok-4.1-fast ve Kimi-K2.6 (yalnız Global
+  Standard), Llama-3.2-Vision 11B/90B (emeklilik 2026-06-13 — geçti), Pixtral
+  (Azure'da direkt satılmıyor), Qwen2.5-VL (serverless yok — managed compute).
+- **Ayrı servis — Azure Document Intelligence prebuilt-idDocument**: Denmark East
+  bölgesi, Danca locale, ID kartı/kørekort/pasaport desteği; S0 $10/1000 sayfa,
+  F0'da ayda 500 sayfa ücretsiz. chat/completions DEĞİL — ayrı istemci kodu ister.
+  "Seçici yedek" tasarımında ilginç: yalnız 0F/low-confidence taramalar yönlendirilirse
+  (beklenen <%5) ücretsiz dilim yetebilir. Yedek aday değil, alternatif yol.
+
 ## Saha telemetrisi nasıl okunur (0.3.41+)
 
 Her tarama iki tür satır yazar: (1) tarama özeti — `idscan.{side}.{lang}.{n}L.{n}F[.S|.NS].{initials}.{engineTag}`
