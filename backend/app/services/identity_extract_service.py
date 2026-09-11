@@ -542,6 +542,11 @@ async def _call_vlm(
     """Tek VLM chat-completions çağrısı (bayrak+anahtar varken)."""
     payload: dict[str, Any] = {
         "model": model,
+        # Çıkış tavanı: strict-JSON alan çıkarımı asla 1024 token'i geçmez.
+        # Gönderilmezse OpenRouter modelin TAM tavanını (ör. 65536) kredi
+        # karşılığı rezerve eder ve düşük bakiyede 402 ile red döner; aynı
+        # tavan maliyet üst sınırı da garantiler.
+        "max_tokens": 1024,
         "response_format": _strict_response_format(),
         "messages": [
             {"role": "system", "content": _system_prompt()},

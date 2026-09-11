@@ -141,21 +141,28 @@ merge zincirini geriletir, kapı geçilmedi, Mistral hesabı açılmadı:**
 | Taban (yerel+barkod, VLM yok) | **19/20** | 0/20* | 14/15 | 10/10 | **43/65** |
 | Mistral Small 3.2 | 11/20 | 2/20 | 14/15 | 10/10 | 37/65 |
 | Mistral Small 2603 | 7/20 | 5/20 | 15/15 | 10/10 | 37/65 |
+| Mistral Medium 3.1 | 11/20 | 0/20 | 15/15 | 10/10 | 36/65 |
+| Mistral Medium 3 | 12/20 | 1/20 | 15/15 | 10/10 | 38/65 |
 | Mistral Large 2512 | 15/20 | 0/20 | 15/15 | 10/10 | 40/65 |
 
 \* cpr, sentetik fixture'larda ölçülmez (barkod bölgesi çizilidir, zxing çözmez);
 gerçek kart cpr'ı barkod katmanından gelir. Karar full_name/doc_number üzerinedir.
 
-İki teknik not:
+Üç teknik not:
 
 - **Merge politikası gerilemenin ana nedeni**: `_merge_tiers` VLM alanını yerelin
   ÜZERİNE koşulsuz yazar — zayıf VLM, doğru yerel okumayı ezer (Small 3.2 8,
-  Small 2603 12, Large 4 ad-regresyonu). VLM yedeği yeniden değerlendirilmeden
-  önce "VLM yalnız yerel boşluğu doldurur + çelişki needs_review" politikası
-  gerekir (0.3.42+ adayı).
+  Small 2603 12, Medium 3.1 8, Medium 3 7, Large 4 ad-regresyonu). VLM yedeği
+  yeniden değerlendirilmeden önce "VLM yalnız yerel boşluğu doldurur + çelişki
+  needs_review" politikası gerekir (0.3.42+ adayı).
 - **Koşul kırılımı**: taban clean/blur/lowlight/rotate 9/13 iken Mistral varyantları
-  7-9/13'te gezinir; VLM'in clean fixture'da bile hatası, modellerin küçük puntolu
-  Danca serif adlarda zayıf olduğunu gösterir.
+  6-9/13'te gezinir; VLM'in clean fixture'da bile hatası, modellerin küçük puntolu
+  Danca serif adlarda zayıf olduğunu gösterir. Pahalı Medium katmanı Small'dan daha
+  iyi DEĞİL — ailede model büyüklüğü ad-okumayı kurtarmıyor.
+- **402 / max_tokens (12 Eyl)**: VLM isteği `max_tokens` göndermiyordu; OpenRouter
+  modelin tam tavanını (65536) krediye rezerve edip düşük bakiyede 402 döndürdü —
+  zincir yerel yola beklendiği gibi düştü (fallback tasarımı sahada doğrulandı).
+  Fix: `_call_vlm` payload'ına `max_tokens: 1024` (maliyet üst sınırı da garantiler).
 
 Runbook: `~/Clients/Recai_Demir/vlm-yedegi-etkinlestirme.md` (tetikleyici eşikleri,
 .env şablonu, smoke/parite adımları; hesap açma kararı bu kapıya bağlı kalır).
