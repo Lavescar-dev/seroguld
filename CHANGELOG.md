@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.3.42] — 2026-09-12
+
+### Kimlik OCR hiyerarşisi — yerel birincil + kalite-tetikli VLM yedeği
+
+- **Hiyerarşi:** yerel (RapidOCR) katman birincil okuyucu; VLM yalnız kalite
+  tetiklendiğinde çağrılır (`IDENTITY_VLM_TRIGGER_MODE=quality`, default) ve
+  birleşimde yalnız BOŞ alanları doldurur. Tetik yoksa VLM hiç çağrılmaz —
+  kaynak=local, usage yok, maliyet sıfır. `always` kipi eski koşulsuz
+  davranışı geri getirir (bench modu; merge politikası iki kipte ortak).
+- **Tetikler (1→4 öncelik, tek neden döner):** (1) no_fields — full_name
+  boş; ya da doc_number boş ve belge sundhedskort değil (sundhedskortta
+  basılı belge no yok); (2) lowconf — roi_low_confidence veya çekirdek alan
+  güveni eşik altı; (3) ndet/glare — card_not_detected / glare_detected;
+  (4) slow — yerel gecikme > 5 sn (`IDENTITY_VLM_LOCAL_SLOW_SECONDS`).
+- **Merge:** öncelik barkod > yerel > VLM. Çekirdek alanlarda yerel ile VLM
+  kanonik biçimde çelişirse YEREL KORUNUR, alan needs_review'a düşer ve
+  `vlm_conflict:{field}` uyarısı yazılır — koşulsuz ezme kalktı (Mistral
+  bench'inde beş modelin de yereli bozması tam buydu). Kanonik karşılaştırma
+  biçim farkını çelişki saymaz; document_type yerel-öncelikli.
+- **Telemetri:** `local_slow`, `vlm_triggered:{nofields|lowconf|ndet|glare
+  |slow|always}`, `vlm_conflict:{field}` token'ları idscan.warn.* ailesine
+  yazar (alan adı taşınır, alan değeri asla). local_slow'da tarama ekranında
+  "Yerel okuma çok uzun sürdü, bulut doğrulaması denenecek" ikazı görünür.
+- **Capabilities:** `vlm_trigger_mode` additive alan (eski frontend
+  bilinmeyeni yok sayar). VLM model fallback tek yardımcıdan beslenir
+  (boşsa `gpt-4.1-mini`); Azure'da bu ayar DEPLOYMENT adıdır.
+- **Bench:** resmi VLM bench artık always kipte koşar (quality kipte
+  tetiksiz taramalarda VLM çağrılmayınca ölçüm totolojikleşir); vlm kanal
+  kapısı identity anahtarını da kabul eder. Sentetik taban 43/65 ve 48/50
+  alan doğruluğu birebir korunur.
+
+## [0.3.41] — 2026-09-11
+
+### Kimlik telemetri + VLM yedeği aday bench'leri
+
+- **idscan.warn telemetri:** extract yanıtının makine uyarı token'ları
+  (glare_detected, roi_low_confidence, card_not_detected, cpr_mod11_failed_soft,
+  vlm_failed:*) `idscan.warn.{side}.{type}.{token}` kodlarıyla
+  ui-diagnostics.jsonl'e yazılır — saha arıza oranları jsonl'den okunur;
+  atom kısıtı [A-Za-z0-9-_.:+] ≤64 karakteri üretici garantiler.
+- **VLM max_tokens tavani:** `_call_vlm` payload'ına `max_tokens: 1024` —
+  OpenRouter modelin tam tavanını krediye rezerve edip 402 döndürüyordu;
+  fix maliyet üst sınırını da garantiler.
+- **Mistral ailesi kapıyı GEÇEMEDİ** (sentetik bench, 5/5 model yereli
+  bozdu: Small 3.2/2603 37, Medium 3/3.1 36-38, Large 40 vs taban 43) —
+  hesap açılmadı; merge politikası gerilemenin ana nedeni olarak belgelendi.
+- **Azure adayları (OpenRouter dağıtımıyla):** gpt-4.1-mini / gpt-5-mini /
+  gpt-5-nano tabanla BİREBİR parite (43/65), llama-4-maverick 44/65.
+  Üretim adayı **gpt-4.1-mini** (parite + ~1 sn + Azure EU Data Zone
+  teyitli + ~$1/ay); küçük katmanlar (4.1-nano, 5.6-luna, 5.4-nano)
+  clean fixture'da bile adı bozuyor.
+- Belgeler: `docs/IDENTITY_LOCAL_OCR_BENCHMARK_TR.md` bench bölümleri +
+  `~/Clients/Recai_Demir/vlm-yedegi-etkinlestirme.md` runbook.
+
+## [0.3.40] — 2026-09-10
+
+### Flatbed / eğik / portre tarama OCR düzeltmesi
+
+- **Portre (dikey) tarama:** kadraj-önceliği + ortogonal sonda — dik kart
+  manzara kadrajda en fazla %36'lık pencere alıyordu; portre 0/50 → 41/50.
+  Satır-bant istatistiği flip-değişmez; foto-sol asimetrisi satır bantlarına
+  taşınır.
+- **Eğik tarama:** 180° ters aday ≥2 alan şartıyla; çapa token taraması;
+  deskew izdüşüm + sıkı kapı + 200 kelime tavanı.
+- **Warp tam çözünürlükten:** küçültülmüş tuvalden değil, full-res kaynaktan
+  warp (satır yüksekliği korunur).
+- Sim katmanı benchmark'ta ölçülmez (asis koşul gerçek taramada değerlidir).
+
 ## [0.3.39] — 2026-09-09
 
 ### Kimlik OCR — yerel PP-OCRv6 motoru + barkod bayraktan ayrıldı

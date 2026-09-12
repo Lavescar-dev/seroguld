@@ -12,7 +12,9 @@ Tarama/fotoğraf (Windows istemci)
   → bellek içi görüntü (diske YAZILMAZ)
   → Tier 0 barkod decode (lokal, ağ YOK)
   → Tier 1 alan doğrulama (lokal)
-  → [yalnız identity_extract_enabled=true ise] Tier 2 VLM isteği (görüntü data URL)
+  → [yalnız identity_extract_enabled=true VE yerel katman kalite tetiği
+     üretirse (0.3.42): boş çekirdek alan / düşük güven / kart-bulunamadı
+     -parlama / gecikme aşımı] Tier 2 VLM isteği (görüntü data URL)
   → IdentityParseResult → operatör onayı → müşteri kaydı
   → görüntü bellekten atılır (saklanmaz)
 ```
@@ -74,8 +76,12 @@ kodunda değişiklik yok). Zorunlu kurallar:
   görüntüsünü asla görmez (config kalıbı: `opmc_api_key` gibi per-feature).
   Anahtar yalnız `.env`'de yaşar (gitignore'lu), repoya asla girmez; sızı
   şüphesinde portaldan regenerate + tüm makinelerde değiştirme.
-- Model: `gpt-5-mini` (GA, ~$0.0009/tarama). Alternatif `gpt-5.4-mini`
-  yalnız gerçek-kart benchmark'ı düşük gösterirse.
+- Model: `gpt-4.1-mini` (0.3.42 tabanı, sentetik bench 43/65 = yerel taban
+  parite, ~1 sn/tarama, ~$1/ay üretim). Yedek aday `llama-4-maverick` (44/65)
+  ve `gpt-5-mini` (parite ama 18-32 sn). Kalite-tetikli minimizasyon
+  (0.3.42): VLM isteği yalnız yerel katman tetik ürettiğinde atılır — tipik
+  dükkân gününde taramaların çoğu yerel dolu ve temizdir, görüntü sağlayıcıya
+  hiç gitmez; bu, veri minimizasyonun operasyonel ifadesidir.
 - Canlı açma (`IDENTITY_EXTRACT_ENABLED=true`) yine benchmark kapısına
   bağlıdır; bu belge uç değişikliğini değil, işlemcinin kimliğini
   günceller: işlemci = Microsoft (Azure OpenAI, AB bölgesi), veri

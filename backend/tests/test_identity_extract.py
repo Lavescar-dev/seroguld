@@ -23,6 +23,8 @@ from app.services.identity_extract_service import (
     extract_identity,
     identity_capabilities,
 )
+from app.services.identity_local_ocr_service import LocalOcrOutcome
+from app.services.identity_local_parse import LocalField, LocalParseResult
 
 VALID_CPR = "0101011119"  # mod-11 geçer
 UNVERIFIED_CPR = "0101901234"
@@ -39,6 +41,10 @@ class _StubSettings:
     identity_extract_max_retries = 1
     identity_extract_max_image_bytes = 8 * 1024 * 1024
     identity_extract_confidence_threshold = 0.62
+    # 0.3.42: kalite tetikleyici ayarları — service bu attribute'ları okur;
+    # stub'a eklenmezse mevcut extract testleri AttributeError düşer.
+    identity_vlm_trigger_mode = "quality"
+    identity_vlm_local_slow_seconds = 5.0
     identity_local_ocr_enabled = False
     identity_local_ocr_model_label = "rapidocr test etiketi"
     identity_ocr_roi_overrides_json = ""
@@ -94,6 +100,17 @@ def stub_settings(monkeypatch):
         lambda: _StubSettings(),
     )
     return _StubSettings
+
+
+@pytest.fixture()
+def local_settings(monkeypatch):
+    """quality kipi + YEREL KATMAN AÇIK — tetikleyici testleri gerçek zincir
+    şekliyle koşar (stub'in local_enabled=False'u tetik testlerini bozar)."""
+    monkeypatch.setattr(
+        "app.services.identity_extract_service.get_settings",
+        lambda: LocalSettings(),
+    )
+    return LocalSettings
 
 
 @pytest.mark.asyncio
@@ -350,3 +367,411 @@ def test_loads_json_tolerates_code_fence() -> None:
     payload = {"document_type": None, "fields": {}}
     fenced = "```json\n" + json.dumps(payload) + "\n```"
     assert _loads_json(fenced) == payload
+
+
+# ---------------------------------------------------------------------------
+# 0.3.42 — kalite tetikleyici + fill-only-empty merge hiyerarşisi
+# ---------------------------------------------------------------------------
+
+
+class AlwaysSettings(_StubSettings):
+    """always kipi + yerel katman: merge davranışını VLM tetik sıklığından
+    ayriştıran testler bu sınıfla koşar — merge politikası iki kipte ortaktır."""
+
+    identity_vlm_trigger_mode = "always"
+    identity_local_ocr_enabled = True
+
+
+class LocalSettings(_StubSettings):
+    """quality kipi + yerel katman: tetikleyici testleri gerçek zincir
+    şeklini taşır (stub'in local_enabled=False'u tetik testlerini bozar)."""
+
+    identity_local_ocr_enabled = True
+
+
+def _local_outcome(
+    fields: dict[str, tuple[str, float]] | None = None,
+    *,
+    document_type: str | None = "driver_license",
+    latency_ms: float = 800.0,
+    warnings: list[str] | None = None,
+) -> LocalOcrOutcome:
+    """Sahte yerel zincir sonucu: run_local_ocr monkeypatch'ine beslenir."""
+    local_fields = {
+        name: LocalField(value=value, confidence=conf, roi_key=name, checksum_ok=True)
+        for name, (value, conf) in (fields or {}).items()
+    }
+    return LocalOcrOutcome(
+        engine_used=True,
+        engine_name="local",
+        latency_ms=latency_ms,
+        document_type=document_type,
+        parse=LocalParseResult(document_type=document_type, document_type_key=None, fields=local_fields),
+        warnings=list(warnings or []),
+    )
+
+
+def _patch_local(monkeypatch, outcome: LocalOcrOutcome) -> None:
+    monkeypatch.setattr(
+        "app.services.identity_extract_service.run_local_ocr", lambda image_bytes, **kwargs: outcome
+    )
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_trigger_skips_vlm_when_local_clean(monkeypatch, local_settings) -> None:
+    """Tetik 0: yerel dolu + uyarı yok + hızlı → VLM ÇAĞRILMAZ (maliyet yok)."""
+    outcome = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.9),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": ("0101011119", 0.97),
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen == {}
+    assert result.usage is None
+    assert result.source == "local+barcode"
+    assert not any(w.startswith("vlm_triggered") for w in result.warnings)
+    assert "local_slow" not in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_trigger_nofields_calls_vlm_and_fills_empty(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Tetik 1: full_name boş → VLM çağrılır ve yalnız boş alanı doldurur."""
+    outcome = _local_outcome({"doc_number": ("DK1000099", 0.9), "cpr_number": ("0101011119", 0.97)})
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({"full_name": ("Vlm Ad", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert result.fields["full_name"].value == "Vlm Ad"
+    assert result.fields["doc_number"].value == "DK1000099"  # yerel bozulmadı
+    assert "vlm_triggered:nofields" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_trigger_lowconf(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Tetik 2a: roi_low_confidence uyarısı → lowconf."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9)},
+        warnings=["roi_low_confidence"],
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:lowconf" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_trigger_core_field_low_confidence(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Tetik 2b: çekirdek alan güveni eşiğin (0.62) altında → lowconf."""
+    outcome = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.4),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": ("0101011119", 0.97),
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:lowconf" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_trigger_card_not_detected(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Tetik 3a: card_not_detected → ndet."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9)},
+        warnings=["card_not_detected"],
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:ndet" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_local_slow_emits_warning_and_triggers_vlm(monkeypatch, local_settings, caplog) -> None:
+    """Tetik 4: yerel gecikme > 5 sn → local_slow olayı + vlm_triggered:slow.
+
+    logger.warning biçim argümanı da denetlenir — format hatası varsa
+    logging çağrısının kendisi patlar.
+    """
+    outcome = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.9),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": ("0101011119", 0.97),
+        },
+        latency_ms=6200.0,
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    with caplog.at_level("WARNING", logger="app.services.identity_extract_service"):
+        result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "local_slow" in result.warnings
+    assert "vlm_triggered:slow" in result.warnings
+    assert "çok uzun sürdü" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_conflict_keeps_local_and_needs_review(monkeypatch) -> None:
+    """Çelişki: yerel doc_number korunur, alan needs_review + vlm_conflict."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9)}
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"doc_number": ("DK1234567", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.fields["doc_number"].value == "DK1000099"  # yerel tutuldu
+    assert result.fields["doc_number"].review == "needs_review"
+    assert "vlm_conflict:doc_number" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_canonical_equal_is_not_conflict(monkeypatch) -> None:
+    """Kanonik eşitlik: '0101801234' ↔ '010180-1234' aynı CPR — çelişki YOK."""
+    outcome = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.9),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": ("0101801234", 0.97),
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"cpr_number": ("010180-1234", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url("xxxx"), side="front")
+    assert not any(w.startswith("vlm_conflict") for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_document_type_local_precedence(monkeypatch) -> None:
+    """Türde yerel öncelik: VLM id_card dese bile yerel driver_license kalır."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9)},
+        document_type="driver_license",
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({}, document_type="id_card")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.document_type == "driver_license"
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_conflict_review_survives_birth_reeval(monkeypatch) -> None:
+    """Çelişki needs_review'ı doğum↔CPR yeniden-değerlendirmesi EZEMEZ.
+
+    Yerel doğum tarihi CPR ile tutarlı → re-eval validated der; VLM farklı
+    tarih okudu → çelişki işaretlemesi (re-eval SONRASI) needs_review'a
+    döndürür. Sıra ters olsaydı VALIDATED ezardı.
+    """
+    outcome = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.9),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": (VALID_CPR, 0.97),
+            "birth_date": ("01.01.1901", 0.9),  # VALID_CPR decode'u ile tutarlı
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"birth_date": ("1985-05-05", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.fields["birth_date"].review == "needs_review"
+    assert result.fields["birth_date"].value == "01.01.1901"  # yerel değer korundu
+    assert "vlm_conflict:birth_date" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_expiry_conflict_and_canonical_date(monkeypatch) -> None:
+    """expiry_date: gerçek fark → needs_review; aynı tarih farklı biçim → dokunma."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9), "expiry_date": ("01.01.2030", 0.9)}
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"expiry_date": ("2030-01-01", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    same = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert same.fields["expiry_date"].review == "validated"
+    assert not any(w.startswith("vlm_conflict") for w in same.warnings)
+
+    async def conflicting_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"expiry_date": ("01.01.2031", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", conflicting_post_chat)
+    different = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert different.fields["expiry_date"].value == "01.01.2030"
+    assert different.fields["expiry_date"].review == "needs_review"
+    assert "vlm_conflict:expiry_date" in different.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_fill_only_empty_keeps_local_values(monkeypatch) -> None:
+    """Fill-only-empty: VLM boş alanı doldurur, yerel dolu alanı BOZMAZ.
+
+    Serbest metin alanları (şehir gibi) kanonik karşılaştırmaya girmez:
+    yerel doluyken VLM değeri tamamen yok sayılır.
+    """
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9), "city": ("Aalborg", 0.8)}
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload(
+            {"full_name": ("Vlm Ad", 0.9), "city": ("Kobenhavn", 0.9), "address": ("Vesterbro 1", 0.9)},
+            document_type="driver_license",
+        )
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.fields["full_name"].value == "Yerel Ad"
+    assert result.fields["city"].value == "Aalborg"
+    assert result.fields["address"].value == "Vesterbro 1"  # boştu → VLM doldurdu
+
+
+@pytest.mark.asyncio
+async def test_extract_barcode_cpr_conflict_is_not_marked(monkeypatch, stub_settings) -> None:  # noqa: ARG001
+    """Barkod CPR otoriterdir: VLM CPR çelişkisi vlm_conflict işareti ÜRETMEZ."""
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({"cpr_number": ("0101909999", 0.9)})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert result.fields["cpr_number"].value == VALID_CPR
+    assert result.fields["cpr_number"].review == "validated"
+    assert not any(w.startswith("vlm_conflict:cpr_number") for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_extract_always_mode_calls_vlm_on_clean_scan(monkeypatch) -> None:
+    """always kipi: temiz taramada bile çağrılır; merge politikası aynıdır."""
+    outcome = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.9),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": ("0101011119", 0.97),
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:always" in result.warnings
+    assert result.fields["full_name"].value == "Yerel Ad"  # merge: yerel korunur
+
+
+def test_identity_vlm_settings_read_from_env(monkeypatch) -> None:
+    """Yeni ayarlar env'den okunur — doğrudan Settings() kurulur (get_settings
+    lru_cache'lidir; cache'li örneği bozmak diğer testleri bozar)."""
+    from app.config import Settings
+
+    monkeypatch.setenv("IDENTITY_VLM_TRIGGER_MODE", "always")
+    monkeypatch.setenv("IDENTITY_VLM_LOCAL_SLOW_SECONDS", "7.5")
+    settings = Settings()
+    assert settings.identity_vlm_trigger_mode == "always"
+    assert settings.identity_vlm_local_slow_seconds == 7.5
+
+
+@pytest.mark.asyncio
+async def test_extract_sundhedskort_clean_scan_does_not_trigger(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Sundhedskort'ta basılı doc_number YOKTUR (composer üretmez): temiz yerel
+    okuma tetik üretmez → VLM çağrılmaz. driver_license'ta doc_number boşsa
+    tetiklenir (tip-farkındalıklı no_fields)."""
+    sundhedskort_outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "cpr_number": ("0101011119", 0.97)},
+        document_type="sundhedskort",
+    )
+    _patch_local(monkeypatch, sundhedskort_outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen == {}
+
+    licence_outcome = _local_outcome({"full_name": ("Yerel Ad", 0.9), "cpr_number": ("0101011119", 0.97)})
+    _patch_local(monkeypatch, licence_outcome)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:nofields" in result.warnings

@@ -7,8 +7,12 @@
 3. yerel katman: identity_local_ocr_enabled + RapidOCR kuruluysa
    (ön-işleme → ROI parse → doğrulama; tamamen offline)
 4. Tier 2 VLM yalnız identity_extract_enabled + anahtar varsa (kod aynı,
-   default KAPALI; maliyet sayacı yalnız bu katman koşarsa yazılır)
-5. birleşim önceliği ALAN BAŞINA barkod > VLM > yerel
+   default KAPALI; maliyet sayacı yalnız bu katman koşarsa yazılır).
+   0.3.42: ayrıca KALİTE TETİKLEDİR — quality kipte tetik yoksa VLM hiç
+   çağrılmaz (nofields/lowconf/ndet/glare/slow; _vlm_should_trigger)
+5. birleşim önceliği ALAN BAŞINA barkod > yerel > VLM; VLM yalnız boş
+   alanları doldurur, çekirdek alan çelişkisinde YEREL KORUNUR ve alan
+   needs_review'a düşer (sessiz ezme kalktı)
 
 VLM koşmadıysa usage=None olur → uç maliyet satırı (AIUsageLog) YAZMAZ.
 Yerel motor kurulu değilse zincir yine de barkod döner; frontend Windows
@@ -26,6 +30,7 @@ import asyncio
 import base64
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -90,6 +95,15 @@ _CONFIDENCE_KEYS = {
     "expiry_date": "expiry_date",
 }
 
+# 0.3.42: VLM birleşiminde ÇELİŞKİ denetlenen çekirdek alanlar. Adres/şehir/
+# postal fill-only'dir (serbest metin — kanonik karşılaştırma yalan söyler);
+# country yerel katmanca hiç üretilmez → saf VLM alanı, fill-only ataması
+# bilinçlidir. expiry_date kanonik tarih karşılaştırmasıyla güvenlidir:
+# sessiz yanlış son-kullanma tarihi needs_review'siz geçemez.
+_VLM_CONFLICT_FIELDS = frozenset(
+    {"full_name", "cpr_number", "birth_date", "doc_number", "expiry_date"}
+)
+
 
 class IdentityExtractUnavailable(HTTPException):
     def __init__(self, detail: str = "Kimlik çıkarma servisi kapalı.") -> None:
@@ -118,6 +132,77 @@ def _vlm_api_key(settings) -> str:
     return settings.identity_extract_api_key.strip() or settings.openai_api_key.strip()
 
 
+def _identity_model(settings) -> str:
+    """VLM model adı: ayar boşsa 0.3.42 tabanı (gpt-4.1-mini, bench 43/65).
+
+    İKİ çağrı noktası da (identity_capabilities + extract_identity) bu
+    yardımcıdan beslenir — ikiz fallback zincirinin sapması olmasın.
+    Azure'da ``identity_extract_model`` DEPLOYMENT adıdır (model adı değil):
+    /openai/v1 ucu model alanına deployment ister, runbook notu.
+    """
+    return (settings.identity_extract_model or "").strip() or "gpt-4.1-mini"
+
+
+def _vlm_should_trigger(
+    *,
+    local: LocalOcrOutcome | None,
+    local_fields: dict[str, LocalField],
+    barcode_hit: IdentityBarcodeHit | None,
+    warnings: list[str],
+    settings,
+) -> str | None:
+    """0.3.42 kalite tetikleyicisi — VLM'in çağrılma NEDENİ (None = çağrılmaZ).
+
+    Çoklu eşleşmede 1→4 önceliğin İLK nedeni döner: telemetri atomludur
+    (``vlm_triggered:{reason}`` tek token). ``always`` kipi bu işlevi hiç
+    çağırmaz — çağrı sıklığını eski hâle getirir; merge politikası her iki
+    kipte ortaktır. Bayrak/anahtar yoksa hiç değerlendirilmez (zincirin
+    dışında kalır), yani ``local_slow`` uyarısı da üretilmez.
+
+    1. no_fields: full_name boş; VEYA doc_number boş ve belge sundhedskort
+       DEĞİL (sundhedskortta basılı belge no yoktur — composer üretmez;
+       tip None iken muhafazakâr taraf tetikleyendir).
+    2. lowconf: roi_low_confidence uyarısı VEYA çekirdek alan güveni eşik
+       altı (barkod CPR otoriterdir — barkod varken cpr güvenine bakılmaz).
+    3. ndet/glare: card_not_detected / glare_detected makine uyarıları.
+    4. slow: yerel motor gecikmesi identity_vlm_local_slow_seconds'i aştı.
+    """
+    doc_type = local.document_type if local else None
+    sundhedskort = doc_type == "sundhedskort"
+
+    def _value(name: str) -> str:
+        field = local_fields.get(name)
+        return field.value if field else ""
+
+    if not _value("full_name"):
+        return "nofields"
+    if not sundhedskort and not _value("doc_number"):
+        return "nofields"
+
+    if "roi_low_confidence" in warnings:
+        return "lowconf"
+    core = ["full_name"] + ([] if sundhedskort else ["doc_number"])
+    if barcode_hit is None:
+        core.append("cpr_number")
+    for name in core:
+        field = local_fields.get(name)
+        if field and field.confidence < float(settings.identity_extract_confidence_threshold):
+            return "lowconf"
+
+    if "card_not_detected" in warnings:
+        return "ndet"
+    if "glare_detected" in warnings:
+        return "glare"
+
+    if (
+        local is not None
+        and local.engine_used
+        and local.latency_ms > float(settings.identity_vlm_local_slow_seconds) * 1000.0
+    ):
+        return "slow"
+    return None
+
+
 async def identity_capabilities() -> dict[str, Any]:
     """GET /alis/identity/capabilities gövdesi — yalnız bool/etiket, PII yok.
 
@@ -134,7 +219,7 @@ async def identity_capabilities() -> dict[str, Any]:
     sözleşmesi eski adı pinlediği için ikisi de gönderilir.
     """
     settings = get_settings()
-    model = (settings.identity_extract_model or "").strip() or settings.openai_model
+    model = _identity_model(settings)
     vlm_enabled = bool(settings.identity_extract_enabled and _vlm_api_key(settings))
 
     # D1: motor kurulumu başarısızsa False — zarif düşüş sinyali. İlk çağrı
@@ -154,6 +239,8 @@ async def identity_capabilities() -> dict[str, Any]:
         # local_engine yalnız "motor kurulu mu" der.
         "local_enabled": bool(settings.identity_local_ocr_enabled),
         "local_model": settings.identity_local_ocr_model_label if local_engine else None,
+        # 0.3.42 (additive): eski frontend bilinmeyeni yok sayar.
+        "vlm_trigger_mode": settings.identity_vlm_trigger_mode,
     }
 
 
@@ -390,11 +477,46 @@ async def extract_identity(
     # VLM İSTEĞE BAĞLI katmandır: sağlayıcı hatsı barkod/yerel sonuçları
     # ASLA çöpe attırmaz (0.3.39 sözleşmesi) — hata uyarıya düşer, zincir
     # elindekiyle döner. usage yalnız sağlıklı yanıtta yazılır.
+    # 0.3.42: artık KALİTE TETİKLİDİR — quality kipte tetik yoksa VLM hiç
+    # çağrılmaz (kaynak=local, usage yok, maliyet yok); always kipte her
+    # taramada çağrılır (eski davranış; bench modu). Merge politikası iki
+    # kipte ortaktır.
     vlm_fields: dict[str, IdentityFieldOut] = {}
     doc_type: str | None = None
     usage_summary = None
-    if settings.identity_extract_enabled and _vlm_api_key(settings):
-        model = (settings.identity_extract_model or "").strip() or settings.openai_model
+    vlm_wanted = bool(settings.identity_extract_enabled and _vlm_api_key(settings))
+    # Gecikme olayı (local_slow) tetikten BAĞIMSIZ telemetridir: bayrak
+    # açıkken gecikme aşımında yazılır — kalite kipte bu aynı zamanda tetik
+    # nedeni de olabilir (_vlm_should_trigger case 4), o zaman olay + tetik
+    # İKİ ayrı token üretir (bilinçli tekrar).
+    local_slow = bool(
+        vlm_wanted
+        and local is not None
+        and local.engine_used
+        and local.latency_ms > float(settings.identity_vlm_local_slow_seconds) * 1000.0
+    )
+    if local_slow:
+        warnings.append("local_slow")
+        logger.warning(
+            "Kimlik yerel motor çok uzun sürdü (%.1f sn) - VLM yedegi denenecek",
+            local.latency_ms / 1000.0,
+        )
+    trigger_reason: str | None = None
+    if vlm_wanted:
+        trigger_reason = (
+            "always"
+            if settings.identity_vlm_trigger_mode == "always"
+            else _vlm_should_trigger(
+                local=local,
+                local_fields=local_fields,
+                barcode_hit=barcode_hit,
+                warnings=warnings,
+                settings=settings,
+            )
+        )
+    if trigger_reason is not None:
+        warnings.append(f"vlm_triggered:{trigger_reason}")
+        model = _identity_model(settings)
         base_url = (settings.identity_extract_base_url or "").strip().rstrip("/") or settings.openai_base_url.rstrip("/")
         try:
             data = await _call_vlm(
@@ -427,7 +549,8 @@ async def extract_identity(
                 cpr_for_consistency=cpr_guess or None,
             )
 
-    # ---- Birleşim: alan başına barkod > VLM > yerel
+    # ---- Birleşim: alan başına barkod > yerel > VLM (0.3.42: VLM yalnız
+    # tetiklenince koşar ve yalnız boş alanları doldurur)
     fields = _merge_tiers(
         local_fields=local_fields,
         vlm_fields=vlm_fields,
@@ -444,7 +567,11 @@ async def extract_identity(
     source = _source_label(local_used=bool(local is not None and local.engine_used), vlm_used=usage_summary is not None, barcode_hit=barcode_hit)
 
     return IdentityExtractOut(
-        document_type=doc_type or (local.document_type if local else None),
+        # 0.3.42: türde YEREL ÖNCELİKLİ — basılı belge ipucu VLM tahmininden
+        # güvenilirdir; VLM türü yalnız yerel bilmiyorsa devreye girer.
+        # (local_fields'ta document_type yoktur, fill-only döngüsü bunu
+        # yakalayamaz — bu yüzden açık sıralama gerekir.)
+        document_type=(local.document_type if local and local.document_type else None) or doc_type,
         fields=fields,
         barcode=IdentityBarcodeOut(cpr=barcode_hit.cpr, verified=barcode_hit.verified) if barcode_hit else None,
         warnings=warnings,
@@ -481,6 +608,46 @@ def _source_label(*, local_used: bool, vlm_used: bool, barcode_hit: IdentityBarc
     return "none"
 
 
+def _canonical(name: str, value: str) -> str:
+    """Alan ailesine göre kanonik karşılaştırma biçimi (0.3.42).
+
+    Ham string eşitliği biçim farkını sahte çelişkiye çevirir: VLM basılı
+    biçimi korur ('010180-1234') ama yerel onarım düz rakam verir
+    ('0101801234') — ikisi aynı CPR'dır. Ayrıştırılamayan değer ham haliyle
+    (boşluk-collapsed, casefold) karşılaştırılır.
+    """
+    text = (value or "").strip()
+    if name == "cpr_number":
+        return re.sub(r"\D", "", text)
+    if name in ("birth_date", "expiry_date"):
+        digits = _canonical_date_digits(text)
+        return digits or text.casefold()
+    if name == "doc_number":
+        return re.sub(r"[^A-Z0-9]", "", text.upper())
+    return " ".join(text.split()).casefold()
+
+
+def _canonical_date_digits(value: str) -> str:
+    """Tarih kanonizasyonu → YYYYMMDD (ayrıştırılamazsa boş).
+
+    Yerel katman dd.mm.yyyy verir; VLM basılı biçimi koruyabilir
+    (yyyy-mm-dd, dd/mm/yyyy). 2 haneli yıl aynı yüzyıl kuralıyla çözülür
+    (_cpr_birth_date: yy > 30 → 19xx).
+    """
+    text = (value or "").strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y%m%d")
+        except ValueError:
+            continue
+    match = re.fullmatch(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2})", text)
+    if match:
+        day, month, yy = match.group(1), match.group(2), match.group(3)
+        century = "19" if int(yy) > 30 else "20"
+        return f"{century}{yy}{int(month):02d}{int(day):02d}"
+    return ""
+
+
 def _merge_tiers(
     *,
     local_fields: dict[str, LocalField],
@@ -489,15 +656,18 @@ def _merge_tiers(
     threshold: float,
     warnings: list[str],
 ) -> dict[str, IdentityFieldOut]:
-    """Katman birleşimi: öncelik barkod > VLM > yerel (alan başına).
+    """Katman birleşimi: öncelik barkod > yerel > VLM (alan başına).
 
-    Yerel alanlar şemaya çevrilir, VLM alanları varsa aynı alanı ezer,
-    barkod CPR son kelimedir. 4d↔barkod çelişkisi alanı needs_review'e
-    düşürür ve uyarı üretir (plan WP2).
+    0.3.42 sözleşmesi: VLM yalnız TETİKLENDİĞİNDE koşar (extract_identity
+    kapısı) ve birleşimde yalnız BOŞ alanları döndürür — yerel dolu alan
+    asla VLM değeriyle ezilmez. Çekirdek alanlarda (_VLM_CONFLICT_FIELDS)
+    yerel ile VLM kanonik biçimde çelişiyorsa YEREL KORUNUR, alan
+    needs_review'a düşer ve ``vlm_conflict:{field}`` uyarısı yazılır.
+    4d↔barkod çelişkisi alanı needs_review'e düşürür ve uyarı üretir (WP2).
     """
     merged: dict[str, IdentityFieldOut] = local_fields_to_identity_fields(local_fields, threshold=threshold)
     for name, field in vlm_fields.items():
-        if field.value:
+        if field.value and (name not in merged or not merged[name].value):
             merged[name] = field
     if not merged and not barcode_hit:
         return merged
@@ -528,6 +698,23 @@ def _merge_tiers(
         merged["birth_date"] = birth.model_copy(
             update={"review": REVIEW_VALIDATED if (conf_ok and consistent) else REVIEW_NEEDS_REVIEW}
         )
+
+    # 0.3.42: çelişki işaretlemesi EN SONDA — doğum-tarihi↔CPR yeniden
+    # değerlendirmesi needs_review kararını EZMESİN (koruma). Barkod varken
+    # cpr çelişkisi işaretlenmez: barkod CPR otoriterdir, _merge_barcode_cpr
+    # değeri zaten yazmıştır ve VLM okuması en doğal kaynaktır.
+    for name, field in vlm_fields.items():
+        if not field.value or name not in _VLM_CONFLICT_FIELDS:
+            continue
+        if name == "cpr_number" and barcode_hit is not None:
+            continue
+        existing = merged.get(name)
+        if existing is None or not existing.value:
+            continue
+        if _canonical(name, existing.value) == _canonical(name, field.value):
+            continue
+        merged[name] = existing.model_copy(update={"review": REVIEW_NEEDS_REVIEW})
+        warnings.append(f"vlm_conflict:{name}")
     return merged
 
 

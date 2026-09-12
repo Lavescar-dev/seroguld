@@ -86,7 +86,8 @@ class IdentityCapabilitiesOut(AppBaseModel):
     ``local_engine`` (motor KURULU mu — bayraktan bağımsız uygunluk),
     ``local_enabled`` (bayrağın kendisi — hangi katmanın gerçekte koştuğu),
     ``local_model`` (insan-okur motor etiketi). Mevcut alan adları DİP
-    SABİT: frontend sözleşme testi pinler.
+    SABİT: frontend sözleşme testi pinler. 0.3.42: ``vlm_trigger_mode``
+    (quality|always — additive; eski frontend bilinmeyeni yok sayar).
     """
 
     extract_enabled: bool
@@ -96,6 +97,9 @@ class IdentityCapabilitiesOut(AppBaseModel):
     local_engine: bool = False
     local_enabled: bool = False
     local_model: str | None = None
+    # Açık default ŞART: pydantic v2'de default'suz ``str | None`` ZORUNLU
+    # alana döner → minimal-dict uç testleri kırılır.
+    vlm_trigger_mode: str | None = None
 
 
 IdentityExtractOut.model_rebuild()

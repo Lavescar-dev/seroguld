@@ -123,6 +123,16 @@ class Settings(BaseSettings):
     # Bozuk JSON → uyarı loglanır, defaults ayakta kalır (asla crash yok).
     identity_ocr_roi_overrides_json: str = ""
 
+    # 0.3.42: VLM yedeği KALİTE TETİKLEDİR. "quality" = yalnız tetik üretildiğinde
+    # çağrılır (boş çekirdek alan / düşük güven / kart-bulunamadı-parlama /
+    # yerel gecikme aşımı; _vlm_should_trigger); "always" = eski koşulsuz
+    # davranış (bench modu — resmi ±2 karşılaştırması YALNIZ bu kipte model
+    # kalitesini ölçer; quality kipte ölçüm totolojikleşir).
+    identity_vlm_trigger_mode: Literal["quality", "always"] = "quality"
+    # Yerel motorun "çok uzun sürdü" eşiği (sn): aşımında local_slow uyarısı
+    # yazılır ve (quality kipte, diğer tetikler yoksa) VLM yedeği tetiklenir.
+    identity_vlm_local_slow_seconds: float = 5.0
+
     opmc_api_url: str = "https://api.opmc.dk/v1"
     opmc_api_key: str = ""
     opmc_webhook_secret: str = ""

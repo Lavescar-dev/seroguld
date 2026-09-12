@@ -152,9 +152,9 @@ gerçek kart cpr'ı barkod katmanından gelir. Karar full_name/doc_number üzeri
 
 - **Merge politikası gerilemenin ana nedeni**: `_merge_tiers` VLM alanını yerelin
   ÜZERİNE koşulsuz yazar — zayıf VLM, doğru yerel okumayı ezer (Small 3.2 8,
-  Small 2603 12, Medium 3.1 8, Medium 3 7, Large 4 ad-regresyonu). VLM yedeği
-  yeniden değerlendirilmeden önce "VLM yalnız yerel boşluğu doldurur + çelişki
-  needs_review" politikası gerekir (0.3.42+ adayı).
+  Small 2603 12, Medium 3.1 8, Medium 3 7, Large 4 ad-regresyonu). **0.3.42'de
+  uygulandı**: VLM yalnız boş alanı doldurur, çekirdek alan çelişkisinde yerel
+  korunur ve alan needs_review'a düşer (aşağıda 0.3.42 bölümü).
 - **Koşul kırılımı**: taban clean/blur/lowlight/rotate 9/13 iken Mistral varyantları
   6-9/13'te gezinir; VLM'in clean fixture'da bile hatası, modellerin küçük puntolu
   Danca serif adlarda zayıf olduğunu gösterir. Pahalı Medium katmanı Small'dan daha
@@ -195,9 +195,35 @@ tek fail yine bilinen pas_05_glare, ek kayıp sıfır:
   kullanılabilirliği teyitsiz.
 - **Resmi uç paritesi hâlâ şart**: OpenRouter sonucu kapı ölçümüdür; açma
   kararı Azure ucu üzerinde aynı bench'in tekrarına bağlı (parite kuralı ±2).
-  Ve `_merge_tiers` koşulsuz-ezme politikası aynen geçerli: parite sentetikte
-  zararsız olsa da gerçek kartta VLM'in doğru yerel okumayı ezme riski durur
-  (0.3.42+ merge politikası adayı).
+  Bench artık `IDENTITY_VLM_TRIGGER_MODE=always` pimiyle koşar (0.3.42) —
+  quality kipte tetiksiz taramalarda VLM çağrılmayacağı için ölçüm
+  totolojikleşirdi. Koşulsuz-ezme merge politikası kalktı (0.3.42): parite
+  sentetikte zararsız olsa da gerçek kartta VLM'in doğru yerel okumayı ezme
+  riski artık hiyerarşiyle kapatıldı.
+
+### 0.3.42 — hiyerarşi uygulandı: yerel birincil + kalite-tetikli VLM yedeği (12 Eyl 2026)
+
+Yerel katman birincil okuyucu; VLM **yalnız kalite tetiklendiğinde** çağrılır
+(`identity_vlm_trigger_mode=quality`, default) ve birleşimde yalnız boş alanları
+doldurur:
+
+- **Tetikler (1→4 öncelik, tek neden döner)**: (1) no_fields — full_name boş;
+  ya da doc_number boş ve belge sundhedskort DEĞİL; (2) lowconf —
+  roi_low_confidence uyarısı veya çekirdek alan güveni eşik (0.62) altı;
+  (3) ndet/glare — card_not_detected / glare_detected; (4) slow — yerel
+  gecikme > 5 sn (`identity_vlm_local_slow_seconds`) → `local_slow` uyarısı
+  + tarama ekranında "yerel okuma çok uzun sürdü" ikazı. Tetik yoksa VLM
+  çağrılmaz: kaynak=local, usage yok, maliyet sıfır.
+- **Merge**: öncelik barkod > yerel > VLM. VLM yalnız BOŞ alanı doldurur;
+  çekirdek alanlarda (full_name, cpr_number, birth_date, doc_number,
+  expiry_date) yerel ile VLM kanonik biçimde çelişirse YEREL KORUNUR, alan
+  needs_review'a düşer ve `vlm_conflict:{field}` telemetrisi yazılır.
+  Kanonik karşılaştırma biçim farkını çelişki saymaz (`0101801234` ↔
+  `010180-1234` aynı CPR). document_type yerel-öncelikli.
+- **Bench etkisi sıfır**: sentetik taban 43/65 → 48/50 alan doğruluğu
+  birebir korunur (yerel kanal zincire dokunmaz). Mistral tablosundaki
+  ad-regresyonlar bu politikayla tekrar ölçülse yereli bozamaz hâle gelir —
+  ancak üretim adayı yine gpt-4.1-mini (parite + hız).
 
 ### 0.3.41 — Azure katalog genişletmesi: Llama-4 ve elenmiş katalog katmanları (12 Eyl 2026)
 

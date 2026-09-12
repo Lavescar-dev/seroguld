@@ -463,8 +463,16 @@ def run_vlm(images_dir: Path | None, side: str, model: str | None) -> int:
 
     if model:
         os.environ["IDENTITY_EXTRACT_MODEL"] = model
+    # 0.3.42: resmi bench model kalitesini ölçer — quality kipte VLM yalnız
+    # tetikli taramalarda çağrılır ve ölçüm totolojikleşir. Bench her zaman
+    # always kipte koşar (merge politikası iki kipte ortaktır).
+    os.environ.setdefault("IDENTITY_VLM_TRIGGER_MODE", "always")
     settings = get_settings()
-    if not settings.identity_extract_enabled or not settings.openai_api_key.strip():
+    # 0.3.42: identity anahtarı da kapıyı açar (Azure kimlik ucu global
+    # anahtarı kullanmaz — 'anahtar yok' exit-1'i Azure açma günü yanlış
+    # çıkarım olmasın).
+    has_key = bool(settings.identity_extract_api_key.strip() or settings.openai_api_key.strip())
+    if not settings.identity_extract_enabled or not has_key:
         print("identity_extract_enabled=False veya anahtar yok — canlı VLM ölçümü için .env'i ayarlayın.")
         return 1
 

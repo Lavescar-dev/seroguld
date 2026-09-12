@@ -340,6 +340,25 @@ describe('useIdentityScan — birleşim zinciri (backend alanları > ocr_text re
     expect(result.current.engineNotice).toBeNull();
   });
 
+  it('0.3.42: local_slow gecikme uyarısı ekran ikazına çevrilir', async () => {
+    // Backend yalnız VLM bayrağı açıkken local_slow üretir; notice bulut
+    // doğrulamasının deneneceğini önceden söyler.
+    mockedCapabilities.mockResolvedValue(extractCapabilities({ local_engine: true }));
+    mockedExtract.mockResolvedValue(extractPayload({ warnings: ['local_slow'] }));
+    const result = await scanFront();
+    await waitFor(() => expect(result.current.glareNotice).toContain('çok uzun sürdü'));
+    expect(result.current.engineNotice).toBeNull();
+  });
+
+  it('0.3.42: glare önceliklidir — aynı yanıtta local_slow parlama ikazını ezmez', async () => {
+    // Tetik önceliği (glare > slow) yüzünden backend ikisini birlikte
+    // göndermez; yine de sıralamada parlama kazanır (savaşan notice yok).
+    mockedCapabilities.mockResolvedValue(extractCapabilities({ local_engine: true }));
+    mockedExtract.mockResolvedValue(extractPayload({ warnings: ['glare_detected', 'local_slow'] }));
+    const result = await scanFront();
+    await waitFor(() => expect(result.current.glareNotice).toContain('parlama'));
+  });
+
   it('yeni tarama eski parlama/katman uyarılarını taşımaz', async () => {
     mockedCapabilities.mockResolvedValue(extractCapabilities({ local_engine: true }));
     mockedAcquire.mockResolvedValue(scanResult());

@@ -1199,6 +1199,10 @@ export type IdentityExtractTiers = { local: boolean; vlm: boolean; barcode: bool
 
 // WP7: yerel ön-işlemenin glare_detected makine uyarısının saha metni.
 const IDENTITY_GLARE_NOTICE = 'Kartta parlama algılandı — kartı düz bir zeminde koyup yeni bir görüntü çekin.';
+// 0.3.42: yerel motorun gecikme aşımı metni. Backend yalnız VLM bayrağı
+// açıkken local_slow üretir; parlama (glare) tetikte öncelikli olduğundan
+// iki notice aynı yanıtta birlikte GELMEZ — tek notice state'i güvenlidir.
+const IDENTITY_LOCAL_SLOW_NOTICE = 'Yerel okuma çok uzun sürdü, bulut doğrulaması denenecek.';
 
 export function useIdentityScan({
   customer: _customer,
@@ -1233,7 +1237,8 @@ export function useIdentityScan({
   const extractTiersRef = useRef<IdentityExtractTiers>({ local: false, vlm: false, barcode: false, localEnabled: false });
   // Hata durumunda regex sonucu ekranda kalır ve operatör GÖRÜNÜR uyarılır
   // (sessiz kalite kaybı yok): engineNotice hangi katmanın devre dışı
-  // kaldığını söyler; glareNotice yerel motorun parlama uyarısını taşır.
+  // kaldığını söyler; glareNotice yerel kalite notice'ını taşır (0.3.39
+  // parlama, 0.3.42 gecikme aşımı — tetik önceliği nedeniyle birlikte gelmez).
   const [engineNotice, setEngineNotice] = useState<string | null>(null);
   const [glareNotice, setGlareNotice] = useState<string | null>(null);
   // Uçuşta çıkarım yanıtının eski taramaya yazılmasını kesen sıra: her
@@ -1427,7 +1432,10 @@ export function useIdentityScan({
             // Extract da alan getirmedi: sync hata durumu yerinde kalır,
             // önizleme temizliği sync yolun kuralıyla aynı olur.
             if (!parsedOk && !resultRef.current) setPreviews({});
-            if (Array.isArray(payload.warnings) && payload.warnings.includes('glare_detected')) setGlareNotice(IDENTITY_GLARE_NOTICE);
+            if (Array.isArray(payload.warnings)) {
+            if (payload.warnings.includes('glare_detected')) setGlareNotice(IDENTITY_GLARE_NOTICE);
+            else if (payload.warnings.includes('local_slow')) setGlareNotice(IDENTITY_LOCAL_SLOW_NOTICE);
+          }
             return;
           }
           // Karşı-yüz eskime denetimi kurtarma için de koşar: kurtarılan tür
@@ -1470,7 +1478,10 @@ export function useIdentityScan({
             setErrorCode(null);
           }
           // Yerel ön-işlemenin makine uyarıları: insan metni frontend işidir.
-          if (Array.isArray(payload.warnings) && payload.warnings.includes('glare_detected')) setGlareNotice(IDENTITY_GLARE_NOTICE);
+          if (Array.isArray(payload.warnings)) {
+            if (payload.warnings.includes('glare_detected')) setGlareNotice(IDENTITY_GLARE_NOTICE);
+            else if (payload.warnings.includes('local_slow')) setGlareNotice(IDENTITY_LOCAL_SLOW_NOTICE);
+          }
         })
         .catch(() => {
           if (seq !== extractSeqRef.current) return;
