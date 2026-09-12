@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.3.43] — 2026-09-13
+
+### Gerçek kartlarda kimlik-OCR alan düzeltmeleri
+
+Saha teşhisi: OCR motoru metni DOĞRU okuyordu — bozuk olan satır→alan
+eşlemesiydi. Pencereler SPECIMEN fixture'ına kalibreydi; gerçek kartta
+læge bloğu satırları aşağı kaydırıyordu (ad CPR'ın altında, SPECIMEN'ın
+tersine). Belirtiler: ad yerine "g: Sik." (çöp, DOĞRULANDI rozetiyle),
+adrese CPR satırı sızmış, şehir ad+sokak birleşmiş, kørekortta soyad hiç
+dolmuyordu. Gerçek kart kapısı (`~/card-photos/real`, repo dışı):
+sundhedskort ad/CPR/adres/postal/şehir 5/5, kørekort ad/CPR/belge-no 3/3.
+
+- **Sundhedskort çapa taraması:** CPR satırı bulunur → posta satırı
+  (dddd+şehir) altında aranır → ad ve adres postadan YUKARI taranır (CPR
+  satırı atlanır). Tekil kural hem SPECIMEN hem gerçek düzeni çözer;
+  pencere yolu yedek kalır. CPR artık çapa satırından gelir (pencereden
+  değil); posta penceresi çok satırlıysa şehir yalnız posta desenli
+  satırdan gelir ("Paris Recai Demir Boulevard 47" birleşmesi biter).
+- **Dev kelime kutusu filtresi:** filigran artıkları ('ECIMEN', dikey
+  'SUNDHEDSKORT', foto bölgesi çöpü) kelime yüksekliği tuvalin ~%20-43'ü
+  ölçüp satır gruplamasında KÖPRÜ kurarak alakasız satırları tek satırda
+  birleştiriyordu. Yüksekliği %15'i aşan kutular satır seçimine girmez
+  (ocr_text'te kalır — belge tipi kokusu onlardan gelir).
+- **Semantik kapılar:** ad/adres penceresine CPR/tarih/kısa-çöp sızmışsa
+  alan ÜRETİLMEZ. Çöp-DOĞRULANDI yerine boş alan → nofields tetiği →
+  kalite kipinde VLM kurtarma yolu açılır. VLM'siz ortamda operatör boş
+  görür (bilinçli takas: dürüstlük > yanlış dolu).
+- **Bulanık etiket düşürme:** yanlış okuma ailesi ('Sik.', 'frac',
+  'Gyldigt'…) Levenshtein ≤1 ile etiket sayılır; kısa gerçek kelimeler
+  ('Frk', 'From') bilinçli olarak düşmez.
+- **Kørekort yapışık çapa:** '1.Demir' tek token'ında çapa değerden
+  bölünür ('l.' okuması 1'e onarılır); '4b.2055-04-20' / '4d.200485-2985'
+  alan-no önekleri ayıklanır; CPR ardışık 6+4 çiftiyle çıkar; belge-no
+  penceresine sızan CPR örüntüsü süpürülür. Tek parçalı ad artık mevcut
+  parçaların minimum güveniyle needs_review'a düşer (yapay yüksek güven
+  kalktı). Çapasız tek alfa satırı yuvalara yazılmaz.
+- **Merge superset:** yerel ad eksik parçalıysa (needs_review) + VLM tam
+  adı validated getirdiyse + yerel token kümesi VLM'inkinin katı alt
+  kümesiyse ("Recai" ⊂ "Recai Demir") VLM değeri alınır
+  (`vlm_superset:full_name`). Doğrulanmış yerel değer asla ezilmez.
+- **Bench:** `address` (truth `street`/`address` anahtarı) artık
+  skorlanıyor; `--images` gerçek taramaları `run_vlm`'de de truth yan
+  dosyasıyla skorlanır. Fixture as-is 52/55 ölçülen alan (adres alanı bu
+  sürümde ilk kez ölçülüyor; fail: pas_05_glare taban davranışı ×2,
+  sund_03_blur adres — filigran harfi satıra karışmış).
+
+### 0.3.42'den taşan denetim düzeltmeleri (7c35dba)
+
+- CPR-yokluk kör noktası: barkod çözülemediğinde CPR'ın hiç üretilmemesi
+  de nofields tetiğidir (pas muaf — pasaportta CPR basılı değildir).
+- Arka yüz: kalite kipinde DK kartlarının arkasında çekirdek alan olmadığı
+  için VLM hiç denenmez (faydasız ücretli çağrı); `always` muaf değildir.
+- expiry yüzyılı geleceğe çözülür (yy ≤ 69 → 20xx) — VLM 2 haneli okumada
+  sahte çelişki üretmiyor.
+- `max_tokens` parametre adı model ailesine göre seçilir (gpt-5*/o-serisi
+  `max_completion_tokens` ister; 400 unsupported_parameter kalkar).
+- ai_service ölü `max_tokens` ayarı yalnız reasoning boşken payload'ta;
+  bench pimi doğrudan atamayla setdefault tuzağından çıktı; slow-seconds
+  ayarı gt=0 doğrulaması; runbook/yorum düzeltmeleri.
+
 ## [0.3.42] — 2026-09-12
 
 ### Kimlik OCR hiyerarşisi — yerel birincil + kalite-tetikli VLM yedeği
