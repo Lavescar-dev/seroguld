@@ -3,6 +3,11 @@ name: ci
 # Repo public: standart runner dakikası sınırsız — push/PR'de otomatik koşar.
 # (Eski "Actions dakika bütçesi" notu private-repo varsayımıydı; gate'ler
 # yine de Windows'ta lokal de koşulabilir — bkz. AGENTS.md.)
+#
+# Dikkat: paths filtresi var — İÇERİK değiştirmeyen commit (ör. --allow-empty)
+# workflow'u TETİKLEMEZ. Kırmızı bir koşuyu yeniden denetlemek için ya filtre
+# listesindeki bir dosyaya gerçek bir değişiklik push edin ya da (yetkiliyse)
+# workflow_dispatch / "Re-run failed jobs" kullanın (12 Eyl 2026 dersi).
 on:
   workflow_dispatch:
   push:
