@@ -351,8 +351,9 @@ describe('useIdentityScan — birleşim zinciri (backend alanları > ocr_text re
   });
 
   it('0.3.42: glare önceliklidir — aynı yanıtta local_slow parlama ikazını ezmez', async () => {
-    // Tetik önceliği (glare > slow) yüzünden backend ikisini birlikte
-    // göndermez; yine de sıralamada parlama kazanır (savaşan notice yok).
+    // 0.3.43 düzeltmesi: backend ikisini BİRLİKTE gönderebilir (local_slow
+    // tetikten bağımsız üretilir); else-if sıralaması parlama ikazını
+    // öne çıkarır — savaşan notice yok, tek state güvenli.
     mockedCapabilities.mockResolvedValue(extractCapabilities({ local_engine: true }));
     mockedExtract.mockResolvedValue(extractPayload({ warnings: ['glare_detected', 'local_slow'] }));
     const result = await scanFront();

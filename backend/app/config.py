@@ -88,8 +88,9 @@ class Settings(BaseSettings):
 
     # R1-B: kimlik OCR üç katman. VLM katmanı BİLİNÇLİ OPT-IN'dir (default
     # kapalı): Tier 0 barkod + Tier 1 doğrulama tamamen lokal çalışır, VLM
-    # yalnız bu bayrak + anahtar varken devreye girer. Model ucuz/min-max
-    # varsayılan (gpt-5-mini); gerçek kart benchmark'ı onaylamadan canlıya
+    # yalnız bu bayrak + anahtar varken devreye girer. Ayar boşken model
+    # yardımcısı 0.3.42 tabanına düşer (gpt-4.1-mini, bench 43/65 —
+    # _identity_model); gerçek kart benchmark'ı onaylamadan canlıya
     # alınmaz. base_url boşsa openai_base_url devralınır (AB-residency
     # projesi aynı URL ile çalışır; Çin ucuna kimlik verisi ASLA gitmez).
     identity_extract_enabled: bool = False
@@ -131,7 +132,9 @@ class Settings(BaseSettings):
     identity_vlm_trigger_mode: Literal["quality", "always"] = "quality"
     # Yerel motorun "çok uzun sürdü" eşiği (sn): aşımında local_slow uyarısı
     # yazılır ve (quality kipte, diğer tetikler yoksa) VLM yedeği tetiklenir.
-    identity_vlm_local_slow_seconds: float = 5.0
+    # 0.3.43: gt=0 — 0/negatif değer her taramayı slow tetiklerdi (quality
+    # kipte VLM her çağrıda); Literal gibi fail-fast, startup'ta ValidationError.
+    identity_vlm_local_slow_seconds: float = Field(default=5.0, gt=0)
 
     opmc_api_url: str = "https://api.opmc.dk/v1"
     opmc_api_key: str = ""

@@ -14,6 +14,7 @@ import httpx
 from PIL import Image, ImageFile
 
 from app.config import get_settings
+from app.services.openai_compat import max_tokens_param
 from app.services.photo_service import sorted_photos_for_publish
 from app.models.product import Product
 
@@ -171,6 +172,10 @@ class AIService:
         self.timeout = max(5.0, float(settings.openai_timeout_seconds))
         self.media_root = settings.media_root_path()
         self.max_images = 4
+        # 0.3.43: admin ayarı artık gerçekten giden payload'a girer (ölü
+        # ayar düzeltmesi) — yalnız reasoning_effort BOŞKEN gönderilir
+        # (aşağıdaki payload notu).
+        self.max_tokens = int(getattr(settings, "openai_max_tokens", 4096))
 
     def _build_prompt(self, product: Product) -> str:
         product_type_key = getattr(product.product_type, "value", str(product.product_type))
@@ -456,11 +461,17 @@ class AIService:
         }
         # Reasoning effort ayrı parametredir. Reasoning modelleri temperature'ı
         # reddedebildiğinden effort verildiğinde temperature gönderilmez.
+        # 0.3.43: token tavanı (openai_max_tokens) YALNIZ effort boşken
+        # gönderilir — max_completion_tokens muhakeme tokenlarını da kapsar;
+        # effort=high + 4096 tavan strict-JSON çıktıyı yarıda kesebilir.
+        # Parametre adı model ailesine göre seçilir (gpt-5*/o-serisi 400
+        # unsupported_parameter döner — openai_compat.max_tokens_param).
         effort = (self.reasoning_effort or "").strip().lower()
         if effort:
             payload["reasoning_effort"] = effort
         else:
             payload["temperature"] = 0.4
+            payload.update(max_tokens_param(self.model, self.max_tokens))
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

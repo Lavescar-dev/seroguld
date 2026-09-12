@@ -1200,8 +1200,10 @@ export type IdentityExtractTiers = { local: boolean; vlm: boolean; barcode: bool
 // WP7: yerel ön-işlemenin glare_detected makine uyarısının saha metni.
 const IDENTITY_GLARE_NOTICE = 'Kartta parlama algılandı — kartı düz bir zeminde koyup yeni bir görüntü çekin.';
 // 0.3.42: yerel motorun gecikme aşımı metni. Backend yalnız VLM bayrağı
-// açıkken local_slow üretir; parlama (glare) tetikte öncelikli olduğundan
-// iki notice aynı yanıtta birlikte GELMEZ — tek notice state'i güvenlidir.
+// açıkken local_slow üretir. 0.3.43 düzeltmesi: local_slow tetikten
+// BAĞIMSIZ üretilir — glare_detected ile AYNI yanıtta birlikte gelebilir;
+// else-if zinciri önceliği parlama ikazına verir, tek notice state'i
+// böylece güvenli kalır (iki uyarı basılmaz, parlama kazanır).
 const IDENTITY_LOCAL_SLOW_NOTICE = 'Yerel okuma çok uzun sürdü, bulut doğrulaması denenecek.';
 
 export function useIdentityScan({

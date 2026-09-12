@@ -55,6 +55,7 @@ from app.services.identity_local_parse import (
     birth_date_consistent_with_cpr,
     local_fields_to_identity_fields,
 )
+from app.services.openai_compat import max_tokens_param
 from app.utils.identity_validate import (
     REVIEW_NEEDS_REVIEW,
     REVIEW_VALIDATED,
@@ -161,7 +162,11 @@ def _vlm_should_trigger(
 
     1. no_fields: full_name boş; VEYA doc_number boş ve belge sundhedskort
        DEĞİL (sundhedskortta basılı belge no yoktur — composer üretmez;
-       tip None iken muhafazakâr taraf tetikleyendir).
+       tip None iken muhafazakâr taraf tetikleyendir); VEYA barkod
+       çözülemediyse cpr_number hiç üretilmemiş (0.3.43: alan YOKSA
+       lowconf döngüsü atlar — CPR penceresi tamamen boş dönen
+       koerekort/sundhedskort tam bu yedekle kurtarılmalıdır). Pasaport
+       muaf: pas'ta CPR basılı değildir, composer asla üretmez).
     2. lowconf: roi_low_confidence uyarısı VEYA çekirdek alan güveni eşik
        altı (barkod CPR otoriterdir — barkod varken cpr güvenine bakılmaz).
     3. ndet/glare: card_not_detected / glare_detected makine uyarıları.
@@ -177,6 +182,13 @@ def _vlm_should_trigger(
     if not _value("full_name"):
         return "nofields"
     if not sundhedskort and not _value("doc_number"):
+        return "nofields"
+    # 0.3.43: barkod yokken CPR'ın HİÇ üretilmemesi de nofields'tır —
+    # lowconf döngüsü yalnız VAR OLAN alanın güvenine bakar, alan yoksa
+    # atlar; CPR penceresi boş dönen kartta VLM kurtarma yolu kapalı
+    # kalıyordu. Pasaport muaf (pas'ta CPR basılı değildir); barkod
+    # varken CPR barkoddan otoriter gelir, eksiklik tetik üretmez.
+    if barcode_hit is None and doc_type != "pas" and not _value("cpr_number"):
         return "nofields"
 
     if "roi_low_confidence" in warnings:
@@ -485,12 +497,21 @@ async def extract_identity(
     doc_type: str | None = None
     usage_summary = None
     vlm_wanted = bool(settings.identity_extract_enabled and _vlm_api_key(settings))
+    # 0.3.43: ARKA YÜZ muafiyeti — DK kartlarının arka yüzünde çekirdek
+    # alanlar (ad/CPR/belge no) basılı değildir; yerel katman full_name
+    # boş dönerdi ve quality kipinde HER arka-yüz taraması nofields
+    # tetikleyip faydasız ücretli VLM çağrısı üretirdi. Quality kipinde
+    # arka yüzde VLM hiç denenmez (local_slow olayı da yazılmaz — metni
+    # "yedek denenecek" derdi). 'always' kipi (bench) muafiyet ALMAZ:
+    # resmi ±2 ölçüm şeması değişmez.
+    vlm_back_allowed = side != "back" or settings.identity_vlm_trigger_mode == "always"
     # Gecikme olayı (local_slow) tetikten BAĞIMSIZ telemetridir: bayrak
     # açıkken gecikme aşımında yazılır — kalite kipte bu aynı zamanda tetik
     # nedeni de olabilir (_vlm_should_trigger case 4), o zaman olay + tetik
     # İKİ ayrı token üretir (bilinçli tekrar).
     local_slow = bool(
         vlm_wanted
+        and vlm_back_allowed
         and local is not None
         and local.engine_used
         and local.latency_ms > float(settings.identity_vlm_local_slow_seconds) * 1000.0
@@ -502,7 +523,7 @@ async def extract_identity(
             local.latency_ms / 1000.0,
         )
     trigger_reason: str | None = None
-    if vlm_wanted:
+    if vlm_wanted and vlm_back_allowed:
         trigger_reason = (
             "always"
             if settings.identity_vlm_trigger_mode == "always"
@@ -620,19 +641,23 @@ def _canonical(name: str, value: str) -> str:
     if name == "cpr_number":
         return re.sub(r"\D", "", text)
     if name in ("birth_date", "expiry_date"):
-        digits = _canonical_date_digits(text)
+        # 0.3.43: son-geçerlilik GELECEK-yönlü çözülür — doğum yüzyıl
+        # kuralı (yy > 30 → 19xx) kart geçerlilikleri (2026-2045) için
+        # VLM'in 2 haneli okumasında sahte çelişki üretirdi.
+        digits = _canonical_date_digits(text, future=name == "expiry_date")
         return digits or text.casefold()
     if name == "doc_number":
         return re.sub(r"[^A-Z0-9]", "", text.upper())
     return " ".join(text.split()).casefold()
 
 
-def _canonical_date_digits(value: str) -> str:
+def _canonical_date_digits(value: str, *, future: bool = False) -> str:
     """Tarih kanonizasyonu → YYYYMMDD (ayrıştırılamazsa boş).
 
     Yerel katman dd.mm.yyyy verir; VLM basılı biçimi koruyabilir
-    (yyyy-mm-dd, dd/mm/yyyy). 2 haneli yıl aynı yüzyıl kuralıyla çözülür
-    (_cpr_birth_date: yy > 30 → 19xx).
+    (yyyy-mm-dd, dd/mm/yyyy). 2 haneli yıl doğum kuralıyla çözülür
+    (_cpr_birth_date: yy > 30 → 19xx); ``future=True`` son-geçerlilik
+    için MRZ kuralını uygular (_mrz_yymmdd: yy <= 69 → 20xx).
     """
     text = (value or "").strip()
     for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y"):
@@ -643,7 +668,7 @@ def _canonical_date_digits(value: str) -> str:
     match = re.fullmatch(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2})", text)
     if match:
         day, month, yy = match.group(1), match.group(2), match.group(3)
-        century = "19" if int(yy) > 30 else "20"
+        century = ("20" if int(yy) <= 69 else "19") if future else ("19" if int(yy) > 30 else "20")
         return f"{century}{yy}{int(month):02d}{int(day):02d}"
     return ""
 
@@ -732,8 +757,10 @@ async def _call_vlm(
         # Çıkış tavanı: strict-JSON alan çıkarımı asla 1024 token'i geçmez.
         # Gönderilmezse OpenRouter modelin TAM tavanını (ör. 65536) kredi
         # karşılığı rezerve eder ve düşük bakiyede 402 ile red döner; aynı
-        # tavan maliyet üst sınırı da garantiler.
-        "max_tokens": 1024,
+        # tavan maliyet üst sınırı da garantiler. 0.3.43: parametre adı
+        # model ailesine göre seçilir — gpt-5*/o-serisi yerel OpenAI/Azure
+        # ucunda 'max_tokens'i 400 unsupported_parameter ile reddeder.
+        **max_tokens_param(model, 1024),
         "response_format": _strict_response_format(),
         "messages": [
             {"role": "system", "content": _system_prompt()},

@@ -281,7 +281,7 @@ yeteneklerine göre — paneldeki motor rozeti hangi katmanın alanları
 **VLM Azure kurulumu (0.3.39 sonrası):** `.env`'e dört satır —
 `IDENTITY_EXTRACT_BASE_URL=https://<kaynak>.openai.azure.com/openai/v1`,
 `IDENTITY_EXTRACT_API_KEY` (kimliğe ÖZEL anahtar; genel sohbet anahtarı
-kimlik verisini görmez), `IDENTITY_EXTRACT_MODEL=gpt-5-mini`,
+kimlik verisini görmez), `IDENTITY_EXTRACT_MODEL=gpt-4.1-mini`,
 `IDENTITY_EXTRACT_ENABLED` (canlı açma benchmark kapısına bağlı).
 Foundry'de deployment tipi **EU Data Zone/Regional** olmalı — Global
 yasak (veri bölge dışına çıkar). Ayrıntı: `IDENTITY_VLM_DPIA_NOTE_TR.md`.

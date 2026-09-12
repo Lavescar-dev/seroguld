@@ -775,3 +775,182 @@ async def test_extract_sundhedskort_clean_scan_does_not_trigger(monkeypatch, loc
     result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
     assert seen.get("called") is True
     assert "vlm_triggered:nofields" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_cpr_missing_without_barcode_triggers_vlm(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """0.3.43: barkod çözülmedi + cpr alanı HİÇ üretilmedi → nofields tetiği.
+
+    lowconf döngüsü yalnız VAR OLAN alanın güvenine bakar — CPR penceresi
+    tamamen boş dönen kartta (aşınma/glare yakalanmadı) tetik üretilmiyor,
+    VLM kurtarma yolu kapalı kalıyordu. 'xxxx' barkodu zxing tarafından
+    çözülür ama 10 haneli rakam run'ı yok → barcode_hit None.
+    """
+    outcome = _local_outcome({"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9)})
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({"cpr_number": ("0101011119", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url("xxxx"), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:nofields" in result.warnings
+    assert result.fields["cpr_number"].value == "0101011119"  # VLM boşluğu doldurdu
+
+    # Kontrol: cpr alanı VAR ve güvenliyse (barkod yine yok) tetik yok.
+    complete = _local_outcome(
+        {
+            "full_name": ("Yerel Ad", 0.9),
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": ("0101011119", 0.97),
+        }
+    )
+    _patch_local(monkeypatch, complete)
+    seen.clear()
+    result = await extract_identity(image_data_url=_data_url("xxxx"), side="front")
+    assert seen == {}
+    assert not any(w.startswith("vlm_triggered") for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_extract_pas_type_cpr_missing_does_not_trigger(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Pasaportta CPR basılı DEĞİLDİR (composer asla üretmez): cpr yokluğu
+    tetik üretmez — yoksa her pasaport taraması faydasız VLM çağırırdı
+    (sundhedskort/doc_number muafiyetinin birebir örüntüsü)."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("P1234567", 0.9)},
+        document_type="pas",
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url("xxxx"), side="front")
+    assert seen == {}
+    assert not any(w.startswith("vlm_triggered") for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_extract_quality_back_side_skips_vlm_and_local_slow(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """0.3.43: arka yüzde çekirdek alanlar basılı değil → quality kipinde
+    VLM hiç denenmez (nofields her arka-yüz taramasını tetiklerdi); gecikme
+    aşımı bile olsa local_slow olayı yazılmaz ("yedek denenecek" yalan olurdu)."""
+    outcome = _local_outcome(
+        {},  # arka yüz: full_name boş döner
+        latency_ms=6200.0,
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="back")
+    assert seen == {}
+    assert "local_slow" not in result.warnings
+    assert not any(w.startswith("vlm_triggered") for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_extract_always_mode_back_side_still_calls_vlm(monkeypatch) -> None:
+    """always kipi (bench) arka-yüz muafiyeti ALMAZ: ölçüm şeması değişmez —
+    --side back ile resmi ±2 bench'i her zaman koşabilir."""
+    outcome = _local_outcome({}, latency_ms=6200.0)
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload({})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="back")
+    assert seen.get("called") is True
+    assert "vlm_triggered:always" in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_expiry_two_digit_year_no_false_conflict(monkeypatch) -> None:
+    """0.3.43: son-geçerlilik 2 haneli yıl GELECEK-yönlü çözülür (MRZ kuralı):
+    VLM '01.01.45' okuduysa 2045'tir — doğum yüzyıl kuralı (→1945) sahte
+    vlm_conflict:expiry_date üretirdi."""
+    outcome = _local_outcome(
+        {"full_name": ("Yerel Ad", 0.9), "doc_number": ("DK1000099", 0.9), "expiry_date": ("01.01.2045", 0.9)}
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"expiry_date": ("01.01.45", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert not any(w.startswith("vlm_conflict:expiry_date") for w in result.warnings)
+    assert result.fields["expiry_date"].review != "needs_review"
+
+
+def test_identity_vlm_trigger_mode_invalid_fails_fast(monkeypatch) -> None:
+    """Literal fail-fast pimli: geçersiz kip startup'ta ValidationError
+    verir (sessiz default'a düşmez) — gevşetilirse bu test kırmızı döner."""
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    monkeypatch.setenv("IDENTITY_VLM_TRIGGER_MODE", "bogus")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+@pytest.mark.parametrize("raw", ["0", "-3"])
+def test_identity_vlm_local_slow_seconds_must_be_positive(monkeypatch, raw: str) -> None:
+    """gt=0 pimi: 0/negatif eşik her taramayı slow tetiklerdi (quality kipte
+    VLM her çağrıda) — startup'ta reddedilir."""
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    monkeypatch.setenv("IDENTITY_VLM_LOCAL_SLOW_SECONDS", raw)
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "expected_key"),
+    [
+        ("gpt-5-mini", "max_completion_tokens"),
+        ("openai/gpt-5-mini", "max_completion_tokens"),
+        ("gpt-4.1-mini", "max_tokens"),
+    ],
+)
+async def test_call_vlm_max_tokens_param_by_model_family(monkeypatch, stub_settings, model: str, expected_key: str) -> None:  # noqa: ARG001
+    """gpt-5 ailesi yerel OpenAI/Azure ucunda 'max_tokens'i 400 ile reddeder
+    (unsupported_parameter) — parametre adı model ailesine göre seçilir."""
+    captured: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs["payload"])
+        return _vlm_payload({})
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    from app.services.identity_extract_service import _call_vlm
+
+    await _call_vlm(
+        image_data_url=_data_url(VALID_CPR),
+        side="front",
+        model=model,
+        base_url="https://proxy.example/v1",
+        timeout=5.0,
+    )
+    assert captured[expected_key] == 1024
+    assert set(captured.keys()) & {"max_tokens", "max_completion_tokens"} == {expected_key}

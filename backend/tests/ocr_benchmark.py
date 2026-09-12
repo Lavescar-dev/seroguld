@@ -465,8 +465,10 @@ def run_vlm(images_dir: Path | None, side: str, model: str | None) -> int:
         os.environ["IDENTITY_EXTRACT_MODEL"] = model
     # 0.3.42: resmi bench model kalitesini ölçer — quality kipte VLM yalnız
     # tetikli taramalarda çağrılır ve ölçüm totolojikleşir. Bench her zaman
-    # always kipte koşar (merge politikası iki kipte ortaktır).
-    os.environ.setdefault("IDENTITY_VLM_TRIGGER_MODE", "always")
+    # always kipte koşar (merge politikası iki kipte ortaktır). 0.3.43:
+    # doğrudan atama — setdefault, kabukta export edilmiş bir TRIGGER_MODE
+    # değerini sessizce korur ve bench'i uyarısız quality'de ölçtürürdü.
+    os.environ["IDENTITY_VLM_TRIGGER_MODE"] = "always"
     settings = get_settings()
     # 0.3.42: identity anahtarı da kapıyı açar (Azure kimlik ucu global
     # anahtarı kullanmaz — 'anahtar yok' exit-1'i Azure açma günü yanlış
