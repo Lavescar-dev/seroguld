@@ -85,15 +85,17 @@ DEFAULT_ROIS: dict[str, tuple[FieldRoi, ...]] = {
     ),
     # Gul sundhedskort (sygesikringsbevis): gerçekte üstte læge/klinika
     # bloğu, ad onun ALTINDA, sonra CPR/adres/Postnr. og by — SPECIMEN
-    # fixture'ı ise adı en üste basar. Ad penceresi geniş tutulur ve
-    # parse katmanı penceredeki SON harf satırını ad alır (iki düzende
-    # de ad en alttaki harf satırıdır); sağ kolon (1813/telefon) dışlanır.
+    # fixture'ı ise adı en üste basar. Pencereler 13 Eyl 2026'da İKİ
+    # düzenin birleşimine genişletildi (gerçek kartta satırlar aşağı
+    # kayar: ad ~0.55, adres ~0.62, posta ~0.68); doğru satır seçimi
+    # parse katmanındaki CPR/posta ÇAPA taramasındadır (identity_local_parse
+    # _split_sundhedskort_anchor) — pencere yalnız aday satırları toplar.
     "sundhedskort": (
-        _roi("full_name", "name", 0.02, 0.20, 0.53, 0.28, "Navn"),
-        _roi("cpr_number", "cpr", 0.02, 0.29, 0.43, 0.13, "CPR-nr."),
-        _roi("address", "address", 0.02, 0.465, 0.40, 0.075, "Adresse"),
-        _roi("postal_code", "postal", 0.02, 0.515, 0.40, 0.17, "Postnr. og by"),
-        _roi("city", "postal", 0.02, 0.515, 0.40, 0.17, "Postnr. og by"),
+        _roi("full_name", "name", 0.02, 0.18, 0.53, 0.42, "Navn"),
+        _roi("cpr_number", "cpr", 0.02, 0.28, 0.43, 0.22, "CPR-nr."),
+        _roi("address", "address", 0.02, 0.44, 0.40, 0.22, "Adresse"),
+        _roi("postal_code", "postal", 0.02, 0.50, 0.40, 0.24, "Postnr. og by"),
+        _roi("city", "postal", 0.02, 0.50, 0.40, 0.24, "Postnr. og by"),
     ),
     # Danmarks pas (TD3 MRZ): basılı soyad/ad satırları + alt MRZ şeridi.
     # Basılı ad transliterasyonsuzdur (PRØVE); MRZ adı PROEVE verir — ikisi

@@ -697,6 +697,96 @@ async def test_extract_merge_fill_only_empty_keeps_local_values(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_extract_merge_superset_rescues_partial_local_name(monkeypatch) -> None:
+    """0.3.43 superset: yerel ad EKSİK parçalı (needs_review — tek ad/soyad
+    okundu) + VLM TAM adı validated getirdi + yerel token kümesi VLM'inkinin
+    katı alt kümesi ('Recai' ⊂ 'Recai Demir') → VLM değeri alınır."""
+    outcome = _local_outcome(
+        {
+            "full_name": ("Recai", 0.5),  # eşik altı → needs_review (tek parça)
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": (VALID_CPR, 0.97),
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"full_name": ("Recai Demir", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.fields["full_name"].value == "Recai Demir"
+    assert result.fields["full_name"].review == "validated"
+    assert "vlm_superset:full_name" in result.warnings
+    # Superset sonrası kanonik değer eşit → sahte çelişki üretmez.
+    assert "vlm_conflict:full_name" not in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_merge_superset_never_overrides_validated_local(monkeypatch) -> None:
+    """Negatif: doğrulanmış yerel ad asla ezilmez — küme genişlese bile bu
+    ÇELİŞKİDIR (0.3.42 semantiği korunur), superset uyarısı yazılmaz."""
+    outcome = _local_outcome(
+        {
+            "full_name": ("Recai Demir", 0.9),  # validated
+            "doc_number": ("DK1000099", 0.9),
+            "cpr_number": (VALID_CPR, 0.97),
+        }
+    )
+    _patch_local(monkeypatch, outcome)
+    monkeypatch.setattr("app.services.identity_extract_service.get_settings", lambda: AlwaysSettings())
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        return _vlm_payload({"full_name": ("Recai Mehmet Demir", 0.9)}, document_type="driver_license")
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert result.fields["full_name"].value == "Recai Demir"  # yerel tutuldu
+    assert result.fields["full_name"].review == "needs_review"  # çelişki işaretlendi
+    assert "vlm_conflict:full_name" in result.warnings
+    assert "vlm_superset:full_name" not in result.warnings
+
+
+@pytest.mark.asyncio
+async def test_extract_gated_name_triggers_nofields_and_vlm_fills(monkeypatch, local_settings) -> None:  # noqa: ARG001
+    """Kapı-boşaltılmış ad (WP3: çöp → boş alan) sundhedskort taramasında
+    nofields tetiğini açar; VLM ad/adres/şehir doldurur, barkod CPR otoritedir.
+    Bu, sürücü-belgesi nofields testinden AYRI: sundhedskortta doc_number
+    muaf — tetik yalnız ad YOKLUĞUNDAN gelmeli."""
+    outcome = _local_outcome(
+        {"cpr_number": (VALID_CPR, 0.97)},  # ad kapısı boşalttı: full_name YOK
+        document_type="sundhedskort",
+    )
+    _patch_local(monkeypatch, outcome)
+    seen: dict[str, Any] = {}
+
+    async def fake_post_chat(**kwargs: Any) -> dict[str, Any]:
+        seen["called"] = True
+        return _vlm_payload(
+            {
+                "full_name": ("Recai Demir", 0.9),
+                "address": ("Paris Boulevard 47", 0.9),
+                "city": ("Hvidovre", 0.9),
+            },
+            document_type="sundhedskort",
+        )
+
+    monkeypatch.setattr("app.services.identity_extract_service._post_chat", fake_post_chat)
+    result = await extract_identity(image_data_url=_data_url(VALID_CPR), side="front")
+    assert seen.get("called") is True
+    assert "vlm_triggered:nofields" in result.warnings
+    assert result.fields["full_name"].value == "Recai Demir"
+    assert result.fields["full_name"].review == "validated"
+    assert result.fields["address"].value == "Paris Boulevard 47"
+    assert result.fields["city"].value == "Hvidovre"
+    # Barkod CPR otorite: verified → validated.
+    assert result.barcode is not None and result.barcode.verified is True
+    assert result.fields["cpr_number"].value == VALID_CPR
+    assert result.source == "merged"  # VLM + barkod birlikte
+
+
+@pytest.mark.asyncio
 async def test_extract_barcode_cpr_conflict_is_not_marked(monkeypatch, stub_settings) -> None:  # noqa: ARG001
     """Barkod CPR otoriterdir: VLM CPR çelişkisi vlm_conflict işareti ÜRETMEZ."""
     seen: dict[str, Any] = {}

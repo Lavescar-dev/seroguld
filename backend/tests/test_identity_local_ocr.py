@@ -625,6 +625,173 @@ def test_parse_sundhedskort_address_strips_name_and_postal_leak() -> None:
     assert result.fields["city"].value == "Hvidovre"
 
 
+def _giant_word(text: str, nx: float, ny: float, *, height_ratio: float = 0.40, score: float = 0.95) -> OcrWord:
+    """Filigran/artık DEVT kutu — merkez (nx, ny), yükseklik tuvalin oranı."""
+    width, height = CANVAS
+    cx, cy = nx * width, ny * height
+    half_h = height_ratio * height / 2.0
+    return OcrWord(text=text, score=score, box=(int(cx - 30), int(cy - half_h), int(cx + 30), int(cy + half_h)))
+
+
+def test_parse_sundhedskort_real_layout_anchor_selects_rows() -> None:
+    """Gerçek kart düzeni (saha 13 Eyl 2026, ölçülmüş): læge bloğu üstte, ad
+    CPR'ın ALTINDA (SPECIMEN'ın tersi), satırlar DEV filigran kutusu
+    ('SUNDHEDSKORT' h~0.43) tarafından tek satırda köprulanmiş. Çapa taraması
+    (CPR bul → posta bul → yukarı tara) + dev-kutu filtresi satırları ayırır."""
+    words = [
+        _word("REGION", 0.06, 0.121), _word("Hovedstaden", 0.27, 0.140),
+        _word("Laege", 0.081, 0.256), _word("JOHNNY", 0.12, 0.297), _word("WØLDIKE", 0.258, 0.298),
+        _word("STRANDHOLMS", 0.17, 0.351), _word("ALLE", 0.328, 0.352), _word("7", 0.38, 0.353), _word("B", 0.406, 0.353),
+        _word("200485-2985", 0.205, 0.452), _word("g:", 0.539, 0.457), _word("Sikr.", 0.54, 0.418),
+        _word("1", 0.573, 0.46), _word("Gyldigt", 0.808, 0.422), _word("frac", 0.857, 0.422),
+        _word("31.05.2016", 0.846, 0.492),
+        _word("Recai", 0.111, 0.608), _word("Demir", 0.237, 0.608),
+        _word("Paris", 0.103, 0.679), _word("Boulevard", 0.261, 0.681), _word("47", 0.385, 0.682),
+        _word("1813", 0.856, 0.707),
+        _word("2650", 0.10, 0.755), _word("Hvidovre", 0.244, 0.755), _word("AKUTTELEFONEN", 0.857, 0.766),
+        _giant_word("SUNDHEDSKORT", 0.025, 0.528),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "Recai Demir"
+    assert result.fields["address"].value == "Paris Boulevard 47"
+    assert result.fields["postal_code"].value == "2650"
+    assert result.fields["city"].value == "Hvidovre"
+    assert result.fields["cpr_number"].value == "2004852985"
+    assert result.fields["birth_date"].value == "20.04.1985"
+
+
+def test_parse_sundhedskort_specimen_layout_survives_clinic_row() -> None:
+    """SPECIMEN düzeni (ad CPR ÜSTÜNDE) çapa yolunun İKİNCİ savunması: adres
+    CPR'ın altında, altında klinik telefon satırı var. Posta satırı desene
+    göre seçilir ('2650 Hvidovre'), telefon satırı aday değildir."""
+    words = [
+        _word("Navn", 0.08, 0.245), _word("ANDERS", 0.20, 0.245), _word("TESTESEN", 0.35, 0.245),
+        _word("CPR-nr.", 0.08, 0.375), _word("010112-4002", 0.24, 0.375),
+        _word("Hovedgaden", 0.14, 0.505), _word("12,", 0.28, 0.505),
+        _word("Postnr.", 0.06, 0.63), _word("2650", 0.26, 0.63), _word("Hvidovre", 0.36, 0.63),
+        _word("Lægehuset", 0.10, 0.755), _word("Prøve", 0.20, 0.755), _word("+45", 0.55, 0.755),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "ANDERS TESTESEN"
+    assert result.fields["address"].value == "Hovedgaden 12,"
+    assert result.fields["city"].value == "Hvidovre"
+
+
+def test_parse_sundhedskort_name_gate_empties_cpr_leak() -> None:
+    """Ad penceresine CPR satırı sızmış (postal yok → çapa düşer, pencere
+    yolu): '200485-2985 g: Sik. 1 Gyldigt frac' AD OLAMAZ — kapı boşaltır,
+    alan üretilmez (nofields tetiği VLM kurtarma yolunu açar)."""
+    words = [
+        _word("200485-2985", 0.10, 0.30), _word("g:", 0.30, 0.30), _word("Sik.", 0.36, 0.30),
+        _word("1", 0.44, 0.30), _word("Gyldigt", 0.55, 0.30), _word("frac", 0.65, 0.30),
+        _word("Paris", 0.10, 0.62), _word("Boulevard", 0.25, 0.62), _word("47", 0.38, 0.62),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert "full_name" not in result.fields
+    # CPR kendi penceresinden yine çıkar (ad kapısı CPR'ı etkilemez).
+    assert result.fields["cpr_number"].value == "2004852985"
+
+
+def test_parse_sundhedskort_address_gate_empties_cpr_row() -> None:
+    """Kullanıcının saha bulgusu: 'Adres: 200485-2985 g: Sik. 1 Gyldigt frac'.
+    Etiket düşürme + semantik süpürme sonrası adres kalitesi kapisini geçen
+    şey kalmazsa alan ÜRETEİLMEZ."""
+    words = [
+        _word("Recai", 0.10, 0.30), _word("Demir", 0.25, 0.30),
+        _word("200485-2985", 0.10, 0.505), _word("g:", 0.30, 0.505), _word("Sik.", 0.36, 0.505),
+        _word("1", 0.44, 0.505), _word("Gyldigt", 0.55, 0.505), _word("frac", 0.65, 0.505),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert "address" not in result.fields
+
+
+def test_parse_sundhedskort_window_fallback_city_from_postal_line_only() -> None:
+    """CPR hiç okunamadı → çapa düşer, pencere yolu ayakta: geniş posta
+    penceresi ad+adres+posta satırlarını toplar ama şehir YALNIZ posta
+    desenli satırdan gelir ('Paris ... Hvidovre' birleşmez)."""
+    words = [
+        _word("Recai", 0.111, 0.55), _word("Demir", 0.237, 0.55),
+        _word("Paris", 0.103, 0.62), _word("Boulevard", 0.261, 0.62), _word("47", 0.385, 0.62),
+        _word("2650", 0.10, 0.68), _word("Hvidovre", 0.244, 0.68),
+    ]
+    result = parse_local_fields(words, document_type_key="sundhedskort", rois_enabled=True, threshold=0.62)
+    assert "cpr_number" not in result.fields  # çapa olmadan CPR uydurulmaz
+    assert result.fields["full_name"].value == "Recai Demir"
+    assert result.fields["address"].value == "Paris Boulevard 47"
+    assert result.fields["postal_code"].value == "2650"
+    assert result.fields["city"].value == "Hvidovre"
+
+
+def test_fuzzy_label_drop_matches_misreads_only() -> None:
+    """Bulanık etiket düşürme: yanlış okumalar ('Sik.', 'frac') düşer; kısa
+    GERÇEK kelimeler ('Frk', 'From') düşMEZ (bilinçli haric)."""
+    from app.services.identity_local_parse import _is_label_token
+
+    for token in ("Sik.", "frac", "Gyldigt", "Sikr", "Laege"):  # yanlış okuma ailesi
+        assert _is_label_token(token), token
+    for token in ("Frk", "From", "Parls", "Kbh", "Demir"):
+        assert not _is_label_token(token), token
+
+
+def test_parse_koerekort_glued_anchor_splits_value() -> None:
+    """Yapışık çapa (saha 13 Eyl 2026): '1.Demir' TEK token — eski birebir
+    regex çapayı düşürüp konumsal fallback tek alfa satırını soyada yazıyordu.
+    'l.Demir' (1→l okuma) da onarılır."""
+    glued = [
+        _word("KØREKORT", 0.30, 0.06), _word("DANMARK", 0.42, 0.06),
+        _word("1.Demir", 0.30, 0.125), _word("2.Recai", 0.30, 0.21),
+    ]
+    result = parse_local_fields(glued, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "Recai Demir"
+    assert result.fields["full_name"].checksum_ok is True  # iki parça = tam ad
+
+    repaired = [
+        _word("KØREKORT", 0.30, 0.06),
+        _word("l.Demir", 0.30, 0.125), _word("2.Recai", 0.30, 0.21),
+    ]
+    result2 = parse_local_fields(repaired, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
+    assert result2.fields["full_name"].value == "Recai Demir"
+
+
+def test_parse_koerekort_real_row_sequence_full_fields() -> None:
+    """Gerçek kart satır dizisi (saha 13 Eyl 2026, ölçülmüş): ø→O başlık
+    okuması, yapışık çapalar, ISO tarihler, '4d.200485-2985' önekli CPR,
+    '4b.2055-04-20' belge penceresine sızmış, dev 'u8luas' kutusu."""
+    words = [
+        _word("DANMARK", 0.759, 0.185), _word("KOREKORT", 0.482, 0.215),
+        _word("DK", 0.227, 0.312), _word("1.Demir", 0.412, 0.303), _word("2.Recai", 0.415, 0.365),
+        _word("3.", 0.415, 0.424), _word("1985-04-20,", 0.526, 0.410), _word("Tyrkiet", 0.647, 0.399),
+        _word("4a.", 0.425, 0.478), _word("2012-05-09", 0.523, 0.468),
+        _word("4c.", 0.629, 0.459), _word("Rigspolitichefen", 0.750, 0.447),
+        _word("4b.2055-04-20", 0.499, 0.530), _word("4d.200485-2985", 0.710, 0.508),
+        _word("5.", 0.418, 0.601), _word("30499459", 0.515, 0.590),
+        _giant_word("u8luas", 0.606, 0.681, height_ratio=0.19),
+        _word("B-C-D-BE-CE-DE", 0.588, 0.811),
+    ]
+    result = parse_local_fields(words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
+    assert result.fields["full_name"].value == "Recai Demir"
+    assert result.fields["birth_date"].value == "20.04.1985"
+    assert result.fields["expiry_date"].value == "20.04.2055"
+    assert result.fields["cpr_number"].value == "2004852985"
+    assert result.fields["doc_number"].value == "30499459"
+
+
+def test_parse_koerekort_single_alpha_line_is_honest_needs_review() -> None:
+    """Çapasız TEK alfa satırı: hangi yuvaya ait olduğu bilinemez — tek
+    parçalı ad üretilse de checksum_kapısı onu needs_review'e düşürür
+    (eski 'min or max' güven tuzağı yüksek güven basıyordu)."""
+    words = [
+        _word("KØREKORT", 0.30, 0.06), _word("DANMARK", 0.42, 0.06),
+        _word("Recai", 0.30, 0.125),
+    ]
+    result = parse_local_fields(words, document_type_key="koerekort", rois_enabled=True, threshold=0.62)
+    field = result.fields.get("full_name")
+    assert field is not None and field.value == "Recai"
+    assert field.checksum_ok is False  # tek parça = eksik bilgi
+    out = local_fields_to_identity_fields(result.fields, threshold=0.62)
+    assert out["full_name"].review == "needs_review"
+
+
 def test_parse_pas_td3_mrz_with_printed_name_preference() -> None:
     words = [
         _word("Efternavn", 0.32, 0.275), _word("TESTESEN", 0.35, 0.271),

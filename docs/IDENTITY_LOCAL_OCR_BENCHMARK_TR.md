@@ -225,6 +225,42 @@ doldurur:
   ad-regresyonlar bu politikayla tekrar ölçülse yereli bozamaz hâle gelir —
   ancak üretim adayı yine gpt-4.1-mini (parite + hız).
 
+### 0.3.43 — GERÇEK kart düzeni: sundhedskort çapa taraması + dev-kutu filtresi (13 Eyl 2026)
+
+Saha bulgusu (SERO GULD sahibinin kendi kartları): OCR metni DOĞRU okuyor,
+**satır→alan eşlemesi** bozuktu — pencereler SPECIMEN fixture'ına kalibreydi,
+gerçek kartta læge bloğu satırları aşağı kaydırıyordu (ad CPR'ın altında,
+SPECIMEN'ın tersine). Belirtiler: ad "g: Sik." (çöp, DOĞRULANDI), adrese CPR
+satırı sızmış, şehir ad+sokak birleşmiş, kørekortta soyad hiç dolmuyordu.
+
+Değişiklik zinciri (`git log 0.3.43`):
+
+- **Sundhedskort çapa taraması** (`_split_sundhedskort_anchor`): CPR satırı
+  (6+4/10 hane) bulunur → posta satırı (dddd+şehir) altında aranır → ADRES ve
+  AD postadan YUKARI taranır (CPR satırı atlanır) — iki düzeni de (SPECIMEN
+  ve gerçek) tekil kuralla çözer; pencere yolu yedek kalır.
+- **Dev kelime kutusu filtresi** (`GIANT_WORD_HEIGHT_RATIO=0.15`): filigran artıkları ('ECIMEN', dikey
+  'SUNDHEDSKORT', foto çöpü 'u8luas') h/tuval ≈ 0.18-0.43 ölçer ve satır
+  gruplamasında KÖPRÜ kurup alakasız satırları birleştiriyordu — artık satır
+  seçimine giremez (ocr_text'te kalır, belge tipi kokusu kaybolmaz).
+- **Semantik kapılar**: ad/adres penceresine CPR/tarih/kısa-çöp sızmışsa
+  alan ÜRETİLMEZ (çöp-DOĞRULANDI yerine boş alan → nofields tetiği → VLM
+  kurtarma yolu açılır).
+- **Kørekort yapışık çapa**: '1.Demir' tek token'ında çapa değerden bölünür;
+  '4b.2055-04-20' / '4d.200485-2985' önekleri ayıklanır (belge no CPR'a
+  çakışmaz); tek parçalı ad min-güvenle needs_review'a düşer (yapay yüksek
+  güven kalkar).
+- **Bench address alanı**: run_local/run_vlm skoruna `street` (truth `address`
+  anahtarı da kabul edilir) eklendi; gerçek kart truth kapısı
+  `~/card-photos/real/<stem>.truth.json` yan dosyasıyla çalışır.
+
+| Kapı | Ölçüm | Sonuç |
+|---|---|---|
+| Gerçek kartlar (sahip) | sundhedskort: ad/CPR/adres/postal/şehir 5/5; kørekort: ad/CPR/belge-no 3/3 → **8/8** | PASS |
+| Fixture as-is | 52/55 ölçülen alan (fail: pas_05_glare ×2 taban davranışı; sund_03_blur adres — SPECIMEN filigranı satıra karışmış, ev no harfi düştü; adres alanı 0.3.43'te İLK KEZ ölçülüyor, taban kıyası yok) | PASS |
+| Gecikme | p50 650 ms, p95 1,4 sn (n=22) | PASS |
+| Barkod | 1/1 verified | PASS |
+
 ### 0.3.41 — Azure katalog genişletmesi: Llama-4 ve elenmiş katalog katmanları (12 Eyl 2026)
 
 "Tablo dışında Azure'da vision/document adayı var mı?" araştırması (Microsoft Learn

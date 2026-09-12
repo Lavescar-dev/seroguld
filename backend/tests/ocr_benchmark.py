@@ -377,6 +377,7 @@ def run_local(
             ("full_name", expected.get("full_name", "")),
             ("cpr_number", expected.get("cpr_first6", "")),
             ("doc_number", expected.get("document_number", "")),
+            ("address", expected.get("street") or expected.get("address", "")),
             ("postal_code", expected.get("postal_code", expected.get("address_postal", ""))),
             ("city", expected.get("city", "")),
         ):
@@ -488,7 +489,9 @@ def run_vlm(images_dir: Path | None, side: str, model: str | None) -> int:
     if images_dir is not None:
         for path in sorted(images_dir.iterdir()):
             if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}:
-                jobs.append((path.name, path, {}))  # gerçek tarama: ground truth yok
+                # 0.3.43: gerçek taramalarda da <stem>.truth.json yan dosyası
+                # varsa skorlanır (run_local ile aynı şema).
+                jobs.append((path.name, path, _truth_for(images_dir, path.stem)))
 
     print(f"== VLM kanalı (canlı, model={settings.identity_extract_model or settings.openai_model}) ==")
     per_condition: dict[str, list[bool]] = defaultdict(list)
@@ -510,6 +513,7 @@ def run_vlm(images_dir: Path | None, side: str, model: str | None) -> int:
             ("full_name", expected.get("full_name", "")),
             ("cpr_number", expected.get("cpr_first6", "")),
             ("doc_number", expected.get("document_number", "")),
+            ("address", expected.get("street") or expected.get("address", "")),
             ("postal_code", expected.get("postal_code", expected.get("address_postal", ""))),
             ("city", expected.get("city", "")),
         ):

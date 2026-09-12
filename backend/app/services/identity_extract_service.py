@@ -728,6 +728,26 @@ def _merge_tiers(
     # değerlendirmesi needs_review kararını EZMESİN (koruma). Barkod varken
     # cpr çelişkisi işaretlenmez: barkod CPR otoriterdir, _merge_barcode_cpr
     # değeri zaten yazmıştır ve VLM okuması en doğal kaynaktır.
+    # 0.3.43 superset kuralı (çelişki döngüsünden ÖNCE): yerel ad eksik
+    # parçalıysa (needs_review — tek ad/soyad) ve VLM TAM adı validated
+    # getirdiyse VE yerel token kümesi VLM'inkinin KATI alt kümesiyse
+    # ('Recai' ⊂ 'Recai Demir') VLM değeri alınır. Doğrulanmış yerel değer
+    # asla ezilmez; aşağıdaki çelişki döngüsü artık eşitlik görür.
+    local_name = merged.get("full_name")
+    vlm_name = vlm_fields.get("full_name")
+    if (
+        local_name is not None
+        and local_name.value
+        and local_name.review == REVIEW_NEEDS_REVIEW
+        and vlm_name is not None
+        and vlm_name.value
+        and vlm_name.review == REVIEW_VALIDATED
+    ):
+        local_tokens = set(_canonical("full_name", local_name.value).split())
+        vlm_tokens = set(_canonical("full_name", vlm_name.value).split())
+        if local_tokens and local_tokens < vlm_tokens:
+            merged["full_name"] = vlm_name
+            warnings.append("vlm_superset:full_name")
     for name, field in vlm_fields.items():
         if not field.value or name not in _VLM_CONFLICT_FIELDS:
             continue

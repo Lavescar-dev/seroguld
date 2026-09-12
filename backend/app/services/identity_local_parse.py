@@ -73,6 +73,14 @@ SKEW_WARPED_IMPROVEMENT = 1.80
 # anlamsızdır: tavan üstünde kestirim yok sayılır.
 SKEW_MAX_WORDS = 200
 
+# DEV KELİME KUTUSU eşiği (tuval yüksekliğinin oranı): kart metin satırı
+# ≤~0.09'dir; filigran artıkları ('ECIMEN', dikey 'SUNDHEDSKORT') ve foto
+# bölgesi çöpü 0.18-0.43 ölçer. Bu kutular satır GRUPLAMASINA girerse
+# aralarındaki TÜM satırları tek satırda birleştirip köprü kurar (saha 13 Eyl
+# 2026: ad+adres+klinik tek satırda birleşiyordu). ocr_text'te KALIRLAR —
+# belge tipi kokusu ('SUNDHEDSKORT') onlardan gelir.
+GIANT_WORD_HEIGHT_RATIO = 0.15
+
 # gg.aa.yyyy VEYA yyyy-aa-gg (ISO basan kartlar). Ayırıcı boşluk DEĞİL:
 # pencereye sızan komşu sayılar boşlukla tarihe yapışıp sahte tarih kurar
 # ('2058-03-15 150388-...' → '03-15 1503'). Nokta/tire/bölü yeterlidir.
@@ -448,10 +456,17 @@ def guess_document_type(words: list[OcrWord]) -> str | None:
     sayılır (id-kortun da MRZ'si vardır, onu pas sanmamak için).
     """
     text = transliterate_name(build_ocr_text(words)) or ""
-    # Bulanık karelerde 'Kørekortnr.' 'Kerekortnr.' okunabilir (ø→e): koerekort
-    # çapası iki yazımla da aranır — yoksa satırın 'kortnr' kalıntısı kartı
-    # id-kort sanıp yanlış ROI tablosuna sokar (koerekortun kendi satırıdır).
-    if "koerekort" in text or "kerekort" in text or "udlobsdato" in text or "udstedelsesdato" in text:
+    # Bulanık karelerde 'Kørekortnr.' 'Kerekortnr.' okunabilir (ø→e), başlık
+    # 'KOREKORT' olabilir (ø→O, saha 13 Eyl 2026 repro'sunda tip=null
+    # üretiyordu): koerekort çapası üç yazımla da aranır — yoksa satırın
+    # 'kortnr' kalıntısı kartı id-kort sanıp yanlış ROI tablosuna sokar.
+    if (
+        "koerekort" in text
+        or "kerekort" in text
+        or "korekort" in text
+        or "udlobsdato" in text
+        or "udstedelsesdato" in text
+    ):
         return "koerekort"
     if "sundhedskort" in text or "sygesikringsbevis" in text or "sygesikringskort" in text:
         return "sundhedskort"
@@ -508,16 +523,64 @@ def _drop_label_tokens(words: list[OcrWord], *, numeric: bool = False) -> list[O
     return kept
 
 
+# Yanlis-okuma etiket aileleri (saha 13 Eyl 2026): motor 'Sikr.'yi 'Sik.',
+# 'fra'yi 'frac' okuyunca birebir eslesme dusuruyor, cop DEGER olarak
+# kaliyordu. Bu kume uzerinde Levenshtein <=1 kabul edilir; kisa/carpismali
+# sozcukler (til/og/by/er/nr) BILINCLI olarak yok — 'Frk' gibi gercek kisa
+# kelimeleri yanlis dusurmemek icin.
+_FUZZY_LABEL_KEYS = (
+    "sikr",
+    "sikkerhedsgruppe",
+    "gyldigt",
+    "gyldig",
+    "fra",
+    "laege",
+    "laegehuset",
+    "kommune",
+    "hovedstaden",
+    "sundhedskort",
+    "sygesikringsbevis",
+    "akuttelefonen",
+)
+
+
+def _within_edit_distance_one(a: str, b: str) -> bool:
+    """Iki kisa string arasinda Levenshtein uzakligi 1 mi? (bagimlilik yok)"""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(1 for x, y in zip(a, b) if x != y) == 1
+    if len(a) > len(b):
+        a, b = b, a
+    for i in range(len(b)):
+        if a == b[:i] + b[i + 1 :]:
+            return True
+    return False
+
+
 def _is_label_token(token: str) -> bool:
     """Token bir basılı ETİKET mi? Rakam taşıyan token asla etiket sayılmaz.
 
     Rakam şartı kritiktir: transliterasyon sonrası "DK1000099" → "dk" anahtarı
     'DK' filigran etiketiyle çakışır ve gerçek numara etiket sanılıp düşer.
+
+    Bulanik dal (13 Eyl 2026): birebir eslesme yoksa, token UZUN (>=4) veya
+    NOKTALAMALI ise ('Sik.') yanlis-okuma ailesine Levenshtein <=1 mesafede
+    olan anahtarlar da etiket sayilir. Kisa ciplak kelimeler ('Frk')
+    bilincli olarak haric.
     """
     if any(ch.isdigit() for ch in token):
         return False
     key = _label_key(token)
-    return bool(key) and key in _LABEL_TOKENS
+    if not key:
+        return False
+    if key in _LABEL_TOKENS:
+        return True
+    if len(key) >= 3 and (len(token) >= 4 or any(not ch.isalnum() for ch in token)):
+        return any(_within_edit_distance_one(key, candidate) for candidate in _FUZZY_LABEL_KEYS)
+    return False
 
 
 def _looks_like_numeric_value(token: str) -> bool:
@@ -592,14 +655,28 @@ def _extract_cpr(text: str) -> tuple[str, bool]:
         if len(run) == 10:
             return run, True
     # Kartta standart basım "DDMMYY-XXXX"tir: tire OCR'da boşluk/nokta da
-    # olabilir — 6+4 parça birleşimi tek CPR'dır (biçimok).
-    if len(runs) == 2 and len(runs[0]) == 6 and len(runs[1]) == 4:
-        return runs[0] + runs[1], True
+    # olabilir — ardışık 6+4 parça birleşimi tek CPR'dır (biçimok). Yalnız
+    # TAM İKİ run değil HER ardışık çift taranır: alan-no öneki ("4d.") ve
+    # pencereye sızmış komşu rakamlar run sayısını 3+ yapar (saha 13 Eyl
+    # 2026: "4d.200485-2985" → ["4","200485","2985"] tam-2 kuralında ölüyordu).
+    for i in range(len(runs) - 1):
+        if len(runs[i]) == 6 and len(runs[i + 1]) == 4:
+            return runs[i] + runs[i + 1], True
     # Administrativt nummer (CPR yok) KESİNTİSİZ tek run'dır: ayrı run'ların
     # birleşimi (barkod no + koşul no gibi) 9 haneye ulaşsa da numara değildir.
     if len(runs) == 1 and len(runs[0]) == 9:
         return runs[0], False
     return "", False
+
+
+def _split_glued_row_prefix(token: str) -> str:
+    """Yapışık alan-no önekini değerden ayırır: '4b.2055-04-20' → '2055-04-20',
+    '5.30499459' → '30499459'. Önek yoksa token olduğu gibi döner. TAM TARİH
+    ('14.03.2031') bölünmez — gün sayısı önek sanılamaz."""
+    if re.fullmatch(r"\d{1,2}[.:]\d{1,2}[.:]\d{4}", token):
+        return token
+    match = re.match(r"^\d{1,2}[a-dA-D]?[.:]\s*(.+)$", token)
+    return match.group(1) if match else token
 
 
 def _extract_doc_number(text: str) -> tuple[str, bool]:
@@ -613,9 +690,19 @@ def _extract_doc_number(text: str) -> tuple[str, bool]:
     doc_number'ı needs_review ile sunmaktan iyidir hiç sunmamamak — operatör
     tam-kart metninden (ocr_text) bakar.
     """
-    # 4a/4b tarih satırları 5 penceresine taşabilir: gg.aa.yyyy token'ı
-    # noktaları sökülünce 8 hane kalır da belge no sanılır — önce çıkarılır.
-    text = re.sub(r"\d{1,2}[.\-/\s]\d{1,2}[.\-/\s]\d{4}", " ", text)
+    # 4a/4b tarih satırları 5 penceresine taşabilir: gg.aa.yyyy VEYA ISO
+    # yyyy-aa-gg token'ı noktaları sökülünce 8 hane kalır da belge no sanılır
+    # — önce yapışık alan-no öneki ayrılır ('4b.2055-04-20', saha 13 Eyl
+    # 2026), sonra iki sıralı tarih de çıkarılır.
+    text = " ".join(_split_glued_row_prefix(token) for token in text.split())
+    text = re.sub(
+        r"\d{1,2}[.\-/\s]\d{1,2}[.\-/\s]\d{4}|\d{4}[.\-/\s]\d{1,2}[.\-/\s]\d{1,2}",
+        " ",
+        text,
+    )
+    # 4d (CPR) satırı 5 penceresine taşabilir: CPR ÖRÜNTÜSÜ belge no değildir
+    # (saf 10 hane reddi ayrıca aşağıda; burada önekli/kesikli biçim de süpürülür).
+    text = re.sub(r"\b\d{6}[-. ]\d{4}\b|\b\d{10}\b", " ", text)
     compact = re.sub(r"[^A-Z0-9]", "", text.upper())
     repaired = re.sub(r"[^A-Z0-9]", "", repair_numeric_confusables(compact))
     if re.fullmatch(r"\d{8}", repaired):
@@ -652,20 +739,89 @@ def _extract_postal(text: str) -> tuple[str, str]:
     return postal, city.strip()
 
 
+# Semantik kapilar (saha 13 Eyl 2026): serbest metin alanlarina baska
+# satirlardan sizan CPR/tarih kalintilari 'DOGRULANDI' rozetiyle donuyordu
+# ('Adres: 200485-2985 g: Sik. 1 Gyldigt frac'). Kapidan gecemeyen deger
+# ALAN OLMAZ — bos alan nofields tetigini acar, VLM kurtarma yolu devreye
+# girer; yanlis-dolu + dogrulanmis degerden iyidir.
+_CPR_TEXT_RE = re.compile(r"\b\d{6}[-.]?\d{4}\b|\b\d{10}\b")
+_DATE_TOKEN_RE = re.compile(
+    r"^\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4}$|^\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}$"
+)
+
+
+def _strip_semantic_junk(text: str) -> str:
+    """Serbest metinden CPR/tarih kalintilarini ve kirinti token'lari supurur.
+
+    Ev/kapi numarasi gibi kisa RAKAMLI token'lar ('2.', '47', '1') yasar;
+    rakam tasimayan <=1 alnum karakterliler ('g:'), CPR desenliler ve tarih
+    desenliler duser.
+    """
+    kept: list[str] = []
+    for token in text.split():
+        if _CPR_TEXT_RE.search(token):
+            continue
+        if _DATE_TOKEN_RE.match(token.strip(".,:;")):
+            continue
+        alnum = re.sub(r"[^A-Za-z0-9]", "", token)
+        if len(alnum) < 2 and not any(ch.isdigit() for ch in token):
+            continue
+        kept.append(token)
+    return " ".join(kept)
+
+
+def _is_plausible_address(text: str) -> bool:
+    """Adres kalitesi kapisı: >=2 token ve >=1 sokak-adi benzeri (>=2 harf)
+    token — kalanı yalnız rakam kirintisi olan satır adres değildir."""
+    tokens = text.split()
+    if len(tokens) < 2:
+        return False
+    return any(sum(ch.isalpha() for ch in token) >= 2 for token in tokens)
+
+
+def _gate_name_text(text: str) -> str:
+    """Ad kapisi: yalniz >=2 harfli, rakamsiz token'lar ad olabilir."""
+    kept: list[str] = []
+    for token in _strip_semantic_junk(text).split():
+        cleaned = token.strip(".,:;")
+        alpha = sum(1 for ch in cleaned if ch.isalpha())
+        if alpha >= 2 and not any(ch.isdigit() for ch in cleaned):
+            kept.append(token)
+    return " ".join(kept)
+
+
+def _looks_like_postal_line(text: str) -> bool:
+    """Satir 'dddd SehirAdi' posta satiri mi? ('1813 AKUTTELEFONEN' degil)."""
+    tokens = _strip_semantic_junk(text).split()
+    if not tokens:
+        return False
+    first = repair_numeric_confusables(tokens[0])
+    return bool(re.fullmatch(r"\d{4}", first)) and any(_is_name_token(t) for t in tokens[1:])
+
+
 def _compose_koerekort(raw: dict[str, tuple[str, float]]) -> dict[str, LocalField]:
     fields: dict[str, LocalField] = {}
 
     given, given_conf = raw.get("2", ("", 0.0))
     surname, surname_conf = raw.get("1", ("", 0.0))
-    full_name = " ".join(part for part in (given.strip(), surname.strip()) if part).strip()
+    parts = [
+        (part, conf)
+        for part, conf in ((given.strip(), given_conf), (surname.strip(), surname_conf))
+        if part
+    ]
+    full_name = " ".join(part for part, _ in parts).strip()
     if full_name:
         # Basılı sıra "given surname"dir (1=soyad, 2=ad) — frontend eşleştirme
         # anahtarı translitere edilerek karşılaştırılır, görüntülenen ad bu.
+        # Güven YALNIZ mevcut parçaların min'idir: eski 'min or max' kalıbı
+        # eksik parçada (conf 0.0 falsy) yüksek max'ı basıp tek parçalı adı
+        # DOĞRULUYORDU (saha 13 Eyl 2026). Tek parçalı ad eksik bilgidir —
+        # checksum kapısı needs_review düşürür.
         fields["full_name"] = LocalField(
             value=full_name,
-            confidence=min(given_conf, surname_conf) or max(given_conf, surname_conf),
+            confidence=min(conf for _, conf in parts),
             roi_key="1+2",
-            checksum_ok=True,
+            checksum_ok=len(parts) == 2,
         )
 
     birth_text, birth_conf = raw.get("3", ("", 0.0))
@@ -725,6 +881,10 @@ def _compose_sundhedskort(raw: dict[str, tuple[str, float]]) -> dict[str, LocalF
     fields: dict[str, LocalField] = {}
 
     name_text, name_conf = raw.get("name", ("", 0.0))
+    # Semantik kapi (saha 13 Eyl 2026): CPR/tarih/kirinti sizmis 'ad'
+    # ('g: Sik.') bosalir — alan uretilmez; nofields tetigi VLM kurtarma
+    # yolunu acar, yanlis-dolu dogrulanmis degerden iyidir.
+    name_text = _gate_name_text(name_text)
     if name_text:
         fields["full_name"] = LocalField(
             value=name_text, confidence=name_conf, roi_key="name", checksum_ok=True
@@ -783,7 +943,10 @@ def _compose_sundhedskort(raw: dict[str, tuple[str, float]]) -> dict[str, LocalF
             if not _token_key(token) or _token_key(token) not in name_keys
         ]
         address_text = " ".join(kept).strip()
-    if address_text:
+    # Semantik kapi: CPR satiri kalintisi ('200485-2985 g: Sik. 1 Gyldigt
+    # frac') supurulunce adres kalitesi kapisini gecemeyen deger uretilmez.
+    address_text = _strip_semantic_junk(address_text)
+    if _is_plausible_address(address_text):
         fields["address"] = LocalField(
             value=address_text, confidence=address_conf, roi_key="address", checksum_ok=True
         )
@@ -895,10 +1058,37 @@ def _compose_pas(raw: dict[str, tuple[str, float]], mrz_lines: list[str]) -> dic
     return fields
 
 
-def _field_anchor(token: str) -> str | None:
-    """Satır başı alan-no çapası: '1.'/'2' → '1'/'2', değilse None."""
-    match = re.match(r"^([12])[.:]?$", token.strip())
-    return match.group(1) if match else None
+def _anchor_info(token: str) -> tuple[str, str] | None:
+    """Satır başı alan-no çapası: '1.'/'2' → ('1', ''), değilse None.
+
+    YAPIŞIK değerde ('1.Demir' → ('1', 'Demir')) değerin kendisi döner —
+    saha 13 Eyl 2026: OCR çapayı değere yapıştırınca birebir regex çapayı
+    düşürüyor, soyad hiç seçilmiyordu. Bulanık 'l.'/'I.' okuması 1'e
+    onarılır. Kalıntı alfa içermiyorsa ('12.') çapa değildir.
+    """
+    text = token.strip()
+    if text and text[0] in "lI|":
+        text = "1" + text[1:]
+    match = re.match(r"^([12])(?:[.:](.*))?$", text)
+    if match is None:
+        return None
+    rest = (match.group(2) or "").strip()
+    if rest and not any(ch.isalpha() for ch in rest):
+        return None
+    return match.group(1), rest
+
+
+def _value_words(line: list[OcrWord]) -> list[OcrWord]:
+    """Satırdaki DEĞER kelimeleri: çapa-sade kelimeler atılır, yapışık
+    çapada ('1.Demir') yalnız değer kısmı kalır."""
+    out: list[OcrWord] = []
+    for word in line:
+        info = _anchor_info(word.text)
+        if info is None:
+            out.append(word)
+        elif info[1]:
+            out.append(OcrWord(text=info[1], score=word.score, box=word.box))
+    return out
 
 
 def _split_koerekort_names(
@@ -928,11 +1118,12 @@ def _split_koerekort_names(
     # birleşir ('1. Jensen 2. Thomas') ve '2.' çapası satır başına hiç
     # düşmez; ilk token'a bakmak birleşik dalı ölü kod bırakıyordu (0.3.40
     # incelemesi). Çapa satır içi HER konumda aranır.
-    def anchor_at(anchor: str) -> tuple[int, int] | None:
+    def anchor_at(anchor: str) -> tuple[int, int, str] | None:
         for i, line in enumerate(lines):
             for t, word in enumerate(line):
-                if _field_anchor(word.text) == anchor:
-                    return i, t
+                info = _anchor_info(word.text)
+                if info is not None and info[0] == anchor:
+                    return i, t, info[1]
         return None
 
     a1 = anchor_at("1")
@@ -940,13 +1131,16 @@ def _split_koerekort_names(
     if a1 is not None and a2 is not None and a1[0] <= a2[0]:
         if a1[0] == a2[0]:
             # İki alan TEK satırda birleşmiş ('1. Jensen 2. Thomas'): çapa
-            # konumları arasından böl.
+            # konumları arasından böl. YAPIŞIK çapada ('1.Jensen') değer
+            # çapa kelimesinin içinde taşınır — kalıntı öne eklenir.
             tokens = [word.text for word in lines[a1[0]]]
             t1, t2 = a1[1], a2[1]
-            if t2 > t1 + 1:
-                raw["1"] = (" ".join(tokens[t1 + 1 : t2]), confidence)
-            if len(tokens) > t2 + 1:
-                raw["2"] = (" ".join(tokens[t2 + 1 :]), confidence)
+            surname_parts = ([a1[2]] if a1[2] else []) + tokens[t1 + 1 : t2]
+            given_parts = ([a2[2]] if a2[2] else []) + tokens[t2 + 1 :]
+            if surname_parts:
+                raw["1"] = (" ".join(surname_parts), confidence)
+            if given_parts:
+                raw["2"] = (" ".join(given_parts), confidence)
             return
         # İki düzen: değer alan-no ile AYNI satırda ('1. Jensen') VEYA bir alt
         # satırda ('1. Efternavn' başlığı + 'TESTESEN'). Değer = çapa satırı
@@ -954,7 +1148,7 @@ def _split_koerekort_names(
         # çapasıyla sınırlıdır — başlık ('DANM ARK') ve doğum yeri sızamaz.
         def first_alpha_text(segment: list[list[OcrWord]]) -> str:
             for line in segment:
-                alpha = _alpha_words(line)
+                alpha = _alpha_words(_value_words(line))
                 if alpha:
                     return _scope_text(alpha)
             return ""
@@ -966,11 +1160,134 @@ def _split_koerekort_names(
         if given:
             raw["2"] = (given, confidence)
         return
-    alpha_lines = [line for line in (_alpha_words(line) for line in lines) if line]
-    if not alpha_lines:
-        return
-    raw["1"] = (_scope_text(alpha_lines[0]), confidence)
-    raw["2"] = (_scope_text(alpha_lines[1]), confidence) if len(alpha_lines) > 1 else ("", 0.0)
+    # Çapa yoksa (bulanık çekim): konumsal kural — ilk İKİ harf satırı
+    # 1=soyad, 2=ad. TEK harf satırı kaldıysa hangi yuvaya ait olduğu
+    # bilinemez: soyada yazmak tek-parça 'Ad: Recai' üretip soyadın hiç
+    # dolmamasına yol açıyordu (saha 13 Eyl 2026) — yuvalar boş kalır,
+    # full_name üretilmez, nofields tetiği VLM kurtarma yolunu açar.
+    alpha_lines = [line for line in (_alpha_words(_value_words(line)) for line in lines) if line]
+    if len(alpha_lines) >= 2:
+        raw["1"] = (_scope_text(alpha_lines[0]), confidence)
+        raw["2"] = (_scope_text(alpha_lines[1]), confidence)
+
+
+def _split_sundhedskort_anchor(
+    raw: dict[str, tuple[str, float]],
+    words: list[OcrWord],
+    rois: dict[str, tuple[FieldRoi, ...]],
+    canvas: tuple[int, int],
+) -> bool:
+    """Sundhedskort alanlarını kartın kendi ÇAPA satırlarından seçer.
+
+    Pencereler SPECIMEN düzenine kalibre; gerçek kartta læge bloğu tüm
+    satırları aşağı kaydırır (ad CPR'ın ALTINDA, SPECIMEN'da ÜSTÜNDE —
+    saha 13 Eyl 2026: 'g: Sik.' / CPR-sızmış adres / birleşik şehir).
+    Pencere varsayımı yerine iki düzene de uyan tekil kural: CPR satırı
+    (10 hane) bulunur; posta satırı (dddd + harf kuyruğu) onun altında
+    aranır; ADRES ve AD posta satırından YUKARI taranır (CPR satırı
+    atlanır — iki düzende de ad, adresin hemen üstündedir). Çapa bulunamazsa
+    False döner ve pencere yolu yedek kalır.
+    """
+    rows = {row.key: row for row in rois.get("sundhedskort", ())}
+    name_row = rows.get("name")
+    address_row = rows.get("address")
+    postal_row = rows.get("postal")
+    if name_row is None or address_row is None or postal_row is None:
+        return False
+    width, height = canvas
+    # Sol kolon: sağ kolon (1813/telefon/barkod) satır seçimine karışmasın.
+    # Sınır EN GENİŞ satır penceresinden (ad, 0.55'e kadar) — posta penceresi
+    # (0.42) ad satırının son kelimesini kolondan düşürüyordu.
+    x_min = (min(name_row.x, address_row.x, postal_row.x) - 0.02) * width
+    x_max = (
+        max(
+            name_row.x + name_row.w,
+            address_row.x + address_row.w,
+            postal_row.x + postal_row.w,
+        )
+        + 0.05
+    ) * width
+    column_words = [word for word in words if x_min <= word.center_x <= x_max]
+    lines = group_words_into_lines(column_words)
+    if not lines:
+        return False
+
+    def line_y(line: list[OcrWord]) -> float:
+        return min(word.center_y for word in line)
+
+    def gated_tokens(line: list[OcrWord]) -> list[str]:
+        return _strip_semantic_junk(_scope_text(_drop_label_tokens(line))).split()
+
+    # 1) CPR satırı: 6+4 veya bitişik 10 hane üreten ilk satır.
+    cpr_idx: int | None = None
+    for i, line in enumerate(lines):
+        repaired = repair_numeric_confusables(_scope_text(line))
+        if re.search(r"\b\d{6}[-. ]\d{4}\b", repaired) or re.search(r"\b\d{10}\b", repaired):
+            cpr_idx = i
+            break
+    if cpr_idx is None:
+        return False
+
+    # 2) Posta satırı: CPR'ın altında 'dddd Şehir' desenli EN ALT satır
+    #    ('1813 AKUTTELEFONEN' — etiket düşünce alfa kuyruk kalmaz — aday
+    #    değildir). Barkod bölgesinin altına düşen satırlar bandı aşar.
+    postal_idx: int | None = None
+    for i in range(len(lines) - 1, cpr_idx, -1):
+        if line_y(lines[i]) - line_y(lines[cpr_idx]) > 0.38 * height:
+            continue
+        if _looks_like_postal_line(_scope_text(_drop_label_tokens(lines[i]))):
+            postal_idx = i
+            break
+    if postal_idx is None:
+        return False
+
+    # CPR de çapa satırından gelsin: gerçek kartta CPR satırı pencerenin
+    # dışına kayabilir (eğim/rotate), çapa satırı zaten TANIMLIdır. Rakam
+    # filtresi alan-no önekini ve etiketleri düşürür, _extract_cpr geri
+    # kalanından 10 haneyi çıkarır.
+    cpr_scope = _drop_label_tokens(lines[cpr_idx], numeric=True)
+    cpr_text = _scope_text(cpr_scope)
+    if cpr_text:
+        raw["cpr"] = (cpr_text, _scope_confidence(lines[cpr_idx]))
+
+    # 3) Adres: postadan yukarı ilk rakamlı (ev no) geçitli satır.
+    # 4) Ad: taramayı sürdür (CPR satırı atlanır), ilk alfa satırı.
+    address_idx: int | None = None
+    name_idx: int | None = None
+    for i in range(postal_idx - 1, -1, -1):
+        if i == cpr_idx:
+            continue
+        tokens = gated_tokens(lines[i])
+        if not tokens:
+            continue
+        has_alpha = any(_is_name_token(t) for t in tokens)
+        has_digit = any(any(ch.isdigit() for ch in t) for t in tokens)
+        if address_idx is None and has_digit and len(tokens) >= 2:
+            address_idx = i
+            continue
+        if has_alpha:
+            name_idx = i
+            break
+
+    def line_text_in(line: list[OcrWord], roi: FieldRoi) -> str:
+        rx0, rx1 = roi.x * width, (roi.x + roi.w) * width
+        return _scope_text(_drop_label_tokens([w for w in line if rx0 <= w.center_x <= rx1]))
+
+    if address_idx is not None:
+        address_text = _strip_semantic_junk(line_text_in(lines[address_idx], address_row))
+        if _is_plausible_address(address_text):
+            raw["address"] = (address_text, _scope_confidence(lines[address_idx]))
+    if name_idx is not None:
+        gated_name = _gate_name_text(line_text_in(lines[name_idx], name_row))
+        if gated_name:
+            raw["name"] = (gated_name, _scope_confidence(lines[name_idx]))
+    postal_scope = [
+        w
+        for w in lines[postal_idx]
+        if postal_row.x * width <= w.center_x <= (postal_row.x + postal_row.w) * width
+    ]
+    raw["postal"] = (_scope_text(_drop_label_tokens(postal_scope)), _scope_confidence(lines[postal_idx]))
+    return True
 
 
 def parse_local_fields(
@@ -1004,6 +1321,10 @@ def parse_local_fields(
     if deskew:
         words = deskew_words(words, active_canvas, strict=skew_strict)
     ocr_text = build_ocr_text(words)
+    # Dev kutular (filigran artıkları, foto bölgesi çöpü) satır seçimine
+    # KATILMAZ: köprü kurup alakasız satırları birleştiriyorlardı. ocr_text
+    # yukarıda tam listeyle kuruldu — belge tipi kokusu kaybolmaz.
+    row_words = [w for w in words if w.height <= GIANT_WORD_HEIGHT_RATIO * active_canvas[1]]
     result = LocalParseResult(
         document_type=document_type_value(document_type_key),
         document_type_key=document_type_key,
@@ -1017,7 +1338,7 @@ def parse_local_fields(
     raw: dict[str, tuple[str, float]] = {}
     best_confidence_by_row: dict[str, float] = {}
     for row in rows:
-        scope = words_in_roi(words, row, active_canvas)
+        scope = words_in_roi(row_words, row, active_canvas)
         text = _scope_text(scope)
         confidence = _scope_confidence(scope)
         best_confidence_by_row[row.key] = max(best_confidence_by_row.get(row.key, 0.0), confidence)
@@ -1045,7 +1366,18 @@ def parse_local_fields(
         elif row.field == "postal_code":
             # Posta penceresi KARIŞIKTIR (kod + şehir adı): yalnız etiket
             # düşürülür, rakamsız filtre uygulanmaz (şehir adı kaybolmasın).
+            # Çok satırlı pencerede (gerçek kart, 13 Eyl 2026) kod+şehir
+            # SATIR bütünlüğü bozulmasın: posta desenine uyan SON satır
+            # alınır — düzleşmiş metnin kuyruğu ad/sokak satırlarını şehre
+            # birleştiriyordu ('Paris Recai Demir Boulevard 47').
             scope = _drop_label_tokens(scope)
+            postal_lines = [
+                line
+                for line in group_words_into_lines(scope)
+                if _looks_like_postal_line(_scope_text(line))
+            ]
+            if postal_lines:
+                scope = postal_lines[-1]
             text = _scope_text(scope)
         if not text:
             continue
@@ -1055,7 +1387,11 @@ def parse_local_fields(
 
     mrz_lines = [line for line in ocr_text.splitlines() if "<" in line and len(line.replace(" ", "")) >= 30]
     if document_type_key == "koerekort":
-        _split_koerekort_names(raw, words, table, active_canvas)
+        _split_koerekort_names(raw, row_words, table, active_canvas)
+    if document_type_key == "sundhedskort":
+        # Çapa yolu pencere değerlerinin ÜZERİNE yazar (raw doğrudan atama);
+        # çapa bulunamazsa pencere yolu yedek kalır.
+        _split_sundhedskort_anchor(raw, row_words, table, active_canvas)
     if document_type_key in ("koerekort", "idkort"):
         result.fields = _compose_koerekort(raw)
         if document_type_key == "idkort":
